@@ -19,6 +19,7 @@ import argon2.low_level as a2
 import blake3
 import nacl.bindings as nb
 from cryptography.hazmat.primitives.asymmetric import ed25519, mlkem, x25519
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms
 from kyber_py.ml_kem import ML_KEM_768
 from mnemonic import Mnemonic
 
@@ -98,6 +99,65 @@ def pubs_equal(idn, o):
 
 def argon(inp, salt, mem, it):
     return a2.hash_secret_raw(inp.encode(), salt, it, mem, 1, 32, a2.Type.ID, 19)
+
+
+# GF(256), AES polynomial 0x11b, plain shift-and-add; Shamir by Horner / Lagrange.
+def gmul(a, b):
+    r = 0
+    while b:
+        if b & 1:
+            r ^= a
+        a = ((a << 1) ^ 0x11B) & 0xFF if a & 0x80 else (a << 1) & 0xFF
+        b >>= 1
+    return r
+
+
+def gpow(a, e):
+    r = 1
+    for _ in range(e):
+        r = gmul(r, a)
+    return r
+
+
+def lagrange0(xs):
+    out = []
+    for i, xi in enumerate(xs):
+        num = den = 1
+        for j, xj in enumerate(xs):
+            if i != j:
+                num = gmul(num, xj)
+                den = gmul(den, xi ^ xj)
+        out.append(gmul(num, gpow(den, 254)))
+    return out
+
+
+def rng_stream(seed, n):
+    # rand_chacha ChaCha20Rng::from_seed: djb ChaCha20, 64 bit counter 0, zero nonce
+    return Cipher(algorithms.ChaCha20(seed, bytes(16)), mode=None).encryptor().update(bytes(n))
+
+
+def shamir_split(secret, k, indices, seed):
+    stream = rng_stream(seed, 32 * (k - 1))
+    coeffs = [secret] + [stream[(i - 1) * 32 : i * 32] for i in range(1, k)]
+    out = []
+    for x in indices:
+        row = bytearray(32)
+        for b in range(32):
+            acc = 0
+            for d in range(k - 1, -1, -1):
+                acc = gmul(acc, x) ^ coeffs[d][b]
+            row[b] = acc
+        out.append((x, bytes(row)))
+    return out
+
+
+def shamir_combine(shares):
+    l = lagrange0([x for x, _ in shares])
+    out = bytearray(32)
+    for (_, sb), li in zip(shares, l):
+        for b in range(32):
+            out[b] ^= gmul(li, sb[b])
+    return bytes(out)
 
 
 EFF = [w for w in (ROOT / "assets/wordlists/eff_large.txt").read_text().split("\n") if w]
@@ -184,7 +244,7 @@ def run(path):
             salt, nonce = h(par["salt"]), h(par["nonce"])
             key = argon(i["passphrase"], salt, pr["mem_kib"], pr["iters"])
             header = b"SSHK\x01" + struct.pack(">II", pr["mem_kib"], pr["iters"]) + salt + nonce
-            plain = idn["ed_seed"] + idn["x_sec"] + idn["dk"]
+            plain = idn["ed_seed"] + idn["x_sec"] + idn["dk"] + b"\x00"  # no older wrapping generations
             check(vid, (header + aead_seal(key, nonce, plain, header)).hex() == o["blob"])
         elif p == "sealed_box":
             idn = identity_from_xof(par["recipient_context"], h(i["recipient_ikm"]))
@@ -215,6 +275,21 @@ def run(path):
             ent = Mnemonic("english").to_entropy(i["phrase"])
             ctx = {"unwrap": "sshub/sync/paper/unwrap/v1", "recover": "sshub/sync/paper/recover/v1"}[par["domain"]]
             check(vid, pubs_equal(identity_from_xof(ctx, bytes(ent)), o))
+        elif p == "sas_words":
+            wl = Mnemonic("english").wordlist
+            head = int.from_bytes(h(i["transcript_hash"])[:6], "big")
+            check(vid, "-".join(wl[(head >> (48 - 11 * (k + 1))) & 0x7FF] for k in range(4)) == o["words"])
+        elif p == "shamir_split":
+            sh = shamir_split(h(i["secret"]), par["k"], par["indices"], h(par["rng_seed"]))
+            check(vid, [(x, b.hex()) for x, b in sh] == [(q["index"], q["bytes_hex"]) for q in o["shares"]])
+        elif p == "shamir_combine":
+            check(vid, shamir_combine([(q["index"], h(q["bytes_hex"])) for q in i["shares"]]).hex() == o["secret"])
+        elif p == "reshare":
+            my = (i["share"]["index"], h(i["share"]["bytes_hex"]))
+            sub = shamir_split(my[1], par["k"], par["new_indices"], h(par["rng_seed"]))
+            check(vid + " sub-shares", [(x, b.hex()) for x, b in sub] == [(q["index"], q["bytes_hex"]) for q in o["sub_shares"]] and o["from"] == my[0])
+            commits = [derive_key("sshub/sync/reshare/commit/v1", bytes([my[0], x]) + b).hex() for x, b in sub]
+            check(vid + " commitments", commits == o["commitments"])
         else:
             check(vid, False, f"oracle has no case for primitive {p}")
     print(f"{len(data['vectors'])} vectors replayed")

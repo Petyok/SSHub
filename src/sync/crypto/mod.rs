@@ -12,6 +12,8 @@ mod hash;
 mod identity;
 mod mlkem;
 mod paper;
+mod sas;
+mod shamir;
 mod vault;
 mod words;
 mod wrap;
@@ -23,10 +25,15 @@ pub use alg::{AlgTag, SigSuite, WrapSuite, ALG_CURRENT};
 pub use argon::{
     argon2_derive, try_argon2_derive, Argon2Profile, ARGON2_EMAIL, ARGON2_MASTER, ARGON2_SNAPSHOT,
 };
-pub use dek::{dek_generate, dek_open, dek_seal};
+pub use dek::{aead_open, aead_seal, dek_generate, dek_open, dek_seal};
 pub use hash::{chain_hash, derive_key};
 pub use identity::{device_id_of, verify, DeviceIdentity, DevicePublic};
 pub use paper::{paper_derive, PaperDomain};
+pub use sas::sas_words;
+pub use shamir::{
+    reshare_combine, reshare_contribute, reshare_verify, shamir_combine, shamir_split,
+    shamir_split_at, ReshareContribution, Share,
+};
 pub use vault::vault_recipient;
 pub use words::{bip39_decode, bip39_encode, eff_decode, eff_encode};
 pub use wrap::{blob_alg, hybrid_unwrap, hybrid_wrap, try_hybrid_wrap};
