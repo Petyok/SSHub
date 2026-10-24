@@ -54,6 +54,9 @@ pub struct Reveal {
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Confirm {
     pub ok: bool,
+    /// Whether the signer had a human at a screen. It is inside the signature, so the other side learns
+    /// it from the key that signs, not from the unauthenticated hello.
+    pub screen: bool,
     /// Device-key signature over the enrollment transcript and the decision.
     #[serde(with = "hex64")]
     pub sig: [u8; 64],
@@ -307,6 +310,13 @@ pub struct EnrollOutcome {
     pub ring: String,
 }
 
+/// The confirmation between two terminals: the phone's message plus the signer's screen bit.
+pub(crate) fn terminal_confirm_message(role: u8, ok: bool, th: &[u8; 32], screen: bool) -> Vec<u8> {
+    let mut m = confirm_message(role, ok, th);
+    m.push(u8::from(screen));
+    m
+}
+
 pub(crate) fn confirm_message(role: u8, ok: bool, th: &[u8; 32]) -> Vec<u8> {
     let mut m = b"sshub/sync/enroll/confirm/v1".to_vec();
     m.push(role);
@@ -460,9 +470,11 @@ fn run<L: SyncLink>(
         }),
         None => true,
     };
+    let my_screen = ui.is_some();
     let mine = Confirm {
         ok,
-        sig: id.sign(&confirm_message(my_role, ok, &th)),
+        screen: my_screen,
+        sig: id.sign(&terminal_confirm_message(my_role, ok, &th, my_screen)),
     };
     let theirs = if initiator {
         s.send(&SyncMsg::EnrollConfirm(mine))?;
@@ -475,7 +487,7 @@ fn run<L: SyncLink>(
     ensure!(
         verify(
             &peer_reveal.ed25519_pub,
-            &confirm_message(peer_role, theirs.ok, &th),
+            &terminal_confirm_message(peer_role, theirs.ok, &th, theirs.screen),
             &theirs.sig
         ),
         "bad confirmation signature"
@@ -496,7 +508,8 @@ fn run<L: SyncLink>(
     } else {
         Attendance::Unattended
     };
-    let verified = if ui.is_some() && peer_hello.screen {
+    // SAS only when BOTH sides had a human at a screen, and the peer's side of that is its signed bit.
+    let verified = if ui.is_some() && theirs.screen {
         VerifiedBy::Sas
     } else {
         VerifiedBy::SshHostKey
@@ -564,7 +577,6 @@ fn run<L: SyncLink>(
         // The joiner trusts the inviter as a holder and takes over its ring.
         EnrollRole::Joiner => {
             let ring = peer_hello.ring.clone().unwrap_or_else(|| peer_id.clone());
-            set_ring_id(store, &ring)?;
             // The ring that existed is the starting state, not something to review (contract 3c).
             let bundle = bundle_from_bytes(&recv_anchor(&mut s, &mut ui)?)?;
             let hosts = hosts_in(&bundle.state);
@@ -583,6 +595,8 @@ fn run<L: SyncLink>(
                 )?;
                 Ok(())
             })?;
+            // Only an adopted ring is ours: a failed adoption leaves the device free to join another.
+            set_ring_id(store, &ring)?;
             note(&mut ui, EnrollProgress::Adopted { hosts });
             store.sync_register_device(
                 &peer_pub,

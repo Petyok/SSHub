@@ -291,3 +291,31 @@ fn an_exemption_that_is_not_set_cannot_be_switched_off() {
         .to_string()
         .contains("no exemption"));
 }
+
+#[test]
+fn the_emailed_code_factor_is_registered_only_on_its_sender() {
+    let d = ring(2);
+    // dev1 is named as the sender but dev0 registers: refused, and dev0 keeps no code.
+    let err = factor_register(
+        &d[0].store,
+        &d[0].id,
+        FactorKind::Email,
+        None,
+        Some("dev1"),
+        1_000,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("ON its sender"), "{err}");
+    assert!(
+        crate::sync::quorum::meta_get(&d[0].store, "email_factor_code")
+            .unwrap()
+            .is_none()
+    );
+    // On the sender itself it works, and the code is not in clear in the database.
+    factor_register(&d[0].store, &d[0].id, FactorKind::Email, None, None, 1_000).unwrap();
+    assert!(
+        crate::sync::quorum::meta_get(&d[0].store, "email_factor_code")
+            .unwrap()
+            .is_none()
+    );
+}

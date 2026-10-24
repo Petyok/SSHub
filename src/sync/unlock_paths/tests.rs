@@ -243,3 +243,11 @@ fn a_ring_of_exactly_two_holders_needs_the_paper_before_credentials_or_a_mode_ch
     );
     cred_put(&d[0].store, &d[0].id, &host, &payload("x")).unwrap();
 }
+
+#[test]
+fn a_challenge_never_lives_longer_than_the_contract_says() {
+    let f = fixture();
+    let (c, _) =
+        make_challenge(&f.d[0].store, &f.d[0].id, &f.host, &f.d[1].did, 1_000, 600).unwrap();
+    assert_eq!(c.expiry, 1_000 + crate::sync::limits::CHALLENGE_EXPIRY_SECS);
+}

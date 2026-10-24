@@ -754,8 +754,13 @@ pub(crate) fn factor_register(
                 Some(s) => find_device(store, s)?.id,
                 None => id.public().device_id(),
             };
+            // The code lives, sealed, on the device that mails it: register from that device.
+            ensure!(
+                sender_id == id.public().device_id(),
+                "the emailed-code factor is registered ON its sender: run this on the device that will mail the code"
+            );
             let (body, code) = ceremony::factor_register_email(&sender_id)?;
-            ceremony::remember_email_code(store, &code)?;
+            ceremony::remember_email_code(store, id, &code)?;
             (body, Some(code))
         }
     };

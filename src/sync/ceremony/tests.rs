@@ -319,7 +319,7 @@ fn the_emailed_code_is_a_factor_and_its_sender_mails_only_when_the_other_proofs_
     for x in &d {
         settle_red_ops(&x.store, ereg.timestamp + 5).unwrap();
     }
-    remember_email_code(&d[B].store, &code).unwrap();
+    remember_email_code(&d[B].store, &d[B].id, &code).unwrap();
     sync(&d);
 
     let op = propose(
@@ -334,7 +334,7 @@ fn the_emailed_code_is_a_factor_and_its_sender_mails_only_when_the_other_proofs_
     sync(&d);
     let now = op.timestamp + 30;
     assert!(
-        owed_code_mails(&d[B].store, &d[B].did, now)
+        owed_code_mails(&d[B].store, &d[B].id, now)
             .unwrap()
             .is_empty(),
         "the phone and the second device have not voted yet"
@@ -343,22 +343,22 @@ fn the_emailed_code_is_a_factor_and_its_sender_mails_only_when_the_other_proofs_
     append(&d[A], red_approve_body(&op));
     sync(&d);
     assert!(
-        owed_code_mails(&d[A].store, &d[A].did, now)
+        owed_code_mails(&d[A].store, &d[A].id, now)
             .unwrap()
             .is_empty(),
         "only the sender mails"
     );
-    let mails = owed_code_mails(&d[B].store, &d[B].did, now).unwrap();
+    let mails = owed_code_mails(&d[B].store, &d[B].id, now).unwrap();
     assert_eq!(mails.len(), 1);
     assert!(mails[0].2.contains(&code) && mails[0].2.contains("opens nothing"));
     // A failing mail server marks nothing; a working one marks it, and then nothing is owed.
     let mut failing = |_: &str, _: &str| -> Result<()> { anyhow::bail!("no mta") };
     assert_eq!(
-        send_owed_codes(&d[B].store, &d[B].did, now, &mut failing).unwrap(),
+        send_owed_codes(&d[B].store, &d[B].id, now, &mut failing).unwrap(),
         0
     );
     assert_eq!(
-        owed_code_mails(&d[B].store, &d[B].did, now).unwrap().len(),
+        owed_code_mails(&d[B].store, &d[B].id, now).unwrap().len(),
         1
     );
     let got = std::cell::RefCell::new(Vec::new());
@@ -367,16 +367,16 @@ fn the_emailed_code_is_a_factor_and_its_sender_mails_only_when_the_other_proofs_
         Ok(())
     };
     assert_eq!(
-        send_owed_codes(&d[B].store, &d[B].did, now, &mut ok).unwrap(),
+        send_owed_codes(&d[B].store, &d[B].id, now, &mut ok).unwrap(),
         1
     );
     assert!(got.borrow()[0].1.contains(&code));
     assert_eq!(
-        send_owed_codes(&d[B].store, &d[B].did, now, &mut ok).unwrap(),
+        send_owed_codes(&d[B].store, &d[B].id, now, &mut ok).unwrap(),
         0
     );
     assert!(
-        owed_code_mails(&d[B].store, &d[B].did, now)
+        owed_code_mails(&d[B].store, &d[B].id, now)
             .unwrap()
             .is_empty(),
         "once per op"
@@ -575,5 +575,482 @@ mod in_force {
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------- review round 1 regressions
+
+mod review {
+    use super::*;
+    use crate::sync::cert::{cert_allows, cert_opened_body, DelegationCert};
+    use crate::sync::cred_ops::cred_put;
+    use crate::sync::crypto::{Argon2Profile, DeviceIdentity};
+    use crate::sync::oplog::{CertScope, DeviceKind, HostUid, VerifiedBy};
+    use crate::sync::protocol::tests::ring;
+    use crate::sync::quorum::tests::{
+        all_to_all, complete, deliver, payload, quorum_mode, ring_phone,
+    };
+    use crate::sync::quorum::{assemble_dek, own_shares, phone_device};
+    use crate::sync::reshare::reissue_receive;
+    use crate::sync::revocation::{next_actions, perform, RevocationAction};
+    use std::sync::Arc;
+
+    const TEST: Argon2Profile = Argon2Profile {
+        mem_kib: 64,
+        iters: 1,
+    };
+
+    fn sync_pull(d: &[Dev]) {
+        for _ in 0..2 {
+            for a in d {
+                for b in d {
+                    if a.did != b.did {
+                        pull(a, b);
+                    }
+                }
+            }
+        }
+    }
+
+    fn mirror_in(d: &[Dev]) -> Dev {
+        let m = Dev::new();
+        for x in d.iter().chain(std::iter::once(&m)) {
+            x.store
+                .sync_register_device(
+                    &m.id.public(),
+                    "mirror",
+                    DeviceRole::Mirror,
+                    Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+        }
+        for x in d {
+            m.trust(x);
+        }
+        m
+    }
+
+    // crypto F1: the delegate cannot waive the daily budget by recording hosts as opened itself.
+    #[test]
+    fn the_delegate_recording_opened_hosts_does_not_waive_the_new_host_budget() {
+        let d = ring(4); // 0 phone, 1 delegate, 2 and 3 enforcing holders
+        let hosts: Vec<HostUid> = (0..5u8).map(|n| [200 + n; 16]).collect();
+        let now = crate::store::now_ts();
+        let op = append(
+            &d[0],
+            OpBody::CertIssue {
+                device_id: d[1].did.clone(),
+                scope: CertScope::Hosts(hosts.clone()),
+                expiry: now + 7 * 86_400,
+                max_new_hosts_per_day: 1,
+                epoch_lo: 0,
+                epoch_hi: 10,
+            },
+        );
+        all_to_all(&d);
+        let cert = DelegationCert::from_op(&op).unwrap();
+        let pk = d[0].id.public().ed25519_pub;
+        let at = op.timestamp + 10;
+        for h in &hosts {
+            append(&d[1], cert_opened_body(&cert, h));
+        }
+        all_to_all(&d);
+        let allowed = hosts
+            .iter()
+            .filter(|h| cert_allows(&cert, &pk, &d[2].store, &d[1].did, h, at, at).is_ok())
+            .count();
+        assert!(allowed <= 1, "{allowed} hosts got through a budget of 1");
+        // A holder's record does count: the host it opened is free afterwards.
+        append(&d[2], cert_opened_body(&cert, &hosts[0]));
+        all_to_all(&d);
+        assert!(cert_allows(&cert, &pk, &d[3].store, &d[1].did, &hosts[0], at, at).is_ok());
+        assert!(cert_allows(&cert, &pk, &d[3].store, &d[1].did, &hosts[1], at, at).is_err());
+    }
+
+    fn drive_reshare(d: &mut [Dev], now: i64, perform_receive: bool) {
+        for _ in 0..6 {
+            for dev in d.iter_mut().take(3) {
+                for a in next_actions(&dev.store, &dev.id, now).unwrap() {
+                    if matches!(a, RevocationAction::Retire)
+                        || (!perform_receive && matches!(a, RevocationAction::Receive { .. }))
+                    {
+                        continue;
+                    }
+                    let store = dev.store.clone();
+                    let bodies = perform(&store, Arc::get_mut(&mut dev.id).unwrap(), &a).unwrap();
+                    for b in bodies {
+                        append(dev, b);
+                    }
+                }
+            }
+            all_to_all(&d[..3]);
+        }
+    }
+
+    // crypto F2: a mirror cannot close an open revocation with an empty reshare batch.
+    #[test]
+    fn a_non_holder_cannot_close_a_revocation_with_a_reshare_batch() {
+        let d = ring(4);
+        quorum_mode(&d[0]);
+        all_to_all(&d);
+        let m = mirror_in(&d);
+        let now = crate::store::now_ts();
+        append(
+            &d[0],
+            OpBody::DeviceRevoke {
+                device_id: d[3].did.clone(),
+            },
+        );
+        all_to_all(&d[..3]);
+        for x in &d[..3] {
+            deliver(x, &m);
+        }
+        let mut holders: Vec<_> = d[..3].iter().map(|x| x.did.clone()).collect();
+        holders.sort();
+        append(
+            &m,
+            OpBody::ShareReshareBatch {
+                epoch: 1,
+                new_holders: holders,
+                items: vec![],
+            },
+        );
+        for x in &d[..3] {
+            deliver(&m, x);
+        }
+        let actions = next_actions(&d[0].store, &d[0].id, now).unwrap();
+        assert!(actions.contains(&RevocationAction::Rotate), "{actions:?}");
+    }
+
+    // crypto F3: a mirror's batch cannot make holders disagree, and the previous wrap keys are never
+    // retired on a timer while credentials are still unadopted.
+    #[test]
+    fn a_non_holder_batch_cannot_poison_a_reshare_and_wrap_keys_are_retired_only_after_adoption() {
+        let mut d = ring(4);
+        quorum_mode(&d[0]);
+        all_to_all(&d);
+        for n in 1..=2u8 {
+            cred_put(&d[0].store, &d[0].id, &[100 + n; 16], &payload("x")).unwrap();
+        }
+        all_to_all(&d);
+        let m = mirror_in(&d);
+        let now = crate::store::now_ts();
+        append(
+            &d[0],
+            OpBody::DeviceRevoke {
+                device_id: d[3].did.clone(),
+            },
+        );
+        all_to_all(&d[..3]);
+        drive_reshare(&mut d, now, false);
+        assert!(
+            reissue_receive(&d[0].store, &d[0].id, 1).is_ok(),
+            "honest baseline"
+        );
+        for x in &d[..3] {
+            deliver(x, &m);
+        }
+        append(
+            &m,
+            OpBody::ShareReshareBatch {
+                epoch: 1,
+                new_holders: vec![d[0].did.clone()],
+                items: vec![],
+            },
+        );
+        for x in &d[..3] {
+            deliver(&m, x);
+        }
+        for x in &d[..3] {
+            assert!(reissue_receive(&x.store, &x.id, 1).is_ok());
+        }
+        // Everyone received; nobody has adopted by a real unlock yet: thirty days later nothing is retired.
+        drive_reshare(&mut d, now, true);
+        let later = now + 30 * 86_400;
+        for x in &d[..3] {
+            assert!(
+                !next_actions(&x.store, &x.id, later)
+                    .unwrap()
+                    .contains(&RevocationAction::Retire),
+                "wrap keys retired on a timer"
+            );
+        }
+    }
+
+    // crypto F4a: a device of kind Phone added as a mirror is a Red op and never the ring's phone.
+    #[test]
+    fn a_phone_kind_device_added_as_a_mirror_is_red_and_never_supplies_the_phone_proof() {
+        let d = ring(3);
+        for x in &d {
+            crate::sync::ceremony::test_force(&x.store, false);
+        }
+        let m = Dev::new();
+        crate::sync::ceremony::test_force(&m.store, false);
+        let add = append(
+            &d[0],
+            OpBody::DeviceAdd {
+                device: m.id.public(),
+                name: "phone".into(),
+                role: DeviceRole::Mirror,
+                attendance: Attendance::Attended,
+                kind: DeviceKind::Phone,
+                verified_by: VerifiedBy::Sas,
+            },
+        );
+        assert!(is_gated(&d[0].store, &add).unwrap());
+        sync_pull(&d);
+        assert!(resolve(&d[1].store, &add.hash(), true, add.timestamp + 5).is_err());
+        assert!(phone_device(&d[1].store).unwrap().is_none());
+        assert!(phone_device(&d[0].store).unwrap().is_none());
+    }
+
+    // crypto F4b: a second phone is a verdict on its own DeviceAdd, not an error in every evaluation.
+    #[test]
+    fn a_second_phone_is_blocked_and_does_not_break_other_ceremonies() {
+        let d = ring_phone(3);
+        let m = Dev::new();
+        let add = append(
+            &d[0],
+            OpBody::DeviceAdd {
+                device: m.id.public(),
+                name: "phone two".into(),
+                role: DeviceRole::Holder,
+                attendance: Attendance::Attended,
+                kind: DeviceKind::Phone,
+                verified_by: VerifiedBy::Sas,
+            },
+        );
+        sync_pull(&d);
+        let st = red_status(&d[2].store, &add, add.timestamp + 1).unwrap();
+        assert!(
+            st.blocked.is_some() && st.rule_violation.is_some(),
+            "{st:?}"
+        );
+        let probe = append(
+            &d[1],
+            OpBody::BulkExport {
+                requester: d[1].did.clone(),
+                window_secs: 60,
+            },
+        );
+        sync_pull(&d);
+        red_status(&d[2].store, &probe, probe.timestamp + 1).unwrap();
+        assert_eq!(phone_device(&d[2].store).unwrap(), Some(d[3].did.clone()));
+    }
+
+    fn quorum_ring_with_paper() -> (Vec<Dev>, String) {
+        let d = ring_phone(3);
+        let phrase = bip39_encode(&[0x77; 32]);
+        let reg = append(
+            &d[0],
+            crate::sync::quorum::paper_registration(&phrase).unwrap(),
+        );
+        complete(&d, &reg, 1, None);
+        let mc = append(
+            &d[0],
+            OpBody::ModeChange {
+                to: CredMode::Quorum,
+                migrated_on: d[0].did.clone(),
+                cosigner: None,
+            },
+        );
+        complete(&d, &mc, 1, Some(&phrase));
+        (d, phrase)
+    }
+
+    // crypto F5: only the exempt device makes its own slot; a slot chosen by another proposer, or one that
+    // equals a known key, never becomes active even with every proof present.
+    #[test]
+    fn an_exemption_slot_is_active_only_when_the_exempt_device_made_it() {
+        let (d, phrase) = quorum_ring_with_paper();
+        let made_up = DeviceIdentity::generate();
+        let bad = append(
+            &d[0],
+            OpBody::ExemptionSet {
+                device_id: d[2].did.clone(),
+                slot: Some(made_up.public()),
+            },
+        );
+        complete(&d, &bad, 1, Some(&phrase));
+        for x in &d {
+            assert!(crate::sync::exemption::active_slots(&x.store)
+                .unwrap()
+                .is_empty());
+        }
+        let host = [9u8; 16];
+        cred_put(&d[0].store, &d[0].id, &host, &payload("secret")).unwrap();
+        all_to_all(&d);
+        assert!(own_shares(&d[0].store, &made_up, &host).is_err());
+        let mine = own_shares(&d[0].store, &d[0].id, &host)
+            .unwrap()
+            .remove(0)
+            .1;
+        assert!(assemble_dek(&d[0].store, &host, mine.clone(), mine).is_err());
+
+        // A slot equal to another device's key is refused too.
+        let clash = append(
+            &d[2],
+            OpBody::ExemptionSet {
+                device_id: d[2].did.clone(),
+                slot: Some(d[1].id.public()),
+            },
+        );
+        complete(&d, &clash, 0, Some(&phrase));
+        assert!(crate::sync::exemption::active_slots(&d[0].store)
+            .unwrap()
+            .is_empty());
+
+        // The honest path: the exempt device derives and proposes its own slot.
+        let ok = append(
+            &d[2],
+            crate::sync::exemption::enable_body(
+                &d[2].id,
+                "alpha bravo charlie delta echo foxtrot",
+                TEST,
+            ),
+        );
+        complete(&d, &ok, 0, Some(&phrase));
+        for x in &d {
+            assert_eq!(
+                crate::sync::exemption::active_slots(&x.store)
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+        let _ = ok;
+    }
+
+    // crypto F6: a Red op stamped in the future expires like any other.
+    #[test]
+    fn a_future_dated_red_op_expires_like_any_other() {
+        let d = ring_phone(3);
+        let phrase = bip39_encode(&[0x66; 32]);
+        let now = crate::store::now_ts();
+        let reg = d[0]
+            .store
+            .sync_append_local_at(
+                &d[0].id,
+                crate::sync::quorum::paper_registration(&phrase).unwrap(),
+                now + 5 * 365 * 86_400,
+            )
+            .unwrap();
+        sync_pull(&d);
+        append(&d[3], red_phone_sign_body(&reg));
+        append(&d[1], red_approve_body(&reg));
+        sync_pull(&d);
+        let st = red_status(&d[2].store, &reg, now + 400 * 86_400).unwrap();
+        assert!(st.expired && !st.complete, "{st:?}");
+    }
+
+    // crypto F7a: the emailed code is never in clear in sync_meta, and only this device's key opens it.
+    #[test]
+    fn the_email_code_is_sealed_under_the_device_key() {
+        let id = DeviceIdentity::generate();
+        let other = DeviceIdentity::generate();
+        let (_, code) = factor_register_email(&id.public().device_id()).unwrap();
+        let store = LauncherStore::open_in_memory().unwrap();
+        remember_email_code(&store, &id, &code).unwrap();
+        assert!(meta_get(&store, "email_factor_code").unwrap().is_none());
+        let raw = meta_get(&store, CODE_KEY).unwrap().unwrap();
+        assert!(!raw.windows(code.len()).any(|w| w == code.as_bytes()));
+        assert_eq!(
+            stored_code(&store, &id).unwrap().as_deref(),
+            Some(code.as_str())
+        );
+        assert!(stored_code(&store, &other).unwrap().is_none());
+    }
+
+    // crypto F7b and app F3: the registered sender neither mails for an op it approved nor finishes it
+    // alone with the code it holds.
+    #[test]
+    fn the_code_sender_that_is_the_second_approver_mails_nothing_and_cannot_finish_alone() {
+        let d = ring_phone(3);
+        let phrase = bip39_encode(&[0x34; 32]);
+        let reg = append(
+            &d[0],
+            crate::sync::quorum::paper_registration(&phrase).unwrap(),
+        );
+        complete(&d, &reg, 2, None);
+        let (body, code) = factor_register_email(&d[1].did).unwrap();
+        let ereg = append(&d[0], body);
+        complete(&d, &ereg, 2, Some(&phrase));
+        remember_email_code(&d[1].store, &d[1].id, &code).unwrap();
+        let op = append(
+            &d[0],
+            OpBody::BulkExport {
+                requester: d[0].did.clone(),
+                window_secs: 60,
+            },
+        );
+        sync_pull(&d);
+        append(&d[3], red_phone_sign_body(&op));
+        append(&d[1], red_approve_body(&op)); // the sender gives the second vote
+        sync_pull(&d);
+        let now = op.timestamp + 30;
+        assert!(owed_code_mails(&d[1].store, &d[1].id, now)
+            .unwrap()
+            .is_empty());
+        append(&d[1], red_factor_email(&d[1].store, &code, &op).unwrap());
+        sync_pull(&d);
+        assert!(!red_status(&d[2].store, &op, now).unwrap().complete);
+        // A different second device and the sender mailing: the ordinary path still works and the mail
+        // says what the change is.
+        let op2 = append(
+            &d[0],
+            OpBody::BulkExport {
+                requester: d[0].did.clone(),
+                window_secs: 90,
+            },
+        );
+        sync_pull(&d);
+        append(&d[3], red_phone_sign_body(&op2));
+        append(&d[2], red_approve_body(&op2));
+        sync_pull(&d);
+        let mails = owed_code_mails(&d[1].store, &d[1].id, op2.timestamp + 30).unwrap();
+        assert_eq!(mails.len(), 1);
+        assert!(
+            mails[0].2.contains("export every credential for 90 s"),
+            "{}",
+            mails[0].2
+        );
+        append(&d[2], red_factor_email(&d[1].store, &code, &op2).unwrap());
+        sync_pull(&d);
+        assert!(
+            red_status(&d[2].store, &op2, op2.timestamp + 40)
+                .unwrap()
+                .complete
+        );
+    }
+
+    // crypto F8: the phone looks as fresh as what it signed, not as the day a courier delivered it.
+    #[test]
+    fn phone_freshness_follows_what_the_phone_signed() {
+        let d = ring(3);
+        let now = crate::store::now_ts();
+        let old = now - 30 * 86_400;
+        let op = d[0]
+            .store
+            .sync_append_local_at(
+                &d[0].id,
+                OpBody::HeadAttest {
+                    device_id: d[0].did.clone(),
+                    seq: 0,
+                    chain_hash: [0; 32],
+                },
+                old,
+            )
+            .unwrap();
+        pull(&d[0], &d[2]);
+        let seen = crate::sync::quorum::phone_signed_at(&d[2].store, &d[0].did, now).unwrap();
+        assert!(seen <= op.timestamp + 5, "{seen} vs {}", op.timestamp);
+    }
+
+    // protocol S5/app F11: foreign names are plain text in mails and screens.
+    #[test]
+    fn names_in_mails_carry_no_control_characters() {
+        assert_eq!(plain_text("evil\nBcc: x\u{1b}[2K\r."), "evilBcc: x[2K.");
     }
 }

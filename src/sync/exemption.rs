@@ -36,6 +36,12 @@ pub fn enable_body(id: &DeviceIdentity, phrase: &str, profile: Argon2Profile) ->
     }
 }
 
+/// The fingerprint of a slot, shown on the exempt machine when it proposes and on every Red screen that
+/// asks to enable the exemption: approvers compare the two. It is the slot key's device id.
+pub fn slot_fingerprint(slot: &DevicePublic) -> String {
+    slot.device_id()
+}
+
 /// Disable it (any attended holder may propose; also a Red op).
 pub fn disable_body(device: &DeviceId) -> OpBody {
     OpBody::ExemptionSet {

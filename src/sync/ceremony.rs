@@ -8,7 +8,7 @@
 use anyhow::{bail, ensure, Context, Result};
 
 use super::codes::gen_email_code;
-use super::crypto::{verify, DeviceIdentity};
+use super::crypto::{dek_open, dek_seal, derive_key, verify, DeviceIdentity};
 use super::email::{email_fragment_open, email_fragment_seal};
 use super::limits::{LIVE_DEVICE_WINDOW_SECS, RED_CEREMONY_TTL_SECS};
 use super::oplog::{
@@ -39,12 +39,18 @@ pub struct RedStatus {
     pub blocked: Option<String>,
     /// Only one attended holder terminal exists: the second-device proof is waived and the paper is required.
     pub single_machine_ring: bool,
+    /// The op breaks a rule of its own kind that no later state can repair (a second phone, an exemption
+    /// slot the exempt device did not make): it is never in force, whoever completed its proofs.
+    pub rule_violation: Option<String>,
 }
 
 /// Is `op` one of the Red ops this ceremony gates? (`PhoneReenroll` has its own path.)
 pub fn is_gated(store: &LauncherStore, op: &Op) -> Result<bool> {
     Ok(match &op.body {
-        OpBody::DeviceAdd { role, .. } => *role == DeviceRole::Holder,
+        // The phone is the ceremony's independent participant: admitting one is Red whatever role it is given.
+        OpBody::DeviceAdd { role, kind, .. } => {
+            *role == DeviceRole::Holder || *kind == DeviceKind::Phone
+        }
         OpBody::DeviceRoleChange { .. }
         | OpBody::CertIssue { .. }
         | OpBody::ModeChange { .. }
@@ -73,7 +79,8 @@ pub fn in_force(store: &LauncherStore, op: &Op) -> Result<bool> {
     if !is_gated(store, op)? {
         return Ok(true);
     }
-    Ok(red_status(store, op, op.timestamp)?.missing.is_empty())
+    let st = red_status(store, op, op.timestamp)?;
+    Ok(st.missing.is_empty() && st.rule_violation.is_none())
 }
 
 /// Test switch: with it on, every op counts as in force on this store (fixtures that exercise what
@@ -227,18 +234,46 @@ fn terminal_holder(d: &DeviceRow) -> bool {
         && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
 }
 
+/// When `op` counts as having happened: its own stamp, but never later than the moment this device first
+/// saw it. The stamp is chosen by the author, so a future date cannot stretch the ceremony window, and a
+/// proof's age is measured the same way.
+pub(crate) fn base_time(store: &LauncherStore, op: &Op) -> i64 {
+    received_at(store, op).map_or(op.timestamp, |s| s.min(op.timestamp))
+}
+
+/// When this device first stored `op` (its own clock; an author cannot choose it).
+pub(crate) fn received_at(store: &LauncherStore, op: &Op) -> Option<i64> {
+    store
+        .with_conn(|c| {
+            Ok(c.query_row(
+                "SELECT received_at FROM sync_ops WHERE op_hash = ?1",
+                rusqlite::params![&op.hash()[..]],
+                |r| r.get(0),
+            )
+            .ok())
+        })
+        .ok()
+        .flatten()
+}
+
 /// Where the ceremony of `op` stands at `now`.
 pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus> {
     let hash = op.hash();
     let proposer = &op.device_id;
     let devices = effective_devices(store, Some(op.lamport))?;
-    let phone = super::quorum::phone_device_in(&devices)?;
-    let expired = now - op.timestamp > RED_CEREMONY_TTL_SECS;
+    // Two phones in force are a verdict on the op being judged, not an error in every evaluation.
+    let (phone, phone_verdict) = match super::quorum::phone_device_in(&devices) {
+        Ok(p) => (p, None),
+        Err(e) => (None, Some(e.to_string())),
+    };
+    let op_base = base_time(store, op);
+    let expired = now - op_base > RED_CEREMONY_TTL_SECS;
     let valid_proof =
-        |p: &Op| p.lamport > op.lamport && p.timestamp - op.timestamp <= RED_CEREMONY_TTL_SECS;
+        |p: &Op| p.lamport > op.lamport && base_time(store, p) - op_base <= RED_CEREMONY_TTL_SECS;
     let mut have = Vec::new();
     let mut missing = Vec::new();
-    let mut blocked = None;
+    let mut blocked = phone_verdict;
+    let mut rule_violation: Option<String> = None;
 
     // Counting rules that make an op impossible.
     let live_terminals = devices
@@ -246,6 +281,19 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         .filter(|d| terminal_holder(d) && now - d.last_seen <= LIVE_DEVICE_WINDOW_SECS)
         .count();
     match &op.body {
+        OpBody::DeviceAdd {
+            kind: DeviceKind::Phone,
+            device,
+            role,
+            ..
+        } if phone.as_ref().is_some_and(|p| *p != device.device_id())
+            || *role != DeviceRole::Holder =>
+        {
+            let why = "a phone is admitted as the one holder of its kind: the ring already has one, or the role is not holder"
+                .to_string();
+            rule_violation = Some(why.clone());
+            blocked = Some(why);
+        }
         OpBody::DeviceAdd {
             role: DeviceRole::Holder,
             ..
@@ -296,13 +344,28 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         }
         OpBody::ExemptionSet {
             device_id,
-            slot: Some(_),
+            slot: Some(slot),
         } => {
+            let slot_is_known_key = devices.iter().any(|d| {
+                d.public.ed25519_pub == slot.ed25519_pub || d.public.x25519_pub == slot.x25519_pub
+            }) || super::quorum::paper_pub(store)?.is_some_and(|p| {
+                p.ed25519_pub == slot.ed25519_pub || p.x25519_pub == slot.x25519_pub
+            });
             let attended_terminal = devices.iter().any(|d| {
                 d.id == *device_id && terminal_holder(d) && d.attendance == Attendance::Attended
             });
             if store.sync_cred_mode()? != CredMode::Quorum {
                 blocked = Some("the exemption exists only in a Quorum ring".to_string());
+            } else if op.device_id != *device_id {
+                // The slot is derived from the phrase and the exempt device's own key: only that device can
+                // make it. A slot chosen by anyone else is a key its author holds alone.
+                let why = "the exemption slot must be made on the exempt device itself".to_string();
+                rule_violation = Some(why.clone());
+                blocked = Some(why);
+            } else if slot_is_known_key {
+                let why = "the exemption slot equals a key the ring already knows".to_string();
+                rule_violation = Some(why.clone());
+                blocked = Some(why);
             } else if !attended_terminal {
                 blocked = Some("only an attended holder terminal can be exempt".to_string());
             }
@@ -351,6 +414,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         .count();
     let single_machine_ring = others == 0 && !authored_by_phone;
     let mut approved = false;
+    let mut approvers: Vec<DeviceId> = Vec::new();
     for p in ops_of(store, "RedApprove", None)? {
         if !valid_proof(&p)
             || !matches!(&p.body, OpBody::RedApprove { op_hash } if *op_hash == hash)
@@ -370,6 +434,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
             continue;
         }
         approved = true;
+        approvers.push(p.device_id.clone());
     }
     if approved {
         have.push(RedProof::SecondDevice);
@@ -405,6 +470,15 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
             ThirdFactor::EmailCode => email.as_ref().map(|r| r.0),
         };
         let Some(key) = key else { continue };
+        // The mailbox duty is a participant of its own: the registered sender neither proposed the op nor
+        // gave its second-device vote.
+        if *factor == ThirdFactor::EmailCode {
+            if let Some(sender) = email.as_ref().and_then(|e| e.2.as_ref()) {
+                if sender == proposer || approvers.contains(sender) {
+                    continue;
+                }
+            }
+        }
         // Replacing a registered factor needs the factor being replaced, not just any.
         if let Some(r) = &replacing {
             if registered_before(store, r.clone(), Some(op.lamport))?.is_some() && factor != r {
@@ -441,6 +515,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         expired,
         blocked,
         single_machine_ring,
+        rule_violation,
     })
 }
 
@@ -564,33 +639,117 @@ pub fn factor_register_email(sender: &DeviceId) -> Result<(OpBody, String)> {
     ))
 }
 
-const CODE_KEY: &str = "email_factor_code";
+const CODE_KEY: &str = "email_factor_code_sealed";
 
-/// The sender device keeps the code locally (never in the log).
-pub fn remember_email_code(store: &LauncherStore, code: &str) -> Result<()> {
-    meta_set(store, CODE_KEY, code.as_bytes())
+/// The key that seals the stored code: a keyed function of this device's key (a deterministic signature),
+/// so a copy of the database alone holds no code.
+fn code_key(id: &DeviceIdentity) -> [u8; 32] {
+    derive_key(
+        "sshub/sync/email-code/seal/v1",
+        &id.sign(b"sshub/sync/email-code/bind/v1"),
+    )
+}
+
+/// The sender device keeps the code locally, sealed under its own device key (never in the log, never in
+/// clear on disk).
+pub fn remember_email_code(store: &LauncherStore, id: &DeviceIdentity, code: &str) -> Result<()> {
+    meta_set(store, CODE_KEY, &dek_seal(&code_key(id), code.as_bytes()))
+}
+
+fn stored_code(store: &LauncherStore, id: &DeviceIdentity) -> Result<Option<String>> {
+    Ok(meta_get(store, CODE_KEY)?
+        .and_then(|b| dek_open(&code_key(id), &b).ok())
+        .and_then(|p| String::from_utf8(p).ok()))
+}
+
+/// A name or id for a mail or a screen: no control characters, bounded.
+pub(crate) fn plain_text(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).take(64).collect()
+}
+
+/// One line saying what a Red op asks for, with its parameters, for the mail that carries the code and
+/// for screens that have no richer view.
+pub fn describe_red(store: &LauncherStore, op: &Op) -> String {
+    let name = |id: &DeviceId| {
+        store
+            .sync_devices()
+            .ok()
+            .and_then(|d| d.into_iter().find(|r| r.id == *id))
+            .map_or_else(
+                || id.clone(),
+                |r| format!("{} ({})", plain_text(&r.name), r.id),
+            )
+    };
+    let what = match &op.body {
+        OpBody::DeviceAdd {
+            name: n,
+            role,
+            kind,
+            ..
+        } => {
+            format!("add device {} as {role:?} ({kind:?})", plain_text(n))
+        }
+        OpBody::DeviceRoleChange { device_id, to } => format!("make {} a {to:?}", name(device_id)),
+        OpBody::DeviceRevoke { device_id } => format!("revoke {}", name(device_id)),
+        OpBody::ModeChange { to, .. } => format!("switch the ring to {to:?} mode"),
+        OpBody::FactorRegister { factor, .. } => format!("register the {factor:?} factor"),
+        OpBody::ExemptionSet { device_id, slot } => match slot {
+            Some(s) => format!(
+                "let {} open credentials with the master phrase (slot {})",
+                name(device_id),
+                s.device_id()
+            ),
+            None => format!("remove the master phrase exemption of {}", name(device_id)),
+        },
+        OpBody::CertIssue {
+            device_id,
+            max_new_hosts_per_day,
+            ..
+        } => format!(
+            "let {} open hosts without asking the phone ({max_new_hosts_per_day} new hosts a day)",
+            name(device_id)
+        ),
+        OpBody::BulkExport {
+            requester,
+            window_secs,
+        } => {
+            format!(
+                "let {} export every credential for {window_secs} s",
+                name(requester)
+            )
+        }
+        _ => "a Red change".to_string(),
+    };
+    format!("{what}, proposed by {}", name(&op.device_id))
 }
 
 /// The mails the sender owes: for each pending gated op that already has its phone and second-device
-/// proofs and has not been mailed, `(op hash, subject, body)`. The body names the purpose and
-/// carries the code; call `mark_code_sent` after the send succeeded.
+/// proofs and has not been mailed, `(op hash, subject, body)`. The body names what the change is and
+/// carries the code; call `mark_code_sent` after the send succeeded. Nothing is owed for an op this
+/// device proposed or gave its second-device vote to.
 pub fn owed_code_mails(
     store: &LauncherStore,
-    me: &DeviceId,
+    id: &DeviceIdentity,
     now: i64,
 ) -> Result<Vec<([u8; 32], String, String)>> {
+    let me = id.public().device_id();
     let Some((_, _, Some(sender))) = registered(store, ThirdFactor::EmailCode)? else {
         return Ok(Vec::new());
     };
-    if sender != *me {
+    if sender != me {
         return Ok(Vec::new());
     }
-    let Some(code) = meta_get(store, CODE_KEY)?.and_then(|b| String::from_utf8(b).ok()) else {
+    let Some(code) = stored_code(store, id)? else {
         return Ok(Vec::new());
+    };
+    let approved_by_me = |hash: &[u8; 32]| -> Result<bool> {
+        Ok(ops_of(store, "RedApprove", Some(&me))?
+            .iter()
+            .any(|p| matches!(&p.body, OpBody::RedApprove { op_hash } if op_hash == hash)))
     };
     let mut out = Vec::new();
     for op in store.sync_pending()? {
-        if !is_gated(store, &op)? || op.device_id == *me {
+        if !is_gated(store, &op)? || op.device_id == me || approved_by_me(&op.hash())? {
             continue;
         }
         let st = red_status(store, &op, now)?;
@@ -611,8 +770,9 @@ pub fn owed_code_mails(
             op.hash(),
             "[sshub] code for a Red change".to_string(),
             format!(
-                "A change that needs your third factor is waiting (reference {}). Paste this code into sshub on the machine that proposed it:\n\n{code}\n\nIf you did not expect this, ignore this message: the code alone opens nothing.",
-                hex::encode(&op.hash()[..4])
+                "A change that needs your third factor is waiting (reference {}): {}.\n\nIf that is what you expect, paste this code into sshub on the machine that proposed it:\n\n{code}\n\nIf you did not expect this, ignore this message: the code alone opens nothing.",
+                hex::encode(&op.hash()[..4]),
+                describe_red(store, &op)
             ),
         ));
     }
@@ -623,7 +783,7 @@ pub fn owed_code_mails(
 /// succeeded, so a failing mail server loses nothing and blocks nobody. Returns how many went out.
 pub fn send_owed_codes(
     store: &LauncherStore,
-    me: &DeviceId,
+    me: &DeviceIdentity,
     now: i64,
     send: &mut dyn FnMut(&str, &str) -> Result<()>,
 ) -> Result<usize> {
