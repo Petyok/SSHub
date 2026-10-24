@@ -33,6 +33,7 @@ const ALLOWED = [
   /^shell getprop [A-Za-z0-9_.]+$/,
   /^shell dumpsys battery$/,
   /^shell dumpsys thermalservice$/,
+  /^shell dumpsys sensor_privacy$/,
   /^shell dumpsys package com\.android\.chrome$/,
   /^shell dumpsys package com\.brave\.browser$/,
   /^shell cat \/proc\/net\/unix$/,
@@ -178,8 +179,14 @@ export class Chrome {
     await this.send('Runtime.enable');
     return targetId;
   }
-  async eval(expression, { await: aw = true, gesture = false } = {}) {
-    const r = await this.send('Runtime.evaluate', { expression, awaitPromise: aw, returnByValue: true, userGesture: gesture });
+  // Every evaluation has a deadline: a page that waits on a permission prompt must not hang the run.
+  async eval(expression, { await: aw = true, gesture = false, timeoutMs = 30000 } = {}) {
+    const call = this.send('Runtime.evaluate', { expression, awaitPromise: aw, returnByValue: true, userGesture: gesture });
+    let timer;
+    const limit = new Promise((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`page evaluation timed out after ${timeoutMs} ms`)), timeoutMs);
+    });
+    const r = await Promise.race([call, limit]).finally(() => clearTimeout(timer));
     if (r.exceptionDetails) throw new Error(`page exception: ${r.exceptionDetails.exception?.description || r.exceptionDetails.text}`);
     return r.result.value;
   }
@@ -261,6 +268,8 @@ export async function cleanup({ chrome, server, dir }) {
 // a later step throws.
 export const state = {};
 export async function setup() {
+  // A killed or interrupted run still cleans up (tab, permissions, site data, forward, reverse, server).
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.once(sig, async () => { await cleanup(state).catch(() => {}); process.exit(130); });
   state.dir = assembleServeDir();
   state.server = await startServer(state.dir);
   adb(['reverse', 'tcp:8443', 'tcp:8443']);

@@ -46,6 +46,30 @@ const stop = (child) =>
   });
 
 // ------------------------------------------------------------ C4: terminal to phone camera
+// Hard preflight: never start a timed block on an input that is not live. The camera must deliver a
+// live video track with a picture within 10 s and the scanner must decode a first frame of the
+// terminal's QR within 10 s more; otherwise the block aborts with the exact reason.
+async function preflightCamera() {
+  const status = () => phoneEval(`JSON.stringify((() => { const v = document.querySelector('#cam'); const t = v && v.srcObject ? v.srcObject.getVideoTracks()[0] : null; return { stream: !!(v && v.srcObject), w: v && v.videoWidth, track: t && t.readyState, label: t && t.label, have: document.querySelector('#have').innerText, total: document.querySelector('#total').innerText }; })())`, { timeoutMs: 8000 }).then(JSON.parse);
+  const perm = await phoneEval(`navigator.permissions.query({ name: 'camera' }).then((p) => p.state)`, { timeoutMs: 5000 }).catch(() => 'unknown');
+  await phoneClick('#start');
+  let st = null;
+  for (let i = 0; i < 20; i++) {
+    st = await status();
+    if (st.track === 'live' && st.w > 0) break;
+    await sleep(500);
+  }
+  if (!(st.track === 'live' && st.w > 0)) throw new Error(`PREFLIGHT FAILED: the camera is not live after 10 s (permission state ${perm}, stream ${st.stream}, track ${st.track}); Chrome probably lacks the Android camera permission`);
+  console.log(JSON.stringify({ preflight: 'camera live', track: st.label, width: st.w }));
+  for (let i = 0; i < 20; i++) {
+    st = await status();
+    if (st.total !== '?' || Number(st.have) > 0) break;
+    await sleep(500);
+  }
+  if (st.total === '?' && !(Number(st.have) > 0)) throw new Error('PREFLIGHT FAILED: the camera is live but decoded no QR frame in 10 s (aim, distance, focus or screen brightness)');
+  console.log(JSON.stringify({ preflight: 'first QR frame decoded', have: st.have, total: st.total }));
+}
+
 async function terminalBlock({ label, version, bytes, cols, rows, runs }) {
   const cls = 'sshub-bench-c4';
   const win = spawn('kitty', [
@@ -59,16 +83,14 @@ async function terminalBlock({ label, version, bytes, cols, rows, runs }) {
     await state.chrome.prepare({ camera: true, silent: true });
     await state.chrome.goto(`${ORIGIN}/qr-scanner.html?seed=1&len=${bytes}&facing=${arg('facing', 'environment')}`);
     await phoneEval(`navigator.wakeLock && navigator.wakeLock.request('screen').then((l) => { window.__wl = l; }, () => {})`);
-    await phoneClick('#start');
-    for (let i = 0; i < 50 && !(await phoneEval(`!!document.querySelector('#cam').srcObject`)); i++) await sleep(200);
-    await sleep(1500);
+    await preflightCamera();
     const rowsOut = [];
     for (let run = 1; run <= runs; run++) {
       const b = guard(`${label} run ${run}`);
       await phoneClick('#reset');
       const t0 = Date.now();
       let res = null;
-      while (Date.now() - t0 < 60000) {
+      while (Date.now() - t0 < 30000) {
         const t = await phoneEval(`document.querySelector('#result').innerText`);
         if (/complete in/.test(t)) {
           res = t;
@@ -208,6 +230,10 @@ async function audioBlock({ label, profile, len, runs }) {
       rows.push(r);
       record(r);
       await sleep(Math.max(1500, burst * 1000 + 1500 - (Date.now() - tSend)));
+      if (trial === 3 && rows.every((x) => !x.ok)) {
+        record({ block: label, summary: true, aborted: 'the first three trials heard nothing: media volume of the phone or the laptop microphone', trials: 3, ok: 0 });
+        return 0;
+      }
     }
     const okRows = rows.filter((r) => r.ok);
     record({ block: label, summary: true, trials: runs, ok: okRows.length, median_latency_ms: median(okRows.map((r) => r.latency_ms_from_send)), burst_s: rows[0]?.burst_s });
@@ -228,7 +254,17 @@ async function qrBlock({ runs }) {
     await laptop.ev(`(() => { document.querySelector('#seed').value = 1; document.querySelector('#len').value = 56; document.querySelector('#useqr').checked = true; return true; })()`);
     await laptop.ev(`document.querySelector('#arm').click()`, true);
     for (let i = 0; i < 100 && (await laptop.ev(`document.querySelector('#status').textContent`)) !== 'armed'; i++) await sleep(200);
-    await sleep(2000);
+    // preflight: the laptop webcam must deliver a picture and the phone must be showing its QR
+    let w = 0;
+    for (let i = 0; i < 20 && !w; i++) {
+      w = await laptop.ev(`document.querySelector('#cam').videoWidth`);
+      if (!w) await sleep(500);
+    }
+    if (!w) throw new Error('PREFLIGHT FAILED: the laptop webcam delivered no picture within 10 s');
+    const shown = await phoneEval(`!!document.querySelector('#qrc') && document.querySelector('#qrc').width > 0`, { timeoutMs: 8000 });
+    if (!shown) throw new Error('PREFLIGHT FAILED: the phone is not showing a QR code');
+    console.log(JSON.stringify({ preflight: 'webcam live and QR shown', webcam_width: w }));
+    await sleep(1000);
     const rows = [];
     for (let trial = 1; trial <= runs; trial++) {
       const b = guard(`qr trial ${trial}`);
