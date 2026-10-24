@@ -182,3 +182,45 @@ pub fn cert_opened_body(cert: &DelegationCert, host: &HostUid) -> OpBody {
         host_uid: *host,
     }
 }
+
+/// What a terminal shows the phone to ask for a trust session: the user's choices, with the phone's
+/// current epoch as the start of the epoch range (`epoch_slack` more epochs stay valid). The phone
+/// builds and signs the op; the terminal then receives it as courier ops or a pasted phone-ops frame.
+pub fn cert_request(
+    store: &LauncherStore,
+    delegate: &DeviceId,
+    scope: CertScope,
+    term_secs: i64,
+    max_new_hosts_per_day: u32,
+    epoch_slack: u64,
+    now: i64,
+) -> Result<super::wire::CertRequestWire> {
+    use anyhow::Context;
+    let phone = super::quorum::phone_device(store)?.context("the ring has no phone")?;
+    ensure!(
+        (1..=CERT_TERM_MAX_SECS).contains(&term_secs),
+        "the term must be between a second and 90 days"
+    );
+    ensure!(
+        (1..=CERT_NEW_HOSTS_PER_DAY).contains(&max_new_hosts_per_day),
+        "the daily budget is outside 1..=50"
+    );
+    let raw: [u8; 8] = hex::decode(delegate)
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .context("malformed device id")?;
+    let epoch = store.sync_epoch(&phone)?;
+    Ok(super::wire::CertRequestWire {
+        device_id: raw,
+        scope,
+        expiry: now + term_secs,
+        max_new_hosts_per_day,
+        epoch_lo: epoch,
+        epoch_hi: epoch.saturating_add(epoch_slack),
+    })
+}
+
+/// Revoke a certificate (Yellow): any attended holder writes it; peers stop honouring the cert at once.
+pub fn cert_revoke_body(cert: &DelegationCert) -> OpBody {
+    OpBody::CertRevoke { cert_id: cert.id }
+}

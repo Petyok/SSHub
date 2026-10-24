@@ -941,6 +941,26 @@ Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, n
 * `BulkExport`: once complete, each holder releases shares for any host to `requester` until
   `op.timestamp + window_secs` without a prompt per host (like a certificate, recorded the same way).
 
+### 4d. Builders and screening for the UI (C4, C7)
+
+* `recovery::start_body(store, me, now, paper_recover: Option<&DeviceIdentity>, third_factor)` builds the
+  `PhoneReenroll` body (liveness set, `paper_sig` when the paper phrase was typed); `approve_body(op)`,
+  `ack_body(op, now)`, `cancel_body(op, by_phone, factor)` build the votes; `unacknowledged(store, me, now)` lists
+  open recoveries this attended device has not acknowledged (the UI shows each, then appends `ack_body`; an
+  unattended device gets none); `validate_phone_reenroll(store, op, now)` is the status for the screen;
+  `completion_bodies(store, op, now, new_phone_public, name)` yields `DeviceRevoke` of the old phone and
+  `DeviceAdd` of the new one once the clock ran out; `clear_snapshots(store)` forgets the old phone's
+  short-code blobs. The caller then reshares (`reshare` / the revocation driver).
+* `screen::screen_pending(store, now)` runs after every `run_round` / `run_sync_serve` (ending badly or not):
+  a pending `PhoneReenroll`, `ModeChange` or `CertIssue` that its validator refuses is rejected at once with the
+  reason; the others stay pending for review.
+* `cert::cert_request(store, delegate, scope, term_secs, budget, epoch_slack, now) -> CertRequestWire` is what the
+  terminal shows the phone (wire kind 9, `CertRequestWire::{encode, decode, to_body}`, layout in `wire.rs`);
+  the phone shows it, builds and signs `CertIssue` itself and returns it as a courier op / phone-ops frame.
+  `cert::cert_revoke_body(&cert)` revokes (Yellow).
+* A device records itself (role, attendance) in its own `sync_devices` when it enrolls, so `quorum::is_unattended`
+  and `recovery::unacknowledged` know an unattended device (the Hub) is one.
+
 ### 4b. Second-share paths (how a terminal gets the share it does not hold)
 
 `ShareSource::second_share(host, epoch, mine)` is answered by one of five paths. Which ring device is
