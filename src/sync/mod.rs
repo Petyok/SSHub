@@ -5,6 +5,7 @@ pub mod crypto;
 pub mod email;
 pub mod fountain;
 pub mod limits;
+pub mod notify;
 pub mod share_release;
 pub mod snapshot;
 #[cfg(test)]
