@@ -475,14 +475,27 @@ tree is needed at these sizes (0.6 to 0.9 MB for 1000 credentials).
 
 ### The mixed-mode exemption
 
-One machine may keep opening credentials with the master phrase inside a Quorum
-ring. The master-phrase slot is then bound to that device: the share replicates
-like all the others, but unwraps only for someone holding both the phrase and
-that machine's key. No invariant breaks. For that machine, "one stolen device is
-not enough" stops being true, so it is labelled an **exemption**, per row, and
-the alternative (an unattended holder + trust mode) is offered
-first — the exemption is usually requested for the laptop most likely to be
-stolen.
+One machine may keep opening credentials with the master phrase inside a Quorum ring. It is built as one
+extra Shamir share per credential, held by a **slot recipient** whose key exists only for someone holding
+**both** the master phrase and that machine's device key:
+
+`slot key = identity from_seed( BLAKE3 derive_key("sshub/sync/exempt/seed/v1", Argon2id(phrase, salt) || PRF(device key)) )`,
+where `PRF(device key)` is the hash of the device's deterministic signature over a fixed message (the key never
+leaves the device) and `salt` derives from the device id. The slot's public key is published in the log;
+every credential created afterwards gets a share wrapped to it, and existing credentials get theirs through a
+reshare (the slot is a permanent recipient like the paper: it takes no part in contributing and adopts nothing,
+it rebuilds its share at unlock time).
+
+The exempt machine owns two shares of every credential (its own and the slot's), so it opens alone: its
+device key unwraps its own share, the phrase plus the same device key unwrap the slot's. Stolen device key
+alone: one share, nothing. Phrase alone: no slot share, nothing. Stolen machine plus the phrase: opens,
+which is why it is labelled an **exemption**, per row ("exemption: master phrase"), never as a banner, and
+why it is offered only after the alternatives (a trust session with an unattended holder, Vault mode) have
+been shown. Other devices are unaffected: they still need a second share. No invariant breaks: the slot's
+share replicates like all the others and revoking the exemption (a Red op) reshares without the slot.
+
+Enabling or disabling it is a Red ceremony (`ExemptionSet`); the exempt device must be an attended holder
+terminal and cannot be the second approver of its own exemption.
 
 ## Share release
 

@@ -284,7 +284,7 @@ pub const KIND_ENROLL_CONFIRM: u8 = 8;
 /// A phone chain moves a few small ops per courier trip: more than this, or a bigger op, is not a
 /// phone and is refused before it is parsed further.
 pub const MAX_COURIER_OPS: usize = 8;
-pub const MAX_COURIER_OP_BYTES: usize = 64 * 1024;
+pub const MAX_COURIER_OP_BYTES: usize = 256 * 1024;
 
 /// An op together with its signature, as the phone carries it.
 pub type SignedOpBytes = (Vec<u8>, [u8; 64]);
@@ -336,6 +336,9 @@ pub(crate) fn encode_op_list(ops: &[SignedOpBytes]) -> Vec<u8> {
 
 /// Parses a list starting at `body[0]`; returns the ops and the number of bytes used.
 pub(crate) fn decode_op_list(body: &[u8]) -> Result<(Vec<SignedOpBytes>, usize)> {
+    if body.len() > MAX_FRAME_BYTES {
+        bail!("op list exceeds the frame cap");
+    }
     let Some((&n, _)) = body.split_first() else {
         bail!("op list truncated");
     };

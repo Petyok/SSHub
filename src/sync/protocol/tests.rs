@@ -98,6 +98,19 @@ impl Dev {
         self.trust_as(other, DeviceKind::Terminal);
     }
 
+    /// This device's own row says it is unattended (what enrollment records for a VPS).
+    pub(crate) fn make_unattended(&self) {
+        self.store
+            .with_conn(|c| {
+                c.execute(
+                    "UPDATE sync_devices SET attendance = 'unattended' WHERE device_id = ?1",
+                    [&self.did],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+    }
+
     pub(crate) fn trust_as(&self, other: &Dev, kind: DeviceKind) {
         self.trust_with(other, Attendance::Attended, kind);
     }
@@ -152,6 +165,17 @@ pub(crate) fn ring(n: usize) -> Vec<Dev> {
                 a.trust(b);
             }
         }
+        // A device records itself when it enrolls into a ring.
+        a.store
+            .sync_register_device(
+                &a.id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
     }
     devs
 }
