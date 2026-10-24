@@ -620,10 +620,14 @@ export async function vaultRecipient(phrase, ringSecret32, salt16, profile) {
 }
 
 // Key file: "SSHK" ‖ 1 ‖ mem u32 BE ‖ iters u32 BE ‖ salt(16) ‖ nonce(24) ‖ ct.
-// Plaintext = ed25519 seed ‖ x25519 secret ‖ ML-KEM dk. The whole header is AEAD AAD.
-export async function keyFileSeal(id, passphrase, profile, salt16, nonce24) {
+// Plaintext = ed25519 seed ‖ x25519 secret ‖ ML-KEM dk ‖ n u8 ‖ n × (x25519 secret ‖ ML-KEM dk),
+// n = older wrap generations (newest first). The whole header is AEAD AAD. Matches the
+// committed vector and src/sync/crypto/identity.rs; the contract text predates this section.
+export async function keyFileSeal(id, passphrase, profile, salt16, nonce24, previous = []) {
+  if (previous.length > 255) throw new Error('key file: more than 255 wrap generations');
   const header = concat(KEYFILE_MAGIC, Uint8Array.of(1), u32be(profile.mem_kib), u32be(profile.iters), salt16, nonce24);
   const key = await argon2idDerive(passphrase, salt16, profile);
-  const plain = concat(id.edSeed, id.xSecret, id.mlkemDk);
+  const older = previous.flatMap((g) => [g.xSecret, g.mlkemDk]);
+  const plain = concat(id.edSeed, id.xSecret, id.mlkemDk, Uint8Array.of(previous.length), ...older);
   return concat(header, xchacha20poly1305(key, nonce24, header).encrypt(plain));
 }
