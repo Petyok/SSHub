@@ -115,6 +115,10 @@ pub struct ReplyCollector {
     reader: QrReader,
     dec: FountainDecoder,
     foreign: u32,
+    /// Header (`doc_id`, length) of the document completed last: its frames keep arriving while
+    /// the phone loops it, and must not start a half-collected copy that would shadow the next
+    /// document for `FOREIGN_RESET` frames.
+    finished: Option<[u8; 4]>,
 }
 
 impl ReplyCollector {
@@ -135,6 +139,12 @@ impl ReplyCollector {
 
     /// One decoded QR payload.
     pub fn push_frame(&mut self, frame: &[u8]) -> Scan {
+        if let (Some(done), Some(key)) = (self.finished, frame.get(1..5)) {
+            if key == done {
+                return Scan::Nothing;
+            }
+            self.finished = None;
+        }
         let pushed = match self.dec.push(frame) {
             Ok(Push::OtherDocument) => {
                 self.foreign += 1;
@@ -156,6 +166,7 @@ impl ReplyCollector {
         match self.dec.finish() {
             Ok(Some(doc)) => {
                 self.reset();
+                self.finished = frame.get(1..5).and_then(|k| k.try_into().ok());
                 Scan::Complete(doc)
             }
             Err(_) => {
