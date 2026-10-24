@@ -484,7 +484,11 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
             let incoming = lww_key(op.lamport, &op.device_id);
             let key = format!("exempt-key:{device_id}");
             let cur: Option<Vec<u8>> = conn
-                .query_row("SELECT value FROM sync_meta WHERE key = ?1", params![key], |r| r.get(0))
+                .query_row(
+                    "SELECT value FROM sync_meta WHERE key = ?1",
+                    params![key],
+                    |r| r.get(0),
+                )
                 .optional()?;
             if cur.is_none_or(|c| String::from_utf8_lossy(&c).as_ref() < incoming.as_str()) {
                 conn.execute(

@@ -2641,7 +2641,10 @@ fn exemption_set_projects_the_flag_and_the_newest_op_wins() {
     });
     assert_eq!(on.tier(), OpTier::Red);
     assert!(exempt(a));
-    assert!(matches!(b.store.sync_ingest(on.clone()).unwrap(), IngestOutcome::Pending));
+    assert!(matches!(
+        b.store.sync_ingest(on.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
     assert!(!exempt(b), "waits for the ceremony");
     b.store.sync_resolve_pending(&on.hash(), true).unwrap();
     assert!(exempt(b));
@@ -2660,7 +2663,13 @@ fn exemption_set_projects_the_flag_and_the_newest_op_wins() {
     };
     assert!(a
         .store
-        .sync_append_local(&a.id, OpBody::ExemptionSet { device_id: a.dev(), slot: Some(bad) })
+        .sync_append_local(
+            &a.id,
+            OpBody::ExemptionSet {
+                device_id: a.dev(),
+                slot: Some(bad)
+            }
+        )
         .is_err());
 }
 
@@ -2668,13 +2677,25 @@ fn exemption_set_projects_the_flag_and_the_newest_op_wins() {
 fn cert_extend_is_green_inert_and_bounded() {
     let ring = ring(2);
     let (a, b) = (&ring[0], &ring[1]);
-    let op = a.append(OpBody::CertExtend { cert_id: [1; 32], extra_hosts: 10 });
+    let op = a.append(OpBody::CertExtend {
+        cert_id: [1; 32],
+        extra_hosts: 10,
+    });
     assert_eq!(op.tier(), OpTier::Green);
-    assert!(matches!(b.store.sync_ingest(op).unwrap(), IngestOutcome::Applied));
+    assert!(matches!(
+        b.store.sync_ingest(op).unwrap(),
+        IngestOutcome::Applied
+    ));
     for n in [0u32, 51] {
         assert!(a
             .store
-            .sync_append_local(&a.id, OpBody::CertExtend { cert_id: [1; 32], extra_hosts: n })
+            .sync_append_local(
+                &a.id,
+                OpBody::CertExtend {
+                    cert_id: [1; 32],
+                    extra_hosts: n
+                }
+            )
             .is_err());
     }
 }

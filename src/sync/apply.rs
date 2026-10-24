@@ -66,7 +66,8 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
         }
         OpBody::ExemptionSet { slot, .. } => {
             if let Some(p) = slot {
-                p.validate().map_err(|e| format!("invalid exemption slot: {e}"))?;
+                p.validate()
+                    .map_err(|e| format!("invalid exemption slot: {e}"))?;
             }
             Ok(())
         }

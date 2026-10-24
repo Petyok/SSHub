@@ -223,7 +223,7 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
                 })),
             }),
         )],
-        OpBody::DeviceRoleChange { device_id, to } => vec![
+        OpBody::DeviceRoleChange { device_id, to } => vec![(
             "role",
             device_id.clone(),
             0,
