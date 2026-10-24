@@ -1,8 +1,8 @@
 //! Guided profile-to-profile migration: the `m` choice of the transfer dialog.
 //!
-//! Five checklist steps — hosts, groups of the chosen hosts, tunnels of the
+//! Five checklist steps: hosts, groups of the chosen hosts, tunnels of the
 //! chosen hosts, identities they (or the chosen groups) use, audit events of
-//! the chosen hosts — then the usual plan review and explicit `y`. A step
+//! the chosen hosts, then the usual plan review and explicit `y`. A step
 //! whose list is empty is skipped. The wizard only collects a
 //! [`TransferSelection`]; planning and applying stay in the engine
 //! ([`crate::store::transfer`]).
