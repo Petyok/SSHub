@@ -14,7 +14,7 @@ textarea{min-height:5rem;font-family:ui-monospace,monospace;font-size:.85rem}
 label{display:block;margin:.5rem 0}label.inline{display:flex;gap:.6rem;align-items:flex-start}label.inline input{width:auto;margin-top:.3rem}
 .card{background:var(--card);border:1px solid var(--line);border-radius:.7rem;padding:.8rem;margin:.6rem 0}
 .rows{display:grid;grid-template-columns:auto 1fr;gap:.25rem .8rem;margin:.4rem 0}
-.rows .k{color:var(--mut);font-size:.85rem}.rows .v{word-break:break-word;font-family:ui-monospace,monospace;font-size:.88rem}
+.rows .k{color:var(--mut);font-size:.85rem}.rows .v{white-space:pre-wrap;word-break:break-word;font-family:ui-monospace,monospace;font-size:.88rem}
 .rows .danger{color:#fff;background:var(--badbg);border-left:.3rem solid var(--bad);padding:.15rem .4rem;font-weight:600}
 .headline{font-size:1.1rem;font-weight:600;margin:.4rem 0}
 .check{font-size:.88rem;padding:.1rem 0}.check.ok::before{content:"\2713 ";color:var(--ok)}.check.bad::before{content:"\2717 ";color:var(--bad)}.check.warn::before{content:"! ";color:var(--warn)}

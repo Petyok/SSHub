@@ -1207,6 +1207,14 @@ share reply plaintext (inside the C11 sealed box of the kind 2 frame):
   blob), the user can declare a blob dead (never delivered, or DEK reissued).
 - Kind 5 list limits: at most 8 ops, each at most 256 KiB (a 200 item `ShareReshareBatch` for a few holders is
   about 100 KiB), at most 1 MiB in all.
+- Trust sessions on the page (4c-2, `assets/companion/src/cert.mjs`): kind 9 and kind 10 are scanned or pasted, shown from
+  their bytes, and signed on the phone's own chain. Before signing it refuses a term that is not 1 s to 90 days, a budget
+  outside 1..=50, a host list outside 1..=64, an inverted epoch range and a request that names the phone itself; a
+  `CertExtend` is refused for an unknown (not issued by this phone), revoked or expired certificate, for `extra_hosts`
+  outside 1..=50, and when this phone already extended that certificate less than 24 hours ago. The phone reads what it
+  issued back from its own chain (`CertIssue` hash = certificate id), so there is no second record. The page e2e writes
+  its chain to `cert-out.json` and `phone_fixtures::e2e_the_pages_trust_session_ops_validate_on_the_terminal` validates
+  it with `validate_cert_issue`, `cert_allows` and `extension_budget`.
 - Residual: the phone's wrap-key generations are derived from its secret and the generation number, so an old
   generation can always be re-derived: unlike a terminal it cannot really retire previous wrap keys, and the
   forward secrecy of C14 does not extend to the phone's own envelopes (it stays in the B6 residual list).

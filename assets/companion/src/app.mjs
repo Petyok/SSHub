@@ -12,9 +12,10 @@ import {
 import { TIMESTAMP_SKEW_GRACE_SECS, approveRelease, evaluateChallenge } from './release.mjs';
 import { describeOp, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
 import {
-  KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
+  KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeCertExtendRequest, decodeCertRequest, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
   encodeEnrollConfirm, encodeEnrollReveal, encodePhoneOps, transcriptHash,
 } from './frames.mjs';
+import { certRequestProblems, describeCert, describeCertRequest, describeTerm, extendCert, extendProblems, issueCert, issuedCerts, revokeCert } from './cert.mjs';
 import { AUDIO_PROFILES, loopQr, playSamples, responseBurst, reverseQrFrames, toBase64 } from './channels.mjs';
 import { DocumentCollector, startCamera } from './scan.mjs';
 import { ownStorageKey, planReshare, publishReshare } from './reshare.mjs';
@@ -191,6 +192,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       btn('Short codes I issued', () => snapshotList(), '', 'snapshots'),
       btn('Export my ops as text', exportOps, '', 'export-ops'),
       btn('Reshare and wrap keys', reshareScreen, '', 'reshare'),
+      btn('Trust sessions', () => trustScreen(), '', 'trust'),
       btn('Recovery and a new phone', () => recovery(), '', 'recovery'),
       btn('Show backup words', showBackup, '', 'show-backup'),
       btn('About and fingerprint', about, '', 'about'),
@@ -286,7 +288,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     scan({
       heading: 'Scan the share request',
       hint: 'Open the unlock screen on the terminal and point the camera at its QR code.',
-      expect: [KIND.CHALLENGE, KIND.RECOVERY_NOTICE],
+      expect: [KIND.CHALLENGE, KIND.RECOVERY_NOTICE, KIND.CERT_REQUEST, KIND.CERT_EXTEND_REQUEST],
       onDoc: (bytes) => {
         let kind;
         try {
@@ -295,6 +297,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
           return refusalScreen(`Not a SSHub document: ${e.message}`, []);
         }
         if (kind === KIND.RECOVERY_NOTICE) return recoveryNotice(bytes);
+        if (kind === KIND.CERT_REQUEST) return certRequestScreen(bytes);
+        if (kind === KIND.CERT_EXTEND_REQUEST) return certExtendScreen(bytes);
         const ev = evaluateChallenge(bytes, { now: app.now(), identity: app.identity, ring: app.state.ring, aliases: app.state.aliases });
         if (!ev.ok) return refusalScreen(ev.refusal, ev.checks);
         release(ev);
@@ -617,6 +621,9 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const msg = h('p', { class: 'err', id: 'reshare-error' });
     show(
       title('Reshare and wrap keys', `Wrap key generation ${app.identity.wrapEpoch}. After a holder is revoked, every remaining holder rotates its wrap keys first; then the ring reshares and this phone adopts its new share here.`),
+      h('div', { class: 'card', id: 'reshare-limits' },
+        h('div', {}, 'This phone only receives a new share: it never contributes a sub-share and keeps none of the old ones.'),
+        h('div', { class: 'mut' }, 'So a reshare that revokes a terminal needs at least two OTHER terminal holders to contribute. A ring of two terminals plus this phone cannot revoke a terminal by resharing (the paper phrase is offline and cannot contribute either): add a third terminal first.')),
       msg,
       btn('Rotate wrap keys', async () => {
         try {
@@ -667,6 +674,105 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         }
       }, 'primary', 'reshare-publish'),
       btn('Cancel', reshareScreen, '', 'back'),
+    );
+  }
+
+  // ---------------------------------------------------------------- trust sessions (4c-2)
+
+  function trustScreen() {
+    const now = app.now();
+    const certs = issuedCerts(app.state);
+    const live = (c) => !c.revoked && BigInt(Math.floor(now)) < c.expiry;
+    show(
+      title('Trust sessions', 'A trust session lets one terminal open listed hosts without asking this phone each time, for a limited term. This phone writes and signs every certificate and can revoke it here.'),
+      btn('Scan a trust-session request', () => scan({ heading: 'Scan the trust-session request', hint: 'The terminal shows it when you choose to trust a device.', expect: [KIND.CERT_REQUEST], onBack: trustScreen, onDoc: certRequestScreen }), 'primary', 'scan-cert'),
+      btn('Scan a budget extension request', () => scan({ heading: 'Scan the extension request', hint: 'The terminal shows it when a certificate used up its daily budget of new hosts.', expect: [KIND.CERT_EXTEND_REQUEST], onBack: trustScreen, onDoc: certExtendScreen }), '', 'scan-extend'),
+      h('h2', {}, 'Issued by this phone'),
+      certs.length
+        ? certs.map((c) => h('div', { class: 'card', id: `cert-${c.id.slice(0, 8)}` },
+          h('div', { class: 'cert-line' }, describeCert(c, aliasesNow())),
+          h('div', { class: 'mut' }, `${c.revoked ? 'Revoked' : live(c) ? 'Active' : 'Expired'}; certificate ${c.id}`),
+          live(c) ? btn('Revoke this trust session', async () => {
+            try {
+              revokeCert(app.state, app.identity, c.id, app.now());
+              await save();
+              opsOut({ heading: 'Trust session revoked', hint: 'Carry this to any terminal: peers stop honouring the certificate on their next sync.', ops: courierOps(app.state) });
+            } catch (e) {
+              refusalScreen(e.message, []);
+            }
+          }, 'danger', `revoke-${c.id.slice(0, 8)}`) : null))
+        : h('p', { class: 'mut', id: 'no-certs' }, 'None.'),
+      back(),
+    );
+  }
+
+  function certRequestScreen(bytes) {
+    let req;
+    try {
+      req = decodeCertRequest(bytes);
+    } catch (e) {
+      return refusalScreen(`Not a trust-session request: ${e.message}`, []);
+    }
+    const now = app.now();
+    const problems = certRequestProblems(req, now, app.identity.deviceId);
+    const d = describeCertRequest(req, now, aliasesNow());
+    const msg = h('p', { class: 'err', id: 'cert-error' });
+    show(
+      title('Trust session requested'),
+      h('div', { class: 'headline', id: 'headline' }, d.headline),
+      descriptionRows(d),
+      d.delegateKnown ? null : h('p', { class: 'mut', id: 'cert-unknown' }, 'This phone has not met that device: compare its id with the one on the terminal before you approve.'),
+      problems.length ? h('div', { class: 'refusal', id: 'cert-refusal' }, problems.join(' ')) : h('p', { class: 'mut', id: 'cert-note' }, 'The certificate takes effect only after a second terminal and a third factor approve it. This signature is the phone\'s part: it authors the certificate.'),
+      msg,
+      problems.length ? null : btn('Approve: sign the trust session with the phone', async () => {
+        try {
+          issueCert(app.state, app.identity, req, app.now());
+          await save();
+          opsOut({ heading: 'Trust session signed', hint: 'Carry this to the terminal: it holds the certificate this phone signed. The ring activates it after the second terminal and the third factor approve.', ops: courierOps(app.state) });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, 'danger', 'cert-approve'),
+      btn('Refuse', home, '', 'refuse'),
+    );
+  }
+
+  function certExtendScreen(bytes) {
+    let req;
+    try {
+      req = decodeCertExtendRequest(bytes);
+    } catch (e) {
+      return refusalScreen(`Not a budget extension request: ${e.message}`, []);
+    }
+    const now = app.now();
+    const r = extendProblems(app.state, req, now);
+    const msg = h('p', { class: 'err', id: 'cert-error' });
+    const c = r.cert;
+    const rows = [
+      { label: 'Certificate', value: req.cert_id, danger: true },
+      ...(c ? [
+        { label: 'Trusted device', value: describeCert(c, aliasesNow()), danger: false },
+        { label: 'Remaining term', value: c.expiry > BigInt(Math.floor(now)) ? describeTerm(c.expiry - BigInt(Math.floor(now))) : 'expired', danger: false },
+        { label: 'Daily budget now', value: String(c.max_new_hosts_per_day), danger: false },
+      ] : []),
+      { label: 'Extra new hosts for today', value: String(req.extra_hosts), danger: true },
+    ];
+    show(
+      title('Budget extension requested'),
+      h('div', { class: 'headline', id: 'headline' }, `Allow ${req.extra_hosts} more new host${req.extra_hosts === 1 ? '' : 's'} for the rolling day on a trust session`),
+      descriptionRows({ rows }),
+      r.ok ? h('p', { class: 'mut', id: 'cert-note' }, 'It adds to the daily budget for the next 24 hours only. It never changes the scope or the term.') : h('div', { class: 'refusal', id: 'cert-refusal' }, r.problems.join(' ')),
+      msg,
+      r.ok ? btn('Approve: sign the extension with the phone', async () => {
+        try {
+          extendCert(app.state, app.identity, req, app.now());
+          await save();
+          opsOut({ heading: 'Extension signed', hint: 'Carry this to the terminal that asked.', ops: courierOps(app.state) });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, 'danger', 'ext-approve') : null,
+      btn('Back', home, '', 'refuse'),
     );
   }
 

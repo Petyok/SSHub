@@ -26,10 +26,10 @@ const DANGER = {
   IdentityUpsert: '*', IdentityDelete: '*', CredUpdate: '*', DeviceAdd: '*', DeviceRevoke: '*',
   ShareRelease: new Set(['host_uid', 'requester']), ShareReshareSession: '*', ShareStorageKey: '*',
   ShareReshareBatch: '*', ShareReshareConfirmBatch: '*', WrapKeyRotate: '*', CertIssue: '*',
-  CertRevoke: '*', CertHostOpened: '*', PhoneReenroll: '*', PhoneReenrollCancel: '*',
+  CertRevoke: '*', CertHostOpened: '*', CertExtend: '*', PhoneReenroll: '*', PhoneReenrollCancel: '*',
   RecoveryAck: '*', ModeChange: '*', HeadAttest: null,
   // Red ceremony (C17): the three proof ops are inert, the other three are Red themselves.
-  RedApprove: null, RedPhoneSign: null, RedFactor: null, FactorRegister: '*', DeviceRoleChange: '*', BulkExport: '*',
+  RedApprove: null, RedPhoneSign: null, RedFactor: null, FactorRegister: '*', DeviceRoleChange: '*', BulkExport: '*', ExemptionSet: '*',
   // Added by the op-log package: a share handed to a requester, a recovery approval, checkpoints.
   ShareGrant: '*', RecoveryApprove: '*', CheckpointPropose: null, CheckpointSign: null,
 };
@@ -168,12 +168,26 @@ export function encodeRedPhoneSign(h, opHashHexStr) {
   return utf8(`${header(h)}{"RedPhoneSign":{"op_hash":${str(opHashHexStr)}}}}`);
 }
 
+// OpBody::CertIssue { device_id, scope, expiry, max_new_hosts_per_day, epoch_lo, epoch_hi } with the fields of a
+// kind 9 request UNCHANGED (CertRequestWire::to_body). scope is { group } or { hosts: [hex] } as decoded.
+export function encodeCertIssue(h, r) {
+  const uid = (u) => str(u);
+  const scope = r.scope.group ? `{"Group":${uid(r.scope.group)}}` : `{"Hosts":[${r.scope.hosts.map(uid).join(',')}]}`;
+  return utf8(`${header(h)}{"CertIssue":{"device_id":${str(r.device_id)},"scope":${scope},"expiry":${asBig(r.expiry)},"max_new_hosts_per_day":${asBig(r.max_new_hosts_per_day)},"epoch_lo":${asBig(r.epoch_lo)},"epoch_hi":${asBig(r.epoch_hi)}}}}`);
+}
+
+// OpBody::CertRevoke { cert_id }
+export const encodeCertRevoke = (h, certIdHex) => utf8(`${header(h)}{"CertRevoke":{"cert_id":${str(certIdHex)}}}}`);
+
+// OpBody::CertExtend { cert_id, extra_hosts }
+export const encodeCertExtend = (h, certIdHex, extraHosts) => utf8(`${header(h)}{"CertExtend":{"cert_id":${str(certIdHex)},"extra_hosts":${asBig(extraHosts)}}}}`);
+
 // Red operations (design "The Red ceremony"): a Red op needs the phone's proof. A mirror
 // DeviceAdd and a DeviceRevoke of a mirror are Yellow in the ring; the phone cannot tell a
 // holder from a mirror in a revoke, so it signs any DeviceRevoke the user approves (the proof is inert).
 export function isRedOp(op) {
   if (op.kind === 'DeviceAdd') return op.fields.role === 'Holder';
-  return ['DeviceRevoke', 'CertIssue', 'ModeChange', 'FactorRegister', 'DeviceRoleChange', 'BulkExport'].includes(op.kind);
+  return ['DeviceRevoke', 'CertIssue', 'ModeChange', 'FactorRegister', 'DeviceRoleChange', 'BulkExport', 'ExemptionSet'].includes(op.kind);
 }
 
 export const b64enc = (bytes) => {
