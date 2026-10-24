@@ -1146,3 +1146,91 @@ fn the_trust_session_path_grants_under_a_certificate_and_defers_without_one() {
     }
     let _ = cert_opened_body;
 }
+
+#[test]
+fn the_attended_peer_path_goes_through_the_log_and_the_grant_is_sealed_to_the_ephemeral_key() {
+    use crate::sync::oplog::{Attendance, DeviceKind, DeviceRole, VerifiedBy};
+
+    let d = ring(3); // 0 requester, 1 attended holder, 2 another holder
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    let host = [91u8; 16];
+    cred_put(&d[0].store, &d[0].id, &host, &payload("through the log")).unwrap();
+    all_to_all(&d);
+
+    let req = peer_request(&d[0].store, &d[0].id, &host).unwrap();
+    assert!(
+        peer_poll(&d[0].store, &req, 0).unwrap().is_none(),
+        "nothing granted yet"
+    );
+    // The holder syncs; the release waits in review. Until approved it grants nothing.
+    for (dev, _, _) in d[0].store.sync_chain_heads().unwrap() {
+        let have = d[1]
+            .store
+            .sync_chain_heads()
+            .unwrap()
+            .into_iter()
+            .find(|(x, _, _)| *x == dev)
+            .map_or(0, |(_, s, _)| s);
+        for op in d[0].store.sync_chain_tail(&dev, have).unwrap() {
+            d[1].store.sync_ingest(op).unwrap();
+        }
+    }
+    let pending = d[1].store.sync_pending().unwrap();
+    let release = pending
+        .iter()
+        .find(|o| matches!(o.body, OpBody::ShareRelease { .. }))
+        .expect("the release is in review")
+        .clone();
+    assert!(
+        grant_bodies(&d[1].store, &d[1].id, &release).is_err(),
+        "not approved yet"
+    );
+    d[1].store
+        .sync_resolve_pending(&release.hash(), true)
+        .unwrap();
+    let release = ops_of(&d[1].store, "ShareRelease", None).unwrap().remove(0);
+
+    let bodies = grant_bodies(&d[1].store, &d[1].id, &release).unwrap();
+    assert_eq!(bodies.len(), 1, "one share epoch, one grant");
+    for b in bodies {
+        append(&d[1], b);
+    }
+    // The requester picks it up on its next sync and opens the credential with its own share.
+    deliver(&d[1], &d[0]);
+    let second = peer_poll(&d[0].store, &req, 0)
+        .unwrap()
+        .expect("the grant arrived");
+    let mine = own_shares(&d[0].store, &d[0].id, &host)
+        .unwrap()
+        .remove(0)
+        .1;
+    let dek = assemble_dek(&d[0].store, &host, mine, second).unwrap();
+    assert_eq!(
+        open_payload(&d[0].store, &host, &dek).password.as_deref(),
+        Some("through the log")
+    );
+    assert!(
+        peer_poll(&d[0].store, &req, 1).unwrap().is_none(),
+        "no grant for another epoch"
+    );
+    // A bystander that sees the log cannot open the grant, and another request id does not match.
+    let other = peer_request(&d[0].store, &d[0].id, &host).unwrap();
+    assert!(peer_poll(&d[0].store, &other, 0).unwrap().is_none());
+
+    // An unattended holder never grants on approval.
+    d[2].store
+        .sync_register_device(
+            &d[2].id.public(),
+            "vps",
+            DeviceRole::Holder,
+            Attendance::Unattended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    assert!(grant_bodies(&d[2].store, &d[2].id, &release)
+        .unwrap_err()
+        .to_string()
+        .contains("unattended"));
+}

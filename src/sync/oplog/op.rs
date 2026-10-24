@@ -23,6 +23,13 @@ pub enum Attendance {
     Unattended,
 }
 
+/// How a device was admitted: replicated so every device shows it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum VerifiedBy {
+    Sas,
+    SshHostKey,
+}
+
 /// Only terminals keep a store and can sign checkpoints; recovery needs to know
 /// which device is the phone.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -168,6 +175,7 @@ pub enum OpBody {
         role: DeviceRole,
         attendance: Attendance,
         kind: DeviceKind,
+        verified_by: VerifiedBy,
     },
     DeviceRevoke {
         device_id: DeviceId,
@@ -178,6 +186,17 @@ pub enum OpBody {
         host_uid: HostUid,
         request_id: u64,
         requester: DeviceId,
+        /// Ephemeral key the grant is sealed to; never a long-lived key.
+        eph_x25519_pub: [u8; 32],
+    },
+    /// A holder's answer to a `ShareRelease`: `sealed = seal_to(eph, share)`,
+    /// at most 128 bytes. Inert: it applies nothing.
+    ShareGrant {
+        host_uid: HostUid,
+        request_id: u64,
+        requester: DeviceId,
+        epoch: u64,
+        sealed: Vec<u8>,
     },
     /// One per (contributor, recipient) per epoch: `hybrid_wrap(to.pub, session key)`.
     /// The contributor is the op's device.

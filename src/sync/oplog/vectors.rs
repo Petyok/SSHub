@@ -263,6 +263,7 @@ fn cases() -> Vec<(&'static str, Op)> {
                     role: DeviceRole::Mirror,
                     attendance: Attendance::Unattended,
                     kind: DeviceKind::Terminal,
+                    verified_by: VerifiedBy::SshHostKey,
                 },
             ),
         ),
@@ -279,6 +280,7 @@ fn cases() -> Vec<(&'static str, Op)> {
                     role: DeviceRole::Holder,
                     attendance: Attendance::Attended,
                     kind: DeviceKind::Phone,
+                    verified_by: VerifiedBy::Sas,
                 },
             ),
         ),
@@ -305,6 +307,39 @@ fn cases() -> Vec<(&'static str, Op)> {
                     host_uid: u(2),
                     request_id: u64::MAX,
                     requester: dev.clone(),
+                    eph_x25519_pub: [0x9e; 32],
+                },
+            ),
+        ),
+        (
+            "share-grant",
+            mk(
+                39,
+                39,
+                1,
+                2,
+                OpBody::ShareGrant {
+                    host_uid: u(2),
+                    request_id: u64::MAX,
+                    requester: other.clone(),
+                    epoch: 3,
+                    sealed: (0..128).collect(),
+                },
+            ),
+        ),
+        (
+            "share-grant-empty",
+            mk(
+                40,
+                40,
+                1,
+                2,
+                OpBody::ShareGrant {
+                    host_uid: u(2),
+                    request_id: 0,
+                    requester: dev.clone(),
+                    epoch: 0,
+                    sealed: vec![],
                 },
             ),
         ),
@@ -811,5 +846,5 @@ fn every_body_variant_has_a_vector() {
         .iter()
         .map(|(_, op)| super::canonical::body_name(&op.body))
         .collect();
-    assert_eq!(names.len(), 26, "{names:?}");
+    assert_eq!(names.len(), 27, "{names:?}");
 }

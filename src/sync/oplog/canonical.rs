@@ -140,6 +140,7 @@ pub fn body_name(body: &OpBody) -> &'static str {
         OpBody::DeviceAdd { .. } => "DeviceAdd",
         OpBody::DeviceRevoke { .. } => "DeviceRevoke",
         OpBody::ShareRelease { .. } => "ShareRelease",
+        OpBody::ShareGrant { .. } => "ShareGrant",
         OpBody::ShareReshareSession { .. } => "ShareReshareSession",
         OpBody::ShareStorageKey { .. } => "ShareStorageKey",
         OpBody::ShareReshareBatch { .. } => "ShareReshareBatch",
@@ -209,6 +210,7 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             role,
             attendance,
             kind,
+            verified_by,
         } => {
             let mut d = Obj::new(o.key("device"));
             hex32(d.key("ed25519_pub"), &device.ed25519_pub);
@@ -219,16 +221,38 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
             string(o.key("role"), role_str(*role));
             string(o.key("attendance"), attendance_str(*attendance));
             string(o.key("kind"), kind_str(*kind));
+            string(
+                o.key("verified_by"),
+                match verified_by {
+                    VerifiedBy::Sas => "Sas",
+                    VerifiedBy::SshHostKey => "SshHostKey",
+                },
+            );
         }
         OpBody::DeviceRevoke { device_id } => string(o.key("device_id"), device_id),
         OpBody::ShareRelease {
             host_uid,
             request_id,
             requester,
+            eph_x25519_pub,
         } => {
             uid_str(o.key("host_uid"), host_uid);
             write!(o.key("request_id"), "{request_id}").expect("vec write");
             string(o.key("requester"), requester);
+            hex32(o.key("eph_x25519_pub"), eph_x25519_pub);
+        }
+        OpBody::ShareGrant {
+            host_uid,
+            request_id,
+            requester,
+            epoch,
+            sealed,
+        } => {
+            uid_str(o.key("host_uid"), host_uid);
+            write!(o.key("request_id"), "{request_id}").expect("vec write");
+            string(o.key("requester"), requester);
+            write!(o.key("epoch"), "{epoch}").expect("vec write");
+            b64(o.key("sealed"), sealed);
         }
         OpBody::ShareReshareSession { epoch, to, sealed } => {
             write!(o.key("epoch"), "{epoch}").expect("vec write");
@@ -871,6 +895,11 @@ fn decode_body(v: &Value) -> Result<OpBody> {
                     "Phone" => DeviceKind::Phone,
                     k => bail!("unknown device kind {k}"),
                 },
+                verified_by: match get_string(m, "verified_by")?.as_str() {
+                    "Sas" => VerifiedBy::Sas,
+                    "SshHostKey" => VerifiedBy::SshHostKey,
+                    v => bail!("unknown admission method {v}"),
+                },
             }
         }
         "DeviceRevoke" => OpBody::DeviceRevoke {
@@ -880,6 +909,14 @@ fn decode_body(v: &Value) -> Result<OpBody> {
             host_uid: get_uid(m, "host_uid")?,
             request_id: get_u64(m, "request_id")?,
             requester: get_string(m, "requester")?,
+            eph_x25519_pub: get_32(m, "eph_x25519_pub")?,
+        },
+        "ShareGrant" => OpBody::ShareGrant {
+            host_uid: get_uid(m, "host_uid")?,
+            request_id: get_u64(m, "request_id")?,
+            requester: get_string(m, "requester")?,
+            epoch: get_u64(m, "epoch")?,
+            sealed: get_bytes(m, "sealed")?,
         },
         "ShareReshareSession" => OpBody::ShareReshareSession {
             epoch: get_u64(m, "epoch")?,
