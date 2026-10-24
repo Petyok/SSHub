@@ -619,6 +619,24 @@ pub fn owed_code_mails(
     Ok(out)
 }
 
+/// Mail every owed code through `send(subject, body)`; an op is marked mailed only after its send
+/// succeeded, so a failing mail server loses nothing and blocks nobody. Returns how many went out.
+pub fn send_owed_codes(
+    store: &LauncherStore,
+    me: &DeviceId,
+    now: i64,
+    send: &mut dyn FnMut(&str, &str) -> Result<()>,
+) -> Result<usize> {
+    let mut sent = 0;
+    for (hash, subject, body) in owed_code_mails(store, me, now)? {
+        if send(&subject, &body).is_ok() {
+            mark_code_sent(store, &hash)?;
+            sent += 1;
+        }
+    }
+    Ok(sent)
+}
+
 pub fn mark_code_sent(store: &LauncherStore, op_hash: &[u8; 32]) -> Result<()> {
     meta_set(
         store,

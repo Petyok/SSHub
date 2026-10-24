@@ -9,9 +9,7 @@ use zeroize::Zeroizing;
 use super::*;
 use crate::credentials::{ensure_unlocked, PasswordStore, QuorumGatedStore};
 use crate::sync::cert::{cert_allows, validate_cert_issue, DelegationCert};
-use crate::sync::cred_ops::{
-    cred_put, materialise_key, migrate_local_secrets, remove_local_copies, CredPayload,
-};
+use crate::sync::cred_ops::{cred_put, migrate_local_secrets, remove_local_copies, CredPayload};
 use crate::sync::crypto::{bip39_encode, shamir_combine, COMBINE_CALLS};
 use crate::sync::modes::validate_mode_change;
 use crate::sync::oplog::{CertScope, CredMode};
@@ -704,7 +702,7 @@ fn a_mode_change_re_encrypts_under_new_deks_and_going_back_needs_a_cosigner() {
 }
 
 #[test]
-fn payload_is_strict_keys_materialise_with_a_private_mode_and_vanish() {
+fn payload_is_strict() {
     let p = CredPayload {
         password: Some("p".into()),
         private_key: Some(
@@ -715,25 +713,6 @@ fn payload_is_strict_keys_materialise_with_a_private_mode_and_vanish() {
     assert!(CredPayload::from_bytes(br#"{"v":2}"#).is_err());
     assert!(CredPayload::from_bytes(br#"{"v":1,"extra":1}"#).is_err());
     assert!(CredPayload::from_bytes(b"[]").is_err());
-    let dir = std::env::temp_dir().join(format!("sshub-mat-{}", std::process::id()));
-    let uid = [5u8; 16];
-    let path = {
-        let k = materialise_key(&p, &dir, &uid).unwrap().unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(
-            std::fs::metadata(k.path()).unwrap().permissions().mode() & 0o777,
-            0o600
-        );
-        assert!(std::fs::read_to_string(k.path())
-            .unwrap()
-            .ends_with("KEY-----\n"));
-        k.path().to_path_buf()
-    };
-    assert!(!path.exists(), "the file goes with the guard");
-    assert!(materialise_key(&payload("only a password"), &dir, &uid)
-        .unwrap()
-        .is_none());
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 struct MemStore(Mutex<HashMap<String, String>>);

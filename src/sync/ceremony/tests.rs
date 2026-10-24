@@ -351,7 +351,30 @@ fn the_emailed_code_is_a_factor_and_its_sender_mails_only_when_the_other_proofs_
     let mails = owed_code_mails(&d[B].store, &d[B].did, now).unwrap();
     assert_eq!(mails.len(), 1);
     assert!(mails[0].2.contains(&code) && mails[0].2.contains("opens nothing"));
-    mark_code_sent(&d[B].store, &mails[0].0).unwrap();
+    // A failing mail server marks nothing; a working one marks it, and then nothing is owed.
+    let mut failing = |_: &str, _: &str| -> Result<()> { anyhow::bail!("no mta") };
+    assert_eq!(
+        send_owed_codes(&d[B].store, &d[B].did, now, &mut failing).unwrap(),
+        0
+    );
+    assert_eq!(
+        owed_code_mails(&d[B].store, &d[B].did, now).unwrap().len(),
+        1
+    );
+    let mut got = Vec::new();
+    let mut ok = |s: &str, b: &str| -> Result<()> {
+        got.push((s.to_string(), b.to_string()));
+        Ok(())
+    };
+    assert_eq!(
+        send_owed_codes(&d[B].store, &d[B].did, now, &mut ok).unwrap(),
+        1
+    );
+    assert!(got[0].1.contains(&code));
+    assert_eq!(
+        send_owed_codes(&d[B].store, &d[B].did, now, &mut ok).unwrap(),
+        0
+    );
     assert!(
         owed_code_mails(&d[B].store, &d[B].did, now)
             .unwrap()
