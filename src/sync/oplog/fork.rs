@@ -106,7 +106,8 @@ pub(crate) fn record_op_fork(conn: &Connection, stored: &Op, new: &Op) -> Result
 }
 
 pub(crate) fn evidence(conn: &Connection, device: &str) -> Result<Option<ForkEvidence>> {
-    let row: Option<(Option<Vec<u8>>, Option<Vec<u8>>)> = conn
+    type Blobs = (Option<Vec<u8>>, Option<Vec<u8>>);
+    let row: Option<Blobs> = conn
         .query_row(
             "SELECT fork_a, fork_b FROM sync_devices WHERE device_id = ?1",
             params![device],

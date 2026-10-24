@@ -400,6 +400,8 @@ fn req_value<T>(
     }
 }
 
+// Matches the `Fn(&T)` shape of `req_value`/`opt_value` for `T = String`.
+#[allow(clippy::ptr_arg)]
 fn s(v: &String) -> Value {
     Value::String(v.clone())
 }

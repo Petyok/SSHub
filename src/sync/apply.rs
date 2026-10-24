@@ -902,7 +902,7 @@ pub fn projection_dump(conn: &Connection) -> Result<String> {
     )?;
     let mut rows = hosts.query([])?;
     while let Some(r) = rows.next()? {
-        out.push_str("H");
+        out.push('H');
         for i in 0..19 {
             out.push('|');
             out.push_str(&dump(r.get_ref(i)?));
@@ -919,7 +919,7 @@ pub fn projection_dump(conn: &Connection) -> Result<String> {
     )?;
     let mut rows = groups.query([])?;
     while let Some(r) = rows.next()? {
-        out.push_str("G");
+        out.push('G');
         for i in 0..9 {
             out.push('|');
             out.push_str(&dump(r.get_ref(i)?));
@@ -932,7 +932,7 @@ pub fn projection_dump(conn: &Connection) -> Result<String> {
     )?;
     let mut rows = ids.query([])?;
     while let Some(r) = rows.next()? {
-        out.push_str("I");
+        out.push('I');
         for i in 0..4 {
             out.push('|');
             out.push_str(&dump(r.get_ref(i)?));
