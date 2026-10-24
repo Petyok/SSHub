@@ -56,8 +56,8 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Move up / down",
     },
     HelpItem::Entry {
-        key: "1..6 / h i",
-        desc: "Switch tab (hosts, sftp, tunnels, identities, audit, map)",
+        key: "1..7 / h i",
+        desc: "Switch tab (hosts, sftp, tunnels, identities, audit, map, sync)",
     },
     HelpItem::Entry {
         key: "Tab",
@@ -170,6 +170,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "Shift+W",
         desc: "What's new: release notes of this version or the installed update",
+    },
+    HelpItem::Entry {
+        key: "t",
+        desc: "Make the selected host one of your sync devices (once sync is set up)",
     },
     HelpItem::Entry {
         key: "b",
@@ -438,6 +442,28 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "",
         desc: "Tags are comma-separated, e.g.  prod, db, eu-west",
+    },
+    HelpItem::Blank,
+    HelpItem::Section("sync (tab 7)"),
+    HelpItem::Entry {
+        key: "\u{2191}\u{2193}",
+        desc: "Select a device",
+    },
+    HelpItem::Entry {
+        key: "y",
+        desc: "Sync now with the selected device",
+    },
+    HelpItem::Entry {
+        key: "R",
+        desc: "Review the changes waiting for approval (a approve, r reject, Esc close)",
+    },
+    HelpItem::Entry {
+        key: "t",
+        desc: "Open a trust session: pick the scope first, then the term (7, 30 or 90 days)",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "Not set up yet: t on the hosts tab enrolls a machine as one of your devices; sshub sync-join <device> joins a blank machine. A fork takes over the screen and names the device.",
     },
     HelpItem::Blank,
     HelpItem::Section("groups"),

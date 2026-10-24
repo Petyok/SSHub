@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PoC H transmit</title>
+<style>
+  body { font: 14px monospace; background: #fff; color: #000; margin: 16px; }
+  button { font: inherit; padding: 6px 12px; }
+  canvas { image-rendering: pixelated; border: 0; }
+</style>
+</head>
+<body>
+<h3>PoC H transmit (audio FSK burst + looping QR)</h3>
+<p>
+  seed <span id="seed"></span> len <span id="len"></span> bytes ·
+  profile <select id="profile"><option value="slow">slow (60 ms)</option><option value="fast">fast (30 ms)</option></select> ·
+  QR v<span id="ver"></span> chunk <span id="chunk"></span> B ·
+  sha256 <span id="sha"></span>
+</p>
+<p><button id="send">Send audio burst</button> <button id="qr">Start QR loop</button> <button id="stopqr">Stop QR loop</button></p>
+<p id="status"></p>
+<canvas id="qrc"></canvas>
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="share-lib.js"></script>
+<script>
+(function () {
+  "use strict";
+  const L = window.ShareLib;
+  const q = new URLSearchParams(location.search);
+  const seed = Number(q.get("seed") || 1);
+  const len = Number(q.get("len") || 56);
+  const version = Number(q.get("version") || 10);
+  const payload = L.seededBytes(len, seed);
+  const chunkSize = L.byteCapacity(version, "M") - L.CHUNK_HDR;
+  const frames = L.fountainChunks(payload, chunkSize);
+  const $ = (id) => document.getElementById(id);
+  $("seed").textContent = seed; $("len").textContent = len;
+  $("ver").textContent = version; $("chunk").textContent = chunkSize;
+  L.sha256Hex(payload).then((h) => { $("sha").textContent = h; });
+  const profile = () => (($("profile").value === "fast") ? L.FSK_FAST : L.FSK);
+
+  let ctx = null;
+  $("send").onclick = () => {
+    // ponytail: no unlock/retry handling; the user gesture from this click starts the context
+    ctx = ctx || new AudioContext({ sampleRate: L.FSK.sampleRate });
+    const samples = L.fskEncode(L.frame(payload), profile());
+    const buf = ctx.createBuffer(1, samples.length, L.FSK.sampleRate);
+    buf.copyToChannel(samples, 0);
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.connect(ctx.destination); src.start();
+    $("status").textContent = "audio sent: " + (samples.length / L.FSK.sampleRate).toFixed(2) + " s";
+  };
+
+  // Loop the indexed chunk set. Sender loops; receiver needs one full pass plus gaps.
+  let timer = null, i = 0;
+  const canvas = $("qrc");
+  function show() {
+    const qr = L.qrFor(frames[i], version, "M");
+    L.drawQR(canvas, qr, 4, 4);
+    i = (i + 1) % frames.length;
+  }
+  $("qr").onclick = () => { if (!timer) { show(); timer = setInterval(show, 125); } };
+  $("stopqr").onclick = () => { clearInterval(timer); timer = null; };
+  window.__tx = { payload, frames, chunkSize };
+})();
+</script>
+</body>
+</html>

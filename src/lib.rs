@@ -618,6 +618,10 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
     // Refresh auth events cache periodically
     app.refresh_auth_cache();
 
+    // Forward the UI's sync requests to the worker and fold its events into
+    // the Sync view, before the tick's mode change detection below.
+    app.poll_sync();
+
     // Arm tab-switch / popup slides for ANY mode or tab change this tick (#35).
     // Must run AFTER the background event drains (SFTP / OS-detect / broadcast),
     // not just after key handling: a mode change from e.g. an SFTP ConnectFailed

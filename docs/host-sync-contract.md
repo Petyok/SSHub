@@ -703,6 +703,45 @@ from `limits.rs`, stderr separate, EOF and timeout handled. `sync-serve`,
 next to `theme` (no `CliContext`, stdout carries frames only). The existing
 `sshub sync` (ssh_config refresh) is unchanged.
 
+### 3a. Stage 2 as built (WP2a): supersedes the sketch above where they differ
+
+Code: `src/sync/{protocol,ratchet,enroll}.rs`. The `SyncMsg` shapes above were a sketch; the built set is
+`Hello`, `Auth`, `Prove`, `Heads`, `WantTail`, `Tail`, `Pruned`, `WantCheckpoint`, `CheckpointChunk`,
+`EndWants`, `Finish`, `Ack`, `EnrollCommit`, `EnrollReveal`, `EnrollConfirm`, `Bye`, as internally tagged
+JSON (`{"t": "..."}`; byte fields hex for fixed arrays, base64 for `Vec<u8>`). The round order is
+`Hello(S) Hello(C) Auth(C) Auth(S) Prove(C) Prove(S) Heads(C) Heads(S)`, the client pulls
+(`WantTail`/`Tail`, `EndWants`), the server pulls, `Finish(C) Finish(S) Ack(C)`.
+
+* `Hello { proto, min_proto, device_id, nonce, eph, checkpoint }` has NO epoch: the server speaks first
+  and does not know the client yet. The pair epoch travels in `Prove { epoch: Option<u64>, mac }`
+  after `Auth`. `Auth` is a device-key signature over the hello transcript.
+* `Heads { heads: Vec<HeadRef{device_id, seq, hash}>, own: Option<WireHead>, gossip: Vec<WireHead>,
+  forks: Vec<WireFork> }`. `WireHead` is a self-signed head `{device_id, seq, hash, sig}`; the unsigned
+  `HeadRef` carries no signature (supersedes `HeadRef.sig` above).
+* `Tail { device_id, ops: Vec<WireOp> }` with `WireOp { canonical: base64, sig: hex64 }`; the receiver
+  decodes with `Op::from_canonical(canonical, sig)` (strict) and sorts per chain before ingest.
+* Caps: `MAX_OPS_PER_TAIL`, `MAX_HEADS` 256, `MAX_GOSSIP_HEADS` 64, `MAX_FORK_PROOFS` 16,
+  `MAX_WANTS_PER_PHASE` 1024, `MAX_OPS_PER_ROUND` 200000; a `Tail` frame is cut at half of `MAX_FRAME_BYTES`.
+* Ratchet: pair keys are per pair of devices, stored in `sync_meta` under `pair:<device_id>`
+  (`PairState { epoch, key, next, prev }`). `ratchet_epoch` and `epoch_mac` are BLAKE3 keyed hashes
+  (not HMAC) with domain strings `sshub/sync/ratchet/v1` and `sshub/sync/epoch-mac/v1`. `K(0)` comes from
+  the ephemeral X25519 exchange of the first authenticated round or of an enrollment. The server commits
+  a step only after the client's `Ack`; the client keeps `K(epoch-1)`.
+* Round functions are generic over `SyncLink` (`send(&Value)`, `recv() -> Value`, `recv_first()`),
+  implemented by `transport::Conn`:
+  `run_round(&mut L, &LauncherStore, &DeviceIdentity, &DeviceId) -> Result<RoundSummary>` (client),
+  `run_sync_serve(&LauncherStore, &DeviceIdentity, &mut L) -> Result<RoundSummary>`.
+* `RoundSummary { peer, pending_arrived, applied, rejected, duplicates, reject_reasons (max 8), received,
+  sent, forks, behind, suspect, epoch_advanced, first_contact, peer_checkpoint: Option<[u8;32]>,
+  needs_checkpoint: Vec<DeviceId> }`. Hard failures are `Err`; `behind` is `Ok` and no op moved.
+* Enrollment: `enroll::run_sync_enroll(&mut L, store, id, name, attended, &mut dyn SasConfirm)` (existing
+  device, speaks first) and `run_sync_join(..)` (joining device) return
+  `EnrollOutcome { peer, peer_name, sas }`. `SasConfirm::confirm(sas, peer_name) -> bool` has a blanket
+  impl for `FnMut(&str, &str) -> bool`; the caller blocks in it on the human. The existing device
+  registers the joiner as `Mirror` and appends a `DeviceAdd`; the joiner registers the existing device as
+  `Holder`. Both save `K(0)` as a fresh pair. Enrollment waits for a human: build its `Conn` with long
+  `Limits` (idle and round), not the 30 s idle default.
+
 ## 4. Stage 3: `src/sync/{wire,quorum,share_release,snapshot,cert,recovery,modes,cred_ops}.rs` (WP3a, WP3c)
 
 ```rust
@@ -760,10 +799,158 @@ Invariants: `shamir_combine` is called only by the requester assembling k=2 in
 memory; reissue is resharing only; the phone signs the binding hash; a release
 prompt names the requester; plaintext never touches disk.
 
+### 3b. Enrollment roles and honest SAS (supersedes the enrollment lines of 3a)
+
+* First frame of an enrollment, both ways: `EnrollHello { ring: Option<String>, screen: bool }`
+  (`ring` is the founder's device id kept in `sync_meta` `ring_id`; `screen` is "a human at a tty will
+  decide"). The responder speaks first as before; then `EnrollCommit`, `EnrollReveal`, `EnrollConfirm`
+  unchanged (the commitment scheme and `confirm_message` bytes are untouched, the phone page is unaffected).
+* `enroll::decide_role(mine_ring, their_ring, am_initiator)`: a ring on one side makes that side the
+  `Inviter`; a blank side is the `Joiner`; two blank sides: the initiator invites and founds the ring
+  (ring id = its device id); the same ring on both sides: a repeat ceremony, the initiator invites and no
+  second `DeviceAdd` is written; two different rings: `Bye` and `Err("merging rings is not supported ...")`.
+* The inviter registers the joiner as `Mirror` and appends `DeviceAdd` (once, if the joiner was not known);
+  the joiner registers the inviter as `Holder` and takes over the ring id. An unattended inviter does the
+  same; the op is Yellow on the other devices, pending until an attended user approves.
+* `run_sync_enroll(link, store, id, name, attended, Option<&mut dyn SasConfirm>)` (the remote end, roles from
+  the handshake) and `run_sync_join(..)` (the initiating end) take `None` when there is no tty: that side
+  never calls a confirm, sends `screen: false` and its `Confirm { ok: true }` means "admitted on the strength
+  of the authenticated ssh session". `SasConfirm::confirm(&SasPrompt { sas, peer_name, peer_has_screen })`
+  must say plainly when `peer_has_screen` is false that the words prove nothing and that the peer's identity
+  rests on the SSH host key.
+* `EnrollOutcome { peer, peer_name, sas, role, verified_by, ring }`; `VerifiedBy::{Sas, SshHostKey}` is
+  `Sas` only when both sides had a screen. The record is `sync_meta` `verified_by:<device id>` (`sas` /
+  `ssh_host_key`), read by `enroll::verified_by`, shown per device on the Sync tab. (Replicating the record
+  with the `DeviceAdd` needs an op-log field; not done.)
+* Per verb. `sshub sync-enroll` (remote, run by `ssh P sshub sync-enroll`): responder, tty prompt only when
+  stdin is a tty (`ssh -t`), else `None`. `sshub sync-join <peer>`: initiator, prompt on its tty. Hosts-tab
+  `t` on P: the initiator end over `ssh P sshub sync-enroll` without a tty on P, so the TUI modal shows the
+  words with `peer_has_screen = false` and the plain warning; the local machine invites when it has a ring,
+  founds one when both are blank, joins P's ring when only P has one.
+
+### 4a. Stage 3 as built (WP3a, WP3c): supersedes the sketch above where they differ
+
+Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phone wire frames in `wire.rs`).
+
+* **Share indices are positions.** A sharing is a sorted list of holder ids; a holder's index is its
+  1-based position. The list of the original sharing is the recipient list of the `CredUpdate` (the
+  vault recipient excluded); the list of reshare epoch `e` is `new_holders` of its batch ops.
+  Nothing else stores indices, so receivers compute contributor and own indices themselves.
+* **Vault.** The ring salt is `BLAKE3 derive_key("sshub/sync/vault/salt/v1", ring_secret)[..16]`, so a
+  new machine needs only the kit and the phrase. `vault_setup(store, phrase, ring_secret)` derives the
+  vault recipient and keeps its PUBLIC key in `sync_meta` under `vault_pub`. That key is LOCAL and is
+  never replicated: a replicated vault key would let one device redirect every new credential to
+  itself. The ring secret is kept by the caller in the profile credential store (`sync-ring-secret`).
+  The printed ring-secret sheet (poc/tui onboarding) encodes the text `sshub:ring:1:<32 lowercase hex>`
+  in its QR (the hex is also printed in groups); `ring_secret_text` and `parse_ring_secret` are the only
+  writer and reader of it, and `parse_ring_secret` also accepts typed hex groups. `vault_setup` takes the
+  phrase and ring secret of `SyncIntent::OnboardingDone` and refuses a phrase that is not 6 EFF words.
+  A vault credential is one `WrappedShare { recipient: vault id, sealed: hybrid_wrap(vault_pub,
+  host_uid || DEK) }`; `vault_open_dek(store, host, phrase, ring_secret)` opens it and checks the
+  credential by AEAD.
+* **Quorum.** `cred_put(store, id, host, &CredPayload)` writes `CredUpdate` under the ring's mode:
+  vault, or `shamir_split_at(dek, 2, 1..=n)` to `share_recipients` (holders that are not revoked or
+  compromised, the device itself, plus the paper unwrap key from `paper_setup`), sorted by id.
+  `CredPayload` is strict JSON `{"v":1,"password"?,"private_key"?}` sealed under the DEK.
+* **Reading shares.** `own_shares(store, id, host)` returns this holder's shares newest sharing first
+  (envelope shares of reshare epochs, then the original wrap); `assemble_dek(store, host, mine,
+  second)` combines two and checks by opening the credential. A reshare is adopted only by a real
+  unlock under it (`mark_adopted`, `unadopted(store, epoch)`); only then may previous wrap keys be retired.
+* **Reshare (`reissue_plan`, `reissue_receive`).** `reissue_plan(store, id, new_holders, epoch) ->
+  ReissuePlan { epoch, bodies }` replaces the sketch `reissue_plan(store, new_holders)`: it needs the
+  contributor's identity. Bodies: one `ShareReshareSession` per new holder, then `ShareReshareBatch` ops
+  of at most `RESHARE_ITEMS_PER_OP` items. A sub-share is `aead_seal(session key, aad, old_epoch u64 BE
+  || from index || 32 bytes)` with `aad = host_uid || epoch u64 BE || contributor id || recipient id`
+  (device id strings, not indices: a receiver does not know the contributor's old index before it
+  decrypts). `reissue_receive` combines two contributors' sub-shares with `reshare_combine`, publishes
+  a `ShareStorageKey` and a `ShareReshareConfirmBatch` (`aead_seal(storage key, host_uid || epoch ||
+  own index, share)`). `shamir_combine` is never called; `COMBINE_CALLS` (per thread, test only) proves it.
+  The paper recipient is offline and cannot take part: it keeps the sharing it was written for.
+* **Challenge.** `Challenge { op, nonce, expiry, eph_x25519_pub, request_id, phone_material }` with
+  `to_wire`, `to_qr_payload(frame_bytes) -> Result<Vec<Vec<u8>>>`, `binding_hash`, `binding_preimage`;
+  `make_challenge(store, id, host, phone, now, ttl)` appends the `ShareRelease` op and returns the
+  challenge and the ephemeral secret; `release_share(store, id, host, epoch, eph_pub)` seals a share
+  for a requester.
+* **Unlocker.** `QuorumUnlocker::new(store, id, gate, ShareSource, ring_secret)` implements
+  `credentials::Unlocker`: it sets the gate's synced check (`host:<id>` / `identity:<id>` map to uids,
+  synced means a `sync_cred_state` row exists) and opens credentials into the gate. `ShareSource`
+  (`master_phrase()`, `second_share(host, epoch, mine)`) is implemented by whoever owns the interaction.
+* **Certificates.** `DelegationCert::from_op(&Op)`; `cert_allows(cert, issuer_ed25519, store, requester,
+  host, phone_head_ts, now)` adds the `requester` argument (the device that asks) and checks signature,
+  issuer, delegatee, revocation, expiry and term cap, phone freshness (`PHONE_FRESH_SECS`), the phone's
+  epoch range, scope (group membership or explicit list) and the ring-wide budget read from
+  `sync_cert_hosts_opened`; hosts already opened are free. `validate_cert_issue` adds the three-holder rule.
+* **Modes.** `mode_change_plan(store, me_public, to, cosigner, open)` returns the `ModeChange` followed
+  by one `CredUpdate` per credential re-encrypted under a fresh DEK; Quorum to Vault needs a co-signer;
+  `validate_mode_change` checks `migrated_on` and the co-signer. History is not erased: old log entries
+  stay openable by whoever held the old shape.
+* **Recovery.** `recovery::Recovery` is a pure state machine (events `Propose`, `Approve`, `Ack`,
+  `CancelByPhone`, `CancelByDevice`, `Complete { now }`); verdicts add `AwaitingApproval { have, need }`
+  and `Completed` to the sketch. A second `PhoneReenroll`, replayed or fresh, is refused; a backdated
+  `initiated_at` is refused; approvals do not count next to a paper signature.
+* **Identity keys and migration.** `materialise_key(payload, dir, identity_uid)` writes the key with
+  mode 0600 (create-new) and removes it on drop; the caller chooses a tmpfs `dir`.
+  `migrate_local_secrets(store, id, ungated_store)` READS `host:<id>` secrets and identity key files
+  into credentials; `remove_local_copies` deletes the local entries only after the user confirmed.
+* **Phone wire (C16, owned here).** Courier op lists are capped at `MAX_COURIER_OPS` (8) ops of at
+  most `MAX_COURIER_OP_BYTES` (64 KiB) each, in both `PhoneOpsWire` and the reply extension.
+  `ReplyExt::approved_by(phone_ed25519, binding_preimage)` is the check that ties an extension to the
+  phone that was asked: replies are sealed to a public ephemeral key, so anyone can build one.
+
+### 4b. Second-share paths (how a terminal gets the share it does not hold)
+
+`ShareSource::second_share(host, epoch, mine)` is answered by one of five paths. Which ring device is
+the phone: the unique non-revoked device whose `DeviceRow.kind` is `Phone` (`quorum::phone_device(store)`).
+
+**Peer, trust session (synchronous, inside an authenticated session).** After `Prove` the client may send
+`ShareRequest { host_uid, request_id, eph_x25519_pub, epoch }` instead of `Heads`; the holder's `sync-serve`
+answers `ShareGranted { request_id, sealed }` (`sealed` = `DeviceIdentity::seal_to(eph, share bytes)`, 105
+bytes) or `ShareDeferred { request_id, reason }`, then both sides finish the round as usual. It grants only
+when this device holds the share, the requester holds a non-revoked `CertIssue` from the phone for it, and
+`cert_allows` passes (scope, expiry, phone freshness, ring-wide budget); a new host is recorded with a
+`CertHostOpened` op. A holder that is attended or unattended is treated the same on this path: the
+certificate IS the consent. `Deferred` sends the requester to the next path. Built: client
+`protocol::run_share_request(conn, store, id, holder, &ShareAsk { host_uid, epoch, eph, request_id }) ->
+ShareReply::{Granted(sealed), Deferred(reason)}`; holder side inside `run_sync_serve` via
+`quorum::trust_grant`.
+
+**Peer, attended (asynchronous, through the op-log).** The requester appends `ShareRelease { host_uid,
+request_id, requester, eph_x25519_pub }` (the op gains the ephemeral key; Yellow, so it shows up in the
+holder's review modal naming the requester on its next sync). On approve the holder's TUI appends one
+`ShareGrant { host_uid, request_id, requester, epoch, sealed }` per share epoch it holds (newest first, at
+most 3; Green, inert data) with `sealed` as above; the requester finds it on its next sync
+(`quorum::peer_request`, `quorum::peer_poll`; to be written when the op-log has the two changes: `eph_x25519_pub` on `ShareRelease` and the `ShareGrant` op). The grant is sealed to the EPHEMERAL key, never to the
+requester's wrap key: a grant wrapped to a long-lived key would let one stolen requester device open the
+credential forever. The ephemeral secret lives in the requester's memory only; if sshub exits the request
+is made again. No `sync-release` CLI verb: an attended holder approves in its TUI, an unattended holder
+releases only on the trust-session path.
+
+**Phone reply (QR, clipboard, audio).** The input is the bytes of a `ShareResponseWire`. The clipboard text
+is the base64 of exactly those bytes (standard alphabet, padded, whitespace ignored), what the page copies
+(948 characters in the e2e). `unlock_paths::open_phone_reply` / `open_phone_reply_clipboard` check the
+request id, open the share with the challenge's ephemeral secret and, when the reply carries the courier
+extension, require the phone's signature over `Challenge::binding_preimage()`: an extension that does not
+verify refuses the whole reply. The audio reply is the share only. `apply_reply_ext` chains the courier ops
+and keeps the snapshot blob.
+
+**Short code.** The 16 Crockford characters (case, spaces, hyphens and look-alike letters tolerated) open
+the snapshot blob this terminal stored from an earlier reply extension. Blobs are kept in `sync_meta` under
+`snapshot:<host uid hex>`: local only, never replicated, replaced by a newer one, expired after
+`SNAPSHOT_TTL_SECS` (`unlock_paths::share_from_code`).
+
+**Full entry.** The user types the 32 share bytes as 24 BIP39 words (the words the phone page shows). The
+share index is not typed: it is the holder's 1-based position in the sorted holder list of that credential's
+sharing at that epoch (`unlock_paths::full_entry_share`). A wrong word fails the BIP39 checksum; a wrong
+but valid phrase fails the credential's AEAD at `assemble_dek`.
+
 ## 5. Stage 3.5: Hub
 
-`deploy/hub/docker-compose.yml` and `sshub hub-serve` (headless branch in
-`main.rs`). Role in the ring: mirror, optionally unattended holder. Hard
+`deploy/hub/docker-compose.yml`. There is NO `hub-serve` verb and no daemon: the Hub is an ordinary ring
+device reached with `ssh hub sshub sync-serve` behind the container's sshd. What makes it a Hub is
+enforced in `src/sync/hub.rs`, `quorum::release_share_for` and the recovery state machine (see
+`poc/results/hub.md`): unattended devices neither approve nor acknowledge a recovery, an unattended holder
+releases only under a valid certificate, and `hub::run_sync_serve_notify` announces recovery ops (once per
+op, never with a code). Role in the ring: mirror, optionally unattended holder. Hard
 boundaries: no accounts, no authoritative copy, no Red-level vote; the ring
 works without it. Notifications use a sendmail-compatible command from
 `[sync.notify] command`, spawned by argv (no shell, no SMTP crate).
@@ -784,8 +971,53 @@ per device row, never as a banner. Colours come from the theme (`ColorRole`,
 `assets/companion/sshub-companion.html` (built file committed; sources, vendor,
 tests, `build.mjs`, `package*.json` excluded from the published crate). Consumes
 only the byte contract of section 4 (`Challenge::to_qr_payload`,
-`unwrap_share_response`, `SYNC_WIRE_V1`). The release fingerprint is a const in
-`src/sync/companion.rs`, shown by the TUI.
+`unwrap_share_response`, `SYNC_WIRE_V1`) and the phone frames of C16 below. The release
+fingerprint is a const in `src/sync/companion.rs`, shown by the TUI. Fingerprint = lowercase
+hex sha256 of the built file with its own 64 hex characters replaced by 64 zeros (a file
+cannot hold its own hash); the page shows it, the build writes it to
+`assets/companion/FINGERPRINT`, and the About screen says how to recompute it. It detects a wrong
+or outdated build, not a malicious page (a substituted page can print any string; that residual is
+already in the design).
+
+### C16: frames and replies only the phone uses
+
+Additive to `SYNC_WIRE_V1` (frame kinds 1 and 2 are unchanged). Rust: `wire.rs`
+(`RecoveryNoticeWire`, `PhoneOpsWire`, `EnrollFrame`) and `share_release.rs` (`ReplyExt`,
+`unwrap_share_reply`); JS: `assets/companion/src/frames.mjs`. `unwrap_share_response` still returns
+the share and ignores an extension.
+
+```text
+kind 3 recovery notice (terminal to phone) = op_len u32 BE || op_canonical || op_signature(64)
+kind 5 phone ops       (phone to terminal) = n u8 || n * (op_len u32 BE || op_canonical || signature(64))
+kind 6 enroll commit   = role u8 || commit(32)
+kind 7 enroll reveal   = role u8 || reveal bytes (enroll.rs Reveal::bytes, opaque to the wire)
+kind 8 enroll confirm  = role u8 || ok u8 || signature(64)       role 0 = joining (phone), 1 = existing terminal
+
+share reply plaintext (inside the C11 sealed box of the kind 2 frame):
+  share(33)                                      audio channel: nothing else fits a 2 to 15 second burst
+  share(33) || 0x01 || approval_sig(64) || n u8 || n * (op_len u32 BE || op || sig(64))
+            || snap u8 [|| host_uid(16) || blob_len u16 BE || snapshot blob]       reverse QR and clipboard
+```
+
+- `approval_sig` is Ed25519 by the phone over the binding preimage of the challenge (section 4).
+- Courier: the ops are the newest (at most 8) of the phone's own chain, each approval appends one
+  `HeadAttest { device_id: phone, seq: previous own seq, chain_hash: previous own op hash }`
+  (seq 0 and 32 zero bytes before the first op) with a fresh timestamp, `lamport` above every
+  lamport seen, `epoch` the highest seen. A recovery cancellation is a `PhoneReenrollCancel` with
+  `by_phone: true`, `third_factor: null`, `reenroll_hash` = BLAKE3 of the `PhoneReenroll` op bytes,
+  delivered in a kind 5 frame. The terminal that receives them ingests them like any other ops.
+- The snapshot blob is the contract `SnapshotBlob::to_bytes` and `host_uid` names the credential it
+  opens; the phone issues one per credential only while none is live (TTL 7 days recorded in the
+  blob), the user can declare a blob dead (never delivered, or DEK reissued).
+- Manual entry: the phone shows `index` and the 24 BIP39 words of the 32 share bytes.
+- Phone identity: 32 random bytes are the secret; `BLAKE3 derive_key("sshub/sync/phone/v1", secret)`
+  as 128 bytes = the usual identity split (section 1); the 24 BIP39 words are the backup. At rest
+  the secret is `"SSHP" || 1 || mem u32 BE || iters u32 BE || salt(16) || nonce(24) || ct` under
+  Argon2id of the PIN (64 MiB x 3 by default), header as AAD.
+- Binding words: the phone prints `sas_words(binding_hash)` of the challenge it is about to approve;
+  a terminal that shows the same four words lets the person compare before approving.
+- Enrollment over QR runs the commit, reveal, SAS and confirm steps of `enroll.rs` with the same
+  byte layouts; the phone is the joining side (role 0), the terminal commits first.
 
 ## 8. Global constraints
 

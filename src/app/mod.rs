@@ -32,6 +32,7 @@ mod session_spawn;
 mod sftp;
 mod snippets;
 mod suggestions;
+pub mod sync;
 mod tags;
 pub mod test_connect;
 mod theme_picker;
@@ -301,6 +302,12 @@ pub struct App {
     pub snippet_form: Option<SnippetFormEdit>,
     /// Live snippet picker state ([`AppMode::SnippetPicker`]).
     pub snippet_picker: Option<SnippetPickerState>,
+    /// Everything the Sync tab and its modals draw; see [`sync::SyncView`].
+    pub sync: sync::SyncView,
+    /// The sync worker, once the protocol package attaches one.
+    pub sync_worker: Option<crate::sync::client::SyncHandle>,
+    /// The action waiting for a credential unlock, if any.
+    pub(crate) unlock_resume: Option<sync::UnlockResume>,
     /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
     /// the input line changes. `None` while nothing is dismissed.
     pub ghost_dismissed_for: Option<String>,
@@ -575,7 +582,7 @@ pub struct App {
 pub(crate) fn is_overlay_mode(mode: AppMode) -> bool {
     !matches!(
         mode,
-        AppMode::Normal | AppMode::Connecting | AppMode::Session
+        AppMode::Normal | AppMode::Connecting | AppMode::Session | AppMode::SyncForkAlert
     )
 }
 
@@ -700,6 +707,8 @@ impl App {
             self.anim_prev_audit = (self.audit_filter, self.audit_range);
             self.audit_filter_at = Some(std::time::Instant::now());
         }
+        // The unlock modal's QR steps its frame from this tick.
+        self.advance_sync_qr(std::time::Instant::now());
         self.detect_sftp_navigation();
         // A transfer staged since the last tick flies its row in (#35).
         let queued = self.sftp.as_ref().map(|s| s.queue.len()).unwrap_or(0);
@@ -937,7 +946,7 @@ impl App {
         ));
         let keyring_available = crate::credentials::check_keyring_available();
         let prefix = paths.credential_prefix();
-        let password_store: Box<dyn crate::credentials::PasswordStore> = if keyring_available {
+        let inner_store: Box<dyn crate::credentials::PasswordStore> = if keyring_available {
             let _ = crate::credentials::migrate_fallback_to_keyring(&paths.credentials_file());
             Box::new(crate::credentials::NamespacedPasswordStore::new(
                 Box::new(crate::credentials::OsKeyring),
@@ -951,6 +960,9 @@ impl App {
                 prefix,
             ))
         };
+        // Synced credentials answer from the gate; local ones pass through.
+        let password_store: Box<dyn crate::credentials::PasswordStore> =
+            Box::new(crate::credentials::QuorumGatedStore::new(inner_store));
 
         let mut app = Self::new_with_deps(
             config,
@@ -1062,6 +1074,9 @@ impl App {
             snippet_manage_selected: 0,
             snippet_form: None,
             snippet_picker: None,
+            sync: sync::SyncView::default(),
+            unlock_resume: None,
+            sync_worker: None,
             ghost_dismissed_for: None,
             ghost_host_cache: std::cell::RefCell::new(None),
             snippet_notice: None,

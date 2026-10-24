@@ -1,0 +1,15 @@
+{
+  "name": "sshub-companion",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Phone companion (stage 5 harness). Crypto deps are vendored under vendor/ and linked by scripts/link-vendor.mjs. esbuild is a build-only devDependency, installed with npm ci in the tools container.",
+  "scripts": {
+    "link": "node scripts/link-vendor.mjs",
+    "test": "node scripts/link-vendor.mjs && node --test test/replay.test.js",
+    "build": "node scripts/link-vendor.mjs && node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

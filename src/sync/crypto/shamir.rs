@@ -21,6 +21,12 @@ use zeroize::Zeroize;
 
 use super::hash::derive_key;
 
+thread_local! {
+    /// How often this thread reconstructed a secret. Resharing must never move it (per thread, so
+    /// parallel tests do not see each other).
+    pub(crate) static COMBINE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 const COMMIT_CTX: &str = "sshub/sync/reshare/commit/v1";
 
 /// One holder's share: an x coordinate and the 32 polynomial values.
@@ -164,6 +170,7 @@ pub fn shamir_split_at(secret: &[u8; 32], k: u8, indices: &[u8]) -> Vec<Share> {
 /// recorded in a share: a subset smaller than k yields an unrelated value, which the AEAD
 /// layer above (credential decryption) rejects. Only the requester calls this, in memory.
 pub fn shamir_combine(shares: &[Share]) -> Result<[u8; 32]> {
+    COMBINE_CALLS.with(|c| c.set(c.get() + 1));
     if shares.len() < 2 {
         bail!("need at least 2 shares (k = 2 is the product minimum)");
     }
