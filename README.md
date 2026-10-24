@@ -342,7 +342,7 @@ sshub sync-join laptop                        # enroll with the device at host "
 sshub sync-now                                # sync with every ring device that has a known host
 sshub sync-now laptop --format json           # one device, by name or id prefix
 sshub sync-status                             # ring devices, pending changes, credential mode
-sshub sync-review                             # changes waiting for review (id, author, field diffs)
+sshub sync-review                             # every change waiting for review (id, author, reason, field diffs, Red ceremony)
 sshub sync-review --approve 3fa9c1            # or --reject; id = unique prefix (4+ hex chars)
 # Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected.
 # sync-serve / sync-enroll are what a peer runs over ssh; not for interactive use.

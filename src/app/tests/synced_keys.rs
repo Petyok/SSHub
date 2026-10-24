@@ -163,3 +163,68 @@ fn dropping_the_gate_stops_the_agent_and_a_non_identity_key_is_refused() {
     assert!(!socket.exists());
     assert!(synced_identity_agent(41).is_none());
 }
+
+#[test]
+fn a_jump_host_with_a_synced_key_gets_its_own_block_in_a_config_that_keeps_the_users() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(pem) = generate_key() else { return };
+    let gate = SecretGate::default();
+    gate.insert_private_key(&identity_key(77), Zeroizing::new(pem))
+        .unwrap();
+    let agent = synced_identity_agent(77).unwrap();
+    crate::credentials::note_hop_identity("hop.example", 77);
+
+    let config = crate::credentials::hop_agent_config("me@hop.example:2222,other")
+        .expect("the hop needs the private agent");
+    assert!(
+        config.starts_with(agent.socket.parent().unwrap()),
+        "inside the agent's directory"
+    );
+    assert_eq!(
+        std::fs::metadata(&config).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let text = std::fs::read_to_string(&config).unwrap();
+    assert!(text.contains("Host hop.example"));
+    assert!(text.contains(&format!("IdentityAgent {}", agent.socket.display())));
+    assert!(text.contains(&format!("IdentityFile {}", agent.public_file.display())));
+    assert!(text.contains("IdentitiesOnly yes"));
+    // The user's own configuration still applies, after the hop's block.
+    let (hop_at, own_at) = (
+        text.find("Host hop.example").unwrap(),
+        text.find("Include ~/.ssh/config").unwrap(),
+    );
+    assert!(hop_at < own_at);
+    assert!(
+        !text.contains("Host other"),
+        "a hop without a synced key gets nothing"
+    );
+
+    // ssh reads it the way the jump command will.
+    if let Ok(out) = Command::new("ssh")
+        .args(["-G", "-F"])
+        .arg(&config)
+        .arg("hop.example")
+        .output()
+    {
+        let shown = String::from_utf8_lossy(&out.stdout).to_lowercase();
+        assert!(
+            shown.contains(&format!("identityagent {}", agent.socket.display()).to_lowercase()),
+            "{shown}"
+        );
+        assert!(shown.contains("identitiesonly yes"));
+    }
+
+    // The connection builder passes it.
+    let mut ssh = crate::ssh::SshHost::new("dest");
+    ssh.hostname = Some("dest.example".into());
+    ssh.proxy_jump = Some("me@hop.example:2222".into());
+    let argv = crate::ssh::build_ssh_argv(&ssh);
+    let at = argv.iter().position(|a| a == "-F").expect("-F present");
+    assert_eq!(argv[at + 1], config.display().to_string());
+
+    // No hop to serve, no config; and locking removes the file with the agent.
+    assert!(crate::credentials::hop_agent_config("unknown.example").is_none());
+    gate.lock_all();
+    assert!(!config.exists());
+}

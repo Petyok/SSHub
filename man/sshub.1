@@ -415,7 +415,10 @@ host), pending change count and credential mode. Never creates a device key.
 List the changes waiting for review: a 12-character id, the author device, a
 summary and one line per field (marked
 .B [!]
-when dangerous). With
+when dangerous). Every waiting change is listed with the reason it waits
+(in brackets; the
+.B reason
+field of the JSON items) and a Red change with the proofs of its ceremony. With
 .B \-\-approve
 or
 .B \-\-reject

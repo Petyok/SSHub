@@ -706,6 +706,78 @@ pub fn synced_identity_agent(id: i64) -> Option<AgentUse> {
         })
 }
 
+/// Jump hosts (as ssh is given them) whose identity has no key on this disk,
+/// noted by the hop resolver so the connection builder can point ssh at the
+/// private agent for them.
+static HOP_IDENTITIES: std::sync::Mutex<std::collections::BTreeMap<String, i64>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+pub fn note_hop_identity(via: &str, identity_id: i64) {
+    HOP_IDENTITIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(via.to_string(), identity_id);
+}
+
+/// The host part of one `-J` token: `user@host:port`, `[v6]:port` or a name.
+fn jump_token_host(token: &str) -> &str {
+    let t = token.rsplit_once('@').map_or(token, |(_, h)| h);
+    if let Some(inner) = t.strip_prefix('[') {
+        return inner.split_once(']').map_or(inner, |(h, _)| h);
+    }
+    match t.rsplit_once(':') {
+        Some((h, port)) if !h.contains(':') && port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => t,
+    }
+}
+
+/// A per-connection ssh config for jump hosts that need a synced key: the
+/// hop's `Host` block (private agent, its public key, IdentitiesOnly) first,
+/// then the user's own config, so `-F <this>` changes nothing else. ssh passes
+/// `-F` to the jump command, which `-o` options are not. Written 0600 into the
+/// agent's 0700 directory, removed with it. `None` when no hop needs it.
+pub fn hop_agent_config(jump: &str) -> Option<std::path::PathBuf> {
+    let noted = HOP_IDENTITIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let mut blocks = String::new();
+    let mut dir = None;
+    for token in jump.split(',') {
+        let host = jump_token_host(token.trim());
+        let Some(agent) = noted.get(host).and_then(|id| synced_identity_agent(*id)) else {
+            continue;
+        };
+        dir = agent.socket.parent().map(std::path::Path::to_path_buf);
+        blocks.push_str(&format!(
+            "Host {host}\n    IdentityAgent {}\n    IdentityFile {}\n    IdentitiesOnly yes\n",
+            agent.socket.display(),
+            agent.public_file.display()
+        ));
+    }
+    let dir = dir?;
+    let text = format!(
+        "# sshub: synced keys for jump hosts, then your own configuration\n{blocks}Include ~/.ssh/config\nInclude /etc/ssh/ssh_config\n"
+    );
+    let name = format!(
+        "hops-{}.conf",
+        &blake3::hash(text.as_bytes()).to_hex()[..12]
+    );
+    let path = dir.join(name);
+    if !path.exists() {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .ok()?;
+        f.write_all(text.as_bytes()).ok()?;
+    }
+    Some(path)
+}
+
 /// The key bytes behind an agent public file, for in-process SFTP
 /// (`userauth_pubkey_memory`): memory only.
 pub fn synced_key_for_public_file(path: &std::path::Path) -> Option<zeroize::Zeroizing<String>> {

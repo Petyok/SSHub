@@ -1236,6 +1236,11 @@ pub fn hop_specs(
                     same.next().is_none().then_some(one)
                 })?;
             let fields = store.resolve_fields(managed).ok()?;
+            // A hop whose key is not on this disk is reached through the
+            // private agent once its identity is open.
+            if let Some(identity) = fields.identity.as_ref().filter(|i| i.private_key.is_none()) {
+                crate::credentials::note_hop_identity(&via, identity.id);
+            }
             let user = raw
                 .and_then(|r| r.user)
                 .or(fields.username)

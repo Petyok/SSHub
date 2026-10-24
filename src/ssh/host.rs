@@ -64,6 +64,11 @@ pub fn build_ssh_argv(host: &SshHost) -> Vec<String> {
     }
 
     if let Some(ref jump) = host.proxy_jump {
+        // A jump host whose key lives in the private agent needs its own block.
+        if let Some(config) = crate::credentials::hop_agent_config(jump) {
+            args.push("-F".into());
+            args.push(config.display().to_string());
+        }
         args.push("-J".into());
         args.push(jump.clone());
     }
