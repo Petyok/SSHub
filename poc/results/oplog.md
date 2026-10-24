@@ -69,3 +69,18 @@ Replay rule as built: local ops (`local = 1`) above this device's cut seq must c
 | Vectors / oracle for every body | 51 vectors, 35 body variants, oracle 159 checks 0 failures | PASS |
 | Bulk export: window check (before, inside, after, other device, mid-export expiry), 0600 file in the importer's `L00t.csv` format (commas, quotes, newlines in passwords survive `parse_loot_csv`), never overwrites, window over 3600 s refused, announced once per op through the notify hook, failing mail retried | 4 tests in `sync::export` | PASS |
 | C2 revocation driver | not built here: it exists as `src/sync/revocation.rs` on poc/quorum2 (S) | n/a |
+
+## Join anchor, unknown-author review, CLI admin verbs
+
+- `sync_join_anchor_build(id)`: the inviter's resolved state at its chain heads, a detached
+  proposal plus one sign by the inviter alone (not entered in any log, `prev_checkpoint` is the
+  sentinel `JOIN_ANCHOR_PREV`). `sync_join_adopt(bundle, BootstrapTrust::Enrollment{inviter})`
+  installs it as the starting state; it is not recorded as a checkpoint and `sync_bootstrap`
+  with the other trusts, `record` and `verify` refuse it.
+- Unknown author: `ingest` stores such an op as `pending` with reason `unknown-author` (no chain
+  head, no fold, never served, no fork evidence, kind marker `UnknownAuthor`); caps 256 overall.
+  Approve is refused until the author is a device, then the op goes through the ordinary ingest;
+  reject forgets it. `sync_pending_with_reasons()` lists every pending op with its reason.
+- Tests: 502-host joiner has 0 pending; later dangerous change pending `tier`; stranger op
+  pending `unknown-author`. Full verify PASS (2114 tests).
+- CLI: `src/cli/sync_admin.rs` (11 verbs), smoke tests in `tests/smoke/cli_commands.rs`.

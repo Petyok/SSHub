@@ -125,10 +125,60 @@ pub(crate) fn load_op(conn: &Connection, hash: &[u8; 32]) -> Result<Option<OpRow
 pub(crate) fn op_at(conn: &Connection, device: &str, seq: u64) -> Result<Option<OpRow>> {
     Ok(row_of(
         conn,
-        "device_id = ?1 AND seq = ?2",
+        "device_id = ?1 AND seq = ?2 AND COALESCE(reason, '') <> 'unknown-author'",
         params![device, seq as i64],
     )?
     .pop())
+}
+
+/// Pending reason of an op whose author is not a known device: its signature
+/// could not be checked, it is stored for review only (see [`insert_unverified`]).
+pub(crate) const UNKNOWN_AUTHOR: &str = "unknown-author";
+
+/// Store an op of an unknown author for review: no chain head, no register
+/// writes, no tombstone, and a `kind` no reader of real ops matches. It never
+/// feeds fork detection, the served chain tail or any fold.
+pub(crate) fn insert_unverified(conn: &Connection, op: &Op, now: i64) -> Result<[u8; 32]> {
+    let hash = op.hash();
+    conn.execute(
+        "INSERT INTO sync_ops (op_hash, device_id, seq, lamport, prev_hash, epoch, canonical,
+             signature, kind, subject, state, reason, local, received_at, timestamp)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'UnknownAuthor', NULL, 'pending', ?9, 0, ?10, ?11)",
+        params![
+            &hash[..],
+            op.device_id,
+            op.seq as i64,
+            op.lamport as i64,
+            &op.prev_hash[..],
+            op.epoch as i64,
+            op.canonical_bytes(),
+            &op.signature[..],
+            UNKNOWN_AUTHOR,
+            now,
+            op.timestamp,
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO sync_pending_ops (op_hash, device_id, entity_kind, entity_uid, reason, received_at)
+         VALUES (?1, ?2, NULL, NULL, ?3, ?4)",
+        params![&hash[..], op.device_id, UNKNOWN_AUTHOR, now],
+    )?;
+    Ok(hash)
+}
+
+/// Drop stored unverified ops of `device` (all, or one `seq`).
+pub(crate) fn forget_unverified(conn: &Connection, device: &str, seq: Option<u64>) -> Result<()> {
+    let seq = seq.map(|s| s as i64);
+    conn.execute(
+        "DELETE FROM sync_pending_ops WHERE op_hash IN (SELECT op_hash FROM sync_ops
+           WHERE device_id = ?1 AND reason = 'unknown-author' AND (?2 IS NULL OR seq = ?2))",
+        params![device, seq],
+    )?;
+    conn.execute(
+        "DELETE FROM sync_ops WHERE device_id = ?1 AND reason = 'unknown-author' AND (?2 IS NULL OR seq = ?2)",
+        params![device, seq],
+    )?;
+    Ok(())
 }
 
 /// Store a verified op, its register writes and its tombstone. The state is
