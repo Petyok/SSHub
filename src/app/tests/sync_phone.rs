@@ -278,3 +278,47 @@ fn a_change_whose_ceremony_is_not_complete_is_not_shown_or_used_as_in_force() {
         "no second proposal"
     );
 }
+
+#[test]
+fn the_camera_feeds_the_phones_frames_while_the_flow_is_open() {
+    use crate::sync::media::{listen_with, ListenOpts, MediaEvent, MediaKind};
+    let (mut app, _me, _dir) = app_without_phone();
+    let phone_id = DeviceIdentity::generate();
+    let party = Party::new(&phone_id, "my phone", true);
+    crate::app::sync_phone::start(&mut app);
+    wait_label(&mut app, "Phone's next frame");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = listen_with(&[], tx.clone(), ListenOpts::ENROLL_FRAMES);
+    crate::app::sync_phone::use_camera_channel(&mut app, handle, rx);
+    tx.send(MediaEvent::Reply(
+        MediaKind::Camera,
+        EnrollFrame::Commit {
+            role: INITIATOR,
+            commit: party.commit(INITIATOR),
+        }
+        .encode(),
+    ))
+    .unwrap();
+    pump(
+        &mut app,
+        "the terminal's reveal after the camera frame",
+        |a| {
+            prompt(a).is_some_and(|(_, _, f)| {
+                !f.is_empty()
+                    && matches!(
+                        EnrollFrame::decode(&decode_frames(&f)),
+                        Ok(EnrollFrame::Reveal { .. })
+                    )
+            })
+        },
+    );
+}
+
+#[test]
+fn closing_the_prompt_ends_the_flow_and_releases_the_camera() {
+    let (mut app, _me, _dir) = app_without_phone();
+    crate::app::sync_phone::start(&mut app);
+    wait_label(&mut app, "Phone's next frame");
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    pump(&mut app, "the flow to end", |a| a.phone_flow.is_none());
+}

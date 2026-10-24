@@ -4,12 +4,15 @@
 //! needs the device key runs as a job on the sync worker and leaves its result
 //! in a shared outbox, which the tick turns into the next modal.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 
 use super::sync_trust::qr_frames;
 use super::*;
+use crate::sync::media::{listen_with, ListenHandle, ListenOpts, MediaEvent, MediaKind};
 use crate::sync::phone_enroll::{admit_phone, PhoneEnroll, Step};
 
 const TITLE: &str = "Add my phone";
@@ -44,6 +47,13 @@ pub(crate) struct PhoneFlow {
     out: Arc<Mutex<Vec<FlowOut>>>,
     /// The last prompt, shown again after a refused frame.
     last: Option<FlowOut>,
+    /// Jobs started and not yet finished: the flow lives while any runs or a modal is open.
+    running: Arc<AtomicUsize>,
+    /// The webcam listens for the phone's frames while the flow is open (a build with
+    /// the `camera` feature and a device); dropping it releases the device.
+    camera: Option<(ListenHandle, Receiver<MediaEvent>)>,
+    /// Frames the camera produced that no step has taken yet.
+    inbox: Vec<Vec<u8>>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -63,15 +73,22 @@ pub(crate) fn start(app: &mut App) {
     }
     let enroll = Arc::new(Mutex::new(None));
     let out = Arc::new(Mutex::new(Vec::new()));
+    let running = Arc::new(AtomicUsize::new(1));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = listen_with(&[MediaKind::Camera], tx, ListenOpts::ENROLL_FRAMES);
     app.phone_flow = Some(PhoneFlow {
         enroll: enroll.clone(),
         out: out.clone(),
         last: None,
+        running: running.clone(),
+        camera: Some((handle, rx)),
+        inbox: Vec::new(),
     });
     app.run_sync_job(move |env| {
         let (e, first) = PhoneEnroll::begin(&env.identity, &crate::sync::runtime::device_name());
         *lock(&enroll) = Some(e);
         lock(&out).push(FlowOut::Show(first));
+        running.fetch_sub(1, Ordering::SeqCst);
         Ok(String::new())
     });
 }
@@ -98,10 +115,13 @@ fn step_job(
         return;
     };
     let (enroll, out) = (flow.enroll.clone(), flow.out.clone());
+    let running = flow.running.clone();
+    running.fetch_add(1, Ordering::SeqCst);
     app.run_sync_job(move |env| {
         let mut slot = lock(&enroll);
         let Some(e) = slot.as_mut() else {
             lock(&out).push(FlowOut::Error("the enrollment has not started".into()));
+            running.fetch_sub(1, Ordering::SeqCst);
             return Ok(String::new());
         };
         let next = match call(e, &env.identity) {
@@ -121,6 +141,7 @@ fn step_job(
             Err(e) => Err(e),
         };
         lock(&out).push(next.unwrap_or_else(|e| FlowOut::Error(format!("{e:#}"))));
+        running.fetch_sub(1, Ordering::SeqCst);
         Ok(String::new())
     });
 }
@@ -154,19 +175,42 @@ fn reshow(app: &mut App, why: &str) {
 
 /// Per tick: turn what the jobs produced into the next modal.
 pub(crate) fn tick(app: &mut App) {
-    let Some(flow) = app.phone_flow.as_ref() else {
+    let Some(flow) = app.phone_flow.as_mut() else {
         return;
     };
     let outs: Vec<FlowOut> = std::mem::take(&mut *lock(&flow.out));
+    if let Some((_, rx)) = flow.camera.as_ref() {
+        flow.inbox.extend(rx.try_iter().filter_map(|e| match e {
+            MediaEvent::Reply(_, bytes) => Some(bytes),
+            _ => None,
+        }));
+    }
+    let idle = flow.running.load(Ordering::SeqCst) == 0;
+    // Closed with Esc and nothing in flight: release the camera.
+    if outs.is_empty() && idle && app.sync_ui.is_none() {
+        app.phone_flow = None;
+        return;
+    }
+    // A frame of the camera counts only while the phone's next frame is expected, not while the
+    // words are compared; frames of an earlier step are dropped when the next modal opens.
+    let expecting =
+        idle && outs.is_empty() && matches!(flow.last, Some(FlowOut::Show(_) | FlowOut::Paste));
+    let camera_frame = (expecting && !flow.inbox.is_empty()).then(|| flow.inbox.remove(0));
     for o in outs {
         match o {
             FlowOut::Error(e) => reshow(app, &e),
             o => present(app, o),
         }
     }
+    if let Some(bytes) = camera_frame {
+        feed_bytes(app, bytes);
+    }
 }
 
 fn present(app: &mut App, out: FlowOut) {
+    if let Some(f) = app.phone_flow.as_mut() {
+        f.inbox.clear();
+    }
     if matches!(
         out,
         FlowOut::Show(_) | FlowOut::Compare { .. } | FlowOut::Paste
@@ -180,7 +224,7 @@ fn present(app: &mut App, out: FlowOut) {
             app,
             &frame,
             vec![
-                "Show this code to the phone's camera.".into(),
+                "Show this code to the phone's camera. The terminal's webcam reads the phone's frames too when this build has the `camera` feature.".into(),
                 "Then paste the frame the phone shows next (copy it on the phone).".into(),
             ],
             "Phone's next frame (base64)",
@@ -276,4 +320,12 @@ pub(crate) fn paste_ops(app: &mut App) {
             });
         },
     );
+}
+
+/// Tests stand in for the webcam: frames sent on `rx`' sender arrive as the camera's.
+#[cfg(test)]
+pub(crate) fn use_camera_channel(app: &mut App, handle: ListenHandle, rx: Receiver<MediaEvent>) {
+    if let Some(f) = app.phone_flow.as_mut() {
+        f.camera = Some((handle, rx));
+    }
 }
