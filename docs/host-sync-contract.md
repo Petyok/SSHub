@@ -249,8 +249,13 @@ the Python oracle `tests/oracles/crypto_oracle.py`):
   eph_pub || recipient_x25519_pub || kem_ct)`, header as AEAD associated data (C12).
 - Sealed box: C11, AEAD associated data `eph_pub || recipient_pub`.
 - Device key file: `"SSHK" || 1 || mem u32 BE || iters u32 BE || salt(16) ||
-  nonce(24) || ct`, plaintext `ed25519 seed || x25519 secret || ML-KEM dk (2400)`,
-  header as associated data.
+  nonce(24) || ct`, header (everything before `ct`) as associated data, key =
+  Argon2id(passphrase, salt, profile from the header). Plaintext, exactly:
+  `ed25519 seed (32) || current x25519 secret (32) || current ML-KEM dk (2400) ||
+  n u8 || n * (older x25519 secret (32) || older ML-KEM dk (2400))`, older wrap
+  key generations newest first (C14). A file with no older generation has `n = 0`
+  and a plaintext of 2465 bytes (32 + 32 + 2400 + 1); each older generation adds
+  2432 bytes. The ML-KEM public key is not stored: it is derived from the dk.
 
 ## 2. Stage 1: `src/sync/oplog/` and schema v22 (WP1a, WP1b)
 
