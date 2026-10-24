@@ -761,7 +761,22 @@ opens nothing, so it needs no secrecy and no special credentials.
    as a mirror and appends the `DeviceAdd`; every attended device holds that op
    as pending until one of its users approves it in review, so the joiner is
    known only to the Hub until then.
-7. **Promotion to holder is separate and Red**, and needs two holders online for
+7. **The join-time anchor.** A joiner does not review the ring that already existed. When the
+   enrollment is confirmed (SAS, or the SSH host key of an inviter without a screen), the inviter first
+   appends the joiner's `DeviceAdd`, then sends a **join anchor**: its resolved state at its current chain
+   heads (device table with roles and verification, hosts, groups, identities, credential ciphertexts and
+   wraps, certificates, factors) in the checkpoint bundle format, signed by the inviter alone. The joiner
+   adopts it as its starting state with the existing bootstrap machinery, trusting the inviter exactly as far
+   as the enrollment verified it (no second signature exists in a fresh ring, which is why this form is
+   valid only as a join anchor and never as a prune checkpoint). Consequences: the joiner's own admission is
+   inside the cut and is never in its review queue; 500 existing hosts are 0 approvals; only ops ABOVE the
+   cut, authored by anyone, are foreign changes under review. The joiner's pre-existing local hosts are not
+   published by joining; the UI offers to share them as an explicit step.
+   **Nothing is held silently.** Every op that is pending for any reason is in the review queue with its
+   reason: `tier`, `resurrection`, `revoke-conflict`, or `unknown-author` (an op whose author is not an
+   accepted device yet is quarantined, capped per device, and applies when the author is admitted, instead
+   of being dropped).
+8. **Promotion to holder is separate and Red**, and needs two holders online for
    the resharing protocol.
 
 Minimal topology: 1 machine + phone (Quorum k=2 works, without trust sessions and

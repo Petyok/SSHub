@@ -827,6 +827,28 @@ prompt names the requester; plaintext never touches disk.
   words with `peer_has_screen = false` and the plain warning; the local machine invites when it has a ring,
   founds one when both are blank, joins P's ring when only P has one.
 
+### 3c. Join-time anchor (C18): spec
+
+After `EnrollConfirm` succeeds and the inviter appended `DeviceAdd` for the joiner, the inviter sends the
+join anchor over the same authenticated enrollment channel and the joiner adopts it; new frames after
+`EnrollConfirm`: `EnrollAnchor { index: u32, total: u32, #[b64] bytes }` (chunks of at most
+`CHECKPOINT_CHUNK_BYTES`, at most `CHECKPOINT_BYTES` in all) and `EnrollAnchorDone { #[hex32] bundle_hash }`.
+The bundle is the C15 checkpoint bundle format (cut = the inviter's chain heads, canonical state blob, the
+inviter's signed head); it carries the signature of the inviter only and is accepted only through
+`sync_join_adopt(bundle, inviter)`, which verifies the inviter's signature and that the state hash recomputes,
+then adopts like `sync_bootstrap` with trust `BootstrapTrust::Enrollment(inviter)`. A bundle with one signature
+is never accepted as a prune checkpoint.
+
+Rules: (1) the joiner's own `DeviceAdd` is inside the cut and never pending on the joiner; (2) everything at or
+below the cut is the starting state, not reviewed; (3) ops above the cut are reviewed as usual; (4) an op
+whose author is not an accepted device is stored as pending with reason `unknown-author` (capped by
+`PENDING_QUARANTINE_MAX_PER_DEVICE`) instead of being rejected, and settles when the author is admitted;
+(5) `sync_pending()` returns every pending op and the review screens and `sync-review` list all of them with
+`sync_pending_reason`; (6) the joiner's local hosts stay local until the user chooses to share them.
+Op-log: `sync_join_anchor_build(&self, joiner: &DeviceId) -> Result<CheckpointBundle>`, `sync_join_adopt`,
+the `unknown-author` reason, `BootstrapTrust::Enrollment`. Core (me): the two frames in `enroll.rs` and the
+call order; TUI: the review listing and the progress text "adopting the ring (N hosts)".
+
 ### 4a. Stage 3 as built (WP3a, WP3c): supersedes the sketch above where they differ
 
 Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phone wire frames in `wire.rs`).
