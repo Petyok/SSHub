@@ -613,6 +613,45 @@ from `limits.rs`, stderr separate, EOF and timeout handled. `sync-serve`,
 next to `theme` (no `CliContext`, stdout carries frames only). The existing
 `sshub sync` (ssh_config refresh) is unchanged.
 
+### 3a. Stage 2 as built (WP2a): supersedes the sketch above where they differ
+
+Code: `src/sync/{protocol,ratchet,enroll}.rs`. The `SyncMsg` shapes above were a sketch; the built set is
+`Hello`, `Auth`, `Prove`, `Heads`, `WantTail`, `Tail`, `Pruned`, `WantCheckpoint`, `CheckpointChunk`,
+`EndWants`, `Finish`, `Ack`, `EnrollCommit`, `EnrollReveal`, `EnrollConfirm`, `Bye`, as internally tagged
+JSON (`{"t": "..."}`; byte fields hex for fixed arrays, base64 for `Vec<u8>`). The round order is
+`Hello(S) Hello(C) Auth(C) Auth(S) Prove(C) Prove(S) Heads(C) Heads(S)`, the client pulls
+(`WantTail`/`Tail`, `EndWants`), the server pulls, `Finish(C) Finish(S) Ack(C)`.
+
+* `Hello { proto, min_proto, device_id, nonce, eph, checkpoint }` has NO epoch: the server speaks first
+  and does not know the client yet. The pair epoch travels in `Prove { epoch: Option<u64>, mac }`
+  after `Auth`. `Auth` is a device-key signature over the hello transcript.
+* `Heads { heads: Vec<HeadRef{device_id, seq, hash}>, own: Option<WireHead>, gossip: Vec<WireHead>,
+  forks: Vec<WireFork> }`. `WireHead` is a self-signed head `{device_id, seq, hash, sig}`; the unsigned
+  `HeadRef` carries no signature (supersedes `HeadRef.sig` above).
+* `Tail { device_id, ops: Vec<WireOp> }` with `WireOp { canonical: base64, sig: hex64 }`; the receiver
+  decodes with `Op::from_canonical(canonical, sig)` (strict) and sorts per chain before ingest.
+* Caps: `MAX_OPS_PER_TAIL`, `MAX_HEADS` 256, `MAX_GOSSIP_HEADS` 64, `MAX_FORK_PROOFS` 16,
+  `MAX_WANTS_PER_PHASE` 1024, `MAX_OPS_PER_ROUND` 200000; a `Tail` frame is cut at half of `MAX_FRAME_BYTES`.
+* Ratchet: pair keys are per pair of devices, stored in `sync_meta` under `pair:<device_id>`
+  (`PairState { epoch, key, next, prev }`). `ratchet_epoch` and `epoch_mac` are BLAKE3 keyed hashes
+  (not HMAC) with domain strings `sshub/sync/ratchet/v1` and `sshub/sync/epoch-mac/v1`. `K(0)` comes from
+  the ephemeral X25519 exchange of the first authenticated round or of an enrollment. The server commits
+  a step only after the client's `Ack`; the client keeps `K(epoch-1)`.
+* Round functions are generic over `SyncLink` (`send(&Value)`, `recv() -> Value`, `recv_first()`),
+  implemented by `transport::Conn`:
+  `run_round(&mut L, &LauncherStore, &DeviceIdentity, &DeviceId) -> Result<RoundSummary>` (client),
+  `run_sync_serve(&LauncherStore, &DeviceIdentity, &mut L) -> Result<RoundSummary>`.
+* `RoundSummary { peer, pending_arrived, applied, rejected, duplicates, reject_reasons (max 8), received,
+  sent, forks, behind, suspect, epoch_advanced, first_contact, peer_checkpoint: Option<[u8;32]>,
+  needs_checkpoint: Vec<DeviceId> }`. Hard failures are `Err`; `behind` is `Ok` and no op moved.
+* Enrollment: `enroll::run_sync_enroll(&mut L, store, id, name, attended, &mut dyn SasConfirm)` (existing
+  device, speaks first) and `run_sync_join(..)` (joining device) return
+  `EnrollOutcome { peer, peer_name, sas }`. `SasConfirm::confirm(sas, peer_name) -> bool` has a blanket
+  impl for `FnMut(&str, &str) -> bool`; the caller blocks in it on the human. The existing device
+  registers the joiner as `Mirror` and appends a `DeviceAdd`; the joiner registers the existing device as
+  `Holder`. Both save `K(0)` as a fresh pair. Enrollment waits for a human: build its `Conn` with long
+  `Limits` (idle and round), not the 30 s idle default.
+
 ## 4. Stage 3: `src/sync/{wire,quorum,share_release,snapshot,cert,recovery,modes,cred_ops}.rs` (WP3a, WP3c)
 
 ```rust
