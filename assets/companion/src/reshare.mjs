@@ -36,11 +36,20 @@ const aeadSeal = (key, aad, plain) => {
 // `existingStorage`: the storage key this phone already published for this epoch (opened from its
 // own chain by the caller) or null; then no new ShareStorageKey is needed.
 // Returns { ok, error, epoch, holders, myIndex, contributors, items, skipped, storageSealed, storageKey }.
-export function planReshare(identity, ops, epoch, { ring = {}, existingStorage = null } = {}) {
+// Remote ops of any shape end on a refusal, never on an exception out of the camera callback.
+export function planReshare(identity, ops, epoch, opts = {}) {
+  try {
+    return planReshareChecked(identity, ops, epoch, opts);
+  } catch (e) {
+    return { ok: false, error: `these ops are malformed: ${e.message}` };
+  }
+}
+
+function planReshareChecked(identity, ops, epoch, { ring = {}, existingStorage = null } = {}) {
   const me = identity.deviceId;
   const parsed = ops.map((o) => ({ ...o, op: parseOp(o.canonical) }));
   const sig = (p) => {
-    const known = ring[p.op.device_id];
+    const known = Object.prototype.hasOwnProperty.call(ring, p.op.device_id) ? ring[p.op.device_id] : null;
     return known ? edVerify(bytesOf(known.ed25519_pub), p.canonical, p.signature) : null;
   };
   const batches = parsed.filter((p) => p.op.kind === 'ShareReshareBatch' && BigInt(p.op.fields.epoch) === BigInt(epoch));
@@ -64,7 +73,7 @@ export function planReshare(identity, ops, epoch, { ring = {}, existingStorage =
     }
   }
   const authors = [...new Set(batches.map((b) => b.op.device_id))];
-  const contributors = authors.map((a) => ({ id: a, session: keys.has(a), verified: sig(batches.find((b) => b.op.device_id === a)) === true }));
+  const contributors = authors.map((a) => ({ id: a, session: keys.has(a), verified: sig(batches.find((b) => b.op.device_id === a)) === true, known: Object.prototype.hasOwnProperty.call(ring, a) }));
 
   const hosts = [...new Set(batches.flatMap((b) => b.op.fields.items.map((i) => i.host_uid)))].sort();
   let storage = existingStorage;
@@ -92,7 +101,9 @@ export function planReshare(identity, ops, epoch, { ring = {}, existingStorage =
       const sub = plain.slice(9);
       if (hexOf(commitOf(from, myIndex, sub)) !== hexOf(b64dec(item.commitments[pos]))) continue; // a lying contributor
       const g = groups.get(oldEpoch) ?? [];
-      if (!g.some((c) => c.from === from)) g.push({ from, sub_shares: [[myIndex, sub]] });
+      // Contributors are counted by the DEVICE that authored the batch, not by the byte inside the sealed text: one
+      // author cannot pose as two by writing two `from` values.
+      if (!g.some((c) => c.from === from || c.author === b.op.device_id)) g.push({ from, author: b.op.device_id, sub_shares: [[myIndex, sub]] });
       groups.set(oldEpoch, g);
     }
     const usable = [...groups.entries()].filter(([, g]) => g.length >= SHARE_K).sort((a, b) => (a[0] < b[0] ? 1 : -1))[0];
@@ -112,8 +123,10 @@ export function planReshare(identity, ops, epoch, { ring = {}, existingStorage =
   for (const p of planned) {
     items.push({ host_uid: p.host, sealed_share: aeadSeal(storage, envelopeAad(p.hostBytes, epoch, myIndex), concat(Uint8Array.of(myIndex), p.share.bytes)) });
   }
-  const seenLamport = parsed.reduce((m, p) => (BigInt(p.op.lamport) > m ? BigInt(p.op.lamport) : m), 0n);
-  const seenEpoch = parsed.reduce((m, p) => (BigInt(p.op.epoch) > m ? BigInt(p.op.epoch) : m), 0n);
+  // Counters are adopted only from ops whose signature verified under a key this phone knows.
+  const trusted = parsed.filter((p) => sig(p) === true);
+  const seenLamport = trusted.reduce((m, p) => (BigInt(p.op.lamport) > m ? BigInt(p.op.lamport) : m), 0n);
+  const seenEpoch = trusted.reduce((m, p) => (BigInt(p.op.epoch) > m ? BigInt(p.op.epoch) : m), 0n);
   storage.fill(0);
   return { ok: true, epoch, holders, myIndex, contributors, items, skipped, storageSealed, seen: { lamport: seenLamport, epoch: seenEpoch } };
 }

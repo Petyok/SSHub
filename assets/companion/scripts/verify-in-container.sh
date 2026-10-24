@@ -9,14 +9,18 @@ export NODE_PATH=/opt/node/lib/node_modules
 fail=0
 step() { name=$1; shift; "$@" >"/tmp/$name.txt" 2>&1; rc=$?; echo "STEP $name rc=$rc"; cat "/tmp/$name.txt"; [ $rc -eq 0 ] || fail=1; }
 
+# The committed page and its fingerprint (the container has no .git): the build must reproduce them byte for byte.
+cp sshub-companion.html /tmp/committed.html
+cp FINGERPRINT /tmp/committed.fingerprint
 step npm-ci npm ci --no-audit --no-fund
 step link node scripts/link-vendor.mjs
 step build node build.mjs
+cmp sshub-companion.html /tmp/committed.html && cmp FINGERPRINT /tmp/committed.fingerprint && echo "COMMITTED EQUALS BUILD yes" || { echo "COMMITTED EQUALS BUILD no (rebuild and commit sshub-companion.html and FINGERPRINT)"; fail=1; }
 cp sshub-companion.html /tmp/build1.html
 step build-again node build.mjs
 cmp sshub-companion.html /tmp/build1.html && echo "REPRODUCIBLE yes" || { echo "REPRODUCIBLE no"; fail=1; }
 step build-selftest node build.mjs --selftest
-step node-tests node --test test/phone.test.mjs test/phone2.test.mjs test/phone3.test.mjs test/quorum.test.mjs test/replay.test.js
+step node-tests node --test test/phone.test.mjs test/phone2.test.mjs test/phone3.test.mjs test/review-app-round1.test.mjs test/quorum.test.mjs test/replay.test.js
 step headless-replay node scripts/headless-check.mjs
 # The Rust terminal of the enrollment check (phone_fixtures e2e_enrollment_peer_for_the_page) runs next to the page flow
 # and exchanges the enrollment frames with it as files; compile first so it is ready when the page starts.

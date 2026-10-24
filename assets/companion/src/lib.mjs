@@ -357,28 +357,34 @@ export function canonicalJSON(value) {
 // JSON.parse loses digits above 2^53 (u64::MAX!). Vectors.json is re-read through
 // this parser so big integers survive as BigInt.
 export function parseJSONExact(text) {
+  const U64_MAX = 18446744073709551615n;
+  const I64_MIN = -9223372036854775808n;
+  const MAX_DEPTH = 32; // limits.rs MAX_JSON_DEPTH
+  const ESC = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '"': '"', '\\': '\\', '/': '/' };
   let i = 0;
+  const fail = (what) => new Error(`parseJSONExact: ${what} at ${i}`);
   const ws = () => {
     while (i < text.length && /[\s]/.test(text[i])) i++;
   };
-  function value() {
+  function value(depth) {
     ws();
+    if (i >= text.length) throw fail('unexpected end of input');
     const c = text[i];
-    if (c === '{') return object();
-    if (c === '[') return array();
+    if (c === '{') return object(depth + 1);
+    if (c === '[') return array(depth + 1);
     if (c === '"') return string();
     if (c === 't') return expect('true', true);
     if (c === 'f') return expect('false', false);
     if (c === 'n') return expect('null', null);
     if (c === '-' || (c >= '0' && c <= '9')) return number();
-    throw new Error(`parseJSONExact: unexpected '${c}' at ${i}`);
+    throw fail(`unexpected '${c}'`);
   }
   function expect(lit, v) {
     if (text.startsWith(lit, i)) {
       i += lit.length;
       return v;
     }
-    throw new Error(`parseJSONExact: bad literal at ${i}`);
+    throw fail('bad literal');
   }
   function number() {
     const start = i;
@@ -390,29 +396,47 @@ export function parseJSONExact(text) {
       return Number(text.slice(start, i)); // floats never appear in canonical ops
     }
     const tok = text.slice(start, i);
+    if (!/^-?[0-9]+$/.test(tok)) throw fail('bad number');
     const n = Number(tok);
     if (Number.isSafeInteger(n) && String(n) === tok.replace(/^(-?)0+(?=\d)/, '$1')) {
-      if (tok === '-0') throw new Error('parseJSONExact: -0 unsupported');
+      if (tok === '-0') throw fail('-0 unsupported');
       return n;
     }
-    return BigInt(tok); // u64::MAX & friends survive exactly
+    const big = BigInt(tok); // u64::MAX & friends survive exactly
+    if (big > U64_MAX || big < I64_MIN) throw fail('integer outside the Rust field types');
+    return big;
   }
   function string() {
+    if (text[i] !== '"') throw fail('expected a string');
     let out = '';
     i++; // opening quote
-    while (true) {
+    for (;;) {
+      if (i >= text.length) throw fail('unterminated string');
       const c = text[i];
       if (c === '"') {
         i++;
         return out;
       }
+      if (c < ' ') throw fail('raw control character in a string');
       if (c === '\\') {
         const e = text[i + 1];
         if (e === 'u') {
-          out += String.fromCharCode(parseInt(text.slice(i + 2, i + 6), 16));
+          const hex = text.slice(i + 2, i + 6);
+          if (!/^[0-9a-fA-F]{4}$/.test(hex)) throw fail('bad \\u escape');
+          const unit = parseInt(hex, 16);
+          if (unit >= 0xd800 && unit <= 0xdbff) {
+            const next = text.slice(i + 6, i + 12);
+            if (!/^\\u[dD][c-fC-F][0-9a-fA-F]{2}$/.test(next)) throw fail('lone surrogate');
+            out += String.fromCharCode(unit, parseInt(next.slice(2), 16));
+            i += 12;
+            continue;
+          }
+          if (unit >= 0xdc00 && unit <= 0xdfff) throw fail('lone surrogate');
+          out += String.fromCharCode(unit);
           i += 6;
         } else {
-          out += { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', '"': '"', '\\': '\\', '/': '/' }[e];
+          if (e === undefined || !Object.prototype.hasOwnProperty.call(ESC, e)) throw fail('unknown escape');
+          out += ESC[e];
           i += 2;
         }
         continue;
@@ -421,7 +445,8 @@ export function parseJSONExact(text) {
       i++;
     }
   }
-  function array() {
+  function array(depth) {
+    if (depth > MAX_DEPTH) throw fail('nesting too deep');
     i++;
     const out = [];
     ws();
@@ -429,8 +454,8 @@ export function parseJSONExact(text) {
       i++;
       return out;
     }
-    while (true) {
-      out.push(value());
+    for (;;) {
+      out.push(value(depth));
       ws();
       if (text[i] === ',') {
         i++;
@@ -440,10 +465,11 @@ export function parseJSONExact(text) {
         i++;
         return out;
       }
-      throw new Error(`parseJSONExact: expected , or ] at ${i}`);
+      throw fail('expected , or ]');
     }
   }
-  function object() {
+  function object(depth) {
+    if (depth > MAX_DEPTH) throw fail('nesting too deep');
     i++;
     const out = {};
     ws();
@@ -451,13 +477,14 @@ export function parseJSONExact(text) {
       i++;
       return out;
     }
-    while (true) {
+    for (;;) {
       ws();
       const k = string();
+      if (k === '__proto__') throw fail('__proto__ key');
       ws();
-      if (text[i] !== ':') throw new Error(`parseJSONExact: expected : at ${i}`);
+      if (text[i] !== ':') throw fail('expected :');
       i++;
-      out[k] = value();
+      out[k] = value(depth);
       ws();
       if (text[i] === ',') {
         i++;
@@ -467,12 +494,12 @@ export function parseJSONExact(text) {
         i++;
         return out;
       }
-      throw new Error(`parseJSONExact: expected , or } at ${i}`);
+      throw fail('expected , or }');
     }
   }
-  const v = value();
+  const v = value(0);
   ws();
-  if (i !== text.length) throw new Error(`parseJSONExact: trailing data at ${i}`);
+  if (i !== text.length) throw fail('trailing data');
   return v;
 }
 

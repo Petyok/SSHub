@@ -140,6 +140,7 @@ export async function runPage({ chrome, ORIGIN, clearSiteData, coolDown, guard, 
   await fill('#pin2', PIN);
   await click('#restore');
   await wait('#device-id');
+  await click('#head-new'); // a restored key may not sign until its chain head is known
   check('restore from 24 words gives the fixture phone identity', (await text('#device-id')) === fx.phone.pub.device_id, fx.phone.pub.device_id);
   const good = fx.challenges.find((c) => c.name === 'good');
   await coolDown(36);
@@ -149,6 +150,7 @@ export async function runPage({ chrome, ORIGIN, clearSiteData, coolDown, guard, 
   check('every check passes (the requester is unknown to a fresh phone: one warning)', (await chrome.eval(`document.querySelectorAll('#checks .check.bad').length`)) === 0 && (await chrome.eval(`document.querySelectorAll('#checks .check.warn').length`)) === 1, 'checks');
   await chrome.eval(`for (const id of ['opt-clip', 'opt-sound']) { const e = document.querySelector('#' + id); if (e.checked) e.click(); }`, { gesture: true });
   const ta = Date.now();
+  await fill('#confirm-requester', fx.requester.pub.device_id); // an unmet requester needs its id typed in
   await click('#approve');
   await wait('#send-done');
   const msApprove = Date.now() - ta;
@@ -167,6 +169,7 @@ export async function runPage({ chrome, ORIGIN, clearSiteData, coolDown, guard, 
   await paste(env.frame_hex);
   check('a second short code for a live credential is refused (checkbox locked)', await chrome.eval(`document.querySelector('#opt-snapshot').disabled`), 'disabled');
   await chrome.eval(`for (const id of ['opt-clip', 'opt-sound', 'opt-snapshot']) { const e = document.querySelector('#' + id); if (e.checked) e.click(); }`, { gesture: true });
+  await fill('#confirm-requester', fx.requester.pub.device_id); // an unmet requester needs its id typed in
   await click('#approve');
   await wait('#send-done');
   const envReply = parseReplyPlain(sealedBoxOpen(h(env.eph_secret_hex), (await captureDoc('#reverse-qr')).slice(23)));

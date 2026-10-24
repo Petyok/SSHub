@@ -39,7 +39,7 @@ const i64be = (n) => {
 };
 
 const request = (over = {}) => ({
-  device_id: DELEGATE, scope: { hosts: [HOST_A, HOST_B] }, expiry: BigInt(NOW + 7 * DAY), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 5n, ...over,
+  device_id: DELEGATE, scope: { hosts: [HOST_A, HOST_B] }, expiry: BigInt(NOW + 7 * DAY), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 1n, ...over,
 });
 // What the page receives: the request through the kind 9 wire, as a terminal would show it.
 const wire = (r) => decodeCertRequest(encodeCertRequest(r));
@@ -73,7 +73,7 @@ test('kind 9 and kind 10 have the byte layout of wire.rs', () => {
   const r = request({ scope: { group: '06'.repeat(16) } });
   const expected = concat(
     MAGIC, Uint8Array.of(9), h(DELEGATE), Uint8Array.of(0), h('06'.repeat(16)),
-    i64be(NOW + 7 * DAY), Uint8Array.of(0, 0, 0, 2), new Uint8Array(8), Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 5),
+    i64be(NOW + 7 * DAY), Uint8Array.of(0, 0, 0, 2), new Uint8Array(8), Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 1),
   );
   assert.equal(hexOf(encodeCertRequest(r)), hexOf(expected));
   assert.deepEqual(decodeCertRequest(expected), r);
@@ -129,7 +129,7 @@ test('the phone authors CertIssue with the request fields UNCHANGED, chained on 
   assert.equal(op.device_id, phone.deviceId, 'the phone is the author');
   assert.equal(op.seq, 1);
   assert.deepEqual(op.fields, {
-    device_id: DELEGATE, scope: { Hosts: [HOST_A, HOST_B] }, expiry: NOW + 7 * DAY, max_new_hosts_per_day: 2, epoch_lo: 0, epoch_hi: 5,
+    device_id: DELEGATE, scope: { Hosts: [HOST_A, HOST_B] }, expiry: NOW + 7 * DAY, max_new_hosts_per_day: 2, epoch_lo: 0, epoch_hi: 1,
   });
   assert.ok(edVerify(phone.edPub, first.canonical, first.signature));
   assert.equal(first.entry.hash, opHashHex(first.canonical), 'the certificate id is the op hash');
@@ -183,7 +183,7 @@ test('every limit of CertIssue is enforced before signing, and a refusal writes 
   }
   assert.equal(state.chain.length, 0);
   // the edges themselves are accepted
-  for (const r of [request({ expiry: BigInt(NOW + 1) }), request({ expiry: BigInt(NOW + 90 * DAY) }), request({ max_new_hosts_per_day: 1 }), request({ max_new_hosts_per_day: 50 }), request({ epoch_lo: 5n, epoch_hi: 5n })]) {
+  for (const r of [request({ expiry: BigInt(NOW + 1) }), request({ expiry: BigInt(NOW + 90 * DAY) }), request({ max_new_hosts_per_day: 1 }), request({ max_new_hosts_per_day: 50 }), request({ epoch_lo: 0n, epoch_hi: 0n })]) {
     const s = emptyState();
     assert.doesNotThrow(() => issueCert(s, phone, wire(r), NOW));
     assert.equal(s.chain.length, 1);
