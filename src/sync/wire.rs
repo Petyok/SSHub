@@ -4,13 +4,20 @@
 //! ```text
 //! frame     = "SWR1" || version u16 BE || kind u8 || body
 //! challenge = kind 1: nonce(32) || expiry i64 BE || eph_x25519_pub(32) || request_id u64 BE ||
-//!                     op_len u32 BE || op_canonical(op_len) || op_signature(64)
+//!                     op_len u32 BE || op_canonical(op_len) || op_signature(64) ||
+//!                     material_len u32 BE || phone_material(material_len)
+//! material  = kind u8 (0 hybrid, 1 envelope) || epoch u64 BE || share_len u16 BE || share_blob ||
+//!             storage_len u16 BE || storage_blob
 //! response  = kind 2: request_id u64 BE || len u64 BE || ciphertext(len)
 //! ```
 //!
 //! The op travels as its canonical bytes plus its signature, exactly as the terminal hashed
 //! and signed them: the phone verifies those bytes and renders its description from them,
-//! it never re-serialises. The channel binding hash covers the WHOLE canonical op.
+//! it never re-serialises. The phone stores no credential keys, so everything it needs to
+//! unwrap ITS share of the credential rides along as `phone_material`: either the hybrid
+//! wrapped share of the original credential op (kind 0) or, after a reshare, its envelope share
+//! plus its storage key blob for that epoch (kind 1). The channel binding covers the WHOLE
+//! canonical op and the hash of the phone material, so the approval is for exactly what was shown.
 
 use anyhow::{bail, Result};
 
@@ -26,6 +33,86 @@ pub const KIND_SHARE_RESPONSE: u8 = 2;
 pub const DOMAIN_TAG_CHALLENGE: &[u8] = b"sshub/sync/challenge/v1";
 const HEADER: usize = 7;
 
+/// Which shape of wrapped share the phone is given.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ShareKind {
+    /// `hybrid_wrap(phone pub, host_uid || index || share)` from the credential op.
+    Hybrid = 0,
+    /// `aead_seal(storage key, aad = host_uid || epoch || index, index || share)` plus the
+    /// `hybrid_wrap(phone pub, storage key)` blob of that epoch.
+    Envelope = 1,
+}
+
+/// Everything the phone needs to recover its own share for one credential.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PhoneMaterial {
+    pub kind: ShareKind,
+    pub epoch: u64,
+    pub share_blob: Vec<u8>,
+    /// Empty for [`ShareKind::Hybrid`].
+    pub storage_blob: Vec<u8>,
+}
+
+impl PhoneMaterial {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(13 + self.share_blob.len() + self.storage_blob.len());
+        out.push(self.kind as u8);
+        out.extend_from_slice(&self.epoch.to_be_bytes());
+        out.extend_from_slice(
+            &u16::try_from(self.share_blob.len())
+                .expect("share blob fits u16")
+                .to_be_bytes(),
+        );
+        out.extend_from_slice(&self.share_blob);
+        out.extend_from_slice(
+            &u16::try_from(self.storage_blob.len())
+                .expect("storage blob fits u16")
+                .to_be_bytes(),
+        );
+        out.extend_from_slice(&self.storage_blob);
+        out
+    }
+
+    pub fn decode(b: &[u8]) -> Result<Self> {
+        if b.len() < 13 {
+            bail!("phone material too short");
+        }
+        let kind = match b[0] {
+            0 => ShareKind::Hybrid,
+            1 => ShareKind::Envelope,
+            v => bail!("unknown phone material kind {v}"),
+        };
+        let epoch = u64::from_be_bytes(b[1..9].try_into().unwrap());
+        let share_len = u16::from_be_bytes(b[9..11].try_into().unwrap()) as usize;
+        let storage_at = 11 + share_len;
+        if b.len() < storage_at + 2 {
+            bail!("phone material truncated");
+        }
+        let storage_len =
+            u16::from_be_bytes(b[storage_at..storage_at + 2].try_into().unwrap()) as usize;
+        if b.len() != storage_at + 2 + storage_len {
+            bail!("phone material length does not match its fields");
+        }
+        if kind == ShareKind::Hybrid && storage_len != 0 {
+            bail!("a hybrid share carries no storage key blob");
+        }
+        if kind == ShareKind::Envelope && storage_len == 0 {
+            bail!("an envelope share needs its storage key blob");
+        }
+        Ok(Self {
+            kind,
+            epoch,
+            share_blob: b[11..storage_at].to_vec(),
+            storage_blob: b[storage_at + 2..].to_vec(),
+        })
+    }
+
+    pub fn hash(&self) -> [u8; 32] {
+        chain_hash(&self.encode())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChallengeWire {
     pub op_canonical: Vec<u8>,
@@ -34,19 +121,23 @@ pub struct ChallengeWire {
     pub expiry: i64,
     pub eph_x25519_pub: [u8; 32],
     pub request_id: u64,
+    pub phone_material: PhoneMaterial,
 }
 
 /// The exact bytes an approving holder signs:
-/// `tag || proto_version u16 LE || canonical_op || nonce || expiry i64 LE || eph || request_id u64 LE`.
+/// `tag || proto_version u16 LE || canonical_op || nonce || expiry i64 LE || eph || request_id u64 LE ||
+/// BLAKE3(phone material)`.
 pub fn binding_preimage(
     op_canonical: &[u8],
     nonce: &[u8; 32],
     expiry: i64,
     eph: &[u8; 32],
     request_id: u64,
+    material_hash: &[u8; 32],
 ) -> Vec<u8> {
-    let mut b =
-        Vec::with_capacity(DOMAIN_TAG_CHALLENGE.len() + 2 + op_canonical.len() + 32 + 8 + 32 + 8);
+    let mut b = Vec::with_capacity(
+        DOMAIN_TAG_CHALLENGE.len() + 2 + op_canonical.len() + 32 + 8 + 32 + 8 + 32,
+    );
     b.extend_from_slice(DOMAIN_TAG_CHALLENGE);
     b.extend_from_slice(&SYNC_WIRE_V1.to_le_bytes());
     b.extend_from_slice(op_canonical);
@@ -54,6 +145,7 @@ pub fn binding_preimage(
     b.extend_from_slice(&expiry.to_le_bytes());
     b.extend_from_slice(eph);
     b.extend_from_slice(&request_id.to_le_bytes());
+    b.extend_from_slice(material_hash);
     b
 }
 
@@ -64,6 +156,7 @@ pub fn binding_hash(
     expiry: i64,
     eph: &[u8; 32],
     request_id: u64,
+    material_hash: &[u8; 32],
 ) -> [u8; 32] {
     chain_hash(&binding_preimage(
         op_canonical,
@@ -71,6 +164,7 @@ pub fn binding_hash(
         expiry,
         eph,
         request_id,
+        material_hash,
     ))
 }
 
@@ -88,6 +182,7 @@ impl ChallengeWire {
             self.expiry,
             &self.eph_x25519_pub,
             self.request_id,
+            &self.phone_material.hash(),
         )
     }
 
@@ -104,20 +199,29 @@ impl ChallengeWire {
         );
         out.extend_from_slice(&self.op_canonical);
         out.extend_from_slice(&self.op_signature);
+        let material = self.phone_material.encode();
+        out.extend_from_slice(&(material.len() as u32).to_be_bytes());
+        out.extend_from_slice(&material);
         out
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let body = unframe(bytes, KIND_CHALLENGE)?;
-        if body.len() < 32 + 8 + 32 + 8 + 4 + 64 {
+        if body.len() < 32 + 8 + 32 + 8 + 4 + 64 + 4 {
             bail!("challenge too short");
         }
         let op_len = u32::from_be_bytes(body[80..84].try_into().unwrap()) as usize;
         if op_len > MAX_FRAME_BYTES {
             bail!("challenge op of {op_len} bytes exceeds the frame cap");
         }
-        if body.len() != 84 + op_len + 64 {
-            bail!("challenge length does not match its op length");
+        let material_at = 84 + op_len + 64;
+        if body.len() < material_at + 4 {
+            bail!("challenge truncated before the phone material");
+        }
+        let material_len =
+            u32::from_be_bytes(body[material_at..material_at + 4].try_into().unwrap()) as usize;
+        if material_len > MAX_FRAME_BYTES || body.len() != material_at + 4 + material_len {
+            bail!("challenge length does not match its op and material lengths");
         }
         Ok(Self {
             nonce: body[..32].try_into().unwrap(),
@@ -125,7 +229,8 @@ impl ChallengeWire {
             eph_x25519_pub: body[40..72].try_into().unwrap(),
             request_id: u64::from_be_bytes(body[72..80].try_into().unwrap()),
             op_canonical: body[84..84 + op_len].to_vec(),
-            op_signature: body[84 + op_len..].try_into().unwrap(),
+            op_signature: body[84 + op_len..material_at].try_into().unwrap(),
+            phone_material: PhoneMaterial::decode(&body[material_at + 4..])?,
         })
     }
 }
@@ -198,6 +303,21 @@ mod tests {
             expiry: 1_893_456_000,
             eph_x25519_pub: [3; 32],
             request_id: 0xDEAD_BEEF,
+            phone_material: PhoneMaterial {
+                kind: ShareKind::Hybrid,
+                epoch: 3,
+                share_blob: vec![0xAB; 40],
+                storage_blob: vec![],
+            },
+        }
+    }
+
+    fn envelope() -> PhoneMaterial {
+        PhoneMaterial {
+            kind: ShareKind::Envelope,
+            epoch: 5,
+            share_blob: vec![1; 73],
+            storage_blob: vec![2; 60],
         }
     }
 
@@ -269,6 +389,8 @@ mod tests {
             |c: &mut ChallengeWire| c.expiry += 1,
             |c: &mut ChallengeWire| c.eph_x25519_pub[0] ^= 1,
             |c: &mut ChallengeWire| c.request_id += 1,
+            |c: &mut ChallengeWire| c.phone_material.share_blob[0] ^= 1,
+            |c: &mut ChallengeWire| c.phone_material.epoch += 1,
         ] {
             let mut t = c.clone();
             mutate(&mut t);
@@ -281,7 +403,84 @@ mod tests {
             c.expiry,
             &c.eph_x25519_pub,
             c.request_id,
+            &c.phone_material.hash(),
         );
         assert!(pre.starts_with(b"sshub/sync/challenge/v1\x01\x00"));
+    }
+
+    #[test]
+    fn phone_material_round_trips_in_both_shapes_and_rejects_inconsistent_ones() {
+        for m in [sample().phone_material, envelope()] {
+            assert_eq!(PhoneMaterial::decode(&m.encode()).unwrap(), m);
+            let mut c = sample();
+            c.phone_material = m.clone();
+            assert_eq!(ChallengeWire::decode(&c.encode()).unwrap(), c);
+        }
+        let hybrid_with_storage = PhoneMaterial {
+            storage_blob: vec![1],
+            ..sample().phone_material
+        };
+        assert!(PhoneMaterial::decode(&hybrid_with_storage.encode()).is_err());
+        let envelope_without = PhoneMaterial {
+            storage_blob: vec![],
+            ..envelope()
+        };
+        assert!(PhoneMaterial::decode(&envelope_without.encode()).is_err());
+        let mut bad = envelope().encode();
+        bad[0] = 7;
+        assert!(PhoneMaterial::decode(&bad).is_err());
+        assert!(PhoneMaterial::decode(&envelope().encode()[..20]).is_err());
+    }
+
+    /// Measured, not estimated: a realistic ShareRelease op, a real hybrid wrapped share of the
+    /// phone, a real storage key blob. The breakdown is printed with `--nocapture`.
+    #[test]
+    fn a_realistic_challenge_is_under_two_kilobytes() {
+        use crate::sync::crypto::{hybrid_wrap, DeviceIdentity};
+        use crate::sync::fountain::{fountain_encode, frame_bytes_for_area};
+        let phone = DeviceIdentity::generate().public();
+        let op = format!(
+            r#"{{"device_id":"{}","seq":1234,"lamport":5678,"prev_hash":"{}","timestamp":1893452400,"epoch":3,"alg":{{"sig":1,"wrap":1}},"body":{{"ShareRelease":{{"host_uid":"{}","request_id":1234567890123,"requester":"{}"}}}}}}"#,
+            "d04ab232742bb4ab", "ab".repeat(32), "cd".repeat(16), "d04ab232742bb4ab"
+        )
+        .into_bytes();
+        let hybrid = hybrid_wrap(&phone, &[0x11; 49]); // host_uid || index || share
+        let storage = hybrid_wrap(&phone, &[0x22; 32]);
+        let envelope_share = vec![0x33; 24 + 33 + 16];
+        let breakdown = |m: PhoneMaterial| {
+            let c = ChallengeWire {
+                op_canonical: op.clone(),
+                op_signature: [0; 64],
+                nonce: [0; 32],
+                expiry: 0,
+                eph_x25519_pub: [0; 32],
+                request_id: 1,
+                phone_material: m,
+            };
+            (c.encode().len(), c.phone_material.encode().len(), c)
+        };
+        let (h_total, h_mat, h) = breakdown(PhoneMaterial {
+            kind: ShareKind::Hybrid,
+            epoch: 3,
+            share_blob: hybrid.clone(),
+            storage_blob: vec![],
+        });
+        let (e_total, e_mat, _) = breakdown(PhoneMaterial {
+            kind: ShareKind::Envelope,
+            epoch: 5,
+            share_blob: envelope_share,
+            storage_blob: storage,
+        });
+        println!("op canonical {} B, signature 64 B, fixed fields 91 B + header 7 B, material hybrid {h_mat} B (blob {} B), envelope {e_mat} B", op.len(), hybrid.len());
+        println!("challenge total: hybrid {h_total} B, envelope {e_total} B");
+        for (cols, rows) in [(80u16, 24u16), (120, 40)] {
+            let fb = frame_bytes_for_area(cols, rows).unwrap();
+            let frames = fountain_encode(&h.encode(), fb, 25).unwrap().len();
+            println!(
+                "{cols}x{rows}: {fb} B frames, {frames} frames per lap, {:.1} s at 8 fps",
+                frames as f64 / 8.0
+            );
+        }
+        assert!(h_total < 2000 && e_total < 2000, "{h_total} {e_total}");
     }
 }

@@ -9,7 +9,9 @@ use serde_json::{json, Value};
 use super::codes::{crockford_encode, normalize_code};
 use super::crypto::{Argon2Profile, Share};
 use super::fountain::fountain_encode;
-use super::wire::{binding_hash, binding_preimage, ChallengeWire, ShareResponseWire};
+use super::wire::{
+    binding_hash, binding_preimage, ChallengeWire, PhoneMaterial, ShareKind, ShareResponseWire,
+};
 use super::{email, snapshot};
 
 const TEST_PROFILE: Argon2Profile = Argon2Profile {
@@ -103,17 +105,49 @@ pub(crate) fn build() -> Vec<Value> {
 
     // wire frames and the channel binding
     let op = br#"{"device_id":"d04ab232742bb4ab","seq":5,"lamport":5,"prev_hash":"00","timestamp":1893452400,"epoch":0,"body":{"ShareRelease":{"host_uid":"07","request_id":42,"requester":"d04ab232742bb4ab"}}}"#.to_vec();
-    let ch = ChallengeWire {
-        op_canonical: op,
-        op_signature: [0x44; 64],
-        nonce: [0xAA; 32],
-        expiry: 1_893_456_000,
-        eph_x25519_pub: [0x30; 32],
-        request_id: 42,
-    };
-    let enc = ch.encode();
-    assert_eq!(ChallengeWire::decode(&enc).unwrap(), ch);
-    v.push(vector("wire-challenge", "wire_challenge", json!({}), json!({ "op_canonical": hx(&ch.op_canonical), "op_signature": hx(&ch.op_signature), "nonce": hx(&ch.nonce), "expiry": ch.expiry, "eph_x25519_pub": hx(&ch.eph_x25519_pub), "request_id": ch.request_id }), json!({ "frame": hx(&enc), "binding_preimage": hx(&binding_preimage(&ch.op_canonical, &ch.nonce, ch.expiry, &ch.eph_x25519_pub, ch.request_id)), "binding_hash": hx(&binding_hash(&ch.op_canonical, &ch.nonce, ch.expiry, &ch.eph_x25519_pub, ch.request_id)) })));
+    for (id, material) in [
+        (
+            "wire-challenge-hybrid",
+            PhoneMaterial {
+                kind: ShareKind::Hybrid,
+                epoch: 3,
+                share_blob: counting(70, 0x60),
+                storage_blob: vec![],
+            },
+        ),
+        (
+            "wire-challenge-envelope",
+            PhoneMaterial {
+                kind: ShareKind::Envelope,
+                epoch: 5,
+                share_blob: counting(73, 0x70),
+                storage_blob: counting(90, 0x80),
+            },
+        ),
+    ] {
+        let ch = ChallengeWire {
+            op_canonical: op.clone(),
+            op_signature: [0x44; 64],
+            nonce: [0xAA; 32],
+            expiry: 1_893_456_000,
+            eph_x25519_pub: [0x30; 32],
+            request_id: 42,
+            phone_material: material.clone(),
+        };
+        let enc = ch.encode();
+        assert_eq!(ChallengeWire::decode(&enc).unwrap(), ch);
+        let mh = material.hash();
+        v.push(vector(
+            id,
+            "wire_challenge",
+            json!({}),
+            json!({ "op_canonical": hx(&ch.op_canonical), "op_signature": hx(&ch.op_signature), "nonce": hx(&ch.nonce), "expiry": ch.expiry, "eph_x25519_pub": hx(&ch.eph_x25519_pub), "request_id": ch.request_id,
+                    "phone_material": hx(&material.encode()) }),
+            json!({ "frame": hx(&enc), "material_hash": hx(&mh),
+                    "binding_preimage": hx(&binding_preimage(&ch.op_canonical, &ch.nonce, ch.expiry, &ch.eph_x25519_pub, ch.request_id, &mh)),
+                    "binding_hash": hx(&binding_hash(&ch.op_canonical, &ch.nonce, ch.expiry, &ch.eph_x25519_pub, ch.request_id, &mh)) }),
+        ));
+    }
     let resp = ShareResponseWire {
         request_id: 42,
         ciphertext: counting(81, 7),

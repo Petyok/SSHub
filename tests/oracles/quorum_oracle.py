@@ -103,9 +103,16 @@ def run(path):
             check(vid, (header + seal(key, nonce, h(i["fragment"]), header)).hex() == o["blob"])
         elif p == "wire_challenge":
             op = h(i["op_canonical"])
-            body = h(i["nonce"]) + struct.pack(">q", i["expiry"]) + h(i["eph_x25519_pub"]) + struct.pack(">Q", i["request_id"]) + struct.pack(">I", len(op)) + op + h(i["op_signature"])
+            material = h(i["phone_material"])
+            body = h(i["nonce"]) + struct.pack(">q", i["expiry"]) + h(i["eph_x25519_pub"]) + struct.pack(">Q", i["request_id"]) + struct.pack(">I", len(op)) + op + h(i["op_signature"]) + struct.pack(">I", len(material)) + material
             check(vid + " frame", (b"SWR1\x00\x01\x01" + body).hex() == o["frame"])
-            pre = b"sshub/sync/challenge/v1" + struct.pack("<H", 1) + op + h(i["nonce"]) + struct.pack("<q", i["expiry"]) + h(i["eph_x25519_pub"]) + struct.pack("<Q", i["request_id"])
+            # the material layout: kind, epoch, share blob, storage blob
+            kind, epoch, slen = material[0], struct.unpack(">Q", material[1:9])[0], struct.unpack(">H", material[9:11])[0]
+            tlen = struct.unpack(">H", material[11 + slen:13 + slen])[0]
+            check(vid + " material layout", 13 + slen + tlen == len(material) and (kind == 0) == (tlen == 0))
+            mh = blake3.blake3(material).digest()
+            check(vid + " material hash", mh.hex() == o["material_hash"])
+            pre = b"sshub/sync/challenge/v1" + struct.pack("<H", 1) + op + h(i["nonce"]) + struct.pack("<q", i["expiry"]) + h(i["eph_x25519_pub"]) + struct.pack("<Q", i["request_id"]) + mh
             check(vid + " preimage", pre.hex() == o["binding_preimage"])
             check(vid + " hash", blake3.blake3(pre).hexdigest() == o["binding_hash"])
         elif p == "wire_share_response":
