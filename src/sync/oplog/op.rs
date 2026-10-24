@@ -276,6 +276,37 @@ pub enum OpBody {
         seq: u64,
         chain_hash: [u8; 32],
     },
+    /// Red ceremony, inert records (the ceremony code in stage 3 reads them).
+    RedApprove {
+        op_hash: [u8; 32],
+    },
+    RedPhoneSign {
+        op_hash: [u8; 32],
+    },
+    RedFactor {
+        op_hash: [u8; 32],
+        factor: ThirdFactor,
+        sig: [u8; 64],
+    },
+    /// Registers a third-factor verifier: `sealed` is empty for Paper and at
+    /// most 128 bytes for EmailCode.
+    FactorRegister {
+        factor: ThirdFactor,
+        public: [u8; 32],
+        sealed: Vec<u8>,
+        salt: [u8; 16],
+        sender: Option<DeviceId>,
+    },
+    /// Promotion and demotion of a device between mirror and holder.
+    DeviceRoleChange {
+        device_id: DeviceId,
+        to: DeviceRole,
+    },
+    /// Authorises a bulk credential export for `window_secs` (at most 3600).
+    BulkExport {
+        requester: DeviceId,
+        window_secs: u32,
+    },
     /// Certifies the resolved state at a cut of the log (C15). Inert until
     /// verified by every device that signs.
     CheckpointPropose {

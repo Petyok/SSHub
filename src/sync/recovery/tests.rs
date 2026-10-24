@@ -347,7 +347,9 @@ fn cancellation_wins_over_everything_and_a_live_phone_needs_no_factor() {
 mod over_the_log {
     use super::*;
     use crate::sync::crypto::{bip39_encode, paper_derive, PaperDomain};
-    use crate::sync::oplog::{Attendance, DeviceKind, HeadAttest, Op, OpBody, ThirdFactor};
+    use crate::sync::oplog::{
+        Attendance, DeviceKind, DeviceRole, HeadAttest, Op, OpBody, ThirdFactor, VerifiedBy,
+    };
     use crate::sync::protocol::tests::Dev;
     use crate::sync::quorum::paper_setup;
     use crate::sync::quorum::tests::{append, deliver};
@@ -385,6 +387,17 @@ mod over_the_log {
                 x.trust_with(y, attendance, kind);
             }
         }
+        // A device records itself at enrollment; the hub knows it is unattended.
+        d[H].store
+            .sync_register_device(
+                &d[H].id.public(),
+                "hub",
+                DeviceRole::Holder,
+                Attendance::Unattended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
         World { d }
     }
 
@@ -642,5 +655,123 @@ mod over_the_log {
         w.sync();
         assert!(w.verdict(&by_phone, by_phone.timestamp).is_err());
         assert!(w.verdict(&by_hub, by_hub.timestamp).is_err());
+    }
+
+    #[test]
+    fn the_builders_drive_a_recovery_from_start_to_completion() {
+        use crate::sync::recovery::{
+            ack_body, approve_body, cancel_body, clear_snapshots, completion_bodies, start_body,
+            unacknowledged,
+        };
+        let w = world();
+        let now = crate::store::now_ts();
+        let op = append(
+            &w.d[R],
+            start_body(&w.d[R].store, &w.d[R].id, now, None, ThirdFactor::Paper).unwrap(),
+        );
+        w.sync();
+        // The attended devices see it, the requester and the unattended hub do not owe an acknowledgement.
+        assert_eq!(
+            unacknowledged(&w.d[A].store, &w.d[A].id, now)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(unacknowledged(&w.d[R].store, &w.d[R].id, now)
+            .unwrap()
+            .is_empty());
+        assert!(unacknowledged(&w.d[H].store, &w.d[H].id, now)
+            .unwrap()
+            .is_empty());
+        append(&w.d[A], approve_body(&op).unwrap());
+        append(&w.d[B], approve_body(&op).unwrap());
+        append(&w.d[A], ack_body(&op, now).unwrap());
+        w.sync();
+        assert!(
+            unacknowledged(&w.d[A].store, &w.d[A].id, now)
+                .unwrap()
+                .is_empty(),
+            "acknowledged once"
+        );
+        let ready_at = now + RECOVERY_TIMELOCK_SECS;
+        assert_eq!(
+            w.verdict(&op, now + 5).unwrap(),
+            ReenrollVerdict::NeedsMoreTime { ready_at }
+        );
+
+        // Completion only after the clock, and it revokes the old phone and admits the new one.
+        let new_phone = Dev::new();
+        assert!(completion_bodies(
+            &w.d[OBS].store,
+            &op,
+            now + 5,
+            &new_phone.id.public(),
+            "new phone"
+        )
+        .is_err());
+        let bodies = completion_bodies(
+            &w.d[OBS].store,
+            &op,
+            ready_at,
+            &new_phone.id.public(),
+            "new phone",
+        )
+        .unwrap();
+        assert!(
+            matches!(&bodies[0], OpBody::DeviceRevoke { device_id } if *device_id == w.d[P].did)
+        );
+        assert!(matches!(
+            &bodies[1],
+            OpBody::DeviceAdd {
+                kind: DeviceKind::Phone,
+                ..
+            }
+        ));
+
+        // Cancel builders: a device needs the factor.
+        assert!(cancel_body(&op, false, None).is_err());
+        assert!(
+            cancel_body(&op, false, Some(ThirdFactor::Paper)).is_ok()
+                && cancel_body(&op, true, None).is_ok()
+        );
+
+        crate::sync::quorum::meta_set(&w.d[A].store, "snapshot:aa", b"x").unwrap();
+        assert_eq!(clear_snapshots(&w.d[A].store).unwrap(), 1);
+    }
+
+    #[test]
+    fn screening_rejects_bad_proposals_at_once_and_leaves_good_ones_pending() {
+        use crate::sync::screen::screen_pending;
+        let w = world();
+        let now = crate::store::now_ts();
+        let good_body = crate::sync::recovery::start_body(
+            &w.d[R].store,
+            &w.d[R].id,
+            now,
+            None,
+            ThirdFactor::Paper,
+        )
+        .unwrap();
+        let mut backdated = good_body.clone();
+        if let OpBody::PhoneReenroll { initiated_at, .. } = &mut backdated {
+            *initiated_at -= 10 * 86_400;
+        }
+        let good = append(&w.d[R], good_body);
+        let bad = append(&w.d[R], backdated);
+        // The observer ingests without anyone approving: both wait in review.
+        for op in w.d[R].store.sync_chain_tail(&w.d[R].did, 0).unwrap() {
+            w.d[OBS].store.sync_ingest(op).unwrap();
+        }
+        assert_eq!(w.d[OBS].store.sync_pending().unwrap().len(), 2);
+        let report = screen_pending(&w.d[OBS].store, now).unwrap();
+        assert_eq!(report.rejected.len(), 1);
+        assert_eq!(report.rejected[0].0, bad.hash());
+        assert!(
+            report.rejected[0].1.contains("initiated_at"),
+            "{:?}",
+            report.rejected
+        );
+        let left = w.d[OBS].store.sync_pending().unwrap();
+        assert_eq!((left.len(), left[0].hash()), (1, good.hash()));
     }
 }

@@ -2,6 +2,7 @@
 
 pub mod apply;
 pub mod cert;
+pub mod checkpoint_driver;
 pub mod client;
 pub mod codes;
 pub mod cred_ops;
@@ -22,6 +23,7 @@ pub mod quorum;
 pub mod ratchet;
 pub mod recovery;
 pub mod reshare;
+pub mod screen;
 pub mod share_release;
 pub mod snapshot;
 pub mod transport;
