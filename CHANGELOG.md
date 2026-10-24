@@ -4,6 +4,23 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Host sync between your own machines** - hosts, groups and identities replicate over SSH between devices you
+  enroll yourself (`sync-enroll` on one machine, `sync-join` on the other, four words compared on both screens). The
+  new Sync tab (`7`) shows the devices and what is waiting for review; changes to dangerous fields (address, jump
+  host, remote command, user, key) never apply silently and wait for your approval (`sync-review`), safe fields merge
+  on their own. `sync-serve` is the peer end, `sync-now` and `sync-status` run and inspect a round. Credentials sync in
+  one of two modes: **Vault** (encrypted under a master phrase and a ring secret from a printed kit) or **Quorum**
+  (every secret needs two shares, so a copy of one device opens nothing; shares live on your machines, on paper
+  and on the **phone companion**, a single offline page you open on Android that shows what is being asked and who asks
+  and releases a share by QR code, clipboard or, with the opt-in `audio` cargo feature, sound). Docs:
+  `docs/host-sync-design.md`, `docs/host-sync-companion.md`, measurements in `docs/host-sync-poc-results.md`.
+  Limits, stated plainly: metadata (addresses, notes, groups) is readable by every ring device; revocation protects
+  the future, not what a device already downloaded; the ML-KEM crate is not independently audited; a phone page
+  cannot prove it is the page you meant (compare its fingerprint with the terminal's); the camera, sound and
+  phone-loss flows were verified with simulated devices only and not yet on a physical phone or on iOS.
+
 ## [0.20.0] - 2026-10-24
 
 ### Added
