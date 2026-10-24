@@ -54,28 +54,28 @@ function testFraming() {
   };
 }
 
-function testFskClean(n) {
+function testFskClean(n, F) {
   let ok = 0, fails = [];
   let durMs = 0;
   for (let i = 0; i < n; i++) {
     const p = L.randomBytes(56);
-    const sig = L.fskEncode(L.frame(p));
-    durMs = (sig.length / L.FSK.sampleRate) * 1000;
-    const d = L.fskDecode(sig);
+    const sig = L.fskEncode(L.frame(p), F);
+    durMs = (sig.length / F.sampleRate) * 1000;
+    const d = L.fskDecode(sig, F);
     if (d.ok && L.equalBytes(d.payload, p)) ok++; else fails.push(d.error || "mismatch");
   }
   return { trials: n, ok, burst_ms: durMs, fail_reasons: fails.slice(0, 5) };
 }
 
 // Simulated channel, NOT over-the-air. White noise at a stated SNR (signal = whole buffer power).
-function testFskNoise(n, snrs) {
+function testFskNoise(n, snrs, F) {
   const res = [];
   for (const snr of snrs) {
     let ok = 0;
     for (let i = 0; i < n; i++) {
       const p = L.randomBytes(56);
-      const sig = L.addNoise(L.fskEncode(L.frame(p)), snr);
-      const d = L.fskDecode(sig);
+      const sig = L.addNoise(L.fskEncode(L.frame(p), F), snr);
+      const d = L.fskDecode(sig, F);
       if (d.ok && L.equalBytes(d.payload, p)) ok++;
     }
     res.push({ snr_db: snr, trials: n, ok });
@@ -133,8 +133,9 @@ window.runSelfTests = function (opts) {
   const t0 = performance.now();
   const r = {};
   r.framing = testFraming();
-  r.fsk_clean = testFskClean(o.fskClean);
-  r.fsk_noise_simulated = testFskNoise(o.fskNoise, o.snrs);
+  // Two MFSK profiles: slow = 60 ms symbols, fast = 30 ms symbols. Same frame and noise model.
+  r.fsk_clean = { slow: testFskClean(o.fskClean, L.FSK), fast: testFskClean(o.fskClean, L.FSK_FAST) };
+  r.fsk_noise_simulated = { slow: testFskNoise(o.fskNoise, o.snrs, L.FSK), fast: testFskNoise(o.fskNoise, o.snrs, L.FSK_FAST) };
   r.chunks_direct = [testChunksDirect(4096), testChunksDirect(6144)];
   r.chunks_qr = testChunksViaQr(6144, opts && opts.qrVersion ? opts.qrVersion : 10);
   r.elapsed_ms = Math.round(performance.now() - t0);

@@ -54,10 +54,10 @@ try {
           (o) => window.renderQR(o),
           { version: v, cols, rows: rowsN, theme, seed: 1000 + v, quiet: 4 },
         );
-        if (!r.fits) { rows.push(r); continue; }
+        if (!r.fits) { rows.push({ ...r, theme }); continue; }
         const file = `${outDir}/${theme}-${cols}x${rowsN}-v${v}.png`;
         await page.locator(".xterm").first().screenshot({ path: file });
-        const row = { ...r, file };
+        const row = { ...r, theme, file };
         cases.push(row);
         rows.push(row);
       }
@@ -104,9 +104,12 @@ try {
   out.version_used_for_c3 = vStar;
 
   // ---- C3: frames, decode in memory, offline reassembly (no loss, looped cycle not needed) ----
+  // Challenge sizing (1519 B ShareRelease challenge, 5109 B four-holder CredUpdate estimate) at v5 and v13.
   out.c3 = vStar > 0
-    ? await page.evaluate((o) => window.runC3(o), { version: vStar, sizes: [4096, 6144], fps: [4, 8] })
+    ? await page.evaluate((o) => window.runC3(o), { version: vStar, sizes: [4096, 6144, 1519, 5109], fps: [4, 8] })
     : [];
+  out.c3_challenge = [];
+  for (const v of [5, 13]) out.c3_challenge.push(...(await page.evaluate((o) => window.runC3(o), { version: v, sizes: [1519, 5109], fps: [8] })));
 
   // ---- H self-tests (offline) ----
   const hp = await ctx.newPage();
