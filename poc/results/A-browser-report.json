@@ -1,0 +1,89 @@
+{
+  "page_bytes": 337515,
+  "base": "http://localhost:33019/",
+  "runs": [
+    {
+      "ok": true,
+      "secureContext": true,
+      "vectors": 84,
+      "skipped": 1,
+      "failed": [],
+      "blobMs": 21,
+      "replayMs": 990,
+      "coldWallMs": 1041,
+      "sinceLaunchMs": 1138,
+      "requests": 1,
+      "externalBlocked": 0,
+      "errors": []
+    },
+    {
+      "ok": true,
+      "secureContext": true,
+      "vectors": 84,
+      "skipped": 1,
+      "failed": [],
+      "blobMs": 24,
+      "replayMs": 936,
+      "coldWallMs": 990,
+      "sinceLaunchMs": 1089,
+      "requests": 1,
+      "externalBlocked": 0,
+      "errors": []
+    },
+    {
+      "ok": true,
+      "secureContext": true,
+      "vectors": 84,
+      "skipped": 1,
+      "failed": [],
+      "blobMs": 31,
+      "replayMs": 950,
+      "coldWallMs": 1012,
+      "sinceLaunchMs": 1076,
+      "requests": 1,
+      "externalBlocked": 0,
+      "errors": []
+    },
+    {
+      "ok": true,
+      "secureContext": true,
+      "vectors": 84,
+      "skipped": 1,
+      "failed": [],
+      "blobMs": 24,
+      "replayMs": 988,
+      "coldWallMs": 1040,
+      "sinceLaunchMs": 1123,
+      "requests": 1,
+      "externalBlocked": 0,
+      "errors": []
+    },
+    {
+      "ok": true,
+      "secureContext": true,
+      "vectors": 84,
+      "skipped": 1,
+      "failed": [],
+      "blobMs": 22,
+      "replayMs": 956,
+      "coldWallMs": 1005,
+      "sinceLaunchMs": 1060,
+      "requests": 1,
+      "externalBlocked": 0,
+      "errors": []
+    }
+  ],
+  "version": "156.0.8078.4",
+  "master": {
+    "ok": true,
+    "failed": [],
+    "replayMs": 1969,
+    "errors": []
+  },
+  "summary": {
+    "all_ok": true,
+    "external_requests_blocked": 0,
+    "median_cold_wall_ms": 1012,
+    "median_since_launch_ms": 1089
+  }
+}

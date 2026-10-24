@@ -1,0 +1,32 @@
+//! Stage 0: crypto primitives for host sync. Pure functions, no I/O, no store.
+//!
+//! The public paths below are the contract (`docs/host-sync-contract.md`
+//! section 1); the file split is internal. Test vectors under
+//! `tests/vectors/crypto/` are checked by `vectors::tests` and reproduced by the
+//! Python oracle in `tests/oracles/`.
+
+mod alg;
+mod argon;
+mod dek;
+mod hash;
+mod identity;
+mod mlkem;
+mod paper;
+mod vault;
+mod words;
+mod wrap;
+
+#[cfg(test)]
+mod vectors;
+
+pub use alg::{AlgTag, SigSuite, WrapSuite, ALG_CURRENT};
+pub use argon::{
+    argon2_derive, try_argon2_derive, Argon2Profile, ARGON2_EMAIL, ARGON2_MASTER, ARGON2_SNAPSHOT,
+};
+pub use dek::{dek_generate, dek_open, dek_seal};
+pub use hash::{chain_hash, derive_key};
+pub use identity::{device_id_of, verify, DeviceIdentity, DevicePublic};
+pub use paper::{paper_derive, PaperDomain};
+pub use vault::vault_recipient;
+pub use words::{bip39_decode, bip39_encode, eff_decode, eff_encode};
+pub use wrap::{blob_alg, hybrid_unwrap, hybrid_wrap, try_hybrid_wrap};
