@@ -397,7 +397,15 @@ pub fn resolved_to_ssh_host(
         .identity
         .as_ref()
         .and_then(|i| i.private_key.as_ref())
-        .map(|p| p.to_string_lossy().into_owned());
+        .map(|p| p.to_string_lossy().into_owned())
+        // A synced identity whose key is not on this disk: its opened key file.
+        .or_else(|| {
+            resolved
+                .identity
+                .as_ref()
+                .and_then(|i| crate::credentials::synced_identity_key_file(i.id))
+                .map(|p| p.to_string_lossy().into_owned())
+        });
     host.certificate_file = resolved
         .identity
         .as_ref()
