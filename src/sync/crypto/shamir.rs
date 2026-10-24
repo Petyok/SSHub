@@ -21,6 +21,9 @@ use zeroize::Zeroize;
 
 use super::hash::derive_key;
 
+/// How often a secret was reconstructed in this process. Resharing must never move it.
+pub(crate) static COMBINE_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 const COMMIT_CTX: &str = "sshub/sync/reshare/commit/v1";
 
 /// One holder's share: an x coordinate and the 32 polynomial values.
@@ -164,6 +167,7 @@ pub fn shamir_split_at(secret: &[u8; 32], k: u8, indices: &[u8]) -> Vec<Share> {
 /// recorded in a share: a subset smaller than k yields an unrelated value, which the AEAD
 /// layer above (credential decryption) rejects. Only the requester calls this, in memory.
 pub fn shamir_combine(shares: &[Share]) -> Result<[u8; 32]> {
+    COMBINE_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     if shares.len() < 2 {
         bail!("need at least 2 shares (k = 2 is the product minimum)");
     }
