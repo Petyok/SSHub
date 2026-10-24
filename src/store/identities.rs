@@ -15,7 +15,7 @@ impl LauncherStore {
             return Ok(());
         }
 
-        self.create_identity(&NewIdentity {
+        let created = self.create_identity(&NewIdentity {
             name: DEFAULT_IDENTITY_NAME.to_string(),
             username: None,
             private_key: None,
@@ -23,7 +23,14 @@ impl LauncherStore {
             sort_order: 0,
             has_password: false,
         })?;
-        Ok(())
+        // Every device seeds its own Default; they must agree on its uid.
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE identities SET uid = ?1 WHERE id = ?2",
+                params![&super::uid::DEFAULT_IDENTITY_UID[..], created.id],
+            )?;
+            Ok(())
+        })
     }
 
     pub fn create_identity(&self, identity: &NewIdentity) -> Result<Identity> {

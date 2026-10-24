@@ -9,9 +9,15 @@ mod snippets;
 pub mod transfer;
 mod tunnels;
 mod types;
+mod uid;
 mod workspaces;
 pub use group_defaults::{ResolvedConnection, DEFAULT_PORT};
 pub use hosts::is_option_like;
+pub(crate) use migrate::now_ts;
+pub use uid::{
+    uid_from_hex, uid_hex, GroupUid, HostUid, IdentityUid, Uid, DEFAULT_IDENTITY_UID,
+    FAVORITES_GROUP_UID,
+};
 pub use transfer::{
     apply_transfer_plan, build_transfer_plan, tunnel_token_matches, unique_dest_name, DestIndex,
     GroupTransferMode, PlannedItem, TransferMode, TransferPlan, TransferResult, TransferSelection,
