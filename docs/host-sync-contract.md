@@ -364,75 +364,6 @@ environment, os_icon, tags, notes, favorite, secret_lookup, has_password,
 group_uids, identity_uid`. Hop tokens in `proxy_jump` are stored as uids and
 rendered as names locally; apply rewrites them.
 
-### 2b. Checkpoints and pruning (C15)
-
-Design: `docs/host-sync-design.md`, section "Checkpoints and pruning". Owner: the op-log package.
-
-```rust
-pub enum DeviceKind { Terminal, Phone }   // only terminals keep a store, only they can sign checkpoints
-
-// New ops. Tier GREEN: they never apply anything by themselves.
-pub struct CutEntry { pub device_id: DeviceId, pub seq: u64, pub op_hash: [u8; 32], pub lamport: u64 }
-// body variants of OpBody:
-//   CheckpointPropose { cut: Vec<CutEntry> /*sorted by device_id*/, state_hash: [u8; 32],
-//                       state_len: u64, prev_checkpoint: [u8; 32] /*zeros for the first*/,
-//                       required: Vec<DeviceId> /*sorted: attended live terminals of the state*/ }
-//   CheckpointSign    { proposal_hash: [u8; 32] }
-
-pub struct CheckpointBundle { pub proposal: Op, pub signs: Vec<Op>, pub heads: Vec<Op>, pub state: Vec<u8> }
-pub enum BootstrapTrust { RingFingerprint(String /*8 words*/), Anchor(DeviceId) }
-pub enum CheckpointStatus { Proposed, Verified, Disputed, Accepted, Pruned, Void }
-pub enum CheckpointVerdict {
-    Matches,
-    Differs { section: String, detail: String },
-    MissingOps(Vec<(DeviceId, u64)>),   // ops up to the cut this device does not have yet
-    Blocked(String),                    // pending ops below the cut, a recovery in flight, ...
-}
-pub struct PruneReport { pub ops_deleted: u64, pub field_writes_deleted: u64,
-                         pub wrapped_share_blobs_dropped: u64, pub bytes_freed: u64 }
-
-impl crate::store::LauncherStore {
-    /// Folds the local state as of the cut and returns the draft; refuses (Err) while an op
-    /// below the cut is pending locally, a PhoneReenroll is running, or the device is not an
-    /// attended terminal. `cut` None = this device's current heads for every device.
-    pub fn sync_checkpoint_build(&self, cut: Option<Vec<CutEntry>>, now: i64) -> anyhow::Result<(Vec<CutEntry>, Vec<u8> /*state*/, [u8; 32] /*state_hash*/)>;
-    /// Rebuilds the state from the local store as of `proposal.cut` and compares; never trusts the blob.
-    pub fn sync_checkpoint_verify(&self, proposal: &Op, state: &[u8]) -> anyhow::Result<CheckpointVerdict>;
-    /// Records proposal, signs and state; flips to Accepted when the signatures cover `required`
-    /// and the local verdict is Matches.
-    pub fn sync_checkpoint_record(&self, bundle: &CheckpointBundle) -> anyhow::Result<CheckpointStatus>;
-    pub fn sync_checkpoints(&self) -> anyhow::Result<Vec<CheckpointRow>>;
-    /// Deletes what the policy allows (below the cut of the second newest accepted checkpoint,
-    /// 7 days after the newest was accepted); idempotent, reclaims space.
-    pub fn sync_prune(&self, now: i64) -> anyhow::Result<PruneReport>;
-    /// Materialises a fresh store from a bundle after verifying hash, heads, signatures, the
-    /// required set and the trust anchor; sets chain heads from the cut.
-    pub fn sync_bootstrap(&self, bundle: &CheckpointBundle, trust: &BootstrapTrust) -> anyhow::Result<()>;
-    /// Existing in section 2; below the prune floor it returns Err(Pruned { floor_seq }).
-    pub fn sync_chain_tail(&self, device: &DeviceId, after_seq: u64) -> anyhow::Result<Vec<Op>>;
-}
-/// For the TUI "is this my ring" prompt: 8 BIP39 words (88 bits) of BLAKE3 over the canonical
-/// `devices` section of the state.
-pub fn ring_fingerprint(state: &[u8]) -> anyhow::Result<String>;
-```
-
-`DeviceAdd` and `DeviceRow` gain `kind: DeviceKind`. New tables (migration v22 or its successor):
-`sync_checkpoints(proposal_hash BLOB PK, device_id TEXT, prev BLOB, state_hash BLOB, state_len
-INTEGER, cut TEXT, required TEXT, status TEXT, accepted_at INTEGER, state BLOB NULL)` (the state blob
-is kept for the two newest accepted checkpoints only), `sync_checkpoint_signs(proposal_hash BLOB,
-device_id TEXT, sign_op_hash BLOB, PRIMARY KEY (proposal_hash, device_id))`,
-`sync_prune_floor(device_id TEXT PK, seq INTEGER, op_hash BLOB)`. Head ops of the cut are never
-pruned. `sync_ingest`: an op with `seq` below the floor is ignored as covered; with `seq` equal to the
-floor's and a different hash it is a fork proof against the kept head op; ops of a device that
-was `Stale` at the accepted checkpoint and have `seq` above its cut head enter pending whatever their fields.
-Competing proposals with the same `prev_checkpoint`: lowest `(lamport, device_id)` wins, the others are void.
-Honest devices auto-sign (`CheckpointSign`) only when `sync_checkpoint_verify` says `Matches`;
-`Differs` marks the proposal `Disputed` and the proposer `suspect`, never `compromised`.
-The state blob is canonical JSON with the C2 rules, sections and sort orders as in the design.
-Constants in `limits.rs`: `CHECKPOINT_OPS`, `CHECKPOINT_BYTES`, `CHECKPOINT_MIN_INTERVAL_SECS`,
-`CHECKPOINT_AFTER_RESHARE_SECS`, `CHECKPOINT_PRUNE_DELAY_SECS`, `CHECKPOINT_RETAIN_SPANS`,
-`CHECKPOINT_SIGN_MIN`, `CHECKPOINT_CHUNK_BYTES`, `TOMBSTONE_KEEP_SECS`, `RING_FINGERPRINT_WORDS`.
-
 ### 2a. Stage 1 as built (WP1a, WP1b)
 
 Binding addenda to section 2; the code in `src/sync/oplog/`, `src/sync/apply.rs`
@@ -449,7 +380,9 @@ lowercase hex strings; every `Vec<u8>` (`ciphertext`, `sealed`, `sealed_share`,
 base64 string (standard alphabet, padded); `sub_shares` entries are
 `["<device id>","<base64>"]` pairs; `ReshareItem` is `{host_uid, sub_shares,
 commitments}`, `ConfirmItem` is `{host_uid, sealed_share}`; `ThirdFactor` is
-`"Paper"`, `"EmailCode"` or `{"HardwareKey":"<device id>"}`; `CertScope` is
+`"Paper"` or `"EmailCode"`; `PhoneReenroll` ends with `paper_sig`, `null` or a
+128 character lowercase hex string (the 64 byte signature); `DeviceAdd` ends with
+`kind` (`"Terminal"` or `"Phone"`); `CertScope` is
 `{"Group":"<uid>"}` or `{"Hosts":["<uid>",...]}`; `HeadAttest` (in
 `PhoneReenroll.liveness`) is `{"device_id","seq","chain_hash"}`. Decoding is
 strict: `Op::from_canonical` re-encodes and refuses bytes that differ from what
@@ -566,6 +499,163 @@ under `sync-device-key`: the OS keyring normally; in the `credentials.json`
 fallback it sits next to the file, so the 0600 mode is the whole protection, as for
 every secret there. A key file whose passphrase is missing is an error, never a
 silent regeneration.
+
+### 2a'. Checkpoints as built (C15)
+
+Additions to 2a for the checkpoint package; the code in
+`src/sync/oplog/checkpoint.rs` is the reference.
+
+**Op types.** `DeviceKind { Terminal, Phone }` (`DeviceAdd.kind`,
+`DeviceRow.kind`, `sync_register_device(.., kind)`); `ThirdFactor` is `Paper |
+EmailCode`; `RecoveryApprove { reenroll_hash }` is Red and `PhoneReenroll` carries
+`paper_sig: Option<[u8; 64]>` (stage 3 validates the state machine and the
+signature); `CheckpointPropose` and `CheckpointSign` are Green and inert. The
+canonical form of `CutEntry` is `{device_id, seq, op_hash (hex), lamport}`.
+
+**Multi-version writes.** Everything that is not an entity field is kept as a
+write in `sync_writes(section, key, op_hash, ord, lamport, device_id, seq, value)`:
+sections `device`, `revoke`, `wrap`, `cred`, `share`, `storage`, `mode`, `cert`,
+`cert_revoked`, `cert_open`, `head`. The winner of a `(section, key)` is the newest
+`(ord, lamport, device_id, seq)` among writes of effective ops (`ord` is the epoch,
+wrap epoch or head seq where one exists). `op_hash` = 32 zero bytes marks a *base
+write*: always effective; used for devices registered without an op
+(`sync_register_device` writes one), for pruned winners and for bootstrap.
+`sync_fields` and `sync_tombstones` follow the same rule. The cache tables of
+section 2 (`sync_cred_state`, `sync_delegation_certs`, ...) are still written by
+the op effects and rebuilt from the winners by a bootstrap. `sync_cred_state.wrapped_shares`
+holds base64 `sealed`. Read helpers over the writes: `sync_share_envelopes(host)`
+and `sync_storage_key(device)`.
+
+**State blob.** Canonical JSON (keys sorted), sections `cut`, `devices` (key
+material of the current wrap generation, role, attendance, kind, status
+`operational | revoked | compromised`, `wrap_epoch`, `added_by`, `head_ts` = timestamp
+of the device's op at the cut), `entities` (per entity the winning write of every
+field with its `(lamport, device_id, seq)`; a deleted entity keeps its fields and a
+tombstone `{lamport, device_id, ts}` until `TOMBSTONE_KEEP_SECS` before the proposal
+time, then it is omitted), `epochs` (epoch of each head op), `forks` (the two
+evidence blobs of every compromised device) and `writes` (every `sync_writes`
+winner; a credential that was resharded has `shares: []` in its `cred` entry).
+The fold is *as of the cut*: only effective ops with `seq` at or below the cut of
+their device count, plus base writes. Pending ops below the cut make
+`sync_checkpoint_build` fail and `sync_checkpoint_verify` answer `Blocked`.
+`required` is the sorted set of devices with `kind = terminal`, `attendance =
+attended`, status `operational` and `head_ts` within `LIVE_DEVICE_WINDOW_SECS` of the
+proposal timestamp. `prev_checkpoint` must be the last accepted proposal hash (zeros
+for the first) or the verdict is `Differs { section: "prev_checkpoint" }`.
+`ring_fingerprint(state)` is 88 bits of BLAKE3 over the canonical `devices` section
+as 8 BIP39 words.
+
+**API as built** beyond 2b: `sync_checkpoint_propose(id, cut, now)` (attended
+terminal only; the proposal carries timestamp `now`, which is also the clock of
+the fold), `sync_checkpoint_sign(id, proposal, state)` (signs only on `Matches`;
+`Differs` records the proposal as `Disputed` and the proposer as `suspect`),
+`sync_checkpoint_bundle(proposal_hash)` (proposal, signs, head ops, state of a
+recorded checkpoint, for serving), `sync_append_local_at(id, body, now)`.
+`sync_chain_tail` returns `Err(Pruned { floor_seq })` when `after_seq + 1 <
+floor_seq`.
+
+**Recording and acceptance.** `sync_checkpoint_record` stores the proposal and the
+valid `CheckpointSign` ops, runs the verdict and sets the status: `Disputed` on
+`Differs`, `Proposed` on `MissingOps` or `Blocked`, `Verified` on `Matches` without
+enough signatures, `Accepted` on `Matches` when every `required` device signed and at
+least `CHECKPOINT_SIGN_MIN` distinct attended terminals signed. Accepting flags
+every device whose head op at the cut is older than `STALE_AFTER_SECS`: its ops above
+that seq enter pending with reason `stale` whatever their class. Proposals with the
+same `prev_checkpoint`: the lowest `(lamport, device_id)` stays, the others become
+`Void` (an accepted one is never voided).
+
+**Pruning.** `sync_prune(now)` does nothing until two checkpoints are accepted and
+the newest is `CHECKPOINT_PRUNE_DELAY_SECS` old. Then, with the cut of the older
+accepted checkpoint as the floor: ops below the floor are deleted, the head op of
+every device at the floor stays; the winners of the writes of the deleted ops
+become base writes and every other write is dropped; tombstones are collapsed the
+same way and a deleted entity past the horizon is forgotten; a resharded
+credential loses its wrapped shares; old head attestations and older wrap key
+generations go; only the newest state blob is kept (an older one still holds the
+shares that were live then); the file is `VACUUM`ed so deleted blobs do not stay in
+free pages. `PruneReport` counts deleted ops, deleted writes, dropped share blobs
+and bytes. Ingest: `seq` below the floor is `Rejected("covered ...")`, `seq` equal to
+the floor with another hash is a `ForkProof` against the kept head.
+
+**Bootstrap.** `sync_bootstrap` checks the blob hash and length, the proposer and
+every sign against the blob's own device table, the cut, the required set and its
+signatures (all required, at least `CHECKPOINT_SIGN_MIN`), the head ops, and the
+trust anchor (`RingFingerprint`, case and spacing ignored, or an `Anchor` device
+that signed); it needs a store without ops. It stores the head ops as anchors
+(state `void`, reason `checkpoint-anchor`), writes the base rows, rebuilds the cache
+tables and the projection, sets the floor to the cut and records the checkpoint as
+accepted. Tombstone state is `{lamport, device_id, ts}`: the op hash is not part of
+the blob, so a pruned or bootstrapped store folds to the same bytes as one that kept
+the log.
+
+### 2b. Checkpoints and pruning (C15)
+
+Design: `docs/host-sync-design.md`, section "Checkpoints and pruning". Owner: the op-log package.
+
+```rust
+pub enum DeviceKind { Terminal, Phone }   // only terminals keep a store, only they can sign checkpoints
+
+// New ops. Tier GREEN: they never apply anything by themselves.
+pub struct CutEntry { pub device_id: DeviceId, pub seq: u64, pub op_hash: [u8; 32], pub lamport: u64 }
+// body variants of OpBody:
+//   CheckpointPropose { cut: Vec<CutEntry> /*sorted by device_id*/, state_hash: [u8; 32],
+//                       state_len: u64, prev_checkpoint: [u8; 32] /*zeros for the first*/,
+//                       required: Vec<DeviceId> /*sorted: attended live terminals of the state*/ }
+//   CheckpointSign    { proposal_hash: [u8; 32] }
+
+pub struct CheckpointBundle { pub proposal: Op, pub signs: Vec<Op>, pub heads: Vec<Op>, pub state: Vec<u8> }
+pub enum BootstrapTrust { RingFingerprint(String /*8 words*/), Anchor(DeviceId) }
+pub enum CheckpointStatus { Proposed, Verified, Disputed, Accepted, Pruned, Void }
+pub enum CheckpointVerdict {
+    Matches,
+    Differs { section: String, detail: String },
+    MissingOps(Vec<(DeviceId, u64)>),   // ops up to the cut this device does not have yet
+    Blocked(String),                    // pending ops below the cut, a recovery in flight, ...
+}
+pub struct PruneReport { pub ops_deleted: u64, pub field_writes_deleted: u64,
+                         pub wrapped_share_blobs_dropped: u64, pub bytes_freed: u64 }
+
+impl crate::store::LauncherStore {
+    /// Folds the local state as of the cut and returns the draft; refuses (Err) while an op
+    /// below the cut is pending locally, a PhoneReenroll is running, or the device is not an
+    /// attended terminal. `cut` None = this device's current heads for every device.
+    pub fn sync_checkpoint_build(&self, cut: Option<Vec<CutEntry>>, now: i64) -> anyhow::Result<(Vec<CutEntry>, Vec<u8> /*state*/, [u8; 32] /*state_hash*/)>;
+    /// Rebuilds the state from the local store as of `proposal.cut` and compares; never trusts the blob.
+    pub fn sync_checkpoint_verify(&self, proposal: &Op, state: &[u8]) -> anyhow::Result<CheckpointVerdict>;
+    /// Records proposal, signs and state; flips to Accepted when the signatures cover `required`
+    /// and the local verdict is Matches.
+    pub fn sync_checkpoint_record(&self, bundle: &CheckpointBundle) -> anyhow::Result<CheckpointStatus>;
+    pub fn sync_checkpoints(&self) -> anyhow::Result<Vec<CheckpointRow>>;
+    /// Deletes what the policy allows (below the cut of the second newest accepted checkpoint,
+    /// 7 days after the newest was accepted); idempotent, reclaims space.
+    pub fn sync_prune(&self, now: i64) -> anyhow::Result<PruneReport>;
+    /// Materialises a fresh store from a bundle after verifying hash, heads, signatures, the
+    /// required set and the trust anchor; sets chain heads from the cut.
+    pub fn sync_bootstrap(&self, bundle: &CheckpointBundle, trust: &BootstrapTrust) -> anyhow::Result<()>;
+    /// Existing in section 2; below the prune floor it returns Err(Pruned { floor_seq }).
+    pub fn sync_chain_tail(&self, device: &DeviceId, after_seq: u64) -> anyhow::Result<Vec<Op>>;
+}
+/// For the TUI "is this my ring" prompt: 8 BIP39 words (88 bits) of BLAKE3 over the canonical
+/// `devices` section of the state.
+pub fn ring_fingerprint(state: &[u8]) -> anyhow::Result<String>;
+```
+
+`DeviceAdd` and `DeviceRow` gain `kind: DeviceKind`. New tables (migration v22 or its successor):
+`sync_checkpoints(proposal_hash BLOB PK, device_id TEXT, prev BLOB, state_hash BLOB, state_len
+INTEGER, cut TEXT, required TEXT, status TEXT, accepted_at INTEGER, state BLOB NULL)` (the state blob
+is kept for the two newest accepted checkpoints only), `sync_checkpoint_signs(proposal_hash BLOB,
+device_id TEXT, sign_op_hash BLOB, PRIMARY KEY (proposal_hash, device_id))`,
+`sync_prune_floor(device_id TEXT PK, seq INTEGER, op_hash BLOB)`. Head ops of the cut are never
+pruned. `sync_ingest`: an op with `seq` below the floor is ignored as covered; with `seq` equal to the
+floor's and a different hash it is a fork proof against the kept head op; ops of a device that
+was `Stale` at the accepted checkpoint and have `seq` above its cut head enter pending whatever their fields.
+Competing proposals with the same `prev_checkpoint`: lowest `(lamport, device_id)` wins, the others are void.
+Honest devices auto-sign (`CheckpointSign`) only when `sync_checkpoint_verify` says `Matches`;
+`Differs` marks the proposal `Disputed` and the proposer `suspect`, never `compromised`.
+The state blob is canonical JSON with the C2 rules, sections and sort orders as in the design.
+Constants in `limits.rs`: `CHECKPOINT_OPS`, `CHECKPOINT_BYTES`, `CHECKPOINT_MIN_INTERVAL_SECS`,
+`CHECKPOINT_AFTER_RESHARE_SECS`, `CHECKPOINT_PRUNE_DELAY_SECS`, `CHECKPOINT_RETAIN_SPANS`,
+`CHECKPOINT_SIGN_MIN`, `CHECKPOINT_CHUNK_BYTES`, `TOMBSTONE_KEEP_SECS`, `RING_FINGERPRINT_WORDS`.
 
 ## 3. Stage 2: `src/sync/{protocol,ratchet,enroll,client}.rs` (WP2a, WP2b)
 

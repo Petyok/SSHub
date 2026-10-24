@@ -92,6 +92,7 @@ fn ring(n: usize) -> Vec<Peer> {
                     "peer",
                     DeviceRole::Holder,
                     Attendance::Attended,
+                    DeviceKind::Terminal,
                 )
                 .unwrap();
         }
@@ -223,6 +224,7 @@ fn sample_bodies() -> Vec<OpBody> {
             name: "laptop".into(),
             role: DeviceRole::Mirror,
             attendance: Attendance::Unattended,
+            kind: DeviceKind::Phone,
         },
         OpBody::DeviceRevoke {
             device_id: "ffeeddccbbaa9988".into(),
@@ -288,12 +290,13 @@ fn sample_bodies() -> Vec<OpBody> {
             initiated_at: -5,
             signers: vec!["a".into()],
             via_paper: true,
-            third_factor: ThirdFactor::HardwareKey("0011223344556677".into()),
+            third_factor: ThirdFactor::Paper,
             liveness: vec![HeadAttest {
                 device_id: "a".into(),
                 seq: 3,
                 chain_hash: [1; 32],
             }],
+            paper_sig: Some([0xa5; 64]),
         },
         OpBody::PhoneReenroll {
             initiated_at: 0,
@@ -301,6 +304,7 @@ fn sample_bodies() -> Vec<OpBody> {
             via_paper: false,
             third_factor: ThirdFactor::EmailCode,
             liveness: vec![],
+            paper_sig: None,
         },
         OpBody::PhoneReenrollCancel {
             reenroll_hash: [2; 32],
@@ -325,6 +329,32 @@ fn sample_bodies() -> Vec<OpBody> {
             to: CredMode::Vault,
             migrated_on: "a".into(),
             cosigner: None,
+        },
+        OpBody::RecoveryApprove {
+            reenroll_hash: [6; 32],
+        },
+        OpBody::CheckpointPropose {
+            cut: vec![
+                CutEntry {
+                    device_id: "a".into(),
+                    seq: 9,
+                    op_hash: [1; 32],
+                    lamport: 12,
+                },
+                CutEntry {
+                    device_id: "b".into(),
+                    seq: u64::MAX,
+                    op_hash: [2; 32],
+                    lamport: u64::MAX,
+                },
+            ],
+            state_hash: [3; 32],
+            state_len: u64::MAX,
+            prev_checkpoint: [0; 32],
+            required: vec!["a".into(), "b".into()],
+        },
+        OpBody::CheckpointSign {
+            proposal_hash: [4; 32],
         },
         OpBody::HeadAttest {
             device_id: "a".into(),
@@ -1091,6 +1121,7 @@ fn add_device_body(p: &Peer, role: DeviceRole) -> OpBody {
         name: "new".into(),
         role,
         attendance: Attendance::Attended,
+        kind: DeviceKind::Terminal,
     }
 }
 
@@ -1503,6 +1534,7 @@ fn wrap_key_rotation_replaces_the_current_keys_and_keeps_the_history() {
                 "rot",
                 DeviceRole::Holder,
                 Attendance::Attended,
+                DeviceKind::Terminal,
             )
             .unwrap();
     }
@@ -1821,5 +1853,603 @@ fn three_stores_converge_on_random_ops_in_random_orders() {
         .unwrap_or(1_000_000u64);
     for seed in from..from + seeds(40) {
         run_case(seed, 3, 40);
+    }
+}
+
+// ------------------------------------------------- checkpoints and pruning
+
+fn file_peer(dir: &std::path::Path) -> Peer {
+    Peer {
+        store: LauncherStore::open(dir.join("launcher.db")).unwrap(),
+        id: DeviceIdentity::generate(),
+    }
+}
+
+/// `n` attended terminals trusting each other, each with one op so that all
+/// are live at any later checkpoint.
+fn live_ring(peers: Vec<Peer>) -> Vec<Peer> {
+    for p in &peers {
+        for q in &peers {
+            p.store
+                .sync_register_device(
+                    &q.id.public(),
+                    "peer",
+                    DeviceRole::Holder,
+                    Attendance::Attended,
+                    DeviceKind::Terminal,
+                )
+                .unwrap();
+        }
+    }
+    peers
+}
+
+fn cut_pairs(b: &CheckpointBundle) -> Vec<(DeviceId, u64)> {
+    match &b.proposal.body {
+        OpBody::CheckpointPropose { cut, .. } => {
+            cut.iter().map(|c| (c.device_id.clone(), c.seq)).collect()
+        }
+        _ => unreachable!(),
+    }
+}
+
+/// One op per peer, so every device has a head at any cut and counts as live.
+fn touch(ring: &[Peer]) {
+    for (i, p) in ring.iter().enumerate() {
+        p.append(upsert(60 + i as u8, hf(&format!("seed{i}"), "10.1.1.1")));
+    }
+}
+
+fn settle(ring: &[Peer]) {
+    sync_all(ring);
+    for p in ring {
+        p.approve_all();
+    }
+    sync_all(ring);
+}
+
+/// Propose at `proposer`, have everyone sign, spread the ops and record the
+/// bundle everywhere. Returns the bundle and the proposal hash.
+fn checkpoint_round(ring: &[Peer], proposer: usize, now: i64) -> (CheckpointBundle, [u8; 32]) {
+    let (proposal, state) = ring[proposer]
+        .store
+        .sync_checkpoint_propose(&ring[proposer].id, None, now)
+        .unwrap();
+    sync_all(ring);
+    let mut signs = Vec::new();
+    for p in ring {
+        let s = p
+            .store
+            .sync_checkpoint_sign(&p.id, &proposal, &state)
+            .unwrap();
+        signs.push(s.expect("an honest verifier signs a matching proposal"));
+    }
+    sync_all(ring);
+    let bundle = CheckpointBundle {
+        proposal: proposal.clone(),
+        signs,
+        heads: vec![],
+        state,
+    };
+    for p in ring {
+        let st = p.store.sync_checkpoint_record(&bundle).unwrap();
+        assert_eq!(st, CheckpointStatus::Accepted, "{}", p.dev());
+    }
+    (bundle, proposal.hash())
+}
+
+fn random_content(ring: &[Peer], seed: u64, steps: usize) {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    for _ in 0..steps {
+        let p = (rng.next_u32() as usize) % ring.len();
+        ring[p].append(gen_body(&mut rng));
+    }
+}
+
+#[test]
+fn the_same_cut_folds_to_the_same_state_on_every_store() {
+    for seed in 1..=seeds(6) {
+        let n = 2 + (seed as usize % 2);
+        let ring = live_ring((0..n).map(|_| Peer::new()).collect());
+        random_content(&ring, seed, 40);
+        settle(&ring);
+        let cut = ring[0]
+            .store
+            .sync_checkpoint_build(None, 1_900_000_000)
+            .unwrap()
+            .0;
+        let hashes: Vec<_> = ring
+            .iter()
+            .map(|p| {
+                p.store
+                    .sync_checkpoint_build(Some(cut.clone()), 1_900_000_000)
+                    .unwrap()
+                    .2
+            })
+            .collect();
+        assert!(
+            hashes.iter().all(|h| *h == hashes[0]),
+            "seed {seed}: state hashes differ"
+        );
+        // And it is stable: folding twice gives the same bytes.
+        let again = ring[0]
+            .store
+            .sync_checkpoint_build(Some(cut), 1_900_000_000)
+            .unwrap()
+            .2;
+        assert_eq!(again, hashes[0]);
+    }
+}
+
+#[test]
+fn a_lying_proposer_is_disputed_and_suspect_but_never_compromised() {
+    let ring = live_ring((0..3).map(|_| Peer::new()).collect());
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    for p in &ring {
+        p.append(upsert(
+            p.id.public().ed25519_pub[0],
+            hf(&format!("h{}", p.dev()), "10.0.0.1"),
+        ));
+    }
+    settle(&ring);
+    let now = crate::store::now_ts();
+    let (cut, state, _) = a.store.sync_checkpoint_build(None, now).unwrap();
+    // The lie: one host's address is something else in the blob.
+    let mut v: serde_json::Value = serde_json::from_slice(&state).unwrap();
+    v["entities"][0]["fields"]["address"]["value"] = serde_json::json!("evil.example");
+    let lie = serde_json::to_vec(&v).unwrap();
+    let mut required: Vec<DeviceId> = ring.iter().map(|p| p.dev()).collect();
+    required.sort();
+    let proposal = a.append(OpBody::CheckpointPropose {
+        cut,
+        state_hash: crate::sync::crypto::chain_hash(&lie),
+        state_len: lie.len() as u64,
+        prev_checkpoint: [0; 32],
+        required,
+    });
+    sync_all(&ring);
+    // The liar signs its own lie; the honest ones do not.
+    assert!(b
+        .store
+        .sync_checkpoint_sign(&b.id, &proposal, &lie)
+        .unwrap()
+        .is_none());
+    assert!(c
+        .store
+        .sync_checkpoint_sign(&c.id, &proposal, &lie)
+        .unwrap()
+        .is_none());
+    let verdict = b.store.sync_checkpoint_verify(&proposal, &lie).unwrap();
+    match verdict {
+        CheckpointVerdict::Differs { section, detail } => {
+            assert_eq!(section, "entities", "{detail}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let rows = b.store.sync_checkpoints().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, CheckpointStatus::Disputed);
+    let status = |p: &Peer| {
+        p.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == a.dev())
+            .unwrap()
+            .status
+    };
+    assert_eq!(status(b), DeviceStatus::Suspect, "a rumour, not a proof");
+    assert_ne!(status(b), DeviceStatus::Compromised);
+    // Even with the liar's signature the lie is never accepted.
+    let own_sign = a.append(OpBody::CheckpointSign {
+        proposal_hash: proposal.hash(),
+    });
+    let st = b
+        .store
+        .sync_checkpoint_record(&CheckpointBundle {
+            proposal,
+            signs: vec![own_sign],
+            heads: vec![],
+            state: lie,
+        })
+        .unwrap();
+    assert_eq!(st, CheckpointStatus::Disputed);
+}
+
+#[test]
+fn a_proposal_with_ops_still_pending_below_the_cut_is_blocked() {
+    let ring = live_ring((0..2).map(|_| Peer::new()).collect());
+    let (a, b) = (&ring[0], &ring[1]);
+    let now = crate::store::now_ts();
+    a.append(upsert(1, hf("web", "10.0.0.1")));
+    b.append(upsert(2, hf("db", "10.0.0.2")));
+    pull(a, b);
+    // a has not reviewed b's creation: it refuses to build a checkpoint.
+    let err = a.store.sync_checkpoint_build(None, now).unwrap_err();
+    assert!(err.to_string().contains("pending"), "{err}");
+    assert!(a.store.sync_checkpoint_propose(&a.id, None, now).is_err());
+    a.approve_all();
+    let (p, state) = a.store.sync_checkpoint_propose(&a.id, None, now).unwrap();
+    // b has a's ops but has not reviewed them: blocked, not mismatching.
+    pull(b, a);
+    let v = b.store.sync_checkpoint_verify(&p, &state).unwrap();
+    assert!(matches!(v, CheckpointVerdict::Blocked(_)), "{v:?}");
+    b.approve_all();
+    assert_eq!(
+        b.store.sync_checkpoint_verify(&p, &state).unwrap(),
+        CheckpointVerdict::Matches
+    );
+}
+
+#[test]
+fn prune_then_bootstrap_reaches_the_same_state_as_full_history() {
+    for k in 0..seeds(1) {
+        prune_bootstrap_case(41 + 3 * k);
+    }
+}
+
+fn prune_bootstrap_case(base: u64) {
+    let dir = tempfile::tempdir().unwrap();
+    let ring = live_ring(vec![file_peer(dir.path()), Peer::new(), Peer::new()]);
+    let t0 = crate::store::now_ts();
+    touch(&ring);
+    random_content(&ring, base, 40);
+    settle(&ring);
+    let (_c1, h1) = checkpoint_round(&ring, 0, t0);
+    random_content(&ring, base + 1, 40);
+    settle(&ring);
+    let (_c2, h2) = checkpoint_round(&ring, 1, t0 + 100);
+    assert_eq!(ring[0].store.sync_checkpoints().unwrap().len(), 2);
+    assert_ne!(h1, h2);
+    random_content(&ring, base + 2, 20);
+    settle(&ring);
+
+    // Nothing is pruned before the delay has passed.
+    assert_eq!(
+        ring[0].store.sync_prune(t0 + 200).unwrap(),
+        PruneReport::default()
+    );
+    let report = ring[0].store.sync_prune(t0 + 8 * 86_400 + 1_000).unwrap();
+    assert!(report.ops_deleted > 0, "{report:?}");
+    // Idempotent.
+    assert_eq!(
+        ring[0]
+            .store
+            .sync_prune(t0 + 8 * 86_400 + 2_000)
+            .unwrap()
+            .ops_deleted,
+        0
+    );
+
+    // More work after the prune, spread to everyone who keeps a log.
+    ring[2].append(upsert(
+        1,
+        HostFields {
+            notes: Some(Some("after the prune".into())),
+            ..Default::default()
+        },
+    ));
+    settle(&ring);
+
+    // A fresh device adopts the newest checkpoint (the ring fingerprint is the
+    // trust anchor) and syncs the tails.
+    let bundle = ring[1]
+        .store
+        .sync_checkpoint_bundle(&h2)
+        .unwrap()
+        .expect("the newest checkpoint keeps its blob");
+    assert!(!bundle.heads.is_empty());
+    let fresh = Peer::new();
+    let words = ring_fingerprint(&bundle.state).unwrap();
+    assert_eq!(words.split(' ').count(), 8);
+    assert!(fresh
+        .store
+        .sync_bootstrap(
+            &bundle,
+            &BootstrapTrust::RingFingerprint("wrong words".into())
+        )
+        .is_err());
+    fresh
+        .store
+        .sync_bootstrap(
+            &bundle,
+            &BootstrapTrust::RingFingerprint(words.to_uppercase()),
+        )
+        .unwrap();
+    // Right after the bootstrap the store folds to exactly the adopted state.
+    let adopted = match &bundle.proposal.body {
+        OpBody::CheckpointPropose { cut, .. } => cut.clone(),
+        _ => unreachable!(),
+    };
+    let refold = fresh
+        .store
+        .sync_checkpoint_build(Some(adopted), bundle.proposal.timestamp)
+        .unwrap()
+        .1;
+    if refold != bundle.state {
+        let (a, b): (serde_json::Value, serde_json::Value) = (
+            serde_json::from_slice(&refold).unwrap(),
+            serde_json::from_slice(&bundle.state).unwrap(),
+        );
+        panic!(
+            "bootstrap does not reproduce the blob: {:?}",
+            super::checkpoint::diff_state(&a, &b)
+        );
+    }
+    for p in &ring {
+        pull(&fresh, p);
+    }
+    fresh.approve_all();
+
+    let cut = ring[1]
+        .store
+        .sync_checkpoint_build(None, t0 + 9 * 86_400)
+        .unwrap()
+        .0;
+    let fold = |p: &Peer| {
+        p.store
+            .sync_checkpoint_build(Some(cut.clone()), t0 + 9 * 86_400)
+            .unwrap()
+            .1
+    };
+    let full = fold(&ring[1]);
+    let same = |what: &str, other: Vec<u8>| {
+        if other != full {
+            let (a, b): (serde_json::Value, serde_json::Value) = (
+                serde_json::from_slice(&full).unwrap(),
+                serde_json::from_slice(&other).unwrap(),
+            );
+            panic!("{what}: {:?}", super::checkpoint::diff_state(&a, &b));
+        }
+    };
+    same("pruned store", fold(&ring[0]));
+    same("bootstrapped store", fold(&fresh));
+    assert_eq!(
+        fresh.store.sync_state_hash().unwrap(),
+        ring[1].store.sync_state_hash().unwrap()
+    );
+    assert_eq!(
+        fresh.store.sync_projection_hash().unwrap(),
+        ring[1].store.sync_projection_hash().unwrap()
+    );
+    assert_eq!(
+        ring[0].store.sync_projection_hash().unwrap(),
+        ring[1].store.sync_projection_hash().unwrap()
+    );
+    // The bootstrapped store holds no history below the cut and says so.
+    let dev = ring[1].dev();
+    assert!(fresh.store.sync_chain_tail(&dev, 0).is_err());
+}
+
+#[test]
+fn a_fork_at_the_prune_floor_is_still_proven_and_older_ops_are_covered() {
+    let ring = live_ring(vec![Peer::new(), Peer::new(), Peer::new()]);
+    let t0 = crate::store::now_ts();
+    touch(&ring);
+    random_content(&ring, 7, 30);
+    settle(&ring);
+    let (c1, _) = checkpoint_round(&ring, 0, t0);
+    random_content(&ring, 8, 30);
+    settle(&ring);
+    checkpoint_round(&ring, 1, t0 + 100);
+    let a = &ring[0];
+    a.store.sync_prune(t0 + 8 * 86_400 + 1_000).unwrap();
+    // The floor is the cut of the first checkpoint.
+    let victim = &ring[2];
+    let entry = cut_pairs(&c1)
+        .into_iter()
+        .find(|c| c.0 == victim.dev())
+        .unwrap();
+    let kept = a.store.sync_chain_tail(&victim.dev(), entry.1 - 1).unwrap();
+    assert_eq!(kept[0].seq, entry.1, "the head op of the cut is kept");
+    // Below the floor: ignored as covered, and no tail can be served.
+    let mut below = kept[0].clone();
+    below.seq = entry.1 - 1;
+    below.signature = victim.id.sign(&below.canonical_bytes());
+    assert!(rejected(&a.store.sync_ingest(below).unwrap()).contains("covered"));
+    let mut forged = kept[0].clone();
+    forged.timestamp += 1;
+    forged.signature = victim.id.sign(&forged.canonical_bytes());
+    match a.store.sync_ingest(forged.clone()).unwrap() {
+        IngestOutcome::ForkProof(x, y) => assert_ne!(x.hash(), y.hash()),
+        other => panic!("{other:?}"),
+    }
+    let row = a
+        .store
+        .sync_devices()
+        .unwrap()
+        .into_iter()
+        .find(|d| d.id == victim.dev())
+        .unwrap();
+    assert_eq!(row.status, DeviceStatus::Compromised);
+    let err = a.store.sync_chain_tail(&victim.dev(), 0).unwrap_err();
+    assert_eq!(err.downcast_ref::<Pruned>().unwrap().floor_seq, entry.1);
+}
+
+#[test]
+fn pruning_removes_superseded_wrapped_shares_from_the_database_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let ring = live_ring(vec![file_peer(dir.path()), Peer::new()]);
+    let a = &ring[0];
+    let t0 = crate::store::now_ts();
+    let mk =
+        |tag: &str| -> Vec<u8> { format!("SECRET-MARKER-{tag}-0123456789ABCDEF").into_bytes() };
+    let cred = |host: u8, tag: &str| OpBody::CredUpdate {
+        host_uid: uid(host),
+        ciphertext: mk(&format!("CT{tag}")),
+        wrapped_shares: ring
+            .iter()
+            .map(|p| WrappedShare {
+                recipient: p.dev(),
+                alg: ALG_CURRENT,
+                sealed: mk(tag),
+            })
+            .collect(),
+    };
+    a.append(upsert(1, hf("web", "10.0.0.1")));
+    a.append(upsert(2, hf("db", "10.0.0.2")));
+    a.append(cred(1, "ONE"));
+    a.append(cred(1, "TWO")); // supersedes ONE
+    a.append(cred(2, "THREE")); // resharded later
+    a.append(upsert(
+        1,
+        HostFields {
+            notes: Some(Some("n".into())),
+            ..Default::default()
+        },
+    ));
+    ring[1].append(upsert(3, hf("x", "10.0.0.3")));
+    settle(&ring);
+    checkpoint_round(&ring, 0, t0);
+    a.append(OpBody::ShareReshareConfirmBatch {
+        epoch: 1,
+        items: vec![ConfirmItem {
+            host_uid: uid(2),
+            sealed_share: mk("FOUR"),
+        }],
+    });
+    a.append(upsert(
+        1,
+        HostFields {
+            notes: Some(Some("m".into())),
+            ..Default::default()
+        },
+    ));
+    ring[1].append(upsert(
+        3,
+        HostFields {
+            notes: Some(Some("m".into())),
+            ..Default::default()
+        },
+    ));
+    settle(&ring);
+    checkpoint_round(&ring, 1, t0 + 100);
+    let path = dir.path().join("launcher.db");
+    let scan = |tag: &str| -> bool {
+        let bytes = std::fs::read(&path).unwrap();
+        let raw = mk(tag);
+        let b64 = super::canonical::b64_encode(&raw);
+        let has = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+        has(&raw) || has(b64.as_bytes())
+    };
+    for tag in ["ONE", "TWO", "THREE", "FOUR"] {
+        assert!(scan(tag), "{tag} should be in the file before the prune");
+    }
+    let report = a.store.sync_prune(t0 + 8 * 86_400 + 1_000).unwrap();
+    assert!(report.wrapped_share_blobs_dropped >= 3, "{report:?}");
+    assert!(!scan("ONE"), "superseded credential op");
+    assert!(!scan("THREE"), "shares of a resharded credential");
+    assert!(scan("TWO"), "the live wrapped shares stay");
+    assert!(scan("FOUR"), "the live reshare envelope stays");
+    // Stage 3 can still read both.
+    let (ct, shares) = a.store.sync_cred_ciphertext(&uid(1)).unwrap().unwrap();
+    assert_eq!(ct, mk("CTTWO"));
+    assert_eq!(shares.len(), 2);
+    assert_eq!(a.store.sync_share_envelopes(&uid(2)).unwrap().len(), 1);
+}
+
+#[test]
+fn ops_of_a_device_that_was_stale_at_the_checkpoint_wait_for_review() {
+    let ring = live_ring((0..3).map(|_| Peer::new()).collect());
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    let now = crate::store::now_ts();
+    // c's last op is 40 days old at the checkpoint; a and b are current.
+    c.store
+        .sync_append_local_at(&c.id, upsert(9, hf("old", "10.0.0.9")), now - 40 * 86_400)
+        .unwrap();
+    a.append(upsert(1, hf("web", "10.0.0.1")));
+    b.append(upsert(2, hf("db", "10.0.0.2")));
+    settle(&ring);
+    let (proposal, state) = a.store.sync_checkpoint_propose(&a.id, None, now).unwrap();
+    sync_all(&ring);
+    let mut signs = Vec::new();
+    for p in [a, b] {
+        signs.push(
+            p.store
+                .sync_checkpoint_sign(&p.id, &proposal, &state)
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    sync_all(&ring);
+    let bundle = CheckpointBundle {
+        proposal,
+        signs,
+        heads: vec![],
+        state,
+    };
+    for p in &ring {
+        assert_eq!(
+            p.store.sync_checkpoint_record(&bundle).unwrap(),
+            CheckpointStatus::Accepted
+        );
+    }
+    // c comes back and writes a safe field: it waits, whatever the class.
+    let late = c.append(upsert(
+        9,
+        HostFields {
+            notes: Some(Some("back".into())),
+            ..Default::default()
+        },
+    ));
+    assert_eq!(late.tier(), OpTier::Green);
+    assert!(matches!(
+        a.store.sync_ingest(late.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert_eq!(
+        a.store
+            .sync_pending_reason(&late.hash())
+            .unwrap()
+            .as_deref(),
+        Some("stale")
+    );
+    // The live devices are unaffected.
+    let fine = b.append(upsert(
+        2,
+        HostFields {
+            notes: Some(Some("ok".into())),
+            ..Default::default()
+        },
+    ));
+    assert!(matches!(
+        a.store.sync_ingest(fine).unwrap(),
+        IngestOutcome::Applied
+    ));
+}
+
+#[test]
+fn competing_proposals_resolve_to_the_lowest_lamport_and_device() {
+    let ring = live_ring((0..2).map(|_| Peer::new()).collect());
+    let (a, b) = (&ring[0], &ring[1]);
+    a.append(upsert(1, hf("web", "10.0.0.1")));
+    b.append(upsert(2, hf("db", "10.0.0.2")));
+    settle(&ring);
+    let now = crate::store::now_ts();
+    let (pa, sa) = a.store.sync_checkpoint_propose(&a.id, None, now).unwrap();
+    let (pb, sb) = b.store.sync_checkpoint_propose(&b.id, None, now).unwrap();
+    for (p, s) in [(&pa, &sa), (&pb, &sb)] {
+        a.store
+            .sync_checkpoint_record(&CheckpointBundle {
+                proposal: p.clone(),
+                signs: vec![],
+                heads: vec![],
+                state: s.clone(),
+            })
+            .unwrap();
+    }
+    let rows = a.store.sync_checkpoints().unwrap();
+    let winner = if (pa.lamport, &pa.device_id) <= (pb.lamport, &pb.device_id) {
+        pa.hash()
+    } else {
+        pb.hash()
+    };
+    for r in rows {
+        let want = if r.proposal_hash == winner {
+            CheckpointStatus::Verified
+        } else {
+            CheckpointStatus::Void
+        };
+        assert_eq!(r.status, want, "{}", r.device_id);
     }
 }

@@ -145,8 +145,8 @@ pub(crate) fn insert_op(
     let hash = crate::sync::crypto::chain_hash(&canonical);
     conn.execute(
         "INSERT INTO sync_ops (op_hash, device_id, seq, lamport, prev_hash, epoch, canonical,
-             signature, kind, subject, state, reason, local, received_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             signature, kind, subject, state, reason, local, received_at, timestamp)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             &hash[..],
             op.device_id,
@@ -162,6 +162,7 @@ pub(crate) fn insert_op(
             reason,
             local,
             now,
+            op.timestamp,
         ],
     )?;
     conn.execute(
@@ -178,14 +179,15 @@ pub(crate) fn insert_op(
     if let Some((kind, uid, is_delete)) = entity_of(&op.body) {
         if is_delete {
             conn.execute(
-                "INSERT OR IGNORE INTO sync_tombstones (kind, uid, lamport, device_id, op_hash)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                "INSERT OR IGNORE INTO sync_tombstones (kind, uid, lamport, device_id, op_hash, ts)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     kind.as_str(),
                     &uid[..],
                     op.lamport as i64,
                     op.device_id,
-                    &hash[..]
+                    &hash[..],
+                    op.timestamp
                 ],
             )?;
         } else {
@@ -215,6 +217,7 @@ pub(crate) fn insert_op(
             }
         }
     }
+    super::checkpoint::record_writes(conn, op, &hash)?;
     sync_pending_row(conn, &hash, op, state, reason, now)?;
     Ok(hash)
 }
@@ -276,8 +279,9 @@ fn resurrects(conn: &Connection, op: &Op) -> Result<bool> {
         return Ok(false);
     };
     let tomb: Option<i64> = conn.query_row(
-        "SELECT MAX(t.lamport) FROM sync_tombstones t JOIN sync_ops o ON o.op_hash = t.op_hash
-         WHERE t.kind = ?1 AND t.uid = ?2 AND o.state IN ('applied','approved')",
+        "SELECT MAX(t.lamport) FROM sync_tombstones t LEFT JOIN sync_ops o ON o.op_hash = t.op_hash
+         WHERE t.kind = ?1 AND t.uid = ?2
+           AND (o.state IN ('applied','approved') OR t.op_hash = zeroblob(32))",
         params![kind.as_str(), &uid[..]],
         |r| r.get(0),
     )?;
@@ -301,6 +305,12 @@ pub(crate) fn desired_state(
     }
     if op.tier() != OpTier::Green {
         return Ok((State::Pending, Some("tier")));
+    }
+    if super::checkpoint::stale_above_cut(conn, op)? {
+        // A device that was stale at an accepted checkpoint: its later ops wait
+        // for a human whatever their fields (a safe write to a forgotten host
+        // would resurrect it).
+        return Ok((State::Pending, Some("stale")));
     }
     if revoke_exists(conn, op, &row.hash, "pending")? {
         return Ok((State::Pending, Some("revoke-conflict")));
@@ -426,14 +436,15 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
             name,
             role,
             attendance,
+            kind,
         } => {
             if device.validate().is_ok()
                 && device.device_id() == device_id_of_pub(&device.ed25519_pub)
             {
                 conn.execute(
                     "INSERT OR IGNORE INTO sync_devices
-                       (device_id, ed25519, x25519, mlkem, name, role, attendance, last_seen, added_by)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)",
+                       (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, last_seen, added_by)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0, ?9)",
                     params![
                         device.device_id(),
                         &device.ed25519_pub[..],
@@ -442,6 +453,7 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
                         name,
                         role_db(*role),
                         attendance_db(*attendance),
+                        kind_db(*kind),
                         &hash[..],
                     ],
                 )?;
@@ -617,6 +629,13 @@ pub(crate) fn role_db(r: DeviceRole) -> &'static str {
     }
 }
 
+pub(crate) fn kind_db(k: DeviceKind) -> &'static str {
+    match k {
+        DeviceKind::Terminal => "terminal",
+        DeviceKind::Phone => "phone",
+    }
+}
+
 pub(crate) fn attendance_db(a: Attendance) -> &'static str {
     match a {
         Attendance::Attended => "attended",
@@ -644,7 +663,7 @@ pub(crate) fn shares_json(shares: &[WrappedShare]) -> Result<String> {
             serde_json::json!({
                 "recipient": s.recipient,
                 "alg": s.alg.to_bytes(),
-                "sealed": s.sealed,
+                "sealed": super::canonical::b64_encode(&s.sealed),
             })
         })
         .collect();

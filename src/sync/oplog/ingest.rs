@@ -81,6 +81,17 @@ pub(crate) fn ingest_capped(
         }
     }
 
+    let floor: Option<i64> = conn
+        .query_row(
+            "SELECT seq FROM sync_prune_floor WHERE device_id = ?1",
+            params![op.device_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if floor.is_some_and(|f| op.seq < f as u64) {
+        return reject("covered by an accepted checkpoint");
+    }
+
     let hash = op.hash();
     if let Some(stored) = op_at(conn, &op.device_id, op.seq)? {
         if stored.hash == hash {

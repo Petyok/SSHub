@@ -964,6 +964,7 @@ CREATE TABLE IF NOT EXISTS sync_ops (
     signature   BLOB NOT NULL,
     kind        TEXT NOT NULL,
     subject     TEXT,
+    timestamp   INTEGER NOT NULL DEFAULT 0,
     state       TEXT NOT NULL
         CHECK (state IN ('applied','pending','approved','rejected','void')),
     reason      TEXT,
@@ -999,6 +1000,7 @@ CREATE TABLE IF NOT EXISTS sync_devices (
     mlkem      BLOB NOT NULL,
     name       TEXT NOT NULL,
     role       TEXT NOT NULL CHECK (role IN ('holder','mirror')),
+    kind       TEXT NOT NULL DEFAULT 'terminal' CHECK (kind IN ('terminal','phone')),
     attendance TEXT NOT NULL CHECK (attendance IN ('attended','unattended')),
     status     TEXT NOT NULL DEFAULT 'operational',
     exempt     INTEGER NOT NULL DEFAULT 0,
@@ -1025,6 +1027,7 @@ CREATE TABLE IF NOT EXISTS sync_tombstones (
     lamport   INTEGER NOT NULL,
     device_id TEXT NOT NULL,
     op_hash   BLOB NOT NULL,
+    ts        INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (kind, uid, op_hash)
 );
 
@@ -1089,6 +1092,55 @@ CREATE TABLE IF NOT EXISTS sync_fields (
     PRIMARY KEY (kind, uid, field, op_hash)
 );
 CREATE INDEX IF NOT EXISTS sync_fields_op ON sync_fields(op_hash);
+
+-- Per-key writes of everything that is not an entity field (devices, revocations,
+-- wrap keys, credentials, reshare envelopes, certificates, mode, heads). Like
+-- sync_fields: all writes are kept, the winner of a (section, key) is the newest
+-- `(ord, lamport, device, seq)` among writes of effective ops. `op_hash` = 32 zero
+-- bytes marks a base write (anchor device, checkpoint prune or bootstrap), always
+-- effective.
+CREATE TABLE IF NOT EXISTS sync_writes (
+    section   TEXT NOT NULL,
+    key       TEXT NOT NULL,
+    op_hash   BLOB NOT NULL,
+    ord       INTEGER NOT NULL,
+    lamport   INTEGER NOT NULL,
+    device_id TEXT NOT NULL,
+    seq       INTEGER NOT NULL,
+    value     TEXT NOT NULL,
+    PRIMARY KEY (section, key, op_hash)
+);
+CREATE INDEX IF NOT EXISTS sync_writes_op ON sync_writes(op_hash);
+
+CREATE TABLE IF NOT EXISTS sync_checkpoints (
+    proposal_hash BLOB PRIMARY KEY,
+    device_id     TEXT NOT NULL,
+    prev          BLOB NOT NULL,
+    state_hash    BLOB NOT NULL,
+    state_len     INTEGER NOT NULL,
+    cut           TEXT NOT NULL,
+    required      TEXT NOT NULL,
+    status        TEXT NOT NULL,
+    accepted_at   INTEGER,
+    lamport       INTEGER NOT NULL,
+    proposed_at   INTEGER NOT NULL,
+    op_blob       BLOB NOT NULL,
+    state         BLOB
+);
+
+CREATE TABLE IF NOT EXISTS sync_checkpoint_signs (
+    proposal_hash BLOB NOT NULL,
+    device_id     TEXT NOT NULL,
+    sign_op_hash  BLOB NOT NULL,
+    op_blob       BLOB NOT NULL,
+    PRIMARY KEY (proposal_hash, device_id)
+);
+
+CREATE TABLE IF NOT EXISTS sync_prune_floor (
+    device_id TEXT PRIMARY KEY,
+    seq       INTEGER NOT NULL,
+    op_hash   BLOB NOT NULL
+);
 
 -- Cache of the effective view of each replicated entity: liveness and the base
 -- name with the key of the write that set it (the name tie-break). Recomputed
@@ -1872,7 +1924,7 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
         assert_eq!(tags, "[]");
     }
 
-    const SYNC_TABLES: [&str; 14] = [
+    const SYNC_TABLES: [&str; 18] = [
         "sync_ops",
         "sync_chain_heads",
         "sync_pending_ops",
@@ -1887,6 +1939,10 @@ INSERT INTO host_groups (name, sort_order, reserved, created_at)
         "sync_fields",
         "sync_entities",
         "sync_wrap_history",
+        "sync_writes",
+        "sync_checkpoints",
+        "sync_checkpoint_signs",
+        "sync_prune_floor",
     ];
 
     /// Put a current database back to exactly the v21 shape: no uid columns,
