@@ -72,7 +72,8 @@ is hidden (a tab switch or screen off) and asks for the PIN again.
 ## Enrollment
 
 Enrolling introduces the phone to a terminal of your ring. It uses the same commit, reveal and four-word check as
-terminal to terminal enrollment, over QR codes instead of SSH.
+machine enrollment, over QR codes instead of SSH. Here both sides always have a screen, so the four words are a real
+check (unlike a headless machine reached over ssh, where the words prove nothing).
 
 1. On the terminal start phone enrollment. It shows a short QR code.
 2. On the phone tap **Enroll with a terminal**, name the phone, and scan the code (step 1 of 4).

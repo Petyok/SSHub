@@ -7,8 +7,10 @@ All notable changes to SSHub are documented in this file.
 ### Added
 
 - **Host sync between your own machines** - hosts, groups and identities replicate over SSH between devices you
-  enroll yourself (`sync-enroll` on one machine, `sync-join` on the other, four words compared on both screens). The
-  new Sync tab (`7`) shows the devices and what is waiting for review; changes to dangerous fields (address, jump
+  enroll yourself (`t` on a host in the hosts tab makes that machine one of your devices, or run `sshub sync-join
+  <host>`; the four words are a real check only when both machines have a screen, with a headless machine reached
+  over ssh they prove nothing and its identity rests on the verified SSH host key; the Sync tab shows which method
+  admitted each device). The Sync tab (`7`) shows the devices and what is waiting for review; changes to dangerous fields (address, jump
   host, remote command, user, key) never apply silently and wait for your approval (`sync-review`), safe fields merge
   on their own. `sync-serve` is the peer end, `sync-now` and `sync-status` run and inspect a round. Credentials sync in
   one of two modes: **Vault** (encrypted under a master phrase and a ring secret from a printed kit) or **Quorum**
