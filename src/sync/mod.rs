@@ -15,6 +15,7 @@ pub mod fountain;
 pub mod hub;
 pub mod identity_store;
 pub mod limits;
+pub mod media;
 pub mod modes;
 pub mod notify;
 pub mod oplog;
