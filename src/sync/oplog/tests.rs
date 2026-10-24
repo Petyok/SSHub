@@ -1502,10 +1502,16 @@ fn run_case(seed: u64, n_peers: usize, steps: usize) {
         state.iter().all(|h| *h == state[0]),
         "seed {seed}: state hashes differ"
     );
-    assert!(
-        proj.iter().all(|h| *h == proj[0]),
-        "seed {seed}: projection hashes differ"
-    );
+    if !proj.iter().all(|h| *h == proj[0]) {
+        for p in &peers {
+            eprintln!(
+                "--- peer {}\n{}",
+                p.dev(),
+                p.store.sync_projection_dump().unwrap()
+            );
+        }
+        panic!("seed {seed}: projection hashes differ");
+    }
     for p in &peers {
         let bad: i64 = p
             .store
@@ -1529,14 +1535,22 @@ fn seeds(default: u64) -> u64 {
 
 #[test]
 fn two_stores_converge_on_random_ops_in_random_orders() {
-    for seed in 0..seeds(60) {
+    let from = std::env::var("SSHUB_PROP_FROM")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0u64);
+    for seed in from..from + seeds(60) {
         run_case(seed, 2, 30);
     }
 }
 
 #[test]
 fn three_stores_converge_on_random_ops_in_random_orders() {
-    for seed in 1_000_000..1_000_000 + seeds(40) {
+    let from = std::env::var("SSHUB_PROP_FROM3")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1_000_000u64);
+    for seed in from..from + seeds(40) {
         run_case(seed, 3, 40);
     }
 }

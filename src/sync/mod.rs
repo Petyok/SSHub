@@ -2,5 +2,6 @@
 
 pub mod apply;
 pub mod crypto;
+pub mod identity_store;
 pub mod limits;
 pub mod oplog;

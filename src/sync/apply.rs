@@ -308,39 +308,46 @@ pub fn reproject(conn: &Connection, touched: &Touched) -> Result<()> {
     let mut views: BTreeMap<(EntityKind, Uid), View> = BTreeMap::new();
     let mut work: VecDeque<(EntityKind, Uid)> = touched.iter().copied().collect();
     let mut names: BTreeSet<(EntityKind, String)> = BTreeSet::new();
+    let mut named: BTreeSet<(EntityKind, String)> = BTreeSet::new();
     let mut seen: BTreeSet<(EntityKind, Uid)> = BTreeSet::new();
 
-    // Phase 1: refresh caches, collect name peers and referrers to a fixpoint.
-    while let Some((kind, uid)) = work.pop_front() {
-        if !seen.insert((kind, uid)) {
-            continue;
+    // Refresh caches and collect name peers and referrers to a fixpoint: a
+    // peer pulled in by a shared name has referrers of its own (a hop that
+    // renders its name), and so on.
+    loop {
+        while let Some((kind, uid)) = work.pop_front() {
+            if !seen.insert((kind, uid)) {
+                continue;
+            }
+            let (old, view) = refresh_cache(conn, kind, &uid)?;
+            if let Some(n) = old {
+                names.insert((kind, n));
+            }
+            if let (true, Some(n)) = (view.alive, view.base_name()) {
+                names.insert((kind, n.to_string()));
+            }
+            views.insert((kind, uid), view);
+            for referrer in referrers(conn, &uid)? {
+                work.push_back(referrer);
+            }
         }
-        let (old, view) = refresh_cache(conn, kind, &uid)?;
-        if let Some(n) = old {
-            names.insert((kind, n));
-        }
-        if let (true, Some(n)) = (view.alive, view.base_name()) {
-            names.insert((kind, n.to_string()));
-        }
-        views.insert((kind, uid), view);
-        for referrer in referrers(conn, &uid)? {
-            work.push_back(referrer);
-        }
-    }
-    // Name peers: every live entity sharing a base name with a touched one.
-    for (kind, name) in &names {
-        let mut stmt = conn.prepare_cached(
-            "SELECT uid FROM sync_entities WHERE kind = ?1 AND alive = 1 AND name = ?2",
-        )?;
-        let peers: Vec<Vec<u8>> = stmt
-            .query_map(params![kind.as_str(), name], |r| r.get(0))?
-            .collect::<std::result::Result<_, _>>()?;
-        for p in peers {
-            if let Ok(uid) = <Uid>::try_from(p) {
-                if !views.contains_key(&(*kind, uid)) {
-                    views.insert((*kind, uid), effective_view(conn, *kind, &uid)?);
+        // Name peers: every live entity sharing a base name with a touched one.
+        for (kind, name) in names.difference(&named).cloned().collect::<Vec<_>>() {
+            named.insert((kind, name.clone()));
+            let mut stmt = conn.prepare_cached(
+                "SELECT uid FROM sync_entities WHERE kind = ?1 AND alive = 1 AND name = ?2",
+            )?;
+            let peers: Vec<Vec<u8>> = stmt
+                .query_map(params![kind.as_str(), name], |r| r.get(0))?
+                .collect::<std::result::Result<_, _>>()?;
+            for p in peers {
+                if let Ok(uid) = <Uid>::try_from(p) {
+                    work.push_back((kind, uid));
                 }
             }
+        }
+        if work.is_empty() {
+            break;
         }
     }
 
@@ -872,6 +879,13 @@ pub fn state_hash(conn: &Connection) -> Result<[u8; 32]> {
 /// Hash of the projected rows (replicated columns only, keyed by uid) of every
 /// managed entity: what the user actually sees.
 pub fn projection_hash(conn: &Connection) -> Result<[u8; 32]> {
+    Ok(crate::sync::crypto::chain_hash(
+        projection_dump(conn)?.as_bytes(),
+    ))
+}
+
+/// The text [`projection_hash`] hashes, one line per entity.
+pub fn projection_dump(conn: &Connection) -> Result<String> {
     let mut out = String::new();
     let mut hosts = conn.prepare(
         "SELECT h.uid, h.name, h.label, h.address, h.port, h.username, h.proxy_jump,
@@ -925,7 +939,7 @@ pub fn projection_hash(conn: &Connection) -> Result<[u8; 32]> {
         }
         out.push('\n');
     }
-    Ok(crate::sync::crypto::chain_hash(out.as_bytes()))
+    Ok(out)
 }
 
 fn dump(v: rusqlite::types::ValueRef<'_>) -> String {

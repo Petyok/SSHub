@@ -438,6 +438,11 @@ impl LauncherStore {
         self.with_conn(apply::projection_hash)
     }
 
+    /// Readable form of what [`Self::sync_projection_hash`] hashes (diagnostics).
+    pub fn sync_projection_dump(&self) -> Result<String> {
+        self.with_conn(apply::projection_dump)
+    }
+
     /// Host hop tokens as typed locally to the wire form (`#uid`).
     pub fn sync_hops_to_wire(&self, local: &str) -> Result<String> {
         self.with_conn(|conn| apply::hops_to_wire(conn, local))
