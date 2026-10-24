@@ -745,14 +745,14 @@ fn group_with_host(r: &Ring) -> (crate::sync::oplog::CertScope, [u8; 16]) {
     (crate::sync::oplog::CertScope::Group(guid), huid)
 }
 
-fn frames_of_prompt(app: &App) -> Vec<Vec<u8>> {
+pub(super) fn frames_of_prompt(app: &App) -> Vec<Vec<u8>> {
     match app.sync_ui.as_ref() {
         Some(crate::app::sync_ui::SyncUi::Prompt { frames, .. }) => frames.clone(),
         _ => panic!("no QR prompt is open"),
     }
 }
 
-fn decode_frames(frames: &[Vec<u8>]) -> Vec<u8> {
+pub(super) fn decode_frames(frames: &[Vec<u8>]) -> Vec<u8> {
     let mut d = FountainDecoder::new();
     for f in frames {
         d.push(f).unwrap();

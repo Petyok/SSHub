@@ -10,6 +10,9 @@
 //! drop(handle);                                  // stops capture, releases the devices
 //! ```
 //!
+//! [`listen_with`] takes [`ListenOpts`] to hand over other documents (phone enrollment frames,
+//! several in a row) instead of the single `ShareResponseWire`.
+//!
 //! Capture runs only while the [`ListenHandle`] lives. Nothing is recorded to disk; sample and
 //! frame buffers are dropped when a channel stops. A channel stops itself after its first valid
 //! reply (the device is released at once); the other channel keeps listening until the handle
@@ -28,12 +31,13 @@ mod mic;
 #[cfg(test)]
 mod tests;
 
+use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use crate::sync::wire::ShareResponseWire;
+use crate::sync::wire::{EnrollFrame, ShareResponseWire};
 
 /// A response channel the terminal can listen on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -117,13 +121,60 @@ impl Drop for ListenHandle {
     }
 }
 
+/// Which documents a listener hands over and whether it stops after the first.
+#[derive(Clone, Copy)]
+pub struct ListenOpts {
+    /// Called with every complete document (an audio frame payload or a reassembled QR
+    /// document); only documents it accepts become `Reply` events.
+    pub accept: fn(&[u8]) -> bool,
+    /// False: a channel ends after its first accepted reply. True: it keeps listening until
+    /// the handle is dropped; a document identical to the last one it handed over is not sent
+    /// again (the phone loops the same document until the next step).
+    pub keep_listening: bool,
+}
+
+/// `bytes` is a `ShareResponseWire` (the unlock reply).
+pub fn accept_share_response(bytes: &[u8]) -> bool {
+    ShareResponseWire::decode(bytes).is_ok()
+}
+
+/// `bytes` is an enrollment frame (`EnrollFrame` kinds 6, 7, 8).
+pub fn accept_enroll_frame(bytes: &[u8]) -> bool {
+    EnrollFrame::decode(bytes).is_ok()
+}
+
+impl ListenOpts {
+    /// What [`listen`] uses: the first valid `ShareResponseWire`, then stop.
+    pub const SHARE_RESPONSE: ListenOpts = ListenOpts {
+        accept: accept_share_response,
+        keep_listening: false,
+    };
+
+    /// Enrollment frames, listening until the handle is dropped.
+    pub const ENROLL_FRAMES: ListenOpts = ListenOpts {
+        accept: accept_enroll_frame,
+        keep_listening: true,
+    };
+}
+
 /// Reports one channel's progress; validates what it is given.
 pub(crate) struct Emitter {
     kind: MediaKind,
     tx: Sender<MediaEvent>,
+    opts: ListenOpts,
+    last: RefCell<Option<Vec<u8>>>,
 }
 
 impl Emitter {
+    pub(crate) fn new(kind: MediaKind, tx: Sender<MediaEvent>, opts: ListenOpts) -> Self {
+        Emitter {
+            kind,
+            tx,
+            opts,
+            last: RefCell::new(None),
+        }
+    }
+
     /// False once the modal stopped reading: the capture thread should end.
     pub(crate) fn status(&self, text: impl Into<String>) -> bool {
         self.tx
@@ -138,30 +189,40 @@ impl Emitter {
             .is_ok()
     }
 
-    /// Sends `bytes` as a reply if they are a `ShareResponseWire`; true when sent.
+    /// Hands `bytes` over if `accept` takes them. True when the channel should stop: the
+    /// reply was sent and the caller wants no more, or nobody listens any longer.
     #[cfg_attr(not(any(feature = "audio", feature = "camera")), allow(dead_code))]
     pub(crate) fn reply(&self, bytes: Vec<u8>) -> bool {
-        if ShareResponseWire::decode(&bytes).is_err() {
-            self.status("received something that is not a share reply, still listening");
+        if !(self.opts.accept)(&bytes) {
+            return !self.status("received something this step does not expect, still listening");
+        }
+        if self.opts.keep_listening && self.last.borrow().as_deref() == Some(&bytes[..]) {
             return false;
         }
-        self.tx.send(MediaEvent::Reply(self.kind, bytes)).is_ok()
+        if self.opts.keep_listening {
+            *self.last.borrow_mut() = Some(bytes.clone());
+        }
+        let sent = self.tx.send(MediaEvent::Reply(self.kind, bytes)).is_ok();
+        !sent || !self.opts.keep_listening
     }
 }
 
 /// Starts capture for `kinds` (each at most once). A kind this build or machine cannot serve
 /// reports why through a `Status` event and starts nothing.
 pub fn listen(kinds: &[MediaKind], tx: Sender<MediaEvent>) -> ListenHandle {
+    listen_with(kinds, tx, ListenOpts::SHARE_RESPONSE)
+}
+
+/// [`listen`] with the documents to hand over chosen by the caller (e.g.
+/// [`ListenOpts::ENROLL_FRAMES`] for the phone-enrollment flow).
+pub fn listen_with(kinds: &[MediaKind], tx: Sender<MediaEvent>, opts: ListenOpts) -> ListenHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let mut threads = Vec::new();
     for (i, kind) in kinds.iter().enumerate() {
         if kinds[..i].contains(kind) {
             continue;
         }
-        let em = Emitter {
-            kind: *kind,
-            tx: tx.clone(),
-        };
+        let em = Emitter::new(*kind, tx.clone(), opts);
         let stop = stop.clone();
         let started = std::thread::Builder::new()
             .name(format!("sshub-media-{kind:?}"))

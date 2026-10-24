@@ -249,7 +249,7 @@ HOST SYNC (headless; encrypted peer-to-peer over ssh):
     sshub sync-factor <op-id> (--paper | --email-code) | sync-factor-register paper|email
     sshub sync-recovery start|approve|ack|cancel|status | sync-mode vault|quorum
     sshub sync-exemption on|off <device> | sync-export --window <s> --out <path>
-    sshub sync-migrate [--remove-local] | sync-import-kit   (sshub help <verb> for each)
+    sshub sync-migrate [--remove-local] | sync-import-kit   (sshub <verb> --help for each)
     sshub sync-serve | sync-enroll           Run by a peer over ssh (frames on stdin/stdout)
 
 INVENTORY / CONFIG:

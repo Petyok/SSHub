@@ -155,12 +155,16 @@ fn request(app: &mut App, scope: CertScope, days: u32, budget: u32) {
     }
 }
 
+/// `bytes` as the looping QR frames that fit the QR area.
+pub(crate) fn qr_frames(bytes: &[u8]) -> Result<Vec<Vec<u8>>> {
+    let b = crate::sync::fountain::frame_bytes_for_area(QR_AREA.0, QR_AREA.1)
+        .ok_or_else(|| anyhow::anyhow!("no QR fits this terminal"))?;
+    crate::sync::fountain::fountain_encode(bytes, b, QR_PARITY_PERCENT)
+}
+
 /// The request as a looping QR over a field for the phone's answer.
 fn show_qr(app: &mut App, title: &str, request: Vec<u8>, lines: Vec<String>) {
-    let frames = crate::sync::fountain::frame_bytes_for_area(QR_AREA.0, QR_AREA.1)
-        .ok_or_else(|| anyhow::anyhow!("no QR fits this terminal"))
-        .and_then(|b| crate::sync::fountain::fountain_encode(&request, b, QR_PARITY_PERCENT));
-    match frames {
+    match qr_frames(&request) {
         Ok(frames) => app.sync_prompt_qr(
             title.to_string(),
             lines,

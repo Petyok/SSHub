@@ -22,7 +22,7 @@ use crate::sync::client::{
 };
 use crate::sync::cred_ops::{cred_put, CredPayload};
 use crate::sync::crypto::{Argon2Profile, DeviceIdentity, ARGON2_MASTER};
-use crate::sync::enroll::{run_sync_join, EnrollOutcome, SasConfirm, SasPrompt};
+use crate::sync::enroll::{run_sync_join, EnrollOutcome, EnrollProgress, SasConfirm, SasPrompt};
 use crate::sync::identity_store::load_or_init_identity;
 use crate::sync::oplog::{Attendance, DeviceId, DeviceKind, DeviceRole, VerifiedBy};
 use crate::sync::protocol::{run_round, run_share_request, RoundSummary, ShareAsk, ShareReply};
@@ -174,10 +174,34 @@ impl SyncRuntime {
             })?;
         let host = resolve_host(&self.store, &spec)
             .map_err(|e| TransportError::Offline(format!("{e:#}")))?;
-        self.transport(host, SERVE_COMMAND)
-            .run(cancel, Limits::default(), |conn| {
-                run_round(conn, &self.store, &self.identity, device)
-            })
+        let summary =
+            self.transport(host, SERVE_COMMAND)
+                .run(cancel, Limits::default(), |conn| {
+                    run_round(conn, &self.store, &self.identity, device)
+                })?;
+        self.mail_owed_codes();
+        Ok(summary)
+    }
+
+    /// After a completed round: when this device is the registered sender of an
+    /// emailed third-factor code that a Red change now waits for, mail it through
+    /// `[sync.notify]`. A missing or broken config, or a failing mail command,
+    /// sends nothing and marks nothing (the next round tries again); nothing is
+    /// printed because this also runs under the TUI.
+    fn mail_owed_codes(&self) {
+        let Ok(config) = crate::config::load_config_at(&self.paths.config_file) else {
+            return;
+        };
+        let notify = &config.sync.notify;
+        if notify.command.is_none() {
+            return;
+        }
+        let _ = crate::sync::ceremony::send_owed_codes(
+            &self.store,
+            &self.identity.public().device_id(),
+            crate::store::now_ts(),
+            &mut |subject, body| crate::sync::notify::send_notification(notify, subject, body),
+        );
     }
 
     /// Ask `holder` for a share over its recorded host, inside an authenticated
@@ -248,6 +272,21 @@ impl SasConfirm for UiSas<'_, '_> {
                 None => return false,
             }
         }
+    }
+
+    fn progress(&mut self, p: EnrollProgress) {
+        self.0.emit(SyncEvent::Progress(progress_line(p)));
+    }
+}
+
+/// The worker's status line for a join anchor step.
+pub(crate) fn progress_line(p: EnrollProgress) -> String {
+    match p {
+        EnrollProgress::Receiving { chunk, total } => {
+            format!("receiving the ring ({chunk}/{total})")
+        }
+        EnrollProgress::Adopting { hosts } => format!("adopting the ring ({hosts} hosts)"),
+        EnrollProgress::Adopted { hosts } => format!("adopted the ring ({hosts} hosts)"),
     }
 }
 

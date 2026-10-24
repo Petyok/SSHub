@@ -37,6 +37,7 @@ pub mod sync;
 mod sync_admin;
 mod sync_flows;
 mod sync_flows_more;
+pub(crate) mod sync_phone;
 pub(crate) mod sync_trust;
 pub(crate) mod sync_ui;
 pub(crate) mod sync_view;
@@ -317,6 +318,8 @@ pub struct App {
     pub(crate) unlock_resume: Option<sync::UnlockResume>,
     /// The open generic Sync modal (prompt, menu or panel).
     pub(crate) sync_ui: Option<sync_ui::SyncUi>,
+    /// Phone enrollment in progress (see `app/sync_phone.rs`).
+    pub(crate) phone_flow: Option<sync_phone::PhoneFlow>,
     /// The paper phrase just created, until the user typed it back (memory only).
     pub(crate) sync_paper: Option<zeroize::Zeroizing<String>>,
     /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
@@ -1111,6 +1114,7 @@ impl App {
             sync: sync::SyncView::default(),
             unlock_resume: None,
             sync_ui: None,
+            phone_flow: None,
             sync_paper: None,
             sync_worker: None,
             ghost_dismissed_for: None,

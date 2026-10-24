@@ -32,7 +32,7 @@ pub fn mode_change_body(
     to: CredMode,
     cosigner: Option<DeviceId>,
 ) -> Result<OpBody> {
-    let from = store.sync_cred_mode()?;
+    let from = super::ceremony::effective_cred_mode(store)?;
     ensure!(from != to, "the ring is already in that mode");
     if to == CredMode::Vault {
         ensure!(

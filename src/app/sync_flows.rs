@@ -145,28 +145,75 @@ fn choose_role(app: &mut App, id: String, name: String) {
 
 // -------------------------------------------------------------------- mode
 
+/// The two-step switch, as `sshub sync-mode` does it: the first call proposes
+/// the Red change (nothing is re-encrypted before the ring agreed), a later one
+/// re-wraps the credentials once the ceremony completed.
+fn mode_job(app: &mut App, phrase: String) {
+    app.run_sync_job(move |env| {
+        let ring = read_ring_secret(env)?;
+        let r = admin::mode(
+            &env.store,
+            &env.identity,
+            CredMode::Quorum,
+            None,
+            phrase.trim(),
+            &ring,
+            now(),
+        )?;
+        Ok(r.lines.join("\n"))
+    });
+}
+
+/// This device's own switch to Quorum that is not finished: `Some(false)` while
+/// its ceremony is incomplete, `Some(true)` when it is in force but credentials
+/// are still wrapped for the Vault.
+fn unfinished_switch(app: &App) -> Option<bool> {
+    let me = app.sync.this_device.clone()?;
+    let mc = crate::sync::modes::own_mode_change(&app.store, &me).ok()??;
+    if !matches!(
+        mc.body,
+        crate::sync::oplog::OpBody::ModeChange {
+            to: CredMode::Quorum,
+            ..
+        }
+    ) {
+        return None;
+    }
+    if !crate::sync::ceremony::in_force(&app.store, &mc).ok()? {
+        return Some(false);
+    }
+    let public = app
+        .store
+        .sync_devices()
+        .ok()?
+        .into_iter()
+        .find(|d| d.id == me)?
+        .public;
+    // The probe fails where a credential would have to be opened: that one is still wrapped for the Vault.
+    let pending =
+        crate::sync::modes::mode_migration(&app.store, &public, &|_| anyhow::bail!("pending"))
+            .is_err();
+    pending.then_some(true)
+}
+
 pub(crate) fn mode(app: &mut App) {
+    match unfinished_switch(app) {
+        Some(false) => return mode_job(app, String::new()), // shows the ceremony status
+        Some(true) => {
+            return app.sync_prompt(
+                "Finish the switch to Quorum",
+                "The ring agreed. Type the master phrase to re-wrap the credentials for Quorum (nothing is shown)",
+                true,
+                mode_job,
+            )
+        }
+        None => {}
+    }
     match app.sync.cred_mode {
-        Some(super::sync::CredModeView::Vault) => app.sync_prompt(
-            "Switch to Quorum",
-            "Credentials will need two shares instead of the master phrase. Type the master phrase to re-wrap them (nothing is shown)",
-            true,
-            |app, phrase| {
-                app.run_sync_job(move |env| {
-                    let ring = read_ring_secret(env)?;
-                    let r = admin::mode(
-                        &env.store,
-                        &env.identity,
-                        CredMode::Quorum,
-                        None,
-                        phrase.trim(),
-                        &ring,
-                        now(),
-                    )?;
-                    Ok(r.lines.join("\n"))
-                });
-            },
-        ),
+        Some(super::sync::CredModeView::Vault) => {
+            // Proposing needs no secret; the phrase is asked when the switch is finished.
+            mode_job(app, String::new());
+        }
         Some(super::sync::CredModeView::Quorum) => app.sync_info(
             "Switch to Vault",
             vec![

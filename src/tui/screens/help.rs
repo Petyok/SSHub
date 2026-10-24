@@ -467,7 +467,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "M",
-        desc: "Manage the ring: revoke a device, change roles, switch the credential mode, recovery, paper",
+        desc: "Manage the ring: revoke a device, change roles, switch the credential mode, add my phone, paste phone ops, recovery, paper",
     },
     HelpItem::Entry {
         key: "",

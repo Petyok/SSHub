@@ -25,6 +25,11 @@ pub(crate) fn entries() -> Vec<(String, MenuFn)> {
         item("Revoke a device", f::revoke),
         item("Change a device's role (holder or mirror)", f::role),
         item("Switch the credential mode (Vault, Quorum)", f::mode),
+        item(
+            "Add my phone (enroll it from here)",
+            super::sync_phone::start,
+        ),
+        item("Paste phone ops", super::sync_phone::paste_ops),
         item("Recovery of a lost phone", f::recovery),
         item("Paper phrase: create and show", f::paper_setup),
         item(

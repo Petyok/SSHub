@@ -350,7 +350,7 @@ sshub sync-approve <op-id>                    # second-device vote on a Red chan
 sshub sync-factor <op-id> --paper|--email-code   # third factor, read without echo
 sshub sync-factor-register paper|email [--sender <device>]
 sshub sync-recovery start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status
-sshub sync-mode vault|quorum [--cosigner <device>]   # change the credential mode (Red)
+sshub sync-mode vault|quorum [--cosigner <device>]   # two steps: the first call proposes the change (Red); run it again once its ceremony completed to re-encrypt the credentials
 sshub sync-exemption on|off <device>          # master-phrase exemption (on needs the TUI)
 sshub sync-export --window <seconds> --out <path> [--wait <seconds>]   # bulk export (Red, window <= 3600 s, 0600 file)
 sshub sync-migrate [--remove-local]           # replicate this profile's saved secrets
@@ -608,7 +608,7 @@ What sync does not protect against (the design's honest list, word for word):
 | `Enter` | Sync tab | On a compromised device: its proof and what to do next. On a behind or stale one: sync first, then (if it is still behind) re-enroll it through its recorded host |
 | `R` | Sync tab | Review every change waiting for approval |
 | `t` | Sync tab | Start a trust session: scope (a group, or hosts marked with Space, at most 64; never everything), term (7, 30 or 90 days), budget |
-| `M` | Sync tab | Manage the ring: overview, trust sessions, revoke a device, roles, credential mode, recovery, paper and emailed-code factors, exemption, bulk export, move local secrets into the ring, import the Vault kit |
+| `M` | Sync tab | Manage the ring: overview, trust sessions, revoke a device, roles, credential mode (propose, then finish the switch once the ring agreed), add my phone, paste phone ops, recovery, paper and emailed-code factors, exemption, bulk export, move local secrets into the ring, import the Vault kit |
 | `t` | Hosts tab | Make the selected host one of your sync devices |
 | `a` `r` `p` `e` | Review | `a` approve (for a Red change: add this device's approval), `r` reject, `p` type the paper phrase (24 words, nothing is shown), `e` type the emailed code, `Esc` close |
 
@@ -635,6 +635,8 @@ A **Red** change (revoking a holder, changing a role, switching the credential m
 `t` on the Sync tab (or `M`, "Trust session") asks the phone to certify that this machine may open a group or host list for a while without asking each time: a looping QR carries the request, the phone's answer is pasted back, and the ceremony above completes it. `M` also extends a trust session's daily budget (a second QR) or revokes it. Recovery of a lost phone (start, approve, acknowledge, cancel, status) is under `M` and in `sshub sync-recovery`. The paper phrase is created and shown once, registered only when you type it back exactly, and can be written to one printable sheet (a single owner-only HTML file with the 24 words, the "do not photograph" warning and the sentence that the sheet is the credential store). The emailed code is registered once and shown once.
 
 #### The phone companion
+
+`M` also enrolls the phone from the terminal ("Add my phone"): the terminal shows each step as a looping QR, you paste the phone's matching frame (base64, as the page copies it), both show four words that must be identical, and the phone is then registered and proposed as a holder (a Red change, finished by the ceremony). "Paste phone ops" takes in the ops list the phone copies out. A switch from Vault to Quorum is the same two steps as `sshub sync-mode quorum`: `M`, "Switch the credential mode" proposes it and shows the ceremony; once the ring agreed the same entry reads "Finish the switch to Quorum" and re-wraps the credentials (it asks the master phrase, nothing is shown).
 
 The phone is the second factor: `assets/companion/sshub-companion.html` is one self-contained page (its release fingerprint is shown on it and in `assets/companion/FINGERPRINT`). To test it on an Android phone from a development machine, serve the folder on localhost and reverse the port over USB so the page runs in a secure context (camera and microphone work there):
 
