@@ -210,6 +210,19 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
                 "added_by": hex(hash),
             }),
         )],
+        OpBody::ExemptionSet { device_id, slot } => vec![(
+            "exempt",
+            device_id.clone(),
+            0,
+            json!({
+                "on": slot.is_some(),
+                "slot": slot.as_ref().map(|p| json!({
+                    "ed25519": hex(&p.ed25519_pub),
+                    "x25519": hex(&p.x25519_pub),
+                    "mlkem": b64_encode(&p.mlkem_pub),
+                })),
+            }),
+        )],
         OpBody::DeviceRoleChange { device_id, to } => vec![(
             "role",
             device_id.clone(),
@@ -551,6 +564,12 @@ fn device_section(
         if let Some(r) = wins.get(&("role".to_string(), key.clone())) {
             m.insert("role".into(), r.value["role"].clone());
         }
+        m.insert(
+            "exempt".into(),
+            json!(wins
+                .get(&("exempt".to_string(), key.clone()))
+                .is_some_and(|e| e.value["on"] == true)),
+        );
         m.insert("wrap_epoch".into(), json!(wrap_epoch));
         m.insert(
             "status".into(),
@@ -1898,6 +1917,12 @@ fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
                         v["verified_by"].as_str().unwrap_or("sas"),
                         now,
                     ],
+                )?;
+            }
+            "exempt" => {
+                conn.execute(
+                    "UPDATE sync_devices SET exempt = ?2 WHERE device_id = ?1",
+                    params![key, v["on"] == true],
                 )?;
             }
             "cred" => {

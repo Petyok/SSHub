@@ -27,6 +27,7 @@ pub fn print_command_help(cmd: &str) {
         "sync-now" => print_sync_now(),
         "sync-status" => print_sync_status(),
         "sync-review" => print_sync_review(),
+        c if super::sync_admin::is_admin_command(c) => super::sync_admin::print_help(c),
         "import" => print_import(),
         "export" => print_export(),
         "completions" => print_completions(),
