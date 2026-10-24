@@ -67,7 +67,7 @@ Rust paths are under `crate::sync` (`src/sync/`), declared in `src/lib.rs` as
   each holder calls `retire_previous_wrap_keys`. `Vec<u8>` fields of ops are
   base64 strings (standard alphabet, padded) in the canonical form. Residuals:
   a key file copied before retirement, holders that cannot rotate (paper,
-  hardware key, a phone that has not contacted since), backups of deleted keys,
+  a phone that has not contacted since), backups of deleted keys,
   a lying contributor (denial of service). See `poc/results/B-reshare-cost.md`.
 - **Device key storage (C8).** `load_or_init_identity(&ProfilePaths, &dyn
   PasswordStore) -> Result<DeviceIdentity>`; file `<profile root>/sync/device.key`
@@ -273,7 +273,7 @@ pub enum OpBody {                              // canonical form: section 0 (C2)
     IdentityUpsert{ identity_uid: IdentityUid, fields: IdentityFields }, // metadata only
     IdentityDelete{ identity_uid: IdentityUid },
     CredUpdate    { host_uid: HostUid, ciphertext: Vec<u8>, wrapped_shares: Vec<WrappedShare> },
-    DeviceAdd     { device: DevicePublic, name: String, role: DeviceRole, attendance: Attendance },
+    DeviceAdd     { device: DevicePublic, name: String, role: DeviceRole, attendance: Attendance, kind: DeviceKind },
     DeviceRevoke  { device_id: DeviceId },
     // requester is in the body as well as the header: a holder that checks only
     // the body must still see WHO asks.
@@ -304,7 +304,7 @@ pub enum OpBody {                              // canonical form: section 0 (C2)
     ModeChange    { to: CredMode, migrated_on: DeviceId, cosigner: Option<DeviceId> },
     HeadAttest    { device_id: DeviceId, seq: u64, chain_hash: [u8; 32] },
 }
-pub enum ThirdFactor { Paper, HardwareKey(DeviceId), EmailCode }
+pub enum ThirdFactor { Paper, EmailCode }   // hardware keys are out of this version (PoC E not run)
 // sealed = hybrid_wrap(recipient pub, host_uid || index || share): the credential id is inside the
 // wrap and every unwrapper compares it with the credential it is acting for (confused deputy).
 pub struct WrappedShare { pub recipient: DeviceId, pub alg: AlgTag, pub sealed: Vec<u8> }
@@ -348,6 +348,7 @@ pub struct DeviceRow {
     pub wrap_epoch: u64,        // generation of the current wrap keys (C14)
 }
 pub enum DeviceStatus { Operational, Behind, Stale, Suspect, Compromised, Revoked }
+// DeviceRow also carries `kind: DeviceKind` (C15).
 ```
 
 Tables created by migration v22 (all prefixed `sync_`; BLOB keys, no foreign
@@ -363,13 +364,89 @@ environment, os_icon, tags, notes, favorite, secret_lookup, has_password,
 group_uids, identity_uid`. Hop tokens in `proxy_jump` are stored as uids and
 rendered as names locally; apply rewrites them.
 
+### 2b. Checkpoints and pruning (C15)
+
+Design: `docs/host-sync-design.md`, section "Checkpoints and pruning". Owner: the op-log package.
+
+```rust
+pub enum DeviceKind { Terminal, Phone }   // only terminals keep a store, only they can sign checkpoints
+
+// New ops. Tier GREEN: they never apply anything by themselves.
+pub struct CutEntry { pub device_id: DeviceId, pub seq: u64, pub op_hash: [u8; 32], pub lamport: u64 }
+// body variants of OpBody:
+//   CheckpointPropose { cut: Vec<CutEntry> /*sorted by device_id*/, state_hash: [u8; 32],
+//                       state_len: u64, prev_checkpoint: [u8; 32] /*zeros for the first*/,
+//                       required: Vec<DeviceId> /*sorted: attended live terminals of the state*/ }
+//   CheckpointSign    { proposal_hash: [u8; 32] }
+
+pub struct CheckpointBundle { pub proposal: Op, pub signs: Vec<Op>, pub heads: Vec<Op>, pub state: Vec<u8> }
+pub enum BootstrapTrust { RingFingerprint(String /*8 words*/), Anchor(DeviceId) }
+pub enum CheckpointStatus { Proposed, Verified, Disputed, Accepted, Pruned, Void }
+pub enum CheckpointVerdict {
+    Matches,
+    Differs { section: String, detail: String },
+    MissingOps(Vec<(DeviceId, u64)>),   // ops up to the cut this device does not have yet
+    Blocked(String),                    // pending ops below the cut, a recovery in flight, ...
+}
+pub struct PruneReport { pub ops_deleted: u64, pub field_writes_deleted: u64,
+                         pub wrapped_share_blobs_dropped: u64, pub bytes_freed: u64 }
+
+impl crate::store::LauncherStore {
+    /// Folds the local state as of the cut and returns the draft; refuses (Err) while an op
+    /// below the cut is pending locally, a PhoneReenroll is running, or the device is not an
+    /// attended terminal. `cut` None = this device's current heads for every device.
+    pub fn sync_checkpoint_build(&self, cut: Option<Vec<CutEntry>>, now: i64) -> anyhow::Result<(Vec<CutEntry>, Vec<u8> /*state*/, [u8; 32] /*state_hash*/)>;
+    /// Rebuilds the state from the local store as of `proposal.cut` and compares; never trusts the blob.
+    pub fn sync_checkpoint_verify(&self, proposal: &Op, state: &[u8]) -> anyhow::Result<CheckpointVerdict>;
+    /// Records proposal, signs and state; flips to Accepted when the signatures cover `required`
+    /// and the local verdict is Matches.
+    pub fn sync_checkpoint_record(&self, bundle: &CheckpointBundle) -> anyhow::Result<CheckpointStatus>;
+    pub fn sync_checkpoints(&self) -> anyhow::Result<Vec<CheckpointRow>>;
+    /// Deletes what the policy allows (below the cut of the second newest accepted checkpoint,
+    /// 7 days after the newest was accepted); idempotent, reclaims space.
+    pub fn sync_prune(&self, now: i64) -> anyhow::Result<PruneReport>;
+    /// Materialises a fresh store from a bundle after verifying hash, heads, signatures, the
+    /// required set and the trust anchor; sets chain heads from the cut.
+    pub fn sync_bootstrap(&self, bundle: &CheckpointBundle, trust: &BootstrapTrust) -> anyhow::Result<()>;
+    /// Existing in section 2; below the prune floor it returns Err(Pruned { floor_seq }).
+    pub fn sync_chain_tail(&self, device: &DeviceId, after_seq: u64) -> anyhow::Result<Vec<Op>>;
+}
+/// For the TUI "is this my ring" prompt: 8 BIP39 words (88 bits) of BLAKE3 over the canonical
+/// `devices` section of the state.
+pub fn ring_fingerprint(state: &[u8]) -> anyhow::Result<String>;
+```
+
+`DeviceAdd` and `DeviceRow` gain `kind: DeviceKind`. New tables (migration v22 or its successor):
+`sync_checkpoints(proposal_hash BLOB PK, device_id TEXT, prev BLOB, state_hash BLOB, state_len
+INTEGER, cut TEXT, required TEXT, status TEXT, accepted_at INTEGER, state BLOB NULL)` (the state blob
+is kept for the two newest accepted checkpoints only), `sync_checkpoint_signs(proposal_hash BLOB,
+device_id TEXT, sign_op_hash BLOB, PRIMARY KEY (proposal_hash, device_id))`,
+`sync_prune_floor(device_id TEXT PK, seq INTEGER, op_hash BLOB)`. Head ops of the cut are never
+pruned. `sync_ingest`: an op with `seq` below the floor is ignored as covered; with `seq` equal to the
+floor's and a different hash it is a fork proof against the kept head op; ops of a device that
+was `Stale` at the accepted checkpoint and have `seq` above its cut head enter pending whatever their fields.
+Competing proposals with the same `prev_checkpoint`: lowest `(lamport, device_id)` wins, the others are void.
+Honest devices auto-sign (`CheckpointSign`) only when `sync_checkpoint_verify` says `Matches`;
+`Differs` marks the proposal `Disputed` and the proposer `suspect`, never `compromised`.
+The state blob is canonical JSON with the C2 rules, sections and sort orders as in the design.
+Constants in `limits.rs`: `CHECKPOINT_OPS`, `CHECKPOINT_BYTES`, `CHECKPOINT_MIN_INTERVAL_SECS`,
+`CHECKPOINT_AFTER_RESHARE_SECS`, `CHECKPOINT_PRUNE_DELAY_SECS`, `CHECKPOINT_RETAIN_SPANS`,
+`CHECKPOINT_SIGN_MIN`, `CHECKPOINT_CHUNK_BYTES`, `TOMBSTONE_KEEP_SECS`, `RING_FINGERPRINT_WORDS`.
+
 ## 3. Stage 2: `src/sync/{protocol,ratchet,enroll,client}.rs` (WP2a, WP2b)
 
 ```rust
 pub enum SyncMsg {
-    Hello { proto: u16, device_id: DeviceId, epoch: u64 },
+    // `checkpoint`: hash of the latest accepted checkpoint proposal (C15), if any.
+    Hello { proto: u16, device_id: DeviceId, epoch: u64, checkpoint: Option<[u8; 32]> },
     Heads(Vec<HeadRef>), WantTail { device_id: DeviceId, after_seq: u64 },
     Tail(Vec<Op>),
+    // The peer no longer has the ops after `after_seq`: they are below its prune floor.
+    Pruned { device_id: DeviceId, floor_seq: u64 },
+    // A checkpoint bundle (proposal, signs, head ops, state) is requested and sent in chunks of
+    // at most CHECKPOINT_CHUNK_BYTES; the receiver reassembles by `hash` and verifies.
+    WantCheckpoint { proposal_hash: [u8; 32] },
+    CheckpointChunk { proposal_hash: [u8; 32], index: u32, total: u32, bytes: Vec<u8> },
     EnrollCommit([u8; 32]),
     EnrollReveal { ed25519_pub: [u8; 32], x25519_pub: [u8; 32], mlkem_pub: Vec<u8>, nonce: [u8; 32] },
     Bye,
@@ -426,7 +503,7 @@ pub const SYNC_WIRE_V1: u16 = 1;   // frame: b"SWR1" || version u16 BE || kind u
 pub fn unwrap_share_response(eph_priv: &[u8; 32], ciphertext: &[u8]) -> anyhow::Result<Share>;
 
 pub enum UnlockPath { Peer(DeviceId), PhoneAudio, PhoneReverseQr, PhoneClipboard,
-                      HardwareKey, ShortCode, FullEntry }
+                      ShortCode, FullEntry }
 pub fn assemble_dek(store: &LauncherStore, host: &HostUid, my_share: Share, second: Share)
     -> anyhow::Result<[u8; 32]>;
 pub fn vault_open_dek(store: &LauncherStore, host: &HostUid, master: &str, ring_secret: &[u8; 16])
@@ -534,6 +611,13 @@ offline; no real credentials, no real user directories.
 | `HELLO_TIMEOUT_SECS`, `ROUND_TIMEOUT_SECS`, `IDLE_TIMEOUT_SECS` | 10, 120, 30 | transport timeouts |
 | `PENDING_QUARANTINE_MAX_PER_DEVICE` | `10_000` | quarantine cap per device |
 | `TIMESTAMP_SKEW_GRACE_SECS` | `600` | informational skew grace (never used for ordering) |
+| `CHECKPOINT_OPS`, `CHECKPOINT_BYTES` | `5_000`, `8 MiB` | ops or bytes since the last accepted checkpoint that trigger a proposal |
+| `CHECKPOINT_MIN_INTERVAL_SECS`, `CHECKPOINT_AFTER_RESHARE_SECS` | 1 day, 7 days | minimum spacing; proposal after a finished reshare |
+| `CHECKPOINT_PRUNE_DELAY_SECS`, `CHECKPOINT_RETAIN_SPANS` | 7 days, 2 | prune only this long after acceptance; spans kept on disk |
+| `CHECKPOINT_SIGN_MIN` | `2` | distinct attended terminals that must sign (and every live one) |
+| `CHECKPOINT_CHUNK_BYTES` | `256 KiB` | state blob chunk on the wire |
+| `TOMBSTONE_KEEP_SECS` | `90 * 86_400` | tombstones carried in checkpoint states |
+| `RING_FINGERPRINT_WORDS` | `8` | 88 bit ring fingerprint |
 | `WRAP_KEY_RETIRE_AFTER_SECS` | `7 * 86_400` | previous wrap keys are dropped when all credentials are confirmed or after this long |
 | `RESHARE_ITEMS_PER_OP` | `200` | credentials per `ShareReshareBatch` or `ShareReshareConfirmBatch` op |
 | `SAS_WORDS`, `MASTER_PHRASE_WORDS`, `PAPER_WORDS` | 4, 6, 24 | word counts |
