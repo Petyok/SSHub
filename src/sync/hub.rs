@@ -216,7 +216,10 @@ pub fn courier_ingest(store: &LauncherStore, ops: &[SignedOpBytes]) -> Result<Ro
         .iter()
         .map(|(c, s)| Op::from_canonical(c, *s))
         .collect::<Result<Vec<_>>>()?;
-    let mut sum = RoundSummary { received: decoded.len(), ..Default::default() };
+    let mut sum = RoundSummary {
+        received: decoded.len(),
+        ..Default::default()
+    };
     ingest_ops(store, decoded, &mut sum)?;
     Ok(sum)
 }
