@@ -392,6 +392,10 @@ async function qrBlock({ runs }) {
     const shown = await phoneEval(`!!document.querySelector('#qrc') && document.querySelector('#qrc').width > 0`, { timeoutMs: 8000 });
     if (!shown) throw new Error('PREFLIGHT FAILED: the phone is not showing a QR code');
     console.log(JSON.stringify({ preflight: 'webcam live and QR shown', webcam_width: w }));
+    // receiver preflight: one unrecorded trial must decode a frame (the page gives a trial 10 s)
+    const pre = await laptop.ev(`(async () => { const n = document.querySelectorAll('#rows tr').length; document.querySelector('#trial').click(); for (let i = 0; i < 120; i++) { await new Promise((r) => setTimeout(r, 100)); if (document.querySelectorAll('#rows tr').length > n) return Array.from(document.querySelector('#rows tr:last-child').cells).map((c) => c.textContent); } return null; })()`, true);
+    if (!pre || pre[3] !== 'true') throw new Error('PREFLIGHT FAILED: the laptop webcam is live but decoded no QR from the phone screen within 10 s (distance, angle, brightness)');
+    console.log(JSON.stringify({ preflight: 'first QR decoded by the laptop webcam', ms: pre[4] }));
     await sleep(1000);
     const rows = [];
     for (let trial = 1; trial <= runs; trial++) {
