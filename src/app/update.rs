@@ -301,7 +301,13 @@ mod tests {
         let popup = app.update.whats_new.as_ref().unwrap();
         let version = env!("CARGO_PKG_VERSION");
         assert!(popup.title.contains(&format!("v{version}")));
-        assert!(popup.text.starts_with(&format!("## [{version}]")));
+        // A bumped dev build has no CHANGELOG section yet: the fallback text.
+        assert!(
+            popup.text.starts_with(&format!("## [{version}]"))
+                || popup.text == format!("No release notes for v{version}."),
+            "{}",
+            popup.text
+        );
     }
 
     #[test]
