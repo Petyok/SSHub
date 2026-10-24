@@ -607,7 +607,7 @@ What sync does not protect against (the design's honest list, word for word):
 | `y` | Sync tab | Sync now with the selected device (not with this device) |
 | `Enter` | Sync tab | On a compromised device: its proof and what to do next. On a behind or stale one: sync first, then (if it is still behind) re-enroll it through its recorded host |
 | `R` | Sync tab | Review every change waiting for approval |
-| `t` | Sync tab | Start a trust session: scope (a group or a host, never everything), term (7, 30 or 90 days), budget |
+| `t` | Sync tab | Start a trust session: scope (a group, or hosts marked with Space, at most 64; never everything), term (7, 30 or 90 days), budget |
 | `M` | Sync tab | Manage the ring: overview, trust sessions, revoke a device, roles, credential mode, recovery, paper and emailed-code factors, exemption, bulk export, move local secrets into the ring, import the Vault kit |
 | `t` | Hosts tab | Make the selected host one of your sync devices |
 | `a` `r` `p` `e` | Review | `a` approve (for a Red change: add this device's approval), `r` reject, `p` type the paper phrase (24 words, nothing is shown), `e` type the emailed code, `Esc` close |

@@ -777,6 +777,59 @@ fn a_trust_session_is_scoped_to_a_group_or_a_host_never_everything() {
 }
 
 #[test]
+fn space_marks_hosts_and_the_request_lists_exactly_those() {
+    use crate::sync::oplog::CertScope;
+    use crate::sync::wire::CertRequestWire;
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    let (_, h1) = group_with_host(&r);
+    let h2 = {
+        let h = r
+            .app
+            .store
+            .create_host(&crate::store::NewHost::launcher("other", "10.0.0.8"))
+            .unwrap();
+        r.app.store.host_uid(h.id).unwrap().unwrap()
+    };
+    r.app.refresh_sync_view();
+    r.app.active_tab = 6;
+    r.app.handle_key(key_char('t')).unwrap();
+    // A group row refuses the mark.
+    let g = r
+        .app
+        .sync
+        .trust_scope_values
+        .iter()
+        .position(|s| matches!(s, CertScope::Group(_)))
+        .unwrap();
+    r.app.sync.trust_scope_selected = g;
+    r.app.handle_key(key_char(' ')).unwrap();
+    assert!(r.app.sync.trust_marked.is_empty());
+    for uid in [h1, h2] {
+        r.app.sync.trust_scope_selected = r
+            .app
+            .sync
+            .trust_scope_values
+            .iter()
+            .position(|s| *s == CertScope::Hosts(vec![uid]))
+            .unwrap();
+        r.app.handle_key(key_char(' ')).unwrap();
+    }
+    assert_eq!(r.app.sync.trust_marked.len(), 2);
+    // Space again unmarks.
+    r.app.handle_key(key_char(' ')).unwrap();
+    assert_eq!(r.app.sync.trust_marked.len(), 1);
+    r.app.handle_key(key_char(' ')).unwrap();
+    enter(&mut r.app); // scope
+    enter(&mut r.app); // term
+    type_and_enter(&mut r.app, "5");
+    let wire = CertRequestWire::decode(&decode_frames(&frames_of_prompt(&r.app))).unwrap();
+    let mut want = vec![h1, h2];
+    want.sort_unstable();
+    assert_eq!(wire.scope, CertScope::Hosts(want));
+}
+
+#[test]
 fn the_trust_flow_shows_the_phone_a_request_and_takes_its_answer_into_the_ceremony() {
     use crate::sync::oplog::{CertScope, OpBody};
     use crate::sync::wire::{CertRequestWire, PhoneOpsWire};

@@ -8,6 +8,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use crate::app::sync::{DeviceStatusView, TRUST_TTL_DAYS};
 use crate::app::App;
 use crate::config::KeyAction;
+use crate::sync::oplog::CertScope;
 use crate::theme::catalog::{ColorRole, StyleRole};
 
 fn key_of(app: &App, action: KeyAction) -> String {
@@ -608,8 +609,13 @@ pub fn render_trust_scope(frame: &mut Frame, app: &App) {
     body.extend(
         sync.trust_scopes
             .iter()
+            .zip(&sync.trust_scope_values)
             .enumerate()
-            .map(|(i, s)| row(i == selected, s.clone(), app)),
+            .map(|(i, (s, v))| {
+                let marked = matches!(v, CertScope::Hosts(h) if h.len() == 1 && sync.trust_marked.contains(&h[0]));
+                let box_ = if marked { "[x]" } else if matches!(v, CertScope::Hosts(_)) { "[ ]" } else { "   " };
+                row(i == selected, format!("{box_} {s}"), app)
+            }),
     );
     modal(
         frame,
@@ -617,17 +623,14 @@ pub fn render_trust_scope(frame: &mut Frame, app: &App) {
         "Trust session: scope",
         72,
         body,
-        "\u{2191}\u{2193} select  Enter next  Esc cancel",
+        "\u{2191}\u{2193} select  Space mark hosts (max 64)  Enter next  Esc cancel",
     );
 }
 
 pub fn render_trust_ttl(frame: &mut Frame, app: &App) {
     let sync = &app.sync;
     let selected = sync.trust_ttl_selected.min(TRUST_TTL_DAYS.len() - 1);
-    let scope = sync
-        .trust_scopes
-        .get(sync.trust_scope_selected)
-        .map_or("-", String::as_str);
+    let scope = crate::app::sync_trust::chosen(sync).map_or("-".to_string(), |(_, l)| l);
     let mut body = vec![
         Line::styled(
             format!("Scope: {scope}"),

@@ -463,7 +463,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "t",
-        desc: "Open a trust session: pick the scope first, then the term (7, 30 or 90 days)",
+        desc: "Open a trust session: pick the scope first (a group, or hosts marked with Space), then the term (7, 30 or 90 days)",
     },
     HelpItem::Entry {
         key: "M",

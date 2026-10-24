@@ -429,6 +429,8 @@ pub struct SyncView {
     /// What each of `trust_scopes` certifies, in the same order.
     pub trust_scope_values: Vec<crate::sync::oplog::CertScope>,
     pub trust_scope_selected: usize,
+    /// Hosts marked with Space in the scope step; when any, they are the scope.
+    pub trust_marked: Vec<crate::sync::oplog::HostUid>,
     pub trust_ttl_selected: usize,
     pub unlock: Option<UnlockView>,
     pub sas: Option<SasView>,
@@ -643,6 +645,7 @@ impl App {
         } else {
             self.sync.trust_scope_selected =
                 super::sync_trust::default_scope(&self.store, &self.sync.trust_scopes);
+            self.sync.trust_marked.clear();
             self.sync.trust_ttl_selected = TRUST_TTL_DEFAULT;
             self.mode = AppMode::TrustSessionScope;
         }
@@ -1235,6 +1238,8 @@ impl App {
                 let last = self.sync.trust_scopes.len().saturating_sub(1);
                 if cancel {
                     self.mode = AppMode::Normal;
+                } else if plain(' ') {
+                    super::sync_trust::toggle_mark(self);
                 } else if confirm {
                     self.mode = AppMode::TrustSessionTtl;
                 } else if down {
@@ -1251,7 +1256,6 @@ impl App {
                     self.mode = AppMode::Normal;
                     super::sync_trust::begin(
                         self,
-                        self.sync.trust_scope_selected,
                         TRUST_TTL_DAYS[self.sync.trust_ttl_selected],
                     );
                 } else if down {

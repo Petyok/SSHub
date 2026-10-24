@@ -37,7 +37,7 @@ pub mod sync;
 mod sync_admin;
 mod sync_flows;
 mod sync_flows_more;
-mod sync_trust;
+pub(crate) mod sync_trust;
 pub(crate) mod sync_ui;
 pub(crate) mod sync_view;
 mod tags;

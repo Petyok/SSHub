@@ -63,16 +63,51 @@ pub(crate) fn default_scope(store: &crate::store::LauncherStore, labels: &[Strin
         .unwrap_or(0)
 }
 
+/// Space on a host row marks it for the list scope (at most
+/// `MAX_CERT_REQUEST_HOSTS`); on a group row it says why nothing happens.
+pub(crate) fn toggle_mark(app: &mut App) {
+    let sync = &mut app.sync;
+    match sync.trust_scope_values.get(sync.trust_scope_selected) {
+        Some(CertScope::Hosts(h)) if h.len() == 1 => {
+            let uid = h[0];
+            if let Some(i) = sync.trust_marked.iter().position(|m| *m == uid) {
+                sync.trust_marked.remove(i);
+            } else if sync.trust_marked.len() >= crate::sync::wire::MAX_CERT_REQUEST_HOSTS {
+                app.host_notice = Some(format!(
+                    "a trust session lists at most {} hosts",
+                    crate::sync::wire::MAX_CERT_REQUEST_HOSTS
+                ));
+            } else {
+                sync.trust_marked.push(uid);
+            }
+        }
+        _ => app.host_notice = Some("Space marks single hosts; a group is chosen with Enter".into()),
+    }
+}
+
+/// The scope the flow asks for: the marked hosts if any, else the highlighted row.
+pub(crate) fn chosen(sync: &super::sync::SyncView) -> Option<(CertScope, String)> {
+    if !sync.trust_marked.is_empty() {
+        let mut list = sync.trust_marked.clone();
+        list.sort_unstable();
+        let label = format!("{} selected hosts", list.len());
+        return Some((CertScope::Hosts(list), label));
+    }
+    Some((
+        sync.trust_scope_values.get(sync.trust_scope_selected)?.clone(),
+        sync.trust_scopes.get(sync.trust_scope_selected)?.clone(),
+    ))
+}
+
 /// The TTL step of the `t` flow is done: ask for the budget, then show the request.
-pub(crate) fn begin(app: &mut App, scope_index: usize, term_days: u32) {
-    let (Some(scope), Some(label)) = (
-        app.sync.trust_scope_values.get(scope_index).cloned(),
-        app.sync.trust_scopes.get(scope_index).cloned(),
-    ) else {
+pub(crate) fn begin(app: &mut App, term_days: u32) {
+    let Some((scope, label)) = chosen(&app.sync) else {
         app.host_notice = Some("that scope is gone: open the trust session again".into());
         return;
     };
-    let _ = crate::sync::quorum::meta_set(&app.store, LAST_SCOPE_KEY, label.as_bytes());
+    if app.sync.trust_marked.is_empty() {
+        let _ = crate::sync::quorum::meta_set(&app.store, LAST_SCOPE_KEY, label.as_bytes());
+    }
     app.sync_prompt(
         "Trust session: budget",
         format!(
