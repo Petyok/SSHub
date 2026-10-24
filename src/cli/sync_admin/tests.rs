@@ -76,6 +76,10 @@ fn every_verb_parses_its_synopsis() {
         Cmd::Recovery(RecoveryCmd::Approve("abcdef".into()))
     );
     assert_eq!(
+        ok("sync-recovery", &["ack", "abcdef"]),
+        Cmd::Recovery(RecoveryCmd::Ack("abcdef".into()))
+    );
+    assert_eq!(
         ok("sync-recovery", &["cancel", "abcdef", "--factor", "paper"]),
         Cmd::Recovery(RecoveryCmd::Cancel {
             op: "abcdef".into(),

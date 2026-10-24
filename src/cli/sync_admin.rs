@@ -58,6 +58,7 @@ pub enum FactorKind {
 pub enum RecoveryCmd {
     Start { paper: bool },
     Approve(String),
+    Ack(String),
     Cancel { op: String, factor: FactorKind },
     Status,
 }
@@ -232,6 +233,10 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
                 "approve" => {
                     exact(2, "an op id after approve")?;
                     RecoveryCmd::Approve(pos[1].into())
+                }
+                "ack" => {
+                    exact(2, "an op id after ack")?;
+                    RecoveryCmd::Ack(pos[1].into())
                 }
                 "cancel" => {
                     exact(2, "an op id after cancel")?;
@@ -806,6 +811,21 @@ fn recovery(
                 },
             )
         }
+        RecoveryCmd::Ack(op_id) => {
+            let op = find_op(store, &op_id)?;
+            let a = store.sync_append_local(id, rec::ack_body(&op, now)?)?;
+            report(
+                opts,
+                &Report {
+                    lines: vec![format!(
+                        "acknowledged recovery {} (record {})",
+                        short(&op.hash()),
+                        short(&a.hash())
+                    )],
+                    json: json!({ "op": hex(&op.hash()), "ack": hex(&a.hash()) }),
+                },
+            )
+        }
         RecoveryCmd::Cancel { op, factor } => {
             let target = find_op(store, &op)?;
             let f = match factor {
@@ -1071,7 +1091,7 @@ pub fn print_help(cmd: &str) {
         "sync-approve" => ("sync-approve <op-id> [--format plain|json]", "Approve a pending Red op as this attended device (the second-device vote)."),
         "sync-factor" => ("sync-factor <op-id> (--paper | --email-code) [--format plain|json]", "Add the third factor to a Red op. The 24 paper words or the emailed code are read without echo."),
         "sync-factor-register" => ("sync-factor-register (paper | email) [--sender <device>] [--format plain|json]", "Register a third factor. Paper reads the 24 words without echo; email creates a code and shows it once."),
-        "sync-recovery" => ("sync-recovery (start [--paper] | approve <op-id> | cancel <op-id> --factor paper|email | status) [--format plain|json]", "Re-enroll the phone: start, approve as another attended device, cancel, or show the state of every recovery."),
+        "sync-recovery" => ("sync-recovery (start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status) [--format plain|json]", "Re-enroll the phone: start, approve or acknowledge as another attended device, cancel, or show the state of every recovery."),
         "sync-mode" => ("sync-mode (vault | quorum) [--cosigner <device>] [--format plain|json]", "Change the credential mode (Red). From the command line only Vault to Quorum can open the credentials; the master phrase is read without echo."),
         "sync-exemption" => ("sync-exemption (on | off) <device> [--format plain|json]", "Switch the master-phrase exemption of a device off (Red). Switching it on needs the TUI."),
         "sync-export" => ("sync-export --window <seconds> --out <path> [--wait <seconds>] [--format plain|json]", "Bulk export (Red, window up to 3600 s): propose it, wait for the ceremony, then write every credential to a new 0600 file in the Termius CSV format (import it from a directory as L00t.csv)."),
