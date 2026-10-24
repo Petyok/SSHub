@@ -186,6 +186,17 @@ fn attach_enrolling_worker_in(
     peer_kind: Peer,
     rings: Option<(&'static str, &'static str)>,
 ) -> (Arc<LauncherStore>, String) {
+    attach_enrolling_worker_with(app, peer_kind, rings, false)
+}
+
+/// [`attach_enrolling_worker_in`]; `hold` keeps the round open after the join
+/// until the test sends a command, so the last progress line stays visible.
+fn attach_enrolling_worker_with(
+    app: &mut App,
+    peer_kind: Peer,
+    rings: Option<(&'static str, &'static str)>,
+    hold: bool,
+) -> (Arc<LauncherStore>, String) {
     let store = app.store.clone();
     let id = Arc::new(DeviceIdentity::generate());
     let peer_store = Arc::new(LauncherStore::open_in_memory().unwrap());
@@ -230,6 +241,9 @@ fn attach_enrolling_worker_in(
         let joined = run_sync_join(&mut conn, &store, &id, "me", true, Some(&mut UiSas(ctx)));
         let _ = peer.join();
         let outcome = joined?;
+        if hold {
+            ctx.recv_cmd(Duration::from_secs(10));
+        }
         Ok(crate::sync::protocol::RoundSummary {
             peer: outcome.peer.device_id(),
             first_contact: true,
@@ -295,6 +309,22 @@ fn both_with_screens_compare_words_and_a_yes_joins_verified_by_sas() {
     assert_eq!(peer.role, crate::app::sync::DeviceRoleView::Holder);
     assert_eq!(peer.verified_by, Some(VerifiedBy::Sas));
     assert!(app.sync.last_error.is_none(), "{:?}", app.sync.last_error);
+}
+
+#[test]
+fn a_join_shows_the_ring_being_adopted_as_the_worker_progress_line() {
+    let mut app = test_app(vec![]);
+    attach_enrolling_worker_with(&mut app, Peer::Screen { agrees: true }, None, true);
+    start_enroll(&mut app);
+    pump(&mut app, |a| a.mode == AppMode::SyncSas);
+    app.handle_key(key_char('y')).unwrap();
+    pump(&mut app, |a| {
+        a.sync
+            .progress
+            .as_deref()
+            .is_some_and(|p| p.starts_with("adopted the ring ("))
+    });
+    assert!(app.sync.syncing, "the round is still open");
 }
 
 #[test]
