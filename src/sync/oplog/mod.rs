@@ -18,3 +18,6 @@ pub use store_impl::{DeviceRow, DeviceStatus, IngestOutcome};
 pub use tier::{EntityKind, FieldClass};
 
 pub use crate::store::{GroupUid, HostUid, IdentityUid, Uid};
+
+#[cfg(test)]
+mod tests;

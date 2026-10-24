@@ -344,6 +344,13 @@ pub fn reproject(conn: &Connection, touched: &Touched) -> Result<()> {
         }
     }
 
+    // Deletions first: a dead row may still hold a name a live one now wants.
+    for kind in [EntityKind::Host, EntityKind::Group, EntityKind::Identity] {
+        for ((k, uid), view) in views.iter().filter(|((k, _), v)| *k == kind && !v.alive) {
+            project_row(conn, *k, uid, view)?;
+        }
+    }
+
     // Free the names about to change, so swaps cannot trip UNIQUE(name).
     for ((kind, uid), view) in &views {
         if !view.alive {
@@ -371,15 +378,13 @@ pub fn reproject(conn: &Connection, touched: &Touched) -> Result<()> {
     }
 
     for kind in [EntityKind::Identity, EntityKind::Group, EntityKind::Host] {
-        for ((k, uid), view) in views.iter().filter(|((k, _), _)| *k == kind) {
-            debug_assert_eq!(*k, kind);
+        for ((_, uid), view) in views.iter().filter(|((k, _), v)| *k == kind && v.alive) {
             project_row(conn, kind, uid, view)?;
         }
         // Groups reference groups (parent) and each other's rows: a second
         // sweep resolves references to rows created later in the first.
         if kind == EntityKind::Group {
-            for ((k, uid), view) in views.iter().filter(|((k, _), _)| *k == kind) {
-                debug_assert_eq!(*k, kind);
+            for ((_, uid), view) in views.iter().filter(|((k, _), v)| *k == kind && v.alive) {
                 project_row(conn, kind, uid, view)?;
             }
         }
