@@ -39,7 +39,8 @@ pub fn render_host_transfer(frame: &mut Frame, app: &App) {
     let queue_h = if screen.queue.is_empty() {
         1
     } else {
-        screen.queue.len().min(QUEUE_ROWS) as u16 + 1
+        // Title, three pane rows and the hint line are never given up.
+        (screen.queue.len().min(QUEUE_ROWS) as u16 + 1).min(area.height - 5)
     };
     let foot_h = queue_h + 1; // queue strip + hint line
     let panes_y = area.y + 1;

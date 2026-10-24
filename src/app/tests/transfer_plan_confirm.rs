@@ -1254,3 +1254,29 @@ fn pulling_a_host_in_move_mode_carries_its_secret_into_the_active_profile() {
     assert!(work.get_host_by_name("p1").unwrap().is_none());
     assert_eq!(other_secrets.get(&host_key(p1)).unwrap(), None);
 }
+
+/// Regression: with four or more hosts queued the strip needs five rows; on an
+/// 8-row terminal it ran past the buffer and panicked.
+#[test]
+fn host_screen_renders_a_full_queue_on_a_tiny_terminal() {
+    let (_dir, mut app, _work_db, _src_db) = two_profile_app();
+    app.handle_key(key_char('T')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key_char('m')).unwrap();
+    let screen = app
+        .pending_transfer
+        .as_mut()
+        .unwrap()
+        .screen
+        .as_mut()
+        .unwrap();
+    for i in 0..5 {
+        screen.queue.push(crate::app::host_transfer::Staged {
+            pull: false,
+            host: format!("h{i}"),
+        });
+    }
+    for height in 8..=12 {
+        render_to_buffer(&app, 80, height);
+    }
+}
