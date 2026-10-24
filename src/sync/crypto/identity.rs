@@ -52,11 +52,48 @@ pub fn device_id_of(ed25519_pub: &[u8; 32]) -> String {
     hex::encode(&ed25519_pub[..8])
 }
 
-pub struct DeviceIdentity {
-    signing: SigningKey,
+/// One generation of wrapping keys: an X25519 secret and an ML-KEM-768 decapsulation key.
+pub(crate) struct WrapKeys {
     x_secret: XSecret,
     mlkem_dk: Zeroizing<Vec<u8>>,
     mlkem_pub: Vec<u8>,
+}
+
+impl WrapKeys {
+    fn generate() -> Self {
+        let mut x = Zeroizing::new([0u8; 32]);
+        OsRng.fill_bytes(&mut x[..]);
+        let (ek, dk) = mlkem::generate(&mut OsRng);
+        Self {
+            x_secret: XSecret::from(*x),
+            mlkem_dk: Zeroizing::new(dk),
+            mlkem_pub: ek,
+        }
+    }
+
+    pub(crate) fn x_secret_bytes(&self) -> Zeroizing<[u8; 32]> {
+        Zeroizing::new(self.x_secret.to_bytes())
+    }
+
+    pub(crate) fn x_public(&self) -> [u8; 32] {
+        XPublic::from(&self.x_secret).to_bytes()
+    }
+
+    pub(crate) fn mlkem_dk_bytes(&self) -> &[u8] {
+        &self.mlkem_dk
+    }
+}
+
+/// The device's keys: a long-lived signing key and the CURRENT wrapping keys, plus older
+/// wrapping generations kept only until [`DeviceIdentity::retire_previous_wrap_keys`].
+///
+/// Forward secrecy for wrapped material: after a holder rotates its wrapping keys and every
+/// credential has been reshared to the new keys, retiring the old generation makes every blob
+/// wrapped to it undecryptable, including copies that remain in the append-only log.
+pub struct DeviceIdentity {
+    signing: SigningKey,
+    current: WrapKeys,
+    previous: Vec<WrapKeys>,
 }
 
 impl std::fmt::Debug for DeviceIdentity {
@@ -84,11 +121,12 @@ impl DeviceIdentity {
     /// A fresh identity from the OS CSPRNG.
     pub fn generate() -> Self {
         let mut ed = Zeroizing::new([0u8; 32]);
-        let mut x = Zeroizing::new([0u8; 32]);
         OsRng.fill_bytes(&mut ed[..]);
-        OsRng.fill_bytes(&mut x[..]);
-        let (ek, dk) = mlkem::generate(&mut OsRng);
-        Self::assemble(&ed, &x, dk, ek)
+        Self {
+            signing: SigningKey::from_bytes(&ed),
+            current: WrapKeys::generate(),
+            previous: Vec::new(),
+        }
     }
 
     /// Deterministic identity from 32 bytes of key material and a context string:
@@ -101,41 +139,54 @@ impl DeviceIdentity {
             xof[64..96].try_into().unwrap(),
             xof[96..128].try_into().unwrap(),
         );
-        Self::assemble(
-            xof[..32].try_into().unwrap(),
-            xof[32..64].try_into().unwrap(),
-            dk,
-            ek,
-        )
-    }
-
-    fn assemble(ed_seed: &[u8; 32], x_secret: &[u8; 32], dk: Vec<u8>, ek: Vec<u8>) -> Self {
         Self {
-            signing: SigningKey::from_bytes(ed_seed),
-            x_secret: XSecret::from(*x_secret),
-            mlkem_dk: Zeroizing::new(dk),
-            mlkem_pub: ek,
+            signing: SigningKey::from_bytes(xof[..32].try_into().unwrap()),
+            current: WrapKeys {
+                x_secret: XSecret::from(<[u8; 32]>::try_from(&xof[32..64]).unwrap()),
+                mlkem_dk: Zeroizing::new(dk),
+                mlkem_pub: ek,
+            },
+            previous: Vec::new(),
         }
     }
 
+    /// The public half: signing key plus the CURRENT wrapping keys.
     pub fn public(&self) -> DevicePublic {
         DevicePublic {
             ed25519_pub: self.signing.verifying_key().to_bytes(),
-            x25519_pub: XPublic::from(&self.x_secret).to_bytes(),
-            mlkem_pub: self.mlkem_pub.clone(),
+            x25519_pub: self.current.x_public(),
+            mlkem_pub: self.current.mlkem_pub.clone(),
         }
+    }
+
+    /// Generates fresh wrapping keys and returns the new public half to publish. The previous
+    /// generation stays usable for unwrapping blobs wrapped before the rotation became known.
+    pub fn rotate_wrap_keys(&mut self) -> DevicePublic {
+        let old = std::mem::replace(&mut self.current, WrapKeys::generate());
+        self.previous.insert(0, old);
+        self.public()
+    }
+
+    /// Drops (and zeroizes) every wrapping generation but the current one; returns how many
+    /// were dropped. Call only after every credential has been reshared to the current keys.
+    pub fn retire_previous_wrap_keys(&mut self) -> usize {
+        let n = self.previous.len();
+        self.previous.clear();
+        n
+    }
+
+    /// Number of wrapping generations held (1 = only the current one).
+    pub fn wrap_key_generations(&self) -> usize {
+        1 + self.previous.len()
+    }
+
+    /// Wrapping generations, newest first.
+    pub(crate) fn wrap_keys(&self) -> impl Iterator<Item = &WrapKeys> {
+        std::iter::once(&self.current).chain(self.previous.iter())
     }
 
     pub fn sign(&self, msg: &[u8]) -> [u8; 64] {
         self.signing.sign(msg).to_bytes()
-    }
-
-    pub(crate) fn x_secret_bytes(&self) -> Zeroizing<[u8; 32]> {
-        Zeroizing::new(self.x_secret.to_bytes())
-    }
-
-    pub(crate) fn mlkem_dk_bytes(&self) -> &[u8] {
-        &self.mlkem_dk
     }
 
     /// Sealed box to a static X25519 key: `eph_pub(32) || nonce(24) || ciphertext`,
@@ -178,26 +229,30 @@ impl DeviceIdentity {
         }
         let eph_pub: [u8; 32] = ciphertext[..32].try_into().unwrap();
         let nonce = &ciphertext[32..56];
-        let dh = self.x_secret.diffie_hellman(&XPublic::from(eph_pub));
-        if !dh.was_contributory() {
-            bail!("sealed box with a low-order ephemeral key");
-        }
-        let my_pub = XPublic::from(&self.x_secret).to_bytes();
-        let key = seal_key(dh.as_bytes(), &eph_pub, &my_pub);
-        let aad = [eph_pub.as_slice(), my_pub.as_slice()].concat();
-        XChaCha20Poly1305::new((&*key).into())
-            .decrypt(
+        for keys in self.wrap_keys() {
+            let dh = keys.x_secret.diffie_hellman(&XPublic::from(eph_pub));
+            if !dh.was_contributory() {
+                bail!("sealed box with a low-order ephemeral key");
+            }
+            let my_pub = keys.x_public();
+            let key = seal_key(dh.as_bytes(), &eph_pub, &my_pub);
+            let aad = [eph_pub.as_slice(), my_pub.as_slice()].concat();
+            if let Ok(plain) = XChaCha20Poly1305::new((&*key).into()).decrypt(
                 nonce.into(),
                 Payload {
                     msg: &ciphertext[56..],
                     aad: &aad,
                 },
-            )
-            .map_err(|_| anyhow!("sealed box authentication failed"))
+            ) {
+                return Ok(plain);
+            }
+        }
+        Err(anyhow!("sealed box authentication failed"))
     }
 
     /// Key file form: `"SSHK" || 1 || mem u32 BE || iters u32 BE || salt(16) || nonce(24) || ct`;
-    /// the plaintext is `ed25519 seed || x25519 secret || ML-KEM decapsulation key` and the
+    /// the plaintext is `ed25519 seed || x25519 secret || ML-KEM decapsulation key || n u8 ||
+    /// n * (x25519 secret || ML-KEM decapsulation key)` (older wrapping generations) and the
     /// whole header is associated data. The key comes from Argon2id over the passphrase.
     pub fn to_encrypted(&self, passphrase: &str) -> Vec<u8> {
         let mut salt = [0u8; 16];
@@ -217,10 +272,15 @@ impl DeviceIdentity {
         let key = Zeroizing::new(
             try_argon2_derive(passphrase, salt, profile).expect("profile within bounds"),
         );
-        let mut plain = Zeroizing::new(Vec::with_capacity(64 + mlkem::DK_LEN));
+        let mut plain = Zeroizing::new(Vec::with_capacity(64 + mlkem::DK_LEN + 1));
         plain.extend_from_slice(&self.signing.to_bytes());
-        plain.extend_from_slice(&self.x_secret.to_bytes());
-        plain.extend_from_slice(&self.mlkem_dk);
+        plain.extend_from_slice(&self.current.x_secret.to_bytes());
+        plain.extend_from_slice(&self.current.mlkem_dk);
+        plain.push(u8::try_from(self.previous.len()).expect("fewer than 256 wrapping generations"));
+        for old in &self.previous {
+            plain.extend_from_slice(&old.x_secret.to_bytes());
+            plain.extend_from_slice(&old.mlkem_dk);
+        }
         let mut out = Vec::with_capacity(KEYFILE_HEADER + plain.len() + 16);
         out.extend_from_slice(KEYFILE_MAGIC);
         out.push(KEYFILE_VERSION);
@@ -266,16 +326,33 @@ impl DeviceIdentity {
                 )
                 .map_err(|_| anyhow!("device key file: wrong passphrase or damaged file"))?,
         );
-        if plain.len() != 64 + mlkem::DK_LEN {
-            bail!("device key file has an unexpected payload length");
+        const GEN: usize = 32 + mlkem::DK_LEN;
+        let bad = || anyhow!("device key file has an unexpected payload length");
+        if plain.len() < 32 + GEN + 1 {
+            return Err(bad());
         }
-        let ek = mlkem::ek_of_dk(&plain[64..])?;
-        Ok(Self::assemble(
-            plain[..32].try_into().unwrap(),
-            plain[32..64].try_into().unwrap(),
-            plain[64..].to_vec(),
-            ek,
-        ))
+        let n_prev = plain[32 + GEN] as usize;
+        if plain.len() != 32 + GEN + 1 + n_prev * GEN {
+            return Err(bad());
+        }
+        let wrap_from = |chunk: &[u8]| -> Result<WrapKeys> {
+            let dk = chunk[32..].to_vec();
+            Ok(WrapKeys {
+                x_secret: XSecret::from(<[u8; 32]>::try_from(&chunk[..32]).unwrap()),
+                mlkem_pub: mlkem::ek_of_dk(&dk)?,
+                mlkem_dk: Zeroizing::new(dk),
+            })
+        };
+        let previous = plain[32 + GEN + 1..]
+            .chunks(GEN)
+            .map(wrap_from)
+            .collect::<Result<Vec<_>>>()?;
+        let current = wrap_from(&plain[32..32 + GEN])?;
+        Ok(Self {
+            signing: SigningKey::from_bytes(plain[..32].try_into().unwrap()),
+            current,
+            previous,
+        })
     }
 }
 
@@ -400,5 +477,64 @@ mod tests {
             "memory bomb in header"
         );
         assert!(DeviceIdentity::from_encrypted(&blob[..40], "pw").is_err());
+    }
+
+    #[test]
+    fn rotation_keeps_old_blobs_readable_until_retired() {
+        let mut id = DeviceIdentity::generate();
+        let before = id.public();
+        let old_blob = crate::sync::crypto::hybrid_wrap(&before, b"old epoch share");
+        let old_sealed = DeviceIdentity::seal_to(&before.x25519_pub, b"old sealed");
+        let after = id.rotate_wrap_keys();
+        assert_eq!(
+            after.ed25519_pub, before.ed25519_pub,
+            "the signing key does not rotate"
+        );
+        assert_ne!(after.x25519_pub, before.x25519_pub);
+        assert_ne!(after.mlkem_pub, before.mlkem_pub);
+        assert_eq!(id.wrap_key_generations(), 2);
+        let new_blob = crate::sync::crypto::hybrid_wrap(&after, b"new epoch share");
+        assert_eq!(
+            crate::sync::crypto::hybrid_unwrap(&id, &old_blob).unwrap(),
+            b"old epoch share"
+        );
+        assert_eq!(
+            crate::sync::crypto::hybrid_unwrap(&id, &new_blob).unwrap(),
+            b"new epoch share"
+        );
+        assert_eq!(id.open_sealed(&old_sealed).unwrap(), b"old sealed");
+        assert_eq!(id.retire_previous_wrap_keys(), 1);
+        assert_eq!(id.wrap_key_generations(), 1);
+        assert!(
+            crate::sync::crypto::hybrid_unwrap(&id, &old_blob).is_err(),
+            "retired generation must not open old blobs"
+        );
+        assert!(id.open_sealed(&old_sealed).is_err());
+        assert_eq!(
+            crate::sync::crypto::hybrid_unwrap(&id, &new_blob).unwrap(),
+            b"new epoch share"
+        );
+    }
+
+    #[test]
+    fn the_key_file_keeps_previous_generations_across_a_restart() {
+        let mut id = DeviceIdentity::generate();
+        let old_blob = crate::sync::crypto::hybrid_wrap(&id.public(), b"kept");
+        id.rotate_wrap_keys();
+        let p = Argon2Profile {
+            mem_kib: 64,
+            iters: 1,
+        };
+        let back = DeviceIdentity::from_encrypted(
+            &id.to_encrypted_with("pw", p, &[1; 16], &[2; 24]),
+            "pw",
+        )
+        .unwrap();
+        assert_eq!(back.wrap_key_generations(), 2);
+        assert_eq!(back.public(), id.public());
+        assert_eq!(
+            crate::sync::crypto::hybrid_unwrap(&back, &old_blob).unwrap(),
+            b"kept"
+        );
     }
 }
