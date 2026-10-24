@@ -70,6 +70,14 @@ word; a promise we cannot keep is worse than no promise.
   its ops until the phone touches any other device; bounded by the freshness
   threshold.
 - **A password changed on the server itself**, outside sshub, is not detected.
+- **Old wrapped shares after a revocation.** The forward-secure wrap keys of Quorum mode protect against theft
+  after retirement for holders that can rotate. Not covered: a copy of a holder's
+  key file taken before retirement; holders that cannot rotate (the paper phrase,
+  a hardware key, a phone that has not contacted a terminal since the revocation),
+  whose theft still combines with the revoked device's old share; backups and
+  flash storage that keep a deleted key; and a lying contributor, which can make
+  a credential unrecoverable (the password is then re-entered) but cannot disclose
+  one.
 
 ## Operation tiers
 
@@ -255,9 +263,24 @@ requester (see "Share release").
   share under a fresh polynomial for the new holder set and sends sub-shares;
   each new holder sums the sub-shares it received with Lagrange coefficients. The
   DEK is not reconstructed on any machine at any moment, which matters most
-  exactly when revoking a suspected-compromised device. Verifiable (Feldman)
-  commitments accompany each sub-share so a malicious contributor cannot hand out
-  garbage undetected.
+  exactly when revoking a suspected-compromised device. Each sub-share carries a
+  BLAKE3 commitment: it catches corruption and substitution in transit and names
+  the contributor, but it cannot prove that a contributor's polynomial has the
+  right constant term (that needs a prime field, which the design does not use).
+  A contributor that lies consistently therefore costs availability, not
+  secrecy: the new sharing is adopted per credential only after a real unlock
+  succeeds under it, and the old sharing stays until then.
+- **Revocation needs forward-secure wrap keys.** A reshare keeps the same DEK,
+  and the old wrapped shares stay in the append-only log on every peer. If a
+  holder's long-lived wrapping key still opens its old blob, then "the revoked
+  device's old share plus a later theft of that one holder's key" is every
+  credential (measured in PoC B). So a revocation runs in this order: the
+  remaining software holders **rotate their wrapping keys** (X25519 and ML-KEM,
+  the signing key stays) and announce them; the reshare wraps to the new keys;
+  once the new sharing is confirmed (each credential by its next real unlock,
+  at the latest after 7 days) every holder **retires the previous generation**.
+  The ring must have at least three holders for a revocation to be possible at
+  all (two contributors must remain).
 - **The paper share:** a printable offline share encoded as a **BIP39 24-word
   phrase**. A permanent recipient key is derived from it and every new credential
   gets a share wrapped to that key, so the paper need not be online at creation
