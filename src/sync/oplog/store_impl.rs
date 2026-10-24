@@ -585,6 +585,13 @@ impl LauncherStore {
             },
             now,
         )?;
+        // Keep our own proposal (and its blob) so peers can fetch it.
+        self.sync_checkpoint_record(&CheckpointBundle {
+            proposal: op.clone(),
+            signs: vec![],
+            heads: vec![],
+            state: state.clone(),
+        })?;
         Ok((op, state))
     }
 
@@ -642,6 +649,94 @@ impl LauncherStore {
             checkpoint::bootstrap(&tx, bundle, trust, now_ts())?;
             tx.commit()?;
             Ok(())
+        })
+    }
+
+    /// Newest accepted checkpoint we can serve (announced in the hello).
+    pub fn sync_checkpoint_head(&self) -> Result<Option<[u8; 32]>> {
+        self.with_conn(checkpoint::servable_head)
+    }
+
+    /// The wire bytes of a checkpoint we hold the blob of.
+    pub fn sync_checkpoint_bytes(&self, proposal_hash: &[u8; 32]) -> Result<Option<Vec<u8>>> {
+        self.with_conn(|conn| {
+            Ok(
+                checkpoint::bundle_of(conn, proposal_hash)?
+                    .map(|b| checkpoint::bundle_to_bytes(&b)),
+            )
+        })
+    }
+
+    /// Proposals known as ops without a blob: to fetch from a peer.
+    pub fn sync_checkpoint_missing(&self) -> Result<Vec<[u8; 32]>> {
+        self.with_conn(checkpoint::missing_blobs)
+    }
+
+    /// Take the bytes of a checkpoint fetched from `peer`: record it (a proposal
+    /// to verify) or, with `adopt`, make it the base of this store.
+    pub fn sync_checkpoint_accept(
+        &self,
+        bytes: &[u8],
+        peer: &DeviceId,
+        adopt: bool,
+    ) -> Result<[u8; 32]> {
+        self.with_conn(|conn| {
+            let tx = tx(conn)?;
+            let h = checkpoint::accept_bytes(&tx, bytes, peer, adopt, now_ts())?;
+            tx.commit()?;
+            Ok(h)
+        })
+    }
+
+    /// Record a proposal with the sign ops we hold (the driver calls this).
+    pub fn sync_checkpoint_update(
+        &self,
+        proposal_hash: &[u8; 32],
+    ) -> Result<Option<CheckpointStatus>> {
+        self.with_conn(|conn| {
+            let tx = tx(conn)?;
+            let Some(mut bundle) = checkpoint::bundle_of(&tx, proposal_hash)? else {
+                return Ok(None);
+            };
+            bundle.signs = checkpoint::known_signs(&tx, proposal_hash)?;
+            let st = checkpoint::record(&tx, &bundle, now_ts())?;
+            tx.commit()?;
+            Ok(Some(st))
+        })
+    }
+
+    /// Ops and bytes appended since the lamport of the last accepted cut.
+    pub fn sync_log_growth(&self, since_lamport: u64) -> Result<(u64, u64)> {
+        self.with_conn(|conn| {
+            let (n, b): (i64, i64) = conn.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(length(canonical)), 0) FROM sync_ops WHERE lamport > ?1",
+                params![since_lamport as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            Ok((n as u64, b as u64))
+        })
+    }
+
+    /// Timestamp of the newest proposal we know of.
+    pub fn sync_last_checkpoint_time(&self) -> Result<Option<i64>> {
+        self.with_conn(|conn| {
+            Ok(
+                conn.query_row("SELECT MAX(proposed_at) FROM sync_checkpoints", [], |r| {
+                    r.get(0)
+                })?,
+            )
+        })
+    }
+
+    /// Timestamp of the newest reshare batch above `since_lamport`.
+    pub fn sync_last_reshare_time(&self, since_lamport: u64) -> Result<Option<i64>> {
+        self.with_conn(|conn| {
+            Ok(conn.query_row(
+                "SELECT MAX(timestamp) FROM sync_ops WHERE kind = 'ShareReshareBatch' AND lamport > ?1
+                   AND state IN ('applied','approved')",
+                params![since_lamport as i64],
+                |r| r.get(0),
+            )?)
         })
     }
 

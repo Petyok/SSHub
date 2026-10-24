@@ -588,6 +588,35 @@ accepted. Tombstone state is `{lamport, device_id, ts}`: the op hash is not part
 the blob, so a pruned or bootstrapped store folds to the same bytes as one that kept
 the log.
 
+**Ceremony ops (Red ceremony, stage 3).** `RedApprove { op_hash }`, `RedPhoneSign
+{ op_hash }` and `RedFactor { op_hash, factor, sig }` are Green and inert (the
+ceremony code checks who authored them). `FactorRegister { factor, public, sealed,
+salt, sender }` (sealed empty for Paper, at most 128 bytes for EmailCode),
+`DeviceRoleChange { device_id, to }` and `BulkExport { requester, window_secs }`
+(1 to 3600) are Red. `DeviceRoleChange` updates `sync_devices.role` and the
+checkpoint fold (promotion and demotion). `DeviceRevoke` is Yellow when the target
+is a mirror and Red when it is a holder or unknown (`merge::effective_tier`;
+`Op::tier()` stays the conservative Red). `sync_resolve_pending` settles any
+pending op programmatically. Canonical forms: hashes and `public` are hex, `sig`
+is 128 hex characters, `salt` is 32 hex characters, `sealed` is base64.
+
+**Checkpoint wire and driver (C6).** The hello announces `sync_checkpoint_head()`.
+A `WantTail` below a peer's prune floor is answered `Pruned { device_id,
+floor_seq }`; the asker then sends `WantCheckpoint { hash, offset }` and receives
+`CheckpointChunk { hash, offset, total, data }` chunks of `CHECKPOINT_CHUNK_BYTES`
+(`total` 0: the peer does not hold the blob; at most 64 MiB; chunks must arrive in
+order). The bytes are `checkpoint::bundle_to_bytes` (proposal, signs, heads,
+state), untrusted until `sync_checkpoint_accept(bytes, peer, adopt)`: with
+`adopt` the bundle replaces the local log (`sync_bootstrap` rules with the peer
+as `Anchor`; refused when this device has local ops above the cut), otherwise it
+is recorded as a proposal to verify. Proposals known as ops without a blob are
+fetched in the same phase. After every round `checkpoint_driver::after_round`
+records proposals with the signs held, signs those that match the local fold
+(never on an unattended device), proposes when `due` (ops, bytes, minimum
+interval, a finished reshare), and prunes after the delay. A proposer keeps its
+own blob; blobs of proposals in flight are kept, accepted ones only for the
+newest.
+
 ### 2b. Checkpoints and pruning (C15)
 
 Design: `docs/host-sync-design.md`, section "Checkpoints and pruning". Owner: the op-log package.

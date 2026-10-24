@@ -306,7 +306,7 @@ pub(crate) fn record_writes(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Resu
 pub(crate) fn record_anchor_device(
     conn: &Connection,
     public: &crate::sync::crypto::DevicePublic,
-    name: &str,
+    _name: &str,
     role: DeviceRole,
     attendance: Attendance,
     kind: DeviceKind,
@@ -317,7 +317,8 @@ pub(crate) fn record_anchor_device(
         "ed25519": hex(&public.ed25519_pub),
         "x25519": hex(&public.x25519_pub),
         "mlkem": b64_encode(&public.mlkem_pub),
-        "name": name,
+        // The label of an anchor is a local note; it must not make states differ.
+        "name": "",
         "role": super::merge::role_db(role),
         "attendance": super::merge::attendance_db(attendance),
         "kind": super::merge::kind_db(kind),
@@ -1122,10 +1123,19 @@ pub(crate) fn record(
         return Ok(CheckpointStatus::Accepted);
     }
     set_status(conn, &hash, status)?;
+    if matches!(
+        status,
+        CheckpointStatus::Proposed | CheckpointStatus::Verified | CheckpointStatus::Accepted
+    ) {
+        conn.execute(
+            "UPDATE sync_checkpoints SET state = ?2 WHERE proposal_hash = ?1",
+            params![&hash[..], bundle.state],
+        )?;
+    }
     if status == CheckpointStatus::Accepted {
         conn.execute(
-            "UPDATE sync_checkpoints SET accepted_at = ?2, state = ?3 WHERE proposal_hash = ?1",
-            params![&hash[..], now, bundle.state],
+            "UPDATE sync_checkpoints SET accepted_at = ?2 WHERE proposal_hash = ?1",
+            params![&hash[..], now],
         )?;
         flag_stale_devices(conn, cut, proposal.timestamp)?;
     }
@@ -1163,8 +1173,9 @@ fn settle_competitors(conn: &Connection, prev: &[u8; 32]) -> Result<()> {
 }
 
 fn drop_old_blobs(conn: &Connection) -> Result<()> {
+    // Proposals still in flight keep their blob (peers fetch it to verify).
     conn.execute(
-        "UPDATE sync_checkpoints SET state = NULL WHERE proposal_hash NOT IN (
+        "UPDATE sync_checkpoints SET state = NULL WHERE status IN ('accepted','pruned') AND proposal_hash NOT IN (
             SELECT proposal_hash FROM sync_checkpoints WHERE status IN ('accepted','pruned')
             ORDER BY accepted_at DESC, lamport DESC LIMIT ?1)",
         params![CHECKPOINT_RETAIN_SPANS as i64],
@@ -1875,7 +1886,7 @@ fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
                         unhex(v["ed25519"].as_str().unwrap_or("")),
                         x,
                         ml,
-                        v["name"].as_str().unwrap_or(""),
+                        Some(v["name"].as_str().unwrap_or("")).filter(|n| !n.is_empty()).unwrap_or(key.as_str()),
                         wins.get(&("role".to_string(), key.clone()))
                             .and_then(|r| r.value["role"].as_str())
                             .or(v["role"].as_str())
@@ -1994,4 +2005,177 @@ pub(crate) fn storage_key(conn: &Connection, device: &str) -> Result<Option<(u64
     Ok(wins
         .get(&("storage".to_string(), device.to_string()))
         .and_then(|w| Some((w.ord, b64_decode(w.value["sealed"].as_str()?)?))))
+}
+
+// ------------------------------------------------------------- wire form
+
+fn wire_op(op: &Op) -> Value {
+    json!({ "c": b64_encode(&op.canonical_bytes()), "s": hex(&op.signature) })
+}
+
+fn op_of_wire(v: &Value) -> Result<Op> {
+    let sig = v["s"].as_str().context("op signature")?;
+    ensure!(sig.len() == 128, "bad op signature");
+    let mut s = [0u8; 64];
+    for (i, b) in s.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&sig[2 * i..2 * i + 2], 16)?;
+    }
+    let canonical =
+        b64_decode(v["c"].as_str().context("op bytes")?).context("op bytes are not base64")?;
+    Op::from_canonical(&canonical, s)
+}
+
+/// The bytes a peer serves for one checkpoint: proposal, signs, head ops, state.
+pub fn bundle_to_bytes(b: &CheckpointBundle) -> Vec<u8> {
+    serde_json::to_vec(&json!({
+        "proposal": wire_op(&b.proposal),
+        "signs": b.signs.iter().map(wire_op).collect::<Vec<_>>(),
+        "heads": b.heads.iter().map(wire_op).collect::<Vec<_>>(),
+        "state": b64_encode(&b.state),
+    }))
+    .expect("bundle serialises")
+}
+
+/// Strict parse of [`bundle_to_bytes`] output; every op must re-encode exactly.
+pub fn bundle_from_bytes(bytes: &[u8]) -> Result<CheckpointBundle> {
+    let v: Value = serde_json::from_slice(bytes).context("checkpoint bundle is not JSON")?;
+    let ops = |k: &str| -> Result<Vec<Op>> {
+        v[k].as_array()
+            .context("missing op list")?
+            .iter()
+            .map(op_of_wire)
+            .collect()
+    };
+    Ok(CheckpointBundle {
+        proposal: op_of_wire(&v["proposal"])?,
+        signs: ops("signs")?,
+        heads: ops("heads")?,
+        state: b64_decode(v["state"].as_str().context("state")?).context("state is not base64")?,
+    })
+}
+
+/// Hash of the newest accepted checkpoint whose blob we can serve.
+pub(crate) fn servable_head(conn: &Connection) -> Result<Option<[u8; 32]>> {
+    let h: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT proposal_hash FROM sync_checkpoints WHERE status = 'accepted' AND state IS NOT NULL
+             ORDER BY accepted_at DESC, lamport DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(h.and_then(|h| h.try_into().ok()))
+}
+
+/// Proposals we know as ops but hold no blob for: ask a peer for them.
+pub(crate) fn missing_blobs(conn: &Connection) -> Result<Vec<[u8; 32]>> {
+    let newest = list(conn)?
+        .into_iter()
+        .filter(|c| c.status == CheckpointStatus::Accepted)
+        .map(|c| c.cut.iter().map(|e| e.lamport).max().unwrap_or(0))
+        .max()
+        .unwrap_or(0);
+    let mut stmt = conn.prepare(
+        "SELECT op_hash FROM sync_ops WHERE kind = 'CheckpointPropose' AND state IN ('applied','approved')
+           AND lamport > ?1
+           AND op_hash NOT IN (SELECT proposal_hash FROM sync_checkpoints
+                               WHERE state IS NOT NULL OR status IN ('void','disputed','pruned'))
+         ORDER BY lamport LIMIT 4",
+    )?;
+    let rows: Vec<Vec<u8>> = stmt
+        .query_map(params![newest as i64], |r| r.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(rows.into_iter().filter_map(|h| h.try_into().ok()).collect())
+}
+
+/// Sign ops we hold for a proposal, as bundle material.
+pub(crate) fn known_signs(conn: &Connection, proposal: &[u8; 32]) -> Result<Vec<Op>> {
+    let mut stmt = conn.prepare(
+        "SELECT op_hash FROM sync_ops WHERE kind = 'CheckpointSign' AND state IN ('applied','approved')",
+    )?;
+    let hashes: Vec<Vec<u8>> = stmt
+        .query_map([], |r| r.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    let mut out = Vec::new();
+    for h in hashes {
+        let h: [u8; 32] = h.try_into().map_err(|_| anyhow!("stored hash"))?;
+        if let Some(row) = load_op(conn, &h)? {
+            if matches!(&row.op.body, OpBody::CheckpointSign { proposal_hash } if proposal_hash == proposal)
+            {
+                out.push(row.op);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Adopt a checkpoint on a store that already has a log it can no longer
+/// extend (the peer pruned past it). Refuses when this device holds local ops
+/// above the cut; otherwise the old log is dropped and the bundle becomes the
+/// base, exactly as for a fresh device.
+pub(crate) fn adopt(
+    conn: &Connection,
+    bundle: &CheckpointBundle,
+    trust: &BootstrapTrust,
+    now: i64,
+) -> Result<()> {
+    let (cut, ..) = propose_parts(&bundle.proposal)?;
+    let cut_map = cut_of(cut);
+    let mut stmt = conn.prepare("SELECT device_id, seq FROM sync_ops WHERE local = 1")?;
+    let local: Vec<(String, i64)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+    drop(stmt);
+    for (d, s) in local {
+        ensure!(
+            cut_map.get(&d).is_some_and(|c| s as u64 <= *c),
+            "this device has local ops above the checkpoint; sync them first"
+        );
+    }
+    // Rows the projection made go with the log they came from; bootstrap makes them again.
+    for (kind, table) in [
+        ("host", "hosts"),
+        ("group", "host_groups"),
+        ("identity", "identities"),
+    ] {
+        conn.execute(
+            &format!(
+                "DELETE FROM {table} WHERE uid IN (SELECT uid FROM sync_entities WHERE kind = '{kind}' AND created = 1)"
+            ),
+            [],
+        )?;
+    }
+    for t in [
+        "sync_ops",
+        "sync_chain_heads",
+        "sync_pending_ops",
+        "sync_fields",
+        "sync_tombstones",
+        "sync_writes",
+        "sync_entities",
+        "sync_prune_floor",
+        "sync_epochs",
+    ] {
+        conn.execute(&format!("DELETE FROM {t}"), [])?;
+    }
+    bootstrap(conn, bundle, trust, now)
+}
+
+/// Record a bundle we fetched (a proposal blob) or adopt one (we are behind
+/// past the floor); returns the proposal hash.
+pub(crate) fn accept_bytes(
+    conn: &Connection,
+    bytes: &[u8],
+    peer: &DeviceId,
+    adopt_it: bool,
+    now: i64,
+) -> Result<[u8; 32]> {
+    let bundle = bundle_from_bytes(bytes)?;
+    let hash = bundle.proposal.hash();
+    if adopt_it {
+        adopt(conn, &bundle, &BootstrapTrust::Anchor(peer.clone()), now)?;
+    } else {
+        record(conn, &bundle, now)?;
+    }
+    Ok(hash)
 }

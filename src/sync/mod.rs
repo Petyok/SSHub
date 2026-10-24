@@ -2,6 +2,7 @@
 
 pub mod apply;
 pub mod cert;
+pub mod checkpoint_driver;
 pub mod client;
 pub mod codes;
 pub mod cred_ops;
