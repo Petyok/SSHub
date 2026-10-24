@@ -63,7 +63,7 @@ KbdInteractiveAuthentication no
 UsePAM no
 StrictModes no
 LogLevel VERBOSE
-SetEnv SSHUB_CONFIG_DIR=$SSHUB_CONFIG_DIR SSHUB_DATA_DIR=$SSHUB_DATA_DIR DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS
+SetEnv DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/bus
 EOF
 
 echo "peer-entrypoint: $PEER_NAME ready, sshd on $SSH_PORT"
