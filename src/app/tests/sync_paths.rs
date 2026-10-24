@@ -97,6 +97,17 @@ fn ring(ssh_program: Option<String>) -> Ring {
             }
         }
     }
+    // Enrollment records this device itself in its own ring.
+    d[1].store
+        .sync_register_device(
+            &d[1].id.public(),
+            "me",
+            crate::sync::oplog::DeviceRole::Holder,
+            crate::sync::oplog::Attendance::Attended,
+            DeviceKind::Terminal,
+            crate::sync::oplog::VerifiedBy::Sas,
+        )
+        .unwrap();
     quorum_mode(&d[2]);
     all_to_all(&d);
     let row = app
@@ -491,4 +502,109 @@ fn refusing_a_release_request_grants_nothing_and_does_not_ask_again() {
         AppMode::Normal,
         "the answered request is not asked again"
     );
+}
+
+/// Ingest only (`all_to_all` approves what waits, which a Red change must not get).
+fn ingest_from(from: &Dev, to: &Dev) {
+    let have = to
+        .store
+        .sync_chain_heads()
+        .unwrap()
+        .into_iter()
+        .find(|(d, _, _)| *d == from.did)
+        .map_or(0, |(_, s, _)| s);
+    for op in from.store.sync_chain_tail(&from.did, have).unwrap() {
+        to.store.sync_ingest(op).unwrap();
+    }
+}
+
+#[test]
+fn a_red_change_shows_its_ceremony_and_takes_effect_only_when_all_proofs_are_in() {
+    use crate::sync::ceremony::{factor_register_paper, red_phone_sign_body, settle_red_ops};
+    let mut r = ring(None);
+    let words = crate::sync::crypto::bip39_encode(&[7u8; 32]);
+    let recover =
+        crate::sync::crypto::paper_derive(&words, crate::sync::crypto::PaperDomain::Recover)
+            .unwrap();
+    // The holder proposes registering the paper as a third factor.
+    let proposal = append(&r.d[2], factor_register_paper(&recover));
+    ingest_from(&r.d[2], &r.d[1]);
+    r.app.refresh_sync_view();
+    let red = r.app.sync.review[0]
+        .red
+        .clone()
+        .expect("a Red change shows its ceremony");
+    assert!(red.missing.iter().any(|m| m.contains("phone")), "{red:?}");
+    assert!(red.missing.iter().any(|m| m.contains("second")), "{red:?}");
+
+    // Approving through the store directly is refused: only the ceremony applies it.
+    open_review(&mut r.app);
+    r.app.sync_resolve_review(true);
+    assert!(r
+        .app
+        .host_notice
+        .as_deref()
+        .is_some_and(|n| n.contains("Red change")));
+    assert_eq!(r.app.store.sync_pending().unwrap().len(), 1);
+
+    // `a` adds this device's approval; the change still waits for the phone.
+    r.app.handle_key(key_char('a')).unwrap();
+    pump(&mut r.app, "the approval", |a| {
+        a.host_notice
+            .as_deref()
+            .is_some_and(|n| n.starts_with("proof added"))
+    });
+    let red = r.app.sync.review[0].red.clone().unwrap();
+    assert!(!red.missing.iter().any(|m| m.contains("second")), "{red:?}");
+    assert!(red.have.iter().any(|h| h.contains("second")));
+
+    // The phone signs; once the proofs are all in, the ceremony applies it.
+    // The phone saw the proposal (its proof must come after it), then signs.
+    ingest_from(&r.d[2], &r.d[0]);
+    append(&r.d[0], red_phone_sign_body(&proposal));
+    ingest_from(&r.d[0], &r.d[1]);
+    let st =
+        crate::sync::ceremony::red_status(&r.app.store, &proposal, crate::store::now_ts()).unwrap();
+    let report = settle_red_ops(&r.app.store, crate::store::now_ts()).unwrap();
+    assert_eq!(report.applied, vec![proposal.hash()], "{st:?}");
+    r.app.refresh_sync_view();
+    assert!(r.app.sync.review.is_empty());
+}
+
+#[test]
+fn the_paper_phrase_is_typed_without_echo_and_added_as_a_factor_proof() {
+    use crate::sync::ceremony::factor_register_paper;
+    let mut r = ring(None);
+    let words = crate::sync::crypto::bip39_encode(&[9u8; 32]);
+    let recover =
+        crate::sync::crypto::paper_derive(&words, crate::sync::crypto::PaperDomain::Recover)
+            .unwrap();
+    append(&r.d[2], factor_register_paper(&recover));
+    ingest_from(&r.d[2], &r.d[1]);
+    r.app.refresh_sync_view();
+    open_review(&mut r.app);
+    r.app.handle_key(key_char('p')).unwrap();
+    assert_eq!(r.app.mode, AppMode::SyncPrompt);
+    type_and_enter(&mut r.app, &words);
+    pump(&mut r.app, "the factor proof", |a| {
+        a.host_notice
+            .as_deref()
+            .is_some_and(|n| n.starts_with("proof added"))
+    });
+    // The words are in no file of the profile.
+    let mut hits = Vec::new();
+    for e in std::fs::read_dir(&r.paths.root).unwrap().flatten() {
+        if e.path().is_file() && std::fs::read_to_string(e.path()).is_ok_and(|t| t.contains(&words))
+        {
+            hits.push(e.path());
+        }
+    }
+    assert!(hits.is_empty(), "{hits:?}");
+}
+
+fn open_review(app: &mut App) {
+    app.active_tab = 6;
+    app.handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::SyncReview);
 }

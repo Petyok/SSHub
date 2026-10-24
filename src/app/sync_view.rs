@@ -226,6 +226,7 @@ pub(crate) fn pending_view(
                 .to_string()
         }
     };
+    let reason_text = reason.clone();
     if let Some(reason) = reason {
         summary.push_str(&format!(" [{reason}]"));
     }
@@ -234,7 +235,41 @@ pub(crate) fn pending_view(
         summary,
         changes,
         hash: op.hash(),
+        reason: reason_text,
+        red: red_view(store, op),
     }
+}
+
+fn proof_label(p: &crate::sync::ceremony::RedProof) -> &'static str {
+    use crate::sync::ceremony::RedProof;
+    use crate::sync::oplog::ThirdFactor;
+    match p {
+        RedProof::Phone => "phone signature",
+        RedProof::SecondDevice => "second attended device",
+        RedProof::Factor(None) => "third factor (paper or emailed code)",
+        RedProof::Factor(Some(ThirdFactor::Paper)) => "paper phrase (24 words)",
+        RedProof::Factor(Some(_)) => "emailed code",
+    }
+}
+
+/// The ceremony of `op`, when it is a gated Red change.
+fn red_view(store: &LauncherStore, op: &Op) -> Option<super::sync::RedView> {
+    use crate::sync::ceremony::{is_gated, red_status};
+    if !is_gated(store, op).ok()? {
+        return None;
+    }
+    let st = red_status(store, op, crate::store::now_ts()).ok()?;
+    Some(super::sync::RedView {
+        have: st.have.iter().map(|p| proof_label(p).to_string()).collect(),
+        missing: st
+            .missing
+            .iter()
+            .map(|p| proof_label(p).to_string())
+            .collect(),
+        expired: st.expired,
+        blocked: st.blocked,
+        single_machine: st.single_machine_ring,
+    })
 }
 
 /// The proof of a fork as lines for the alert: what was signed twice and where.
@@ -271,6 +306,57 @@ pub(crate) fn evidence_lines(e: &crate::sync::oplog::ForkEvidence) -> Vec<String
             format!("  signed head seq {} hash {}", b.seq, h(&b.hash)),
         ],
     }
+}
+
+enum RedProofInput {
+    Approve,
+    Paper(zeroize::Zeroizing<String>),
+    Email(zeroize::Zeroizing<String>),
+}
+
+/// Add one proof to a pending Red change on the worker and settle: the change
+/// takes effect only when the ceremony is complete.
+fn red_proof(
+    env: &crate::sync::runtime::JobEnv,
+    hash: &[u8; 32],
+    proof: RedProofInput,
+) -> Result<String> {
+    use crate::sync::ceremony;
+    let op = env
+        .store
+        .sync_pending()?
+        .into_iter()
+        .find(|o| o.hash() == *hash)
+        .ok_or_else(|| anyhow::anyhow!("that change is no longer waiting"))?;
+    ceremony::require_gated(&env.store, &op)?;
+    let body = match proof {
+        RedProofInput::Approve => ceremony::red_approve_body(&op),
+        RedProofInput::Paper(words) => {
+            let recover = crate::sync::crypto::paper_derive(
+                words.trim(),
+                crate::sync::crypto::PaperDomain::Recover,
+            )?;
+            ceremony::red_factor_paper(&recover, &op)
+        }
+        RedProofInput::Email(code) => ceremony::red_factor_email(&env.store, code.trim(), &op)?,
+    };
+    env.store.sync_append_local(&env.identity, body)?;
+    let now = crate::store::now_ts();
+    let report = ceremony::settle_red_ops(&env.store, now)?;
+    if report.applied.contains(hash) {
+        return Ok("the ceremony is complete: the change took effect".into());
+    }
+    let left = ceremony::red_status(&env.store, &op, now)?
+        .missing
+        .iter()
+        .map(|p| proof_label(p))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(if left.is_empty() {
+        "proof added".to_string()
+    } else {
+        format!("proof added; still missing: {left}")
+    })
 }
 
 impl App {
@@ -393,13 +479,50 @@ impl App {
         }
     }
 
+    /// A key in the review list: `a` approve (a Red change: add this device's
+    /// approval), `r` reject, `p` type the paper phrase, `e` type the emailed code.
+    pub(crate) fn sync_review_key(&mut self, c: char) {
+        let Some(sel) = self.sync.review.get(self.sync.review_selected) else {
+            return;
+        };
+        let hash = sel.hash;
+        match (c, sel.red.is_some()) {
+            ('r', _) | ('a', false) => self.sync_resolve_review(c == 'a'),
+            ('a', true) => {
+                self.run_sync_job(move |env| red_proof(env, &hash, RedProofInput::Approve))
+            }
+            ('p', true) => self.sync_prompt(
+                "Paper phrase",
+                "Type the 24 words of the paper phrase (nothing is shown)",
+                true,
+                move |app, words| {
+                    app.run_sync_job(move |env| {
+                        red_proof(env, &hash, RedProofInput::Paper(words.into()))
+                    })
+                },
+            ),
+            ('e', true) => self.sync_prompt(
+                "Emailed code",
+                "Type the code from the email (nothing is shown)",
+                true,
+                move |app, code| {
+                    app.run_sync_job(move |env| {
+                        red_proof(env, &hash, RedProofInput::Email(code.into()))
+                    })
+                },
+            ),
+            _ => {}
+        }
+    }
+
     /// Approve or reject the highlighted pending operation in the store.
     pub(crate) fn sync_resolve_review(&mut self, approve: bool) {
         let Some(op) = self.sync.review.get(self.sync.review_selected) else {
             return;
         };
         let hash = op.hash;
-        match self.store.sync_resolve_pending(&hash, approve) {
+        // The only way a screen approves: a Red change needs its ceremony.
+        match crate::sync::ceremony::resolve(&self.store, &hash, approve, crate::store::now_ts()) {
             Ok(()) => {
                 self.refresh_sync_view();
                 // A change that took effect shows in the hosts list.

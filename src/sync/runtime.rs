@@ -546,7 +546,7 @@ fn release_round(deps: &RoundDeps, identity: &DeviceIdentity, spec: &str) -> Res
         .into_iter()
         .find(|o| o.hash() == hash)
         .context("that release request is no longer waiting")?;
-    deps.store.sync_resolve_pending(&hash, approve)?;
+    crate::sync::ceremony::resolve(&deps.store, &hash, approve, crate::store::now_ts())?;
     if approve {
         for body in crate::sync::quorum::grant_bodies(&deps.store, identity, &op)? {
             deps.store.sync_append_local(identity, body)?;

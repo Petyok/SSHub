@@ -125,6 +125,20 @@ pub struct ChangeView {
     pub dangerous: bool,
 }
 
+/// Where the Red ceremony of a pending change stands.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RedView {
+    /// Proofs present, one line each.
+    pub have: Vec<String>,
+    /// Proofs still missing, one line each.
+    pub missing: Vec<String>,
+    pub expired: bool,
+    /// A rule that makes the change impossible (too few live holders ...).
+    pub blocked: Option<String>,
+    /// Only one attended holder terminal: the second device is waived, the paper needed.
+    pub single_machine: bool,
+}
+
 /// One pending operation awaiting review.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingOpView {
@@ -133,6 +147,10 @@ pub struct PendingOpView {
     pub changes: Vec<ChangeView>,
     /// Hash of the op, for approving or rejecting it in the store.
     pub hash: [u8; 32],
+    /// Why it waits (`tier`, `unknown-author`, ...), when the store says.
+    pub reason: Option<String>,
+    /// The ceremony of a Red change; `None` for everything else.
+    pub red: Option<RedView>,
 }
 
 /// How a share can reach the unlock modal.
@@ -1165,8 +1183,10 @@ impl App {
                     self.sync.review_selected = (self.sync.review_selected + 1).min(last);
                 } else if up {
                     self.sync.review_selected = self.sync.review_selected.saturating_sub(1);
-                } else if plain('a') || plain('r') {
-                    self.sync_resolve_review(plain('a'));
+                } else if let KeyCode::Char(c @ ('a' | 'r' | 'p' | 'e')) = key.code {
+                    if key.modifiers.is_empty() {
+                        self.sync_review_key(c);
+                    }
                 }
             }
             AppMode::SyncUnlock => {
@@ -1278,6 +1298,8 @@ pub(crate) fn sample_sync_view() -> SyncView {
         }),
         review: vec![PendingOpView {
             hash: [0; 32],
+            reason: None,
+            red: None,
             device: "server".into(),
             summary: "edit host web-1".into(),
             changes: vec![ChangeView {

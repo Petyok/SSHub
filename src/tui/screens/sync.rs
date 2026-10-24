@@ -263,14 +263,56 @@ pub fn render_review(frame: &mut Frame, app: &App) {
             style,
         ));
     }
-    modal(
-        frame,
-        app,
-        "Review changes",
-        90,
-        body,
-        "\u{2191}\u{2193} select  a approve  r reject  Esc close",
-    );
+    let op = &sync.review[selected];
+    if let Some(reason) = &op.reason {
+        body.push(Line::styled(
+            format!("  waiting because: {reason}"),
+            app.theme().style(StyleRole::TextMuted),
+        ));
+    }
+    if let Some(red) = &op.red {
+        body.push(Line::raw(""));
+        body.push(Line::styled(
+            "Red change: it takes effect only with all three proofs",
+            color(app, ColorRole::StatusWarning),
+        ));
+        for have in &red.have {
+            body.push(Line::styled(
+                format!("  \u{2713} {have}"),
+                color(app, ColorRole::StatusSuccess),
+            ));
+        }
+        for missing in &red.missing {
+            body.push(Line::styled(
+                format!("  \u{25cb} {missing}: missing"),
+                color(app, ColorRole::StatusWarning),
+            ));
+        }
+        if red.single_machine {
+            body.push(Line::styled(
+                "  one attended holder only: the second device is waived, the paper is required",
+                app.theme().style(StyleRole::TextMuted),
+            ));
+        }
+        if let Some(why) = &red.blocked {
+            body.push(Line::styled(
+                format!("  impossible as it stands: {why}"),
+                color(app, ColorRole::StatusError),
+            ));
+        }
+        if red.expired {
+            body.push(Line::styled(
+                "  the time for this ceremony ran out: reject it and propose it again",
+                color(app, ColorRole::StatusError),
+            ));
+        }
+    }
+    let hint = if op.red.is_some() {
+        "\u{2191}\u{2193} select  a add my approval  p paper  e emailed code  r reject  Esc close"
+    } else {
+        "\u{2191}\u{2193} select  a approve  r reject  Esc close"
+    };
+    modal(frame, app, "Review changes", 96, body, hint);
 }
 
 pub fn render_unlock(frame: &mut Frame, app: &App) {
