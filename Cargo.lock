@@ -2705,6 +2705,7 @@ dependencies = [
  "anyhow",
  "argon2",
  "assert_cmd",
+ "base64",
  "bip39",
  "blake3",
  "chacha20poly1305",
