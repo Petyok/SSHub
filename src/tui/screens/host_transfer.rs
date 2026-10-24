@@ -18,7 +18,7 @@ use crate::tui::widgets::panel_box::{render_panel_box, SFTP_PANEL};
 /// Queue rows shown before the strip folds the rest into a count.
 const QUEUE_ROWS: usize = 4;
 
-const HINT: &str = "↑↓ move · Tab pane · → push · ← pull · Enter stage · a all shown · / filter · u unstage · x clear · c continue · Esc cancel";
+const HINT: &str = "c continue · Esc cancel · ↑↓ move · Tab pane · → push · ← pull · Enter stage · a all shown · / filter · u unstage · x clear";
 
 pub fn render_host_transfer(frame: &mut Frame, app: &App) {
     let Some(screen) = app

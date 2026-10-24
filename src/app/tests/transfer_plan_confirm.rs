@@ -1280,3 +1280,15 @@ fn host_screen_renders_a_full_queue_on_a_tiny_terminal() {
         render_to_buffer(&app, 80, height);
     }
 }
+
+/// The two keys that leave the screen must survive the hint line's ellipsis.
+#[test]
+fn host_screen_hint_keeps_continue_and_cancel_at_80_columns() {
+    let (_dir, mut app, _work_db, _src_db) = two_profile_app();
+    app.handle_key(key_char('T')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key_char('m')).unwrap();
+    let buffer = render_to_buffer(&app, 80, 24);
+    assert!(buffer_contains(&buffer, "c continue"));
+    assert!(buffer_contains(&buffer, "Esc cancel"));
+}
