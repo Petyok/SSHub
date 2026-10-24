@@ -18,8 +18,9 @@ It is not:
 - a sync peer: it has no SSH and no copy of your hosts (it stores no credential keys, the terminal sends it only
   its own wrapped share inside each request);
 - a password manager or a place to read passwords;
-- verified on iOS or Safari. Only desktop Chromium has been run against it; Android Chrome and any iPhone browser
-  are unverified. Do not rely on it there before you have run the checks below yourself.
+- verified on iOS or Safari. It is **unverified there**: it has never been run on an iPhone. It has run on desktop
+  Chromium and, for the page flows, on one Android phone with Chrome (see Known limits). Do not rely on it on iOS
+  before you have run the checks below yourself.
 
 ### The fingerprint, and its limit
 
@@ -31,6 +32,11 @@ It detects a wrong or outdated build. It does not detect a malicious page: a sub
 Get the file from a source you trust (this repository, or the file the terminal ships) and compare against the
 fingerprint printed by your terminal, not only the one on the phone.
 
+The build is reproducible: building twice in the tools container gives the same bytes, and the committed file equals
+that build (`assets/companion/scripts/verify-in-container.sh` runs the check; the fingerprint is written to
+`assets/companion/FINGERPRINT`). So the fingerprint also tells you that the file is the one this repository builds
+from its source, which anyone can rebuild and compare.
+
 ## Getting the page onto a phone
 
 The camera needs a secure context, so the page must be opened from `https://` or from `http://localhost`.
@@ -40,14 +46,31 @@ The camera needs a secure context, so the page must be opened from `https://` or
 On the computer that has the repository, with USB debugging enabled on the phone:
 
 ```
+adb devices -l
 adb reverse tcp:8443 tcp:8443
 python3 -m http.server --bind 127.0.0.1 8443 -d assets/companion
 ```
 
 Then open `http://localhost:8443/sshub-companion.html` in Chrome on the phone. `localhost` on the phone is the
-computer through the reverse tunnel, and counts as a secure context. Stop the server when you are done. The page
-itself makes no requests after it has loaded, so you can pull the cable afterwards, but the browser may not keep the
-page across a restart: use the next section for daily use.
+computer through the reverse tunnel, and counts as a secure context. When you are done: stop the server, run
+`adb reverse --remove tcp:8443`, clear the site data of `http://localhost:8443` in Chrome (it holds the test key)
+and take back any camera permission you granted. The page itself makes no requests after it has loaded, so you can
+pull the cable afterwards, but the browser may not keep the page across a restart: use the next section for daily
+use.
+
+To drive the page from the computer (as the test scripts in `assets/companion/scripts/` do), forward Chrome's DevTools
+socket with `adb forward tcp:9222 localabstract:chrome_devtools_remote` (remove it with `adb forward --remove
+tcp:9222`) and work in one tab of your own; do not touch other tabs.
+
+Camera lessons from the real phone:
+
+- Chrome on Android asks for the site's camera permission through a small collapsed chip in the address bar, not a
+  dialog. Until you tap it and choose Allow, the page's camera request just stays pending with nothing on the screen.
+- Chrome also needs Android's own camera permission (system settings, the app's permissions). After you grant it,
+  **restart Chrome** (swipe it out of the recent apps and open it again): until then the request keeps waiting.
+- Use one tab and one camera request at a time. A second page asking for the same camera froze the image in the
+  tests.
+- A browser tab hidden or a screen turned off locks the page; keep the screen on while you test.
 
 ### Daily use: self-host over HTTPS
 
@@ -106,8 +129,10 @@ The approval screen is built from the signed operation bytes, not from any text 
 Options before you approve: show a QR code, copy to the clipboard, play a sound (fast or slow), and optionally
 issue a short code. Tap **Approve and release**. The phone then fires every channel you left on:
 
-- **QR code**: hold it in front of the laptop camera. It loops until you leave the screen. This is the primary
-  channel.
+- **QR code**: hold the screen in front of the laptop camera with the brightness at maximum. The code is as wide as
+  the screen, drawn with whole device pixels per module (version 6 frames of 106 bytes at 4 frames per second, with
+  25% parity), and loops until you leave the screen; a reply of 711 bytes is 10 frames, one lap 2.5 seconds. In a test
+  with a fixed-focus laptop webcam a code like this was read at about 13 to 25 cm. This is the primary channel.
 - **Clipboard**: the same reply as base64, useful when the clipboard is shared with the computer.
 - **Sound**: a burst for the laptop microphone. The fast profile takes about 8 seconds for the reply and is the
   default; the slow profile (about 16 seconds) is for noisy rooms. Audio is opt-in on the terminal and unmeasured
@@ -157,6 +182,57 @@ timelock ends). Tap **Cancel this recovery: I still have this phone**. A phone t
 recovery is an attack, so no other factor is needed. The phone signs a cancellation and shows it as a QR code and on
 the clipboard: hold it to any terminal. Only cancel a recovery you did not start.
 
+## Red operations: the phone's proof
+
+Some changes are Red: adding or promoting a holder, revoking a holder, a trust certificate, a mode change, a third
+factor, a role change, a bulk export, an exemption. A Red change takes effect only with three proofs: this phone, a
+second attended terminal and a third factor (paper or email code). The terminal shows a Red notice as a QR code.
+On the phone tap **Scan a share request** and scan it: the page describes the operation from its signed bytes
+(every row of a Red operation is highlighted), names the proposer, and shows the hash of the operation. **Approve:
+sign this operation with the phone** adds a signed proof that names that exact hash and shows it as a QR code and as
+text for the terminal. The page refuses a notice older than 3 days, a notice that is not a Red operation, and a
+trust certificate written by another device (the phone writes its own, below). Your signature is only the phone's
+part: the other two proofs come from terminals.
+
+## Trust sessions
+
+A trust session lets one terminal open listed hosts without asking this phone each time, for a limited term. The
+phone is the author and signer of the certificate, so a stolen terminal cannot issue one. Menu **Trust sessions**
+(or **Scan a share request**) takes two kinds of request from a terminal:
+
+- **Request for a trust session**: the terminal shows the device, the hosts (or one group), the term, the budget of
+  new hosts per day and the epoch range. The phone shows all of it from the bytes (the device by name, or "not met"
+  with a warning, every listed host, the term in days with its end date, the budget) and, on **Approve**, signs the
+  certificate with exactly those fields. It refuses, with the reason and no Approve button: a term that is over or
+  longer than 90 days, a budget outside 1 to 50, more than 64 hosts or none, an inverted epoch range, and a request
+  that names this phone. The certificate takes effect only after a second terminal and a third factor approve it;
+  carry the signed answer (QR or text) to the terminal.
+- **Request to extend the budget**: when a certificate has used its new hosts of the day, the terminal shows a
+  request for 1 to 50 more. The phone refuses a certificate it did not issue, a revoked or expired one, and a second
+  extension of the same certificate within 24 hours (it says when the next one is possible). An extension covers its
+  own 24 hours only and never changes scope or term.
+
+The same menu lists the certificates this phone issued (active, expired or revoked, with extensions) and a **Revoke
+this trust session** button for each active one. Carry the signed revocation to any terminal; peers stop honouring the
+certificate on their next sync.
+
+## Reshare and wrap keys
+
+After a holder is revoked the ring reshares. The phone is only a receiver: it never contributes a sub-share and
+keeps no old shares. Menu **Reshare and wrap keys**: **Rotate wrap keys** first (its old generations stay readable,
+they derive from the same 24 words), then **Adopt a reshare** and scan or paste the reshare ops a terminal shows for
+the phone. The page shows the epoch, the holder number, how many credentials are ready and the contributors (with
+"signature not checked" for contributors it has never met), and **Publish the new shares** adds the phone's new
+shares, sealed, to its chain for a terminal to take. The screen states the consequence of this design: a revocation
+needs at least two other terminal holders to contribute, so a ring of two terminals plus the phone cannot revoke a
+terminal by resharing (the paper phrase is offline and cannot contribute either); add a third terminal first.
+
+## Handing ops to a terminal without a camera
+
+Every screen that produces signed operations shows a QR code and the same bytes as text with a **Copy the text**
+button (it is also copied automatically where the browser allows it): paste it into the terminal. **Export my ops as
+text** in the menu does the same for the newest 8 entries of the phone's chain.
+
 ## Backup and restore
 
 - **Show backup words** in the menu needs the PIN again and shows the 24 words. They are the same words as at first
@@ -179,11 +255,21 @@ the clipboard: hold it to any terminal. Only cancel a recovery you did not start
 
 ## Known limits
 
-- Unverified on iOS and Safari, and not yet run on a physical Android phone: camera reading, sound and clipboard are
-  tested only with simulated devices in headless Chromium.
-- The fast audio reply is 8 seconds for 128 bytes; the QR code is the primary channel.
+- **iOS and Safari: unverified.** The page has never been run on an iPhone or in Safari (camera on a local page, Web
+  Audio autoplay and storage persistence are unknown there). Do not rely on it before you have run the checks
+  yourself.
+- On Android Chrome (one Samsung phone, Android 16, Chrome 155) the page flows ran for real (first run, PIN,
+  restore, release, short code, Red notice, export), driven from a computer with the camera, sound and clipboard
+  switched off, and the code reading and the phone-screen-to-webcam reply were measured with test pages. Enrollment
+  by camera, sound and clipboard of the real page, and the real page's reply QR read by a webcam, have not run on a
+  phone yet.
+- The fast audio reply is 8 seconds for 128 bytes and has not been measured over the air; the QR code is the primary
+  channel.
 - A requester the phone has not met is warned about, not refused.
-- The phone does not rotate its wrap keys; its shares stay readable with the same 24 words (see the residual risk
-  list in the design for what that means after a revocation).
+- The phone can rotate its wrap keys (Reshare and wrap keys), but its older generations derive from the same 24 words
+  and can never be retired, so the forward secrecy of the reshare does not extend to the phone's own envelopes.
 - The phone's chain carries the last 8 entries with each reply; a long gap needs the phone to touch another terminal.
+  A list carries at most 8 ops, 256 KiB per op and 1 MiB in all.
+- A trust session stops working when no terminal has seen this phone for 14 days.
+- A ring of two terminals plus the phone cannot revoke a terminal by resharing: the phone never contributes.
 - The fingerprint does not defend against a malicious page.

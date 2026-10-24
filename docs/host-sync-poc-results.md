@@ -6,7 +6,8 @@ credentials). It replaces the per-branch `poc/results/*` files. Design: `docs/ho
 
 Environment names are generic. "Container" means the Linux x86_64 build and test container (rustc 1.99.1, node
 22.23.4, headless Chromium 156, Playwright 1.64.1, Python 3.11 oracle venv). "Laptop" means a 4 core, 8 GB x86_64
-developer laptop. No phone model is named because no phone was used for any measurement below.
+developer laptop. "Phone" means one Android phone, a Samsung SM-A536E (Galaxy A53 5G class) with Android 16 and
+Chrome 155, connected over USB; no serial numbers or personal data appear in the results. No iPhone was available.
 
 ## Summary
 
@@ -14,16 +15,16 @@ developer laptop. No phone model is named because no phone was used for any meas
 |---|---|---|
 | A | Do Rust and browser crypto agree byte for byte? | PASS, four findings changed stage 0 |
 | B | What does revocation (resharing) cost, and does it protect the future? | PASS after redesign, one new risk found and fixed with named residuals |
-| C | How much fits in an animated QR on a terminal? | BLOCKED: offline part done, handheld runs NOT run |
-| D | Are the Argon2 profiles affordable natively and in a browser? | FAIL on the strict 2 s master bound (kept, mitigated), phone run NOT run |
+| C | How much fits in an animated QR on a terminal? | PARTIAL: offline part done; C4 measured on a real phone (four blocks); C5 NOT run |
+| D | Are the Argon2 profiles affordable natively and in a browser? | FAIL on the strict 2 s master bound (kept, mitigated); D3 on a phone: median PASS, worst of five FAIL at 256 MiB |
 | E | Can a hardware key be a share holder? | NOT RUN, feature removed |
 | F | Is the SSH transport sound, fast and bounded when a peer is offline? | PASS |
 | G | iPhone behaviour | NOT APPLICABLE, no iPhone |
-| H | Do audio and QR carry a share back to the terminal? | BLOCKED: offline part done, over-the-air runs NOT run |
+| H | Do audio and QR carry a share back to the terminal? | PARTIAL: offline part done; reverse QR to the laptop webcam 10 of 10 on a real phone; audio (H3, H4, H5) NOT run |
 | Stage 2 | Protocol, ratchet, SAS enrollment | tests pass |
 | Stage 3 | Credential quorum, recovery, certificates, modes | tests pass |
 | Stage 3.5 | Hub | tests pass, no daemon needed |
-| Stage 5 | Phone page end to end | PASS in headless Chromium, NOT run on a phone |
+| Stage 5 | Phone page end to end | PASS in headless Chromium; page flows 23 of 23 on a real Android phone (no camera, sound or clipboard); trust sessions PASS in the container |
 
 ## PoC A: Rust and browser crypto interoperability
 
@@ -101,7 +102,7 @@ variant is a size computation over real ciphertexts.
 
 Question: how much data fits a terminal QR animation, and can a phone read it in time?
 
-Verdict: **BLOCKED.** C1 to C3 measured offline; C4 and C5 need a physical phone and were not run.
+Verdict: **PARTIAL.** C1 to C3 measured offline; C4 measured on a real phone (four blocks, below); C5 not run.
 
 | Claim | Measured |
 |---|---|
@@ -119,16 +120,41 @@ Changed in the design: frame size follows the terminal area (`fountain::frame_by
 byte header and 25% XOR parity; `QR_FPS` is 8 (the real phone measurement tunes it). The sender loops forever, so
 the coding is indexed looped blocks with parity, not a rateless code.
 
-Not run (maintainer, physical phone): **C4** handheld worst case (under 5 s at 80x24, five runs) and **C5**
-recovery after an interrupted scan. Also not run: a real camera at either geometry and a laptop-browser run of C1.
-A desktop decoder on a 2x screenshot shows the code is decodable, not that a handheld camera reads it.
+### Over the air (C4, real phone)
+
+Setup: Android phone as above, rear camera (480 px wide preview in the page), held still by the maintainer; the
+laptop screen showed the animated code in one kitty window (truecolor half blocks, black on white, quiet zone 4, 8
+fps, indexed looped chunks of the PoC H scheme). Quiet room, normal indoor light. The scanner page ran jsQR on every
+camera frame (about 20 Hz); 5 runs per block; "elapsed" is from the first decoded frame of the run to a matching
+sha256. The window is the size of the code's terminal: a tiled window is only 701x825 px (66x35 cells), so the v13
+blocks ran in a floating 800x840 px window (95x44 cells at 10 pt), and the player refuses to draw a code wider than
+its tty.
+
+| Block | Frames | Distance | Runs ok | Worst | Median |
+|---|---|---|---|---|---|
+| version 5 (80x24), 1714 B (the real challenge size) | 22 | about 30 cm | 5 of 5 | 7.47 s | 4.07 s |
+| version 5, 4096 B | 53 | about 30 cm | 5 of 5 | 21.78 s | 18.72 s |
+| version 13 (120x40), 1714 B | 6 | about 50 to 60 cm | 5 of 5 | 1.19 s | 0.66 s |
+| version 13, 4096 B | 13 | about 50 to 60 cm | 5 of 5 | 4.59 s | 2.80 s |
+
+Against the criterion (C4: under 5 s at 80x24, five runs) the real challenge at 80x24 is NOT under 5 s in every run:
+worst 7.5 s, median 4.1 s; the first runs were slower while the aim settled, the last two took one lap (22 frames at 8
+fps is 2.75 s). A missed frame costs a whole lap because the PoC scheme has no parity (the product adds 25 percent
+parity frames). At 120x40 the challenge is 6 frames and takes about a second.
+
+Findings: a half-block QR wider than the terminal wraps into horizontal stripes; Android Chrome asks for the camera
+only through a collapsed permission chip in the address bar, and the first request stayed pending until Chrome was
+restarted after Android's camera permission was granted.
+
+Not run (scheduled for the next device session): **C5** recovery after covering the screen mid-scan, the front
+camera, handheld movement and other lighting. The reverse QR direction is measured under PoC H.
 
 ## PoC D: Argon2 profiles
 
 Question: are the master, snapshot and email profiles affordable natively and in a browser?
 
 Verdict: **FAIL** on D1 (strict wall time bound missed by about 0.2 s, criterion not rewritten, mitigated), D2
-PASS, D3 NOT RUN, D4 deferred.
+PASS, D3 run on a real phone (median PASS, worst of five FAIL at 256 MiB), D4 deferred.
 
 | Claim | Criterion | Measured |
 |---|---|---|
@@ -138,7 +164,7 @@ PASS, D3 NOT RUN, D4 deferred.
 | D1 under `ulimit -v` 512 MiB | clean error, no abort | clean error, exit 3 |
 | D2 container Chromium 64 / 256 / 512 MiB, t=4 | success | 174 / 728 / 1,528 ms |
 | D2 laptop Chromium 64 / 256 / 512 MiB, t=4 | success, digest equal | 701 / 2,840 / 5,772 ms |
-| D3 phone, 256 MiB t=4 | under 3 s, five runs | NOT RUN |
+| D3 phone, 256 MiB t=4 | under 3 s, five runs | median 2,445 ms, worst 3,139 ms, 4 of 5 under 3 s: FAIL on the strict worst case, PASS on the median |
 
 Digests match across node, container Chromium and laptop Chromium. The laptop browser is about 4 times slower
 than the container for the same profile; that is the order a user machine shows.
@@ -147,8 +173,26 @@ Changed in the design: `ARGON2_MASTER` stays 1 GiB, t=1; the Vault key is derive
 background thread with an "unlocking" state, kept in zeroized memory for the session and never written to disk.
 The snapshot profile (256 MiB, t=4 floor) rides in the blob and a weakened profile is flagged.
 
-Not run (maintainer, physical phone): **D3**. Also not run: allocation profiling of the 1 GiB cost, browser peak
-RSS, non-headless laptop window, **D4** profile round trip.
+### D3: real phone (Android)
+
+Samsung SM-A536E (Galaxy A53 5G class), Android 16, Chrome 155, over USB; the same `measure.html` and hash-wasm build
+as D2, driven in one tab of the phone's Chrome. The output digests equal the container and laptop digests for all
+three profiles. Battery 60 percent, 34 C before, between and after the runs.
+
+| Profile | Runs (ms) | Median | Worst |
+|---|---|---|---|
+| 64 MiB, t=4 | 1034, 933, 665, 468, 516 | 665 | 1034 |
+| 256 MiB, t=4 (snapshot) | 2026, 1862, 2445, 3139, 2911 | 2445 | 3139 |
+| 512 MiB, t=4 | 6163 (one run) | 6163 | 6163 |
+
+The snapshot profile is 2 to 3 s on this phone, with a rising trend over five back-to-back runs. The strict criterion
+(under 3 s in every one of five runs) is missed by one run (3.14 s); the median and four of five runs meet it. The
+criterion is not rewritten. In the product the snapshot is issued once per release, the page shows that it is
+sealing the short code, and a phone that cannot afford the floor profile falls back to 64 MiB, t=8, recorded in the
+blob and flagged. One phone only; no second model, no slow phone.
+
+Not run: allocation profiling of the 1 GiB cost, browser peak RSS, non-headless laptop window, **D4** profile round
+trip, and the slow-phone fallback.
 
 ## PoC E: hardware key as a holder
 
@@ -194,7 +238,7 @@ unverified (camera on a local page, Web Audio autoplay, IndexedDB persistence).
 
 Question: can the phone return a share over audio, a reverse QR or the clipboard?
 
-Verdict: **BLOCKED.** H1 and H2 measured offline; H3, H4, H5 need a physical phone, speaker and microphone.
+Verdict: **PARTIAL.** H1 and H2 measured offline; the reverse QR (phone screen to the laptop webcam) measured on a real phone, 10 of 10 (below); H3, H4, H5 (audio) NOT run, scheduled for the next device session.
 
 | Claim | Measured |
 |---|---|
@@ -212,9 +256,35 @@ page the share reply is 128 bytes (the sealed box adds 72 bytes to the 56 byte e
 8.16 s: over the 5 s bound before any acoustics. Audio therefore stays opt-in and the reverse QR is the primary
 phone to terminal channel.
 
-Not run (maintainer, physical phone and laptop): **H3** over-the-air success (10 attempts, under 5 s), **H4**
-channel matrix (10 attempts per cell), **H5** channel order decision. The noise model is simulated white noise,
-not room acoustics, speaker or microphone response.
+### Reverse QR: phone screen to laptop webcam (measured)
+
+Conditions: Android phone as above, screen brightness at maximum, held by the maintainer at roughly 13 to 25 cm from
+the laptop webcam (an estimate), quiet room, normal indoor light. Receiver: a throwaway Chromium profile on the
+laptop, 1280x720 fixed-focus webcam, jsQR on every frame (about 7 frames per second), live preview with an aiming
+overlay. Payload 160 B, error correction M, 4 fps, 4 module quiet zone, black on white.
+
+Finding: a first attempt failed because the test page had no viewport meta tag. Chrome laid it out at 980 CSS px and
+the code was 26 percent of the screen width (about 1.8 cm, 0.28 mm per module). With a viewport tag and a code as
+wide as the screen (an integer number of device pixels per module) it works.
+
+| code | modules | phone px per module | share of screen width | frames | runs ok | median | worst |
+|---|---|---|---|---|---|---|---|
+| version 6, level M, 4 fps | 41 (49 with quiet zone) | 22 | 99.8 percent | 2 | 10 of 10 | 0.67 s | 4.90 s |
+
+The two slow runs lost a frame and waited for the next lap (indexed looped chunks). The first valid chunk was read 644
+ms after aiming. Over a 20 s survey while the holder moved nearer and farther, 80 of 102 frames carried a valid
+chunk. The code measured 6.6 to 11.8 webcam pixels per module on decoded frames (1.43 mm per module on the phone); the
+smallest module that was still read is 6.6 px, and the far limit was not reached. Estimated distance 13 to 24 cm,
+assuming a 67.7 mm screen and a webcam field of view of 1.33 times the distance (not measured with a ruler).
+
+Consequence: the reverse QR must be as wide as the screen with whole device pixels per module and the page must
+declare the viewport. The companion page was changed accordingly (version 6 frames, full width, 4 fps, contract
+table); the changed page has not been read by the webcam yet.
+
+Not run (scheduled for the next device session): **H3** over-the-air audio (10 attempts, under 5 s), **H4** channel
+matrix (10 attempts per cell), **H5** channel order decision, and the terminal's own microphone and camera receivers
+against real hardware. The noise model of H1 is simulated white noise, not room acoustics, speaker or microphone
+response.
 
 ## Stage 2: protocol, ratchet, enrollment (`poc/protocol`)
 
@@ -276,18 +346,19 @@ pruning".
 
 ## Stage 5: phone page (`poc/phone`)
 
-Verdict: PASS in the container (headless Chromium, fake camera and microphone, Rust-generated fixtures). NOT run on
-a phone.
+Verdict: PASS in the container (headless Chromium, fake camera and microphone, Rust-generated fixtures); the page flows
+also pass on a real Android phone (23 of 23) without camera, microphone, speaker or clipboard.
 
 | Claim | Measured |
 |---|---|
-| End to end run (first run, backup, restore, enrollment with SAS, release, refusals, short code, recovery cancel, fingerprint) | 61 checks, 0 failed |
-| Node suites | 52 of 52 (58 crypto vectors, 21 quorum vectors, 35 op-log vectors parsed and described) |
+| End to end run (first run, backup, restore, enrollment with SAS, release, refusals, short code, recovery cancel, Red notice, reshare, trust sessions, fingerprint) | 102 checks, 0 failed |
+| Node suites | 71 of 71 (58 crypto vectors, 21 quorum vectors, 51 op-log vectors parsed and described, trust sessions, reshare fixture) |
+| Rust verifier of what the page sent | 6 tests pass (replies, reshare ops, trust-session chain) |
 | Crypto vectors replayed inside headless Chromium | 58 of 58, 0 external requests |
 | Build reproducible, committed file equals the container build | identical |
-| Page size | 319,006 bytes |
-| Scan of a Rust challenge (84 byte frames, 8 fps loop) to the approval screen | 3.9 s including PIN unlock |
-| Reverse QR reply (with courier and short code blob) | 711 bytes, 4 frames; clipboard identical |
+| Page size | 342,744 bytes |
+| Scan of a Rust challenge (84 byte frames, 8 fps loop) to the approval screen | 4.5 s including PIN unlock |
+| Reverse QR reply (711 bytes with courier and short code blob) | 10 frames of version 6 (106 B each, 25% parity), lap 2.5 s at 4 fps; clipboard identical |
 | Audio reply, fast profile, 128 bytes | 8.16 s; decoded from a fake microphone WAV by the PoC H decoder |
 | Rust opens what the page sent | share equals the fixture, approval signature over the binding preimage verifies, courier ops verify, snapshot blob opens with the shown code |
 | Refusals | expired, expiry too far ahead, wrong host in the material (hybrid and envelope), tampered op, bad signature, request id mismatch, requester mismatch, other op kind, material wrapped to another device |
@@ -295,21 +366,50 @@ a phone.
 Earlier harness result: 58 of 58 crypto vectors in node and Chromium, single file reproducible, cold start 4.2 s
 including the full replay, 0 external requests.
 
-Changed in the design: the phone frames (kinds 3, 5 to 8) and the share reply extension (courier ops, approval
-signature and snapshot blob inside the sealed reply, share only on audio) are contract C16; the fingerprint is the
-sha256 of the file with its own 64 hex characters zeroed.
+Trust sessions (P1, contract 4c-2): the phone authors `CertIssue`, `CertRevoke` and `CertExtend` from kind 9 and kind
+10 requests. Refused before signing: a term outside 1 s to 90 days, a budget outside 1 to 50, a host list outside 1
+to 64, an inverted epoch range, a request that names the phone; an extension is refused for an unknown, revoked or
+expired certificate and when the phone extended it less than 24 hours ago. Rust validates the page's chain with
+`validate_cert_issue`, `cert_allows` (the third new host is refused for the budget and allowed with the phone's
+extension, each extension covers its own day) and the revocation. The reshare receiver is pinned to the committed
+Rust fixture: the page's new shares equal the shares the Rust receiver committed. The courier caps are 8 ops, 256
+KiB per op, 1 MiB per list.
 
-Not run: real phone camera, microphone and speaker, Android Chrome, handheld QR scanning, clipboard sync services,
-iOS and Safari (unverified), `file://` camera behaviour (the harness serves `http://localhost`), a slow-phone Argon2
-fallback.
+### Real phone (Android)
 
-## What remains for the maintainer (physical devices)
+The page was served from the laptop through `adb reverse`, opened in one tab of the phone's Chrome and driven over
+the DevTools protocol; site data of the test origin was cleared and the tab closed at the end. Camera, microphone,
+speaker and clipboard were not used (the driver refuses them inside the page); challenges came from the Rust
+fixtures through the paste box. 23 checks, 0 failed, battery 60 percent, 34 C throughout.
+
+| Claim | Measured |
+|---|---|
+| Crypto vectors replayed on the phone (the 1 GiB MASTER vector and one more MASTER vector skipped) | 56 of 58, 227 ms |
+| Key created under a PIN with 24 backup words | 943 ms including Argon2id 64 MiB x 3 |
+| Reload asks for the PIN, a wrong PIN is refused, the right one unlocks | 697 ms |
+| Approve with a short code (Argon2id 256 MiB x 4 included) | 3,418 ms |
+| Reverse QR reply read back from the page canvas | opens to the phone share (711 bytes) |
+| Binding words, approval signature, courier op, short-code blob, refusals, Red notice with the phone proof | as in the container |
+
+Not run on the phone: camera scanning from the page, microphone, speaker, the clipboard, enrollment with SAS (needs
+the camera), other browsers, iOS.
+
+## Phone runs so far, and what is scheduled for the next device session
+
+One Android phone has been used (Samsung SM-A536E, Galaxy A53 5G class, Android 16, Chrome 155, USB), driven from the
+laptop with the scripts in `assets/companion/scripts/` (`phone-device.mjs`, `phone-ota.mjs`). Done on it: D3 Argon2,
+23 page checks, C4 handheld QR (four blocks), the reverse QR from the phone screen to the laptop webcam (10 of 10).
+
+Scheduled for the next device session (not run):
 
 | Item | Needs |
 |---|---|
-| C4 handheld QR worst case (under 5 s at 80x24, five runs), C5 recovery after interruption | a phone with a camera |
-| D3 Argon2 256 MiB, t=4 on a phone (under 3 s, five runs) | a phone |
-| H3 over-the-air audio (8 of 10 under 5 s), H4 channel matrix, H5 channel order | phone speaker, laptop microphone |
-| Phone page on Android Chrome (first run, enrollment, release) | a phone |
+| H3 over-the-air audio (8 of 10 under 5 s), H4 channel matrix, H5 channel order | phone speaker, laptop microphone, media volume up |
+| sshub's own receivers against real hardware: `mic.rs` (audio) and `cam.rs` (camera), through `examples/media-probe` of the `media` package | laptop microphone and webcam, the phone page playing and showing its reply |
+| The real page's reply QR (version 6 frames, full width, 4 fps, since the page was changed) read by the laptop webcam, with the distance range | phone screen toward the webcam |
+| The real sshub unlock modal QR (TUI QR widget) decoded by a camera in a real terminal, not only in tests | a build that contains the widget, a terminal window, the phone or a webcam |
+| C5 recovery after covering the screen mid-scan; the front camera; handheld movement; other lighting; the v10 reverse QR for comparison | a phone with a camera |
+| Android page on the real hardware beyond the paste path: enrollment with SAS by camera, sound and clipboard of the real page; Brave and Samsung Internet | a phone |
+| A slow phone for the Argon2 fallback (64 MiB, t=8), and a second phone model | another phone |
 | E hardware key | not applicable: no key, feature removed |
-| G iPhone | not applicable: no iPhone |
+| G iPhone | not applicable: no iPhone, iOS and Safari stay unverified |
