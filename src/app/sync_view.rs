@@ -270,9 +270,7 @@ impl App {
             .iter()
             .map(|r| {
                 let mut v = device_view(r);
-                v.verified_by = crate::sync::enroll::verified_by(&store, &r.id)
-                    .ok()
-                    .flatten();
+                v.verified_by = Some(r.verified_by);
                 v
             })
             .collect();
@@ -281,6 +279,38 @@ impl App {
         sync.review_selected = sync.review_selected.min(review.len().saturating_sub(1));
         sync.review = review;
         sync.cred_mode = cred_mode;
+        // A holder is asked for a share: the prompt names the requester.
+        if self.mode == AppMode::Normal && self.sync.release.is_none() {
+            let answered = self.sync.answered_releases.clone();
+            let asked = ops.iter().find_map(|op| match &op.body {
+                OpBody::ShareRelease {
+                    host_uid,
+                    requester,
+                    ..
+                } if !answered.contains(&op.hash()) => {
+                    Some((op.hash(), *host_uid, requester.clone()))
+                }
+                _ => None,
+            });
+            if let Some((hash, host_uid, requester)) = asked {
+                let requester_name = rows
+                    .iter()
+                    .find(|d| d.id == requester)
+                    .map_or_else(|| short(&requester), |d| d.name.clone());
+                let host = store
+                    .host_id_by_uid(&host_uid)
+                    .ok()
+                    .flatten()
+                    .and_then(|id| store.get_host(id).ok().flatten())
+                    .map_or_else(|| short(&uid_hex(&host_uid)), |m| m.name);
+                self.open_sync_release_confirm(super::sync::ReleaseView {
+                    host,
+                    requester: requester_name,
+                    requester_id: requester,
+                    hash,
+                });
+            }
+        }
         Ok(())
     }
 

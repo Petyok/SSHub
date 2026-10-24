@@ -23,7 +23,7 @@ use crate::sync::client::{
 use crate::sync::crypto::{Argon2Profile, DeviceIdentity, ARGON2_MASTER};
 use crate::sync::enroll::{run_sync_join, EnrollOutcome, SasConfirm, SasPrompt};
 use crate::sync::identity_store::load_or_init_identity;
-use crate::sync::oplog::{Attendance, DeviceId, DeviceKind, DeviceRole};
+use crate::sync::oplog::{Attendance, DeviceId, DeviceKind, DeviceRole, VerifiedBy};
 use crate::sync::protocol::{run_round, run_share_request, RoundSummary, ShareAsk, ShareReply};
 use crate::sync::quorum::{parse_ring_secret, ring_secret_text, QuorumUnlocker};
 use crate::sync::transport::Limits;
@@ -315,6 +315,7 @@ fn unlock_round(deps: &RoundDeps, rt: &SyncRuntime, keys: &str, ctx: &RoundCtx<'
         events: ctx.event_sender(),
         answers: Mutex::new(answer_rx),
         runtime: rt.clone(),
+        request: Mutex::new(None),
     };
     let unlocker = QuorumUnlocker::with_profile(
         deps.store.clone(),
@@ -371,9 +372,34 @@ fn onboard_round(deps: &RoundDeps, identity: &DeviceIdentity, s: &OnboardingSecr
             DeviceRole::Holder,
             Attendance::Attended,
             DeviceKind::Terminal,
+            VerifiedBy::Sas,
         )?;
         // The first device founds the ring: enrollment roles follow `ring_id`.
         crate::sync::quorum::meta_set(&deps.store, "ring_id", me.device_id().as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Answer a pending `ShareRelease`: resolve it in the store and, when approved,
+/// append one grant per share epoch this holder has (sealed to the request's
+/// ephemeral key). `spec` is `<0|1>:<op hash hex>`.
+fn release_round(deps: &RoundDeps, identity: &DeviceIdentity, spec: &str) -> Result<()> {
+    let (flag, hash_hex) = spec.split_once(':').context("release request")?;
+    let approve = flag == "1";
+    let hash: [u8; 32] = hex::decode(hash_hex)?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("release request hash"))?;
+    let op = deps
+        .store
+        .sync_pending()?
+        .into_iter()
+        .find(|o| o.hash() == hash)
+        .context("that release request is no longer waiting")?;
+    deps.store.sync_resolve_pending(&hash, approve)?;
+    if approve {
+        for body in crate::sync::quorum::grant_bodies(&deps.store, identity, &op)? {
+            deps.store.sync_append_local(identity, body)?;
+        }
     }
     Ok(())
 }
@@ -405,6 +431,10 @@ pub fn round_fn(deps: RoundDeps) -> RoundFn {
             }
             Round::Unlock => {
                 unlock_round(&deps, rt, device, ctx)?;
+                Ok(RoundSummary::default())
+            }
+            Round::Release => {
+                release_round(&deps, &rt.identity, device)?;
                 Ok(RoundSummary::default())
             }
             Round::Onboard => {

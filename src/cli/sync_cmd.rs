@@ -19,8 +19,9 @@ use crate::profile::ProfilePaths;
 use crate::store::LauncherStore;
 use crate::sync::client::TransportError;
 use crate::sync::crypto::DeviceIdentity;
-use crate::sync::enroll::{run_sync_enroll, EnrollRole, SasConfirm, SasPrompt, VerifiedBy};
+use crate::sync::enroll::{run_sync_enroll, EnrollRole, SasConfirm, SasPrompt};
 use crate::sync::identity_store::load_or_init_identity;
+use crate::sync::oplog::VerifiedBy;
 use crate::sync::protocol::RoundSummary;
 use crate::sync::runtime::{device_name, enroll_limits, Peers, SyncRuntime};
 use crate::sync::transport::{Conn, Limits};
@@ -512,13 +513,19 @@ fn lower<T: std::fmt::Debug>(v: T) -> String {
 }
 
 /// Read-only: never creates the device key.
+fn verified_str(v: VerifiedBy) -> &'static str {
+    match v {
+        VerifiedBy::Sas => "sas",
+        VerifiedBy::SshHostKey => "ssh_host_key",
+    }
+}
+
 fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     let store = open_store(paths)?;
     let rows = store.sync_devices()?;
     let pending = store.sync_pending()?.len();
     let mode = lower(store.sync_cred_mode()?);
     let peers = Peers::load(paths)?;
-    let verified = |id: &str| crate::sync::enroll::verified_by(&store, id).ok().flatten();
     if json_out {
         let devices: Vec<_> = rows
             .iter()
@@ -527,7 +534,7 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
                     "id": r.id, "name": r.name, "role": lower(r.role),
                     "status": lower(r.status), "last_seen": r.last_seen,
                     "head_seq": r.head_seq, "host": peers.host_of(&r.id),
-                    "verified_by": verified(&r.id).map(|v| v.as_str()),
+                    "verified_by": verified_str(r.verified_by),
                 })
             })
             .collect();
@@ -549,7 +556,7 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
             age(r.last_seen),
             r.head_seq,
             peers.host_of(&r.id).unwrap_or("-"),
-            verified(&r.id).map_or("-", |v| v.as_str()),
+            verified_str(r.verified_by),
         );
     }
     println!("Pending changes: {pending}");
@@ -776,6 +783,7 @@ mod tests {
                 DeviceRole::Holder,
                 Attendance::Attended,
                 crate::sync::oplog::DeviceKind::Terminal,
+                VerifiedBy::Sas,
             )
             .unwrap();
         }

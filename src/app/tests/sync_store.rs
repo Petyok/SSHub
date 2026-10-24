@@ -5,7 +5,8 @@ use super::*;
 use crate::store::LauncherStore;
 use crate::sync::client::spawn_sync_thread;
 use crate::sync::crypto::DeviceIdentity;
-use crate::sync::enroll::{run_sync_enroll, run_sync_join, SasPrompt, VerifiedBy};
+use crate::sync::enroll::{run_sync_enroll, run_sync_join, SasPrompt};
+use crate::sync::oplog::VerifiedBy;
 use crate::sync::oplog::{Attendance, DeviceRole, HostFields, Op, OpBody};
 use crate::sync::runtime::UiSas;
 use crate::sync::transport::{Conn, Limits};
@@ -50,6 +51,7 @@ fn app_with_author() -> (App, Author) {
                 DeviceRole::Holder,
                 Attendance::Attended,
                 crate::sync::oplog::DeviceKind::Terminal,
+                VerifiedBy::Sas,
             )
             .unwrap();
     }
@@ -374,6 +376,7 @@ fn a_share_release_names_the_requester_and_the_host_in_the_review() {
                 host_uid: uid,
                 request_id: 7,
                 requester: author.id.public().device_id(),
+                eph_x25519_pub: [3; 32],
             },
         )
         .unwrap();

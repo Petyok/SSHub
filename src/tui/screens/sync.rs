@@ -121,8 +121,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         );
         if let Some(v) = d.verified_by {
             row.push_str(match v {
-                crate::sync::enroll::VerifiedBy::Sas => "  verified: sas",
-                crate::sync::enroll::VerifiedBy::SshHostKey => "  verified: ssh host key",
+                crate::sync::oplog::VerifiedBy::Sas => "  verified: sas",
+                crate::sync::oplog::VerifiedBy::SshHostKey => "  verified: ssh host key",
             });
         }
         if d.unattended {

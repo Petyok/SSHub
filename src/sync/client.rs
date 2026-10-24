@@ -225,6 +225,12 @@ pub enum SyncCmd {
     UnlockCancel,
     /// Set up the Vault ring.
     Onboard(Box<OnboardingSecrets>),
+    /// The holder's answer to a pending `ShareRelease`: resolve it and, when
+    /// approved, append the grants.
+    Release {
+        approve: bool,
+        hash: [u8; 32],
+    },
     Shutdown,
 }
 
@@ -270,6 +276,8 @@ pub enum Round {
     Unlock,
     /// Set up the Vault ring from the secrets [`RoundCtx::take_secrets`] holds.
     Onboard,
+    /// Answer a release request; the device argument is `<0|1>:<op hash hex>`.
+    Release,
 }
 
 /// A round's window onto the worker: report events, and wait for the UI's
@@ -358,6 +366,10 @@ pub fn spawn_sync_thread(mut round: RoundFn) -> SyncHandle {
                     secrets = Some(*s);
                     (Round::Onboard, String::new())
                 }
+                SyncCmd::Release { approve, hash } => (
+                    Round::Release,
+                    format!("{}:{}", u8::from(approve), hex::encode(hash)),
+                ),
                 SyncCmd::EnrollConfirmSas(_) => {
                     let _ = evt_tx.send(SyncEvent::Error(
                         "no enrollment is waiting for a confirmation".into(),

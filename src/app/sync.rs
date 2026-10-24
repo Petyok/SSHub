@@ -101,7 +101,7 @@ pub struct DeviceView {
     pub last_seen: Option<i64>,
     pub head_seq: u64,
     /// How this device was admitted, from the local enrollment record.
-    pub verified_by: Option<crate::sync::enroll::VerifiedBy>,
+    pub verified_by: Option<crate::sync::oplog::VerifiedBy>,
 }
 
 /// The active trust session, if one is open.
@@ -215,6 +215,8 @@ pub struct ReleaseView {
     pub host: String,
     pub requester: String,
     pub requester_id: String,
+    /// Hash of the pending `ShareRelease` op this answers.
+    pub hash: [u8; 32],
 }
 
 /// What stage 3 stores for Vault: the master phrase and the ring secret.
@@ -351,8 +353,10 @@ pub enum SyncIntent {
         scope: usize,
         term_days: u32,
     },
+    /// The holder's answer to a release request: approve (and grant) or refuse.
     Release {
         approve: bool,
+        hash: [u8; 32],
     },
     UnlockCode(String),
     /// Open these synced credentials (store keys) so the action that needs
@@ -418,6 +422,9 @@ pub struct SyncView {
     /// Store keys the open unlock modal is for, and whether its round runs.
     pub unlock_keys: Vec<String>,
     pub unlock_running: bool,
+    /// Release requests this holder already answered (the op may stay pending
+    /// until the worker has resolved it).
+    pub answered_releases: Vec<[u8; 32]>,
     /// Mode the fork alert interrupted, restored on dismissal.
     fork_return: Option<AppMode>,
 }
@@ -637,6 +644,10 @@ impl App {
                     }
                     SyncCmd::UnlockCode(code.clone())
                 }
+                SyncIntent::Release { approve, hash } => SyncCmd::Release {
+                    approve: *approve,
+                    hash: *hash,
+                },
                 SyncIntent::OnboardingDone(secrets) => SyncCmd::Onboard(Box::new(secrets.clone())),
                 // Answered by later stages, not by the transport worker.
                 _ => {
@@ -1108,7 +1119,12 @@ impl App {
             AppMode::SyncReleaseConfirm => {
                 let approve = confirm || self.is_action(KeyAction::ConfirmYes, &key);
                 if approve || cancel || plain('n') {
-                    self.sync.intents.push(SyncIntent::Release { approve });
+                    if let Some(hash) = self.sync.release.as_ref().map(|r| r.hash) {
+                        self.sync.answered_releases.push(hash);
+                        self.sync
+                            .intents
+                            .push(SyncIntent::Release { approve, hash });
+                    }
                     self.sync_close_modal();
                 }
             }
@@ -1132,7 +1148,7 @@ pub(crate) fn sample_sync_view() -> SyncView {
         exempt: false,
         last_seen: Some(1_700_000_000),
         head_seq: 7,
-        verified_by: Some(crate::sync::enroll::VerifiedBy::Sas),
+        verified_by: Some(crate::sync::oplog::VerifiedBy::Sas),
     };
     SyncView {
         configured: true,
@@ -1205,6 +1221,7 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
             host: "web-1".into(),
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
+            hash: [7; 32],
         }),
         onboarding: Some(
             OnboardingView::with_secrets(
@@ -1387,13 +1404,17 @@ mod tests {
             host: "web-1".into(),
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
+            hash: [7; 32],
         });
         app.handle_key(press(KeyCode::Esc)).unwrap();
         assert_eq!(
             app.sync.intents,
             vec![
                 SyncIntent::SasMatches(true),
-                SyncIntent::Release { approve: false },
+                SyncIntent::Release {
+                    approve: false,
+                    hash: [7; 32]
+                },
             ]
         );
         assert_eq!(app.mode, AppMode::Normal);

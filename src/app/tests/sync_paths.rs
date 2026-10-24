@@ -369,3 +369,126 @@ fn auto_sync_on_start_queues_one_sync_per_device_with_a_known_host() {
         }]
     );
 }
+
+fn rebuild_worker(r: &mut Ring, program: String) {
+    r.app
+        .attach_sync_worker(spawn_sync_thread(round_fn(RoundDeps {
+            paths: r.paths.clone(),
+            store: r.app.store.clone(),
+            gate: r.gate.clone(),
+            argon: FAST,
+            open_secrets: file_secrets,
+            ssh_program: Some(program),
+        })));
+}
+
+/// What a holder's TUI does once its user approved a release request.
+fn holder_approves(d: &Dev) {
+    for op in d.store.sync_pending().unwrap() {
+        if matches!(op.body, OpBody::ShareRelease { .. }) {
+            d.store.sync_resolve_pending(&op.hash(), true).unwrap();
+            for body in crate::sync::quorum::grant_bodies(&d.store, &d.id, &op).unwrap() {
+                d.store.sync_append_local(&d.id, body).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn an_attended_holder_approving_on_its_screen_releases_the_share() {
+    let mut r = ring(None);
+    let program = fake_ssh_to_holder(&r);
+    rebuild_worker(&mut r, program);
+    Peers::record(&r.paths, &r.d[2].did, "holder").unwrap();
+    ask(&mut r);
+    pump(&mut r.app, "the attended prompt", |a| {
+        status(a, crate::app::sync::UnlockPathKind::Peer)
+            .is_some_and(|s| s.contains("approve on its screen"))
+    });
+    let end = Instant::now() + Duration::from_secs(40);
+    while r.app.host_notice.as_deref() != Some("resumed") {
+        assert!(
+            Instant::now() < end,
+            "never resumed: {:?}",
+            r.app.sync.last_error
+        );
+        holder_approves(&r.d[2]);
+        r.app.poll_sync();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_resumed_and_open(&mut r);
+}
+
+/// This app is the holder, device 2 asks: deliver the request, refresh.
+fn request_from_device_2(r: &mut Ring) -> crate::sync::quorum::PeerRequest {
+    let req = crate::sync::quorum::peer_request(&r.d[2].store, &r.d[2].id, &r.host).unwrap();
+    // Ingest only: `all_to_all` would approve what waits, as a user does.
+    let mine = r.d[1].store.sync_chain_heads().unwrap();
+    let have = mine
+        .iter()
+        .find(|(d, _, _)| *d == r.d[2].did)
+        .map_or(0, |(_, s, _)| *s);
+    for op in r.d[2].store.sync_chain_tail(&r.d[2].did, have).unwrap() {
+        r.d[1].store.sync_ingest(op).unwrap();
+    }
+    r.app.refresh_sync_view();
+    req
+}
+
+#[test]
+fn a_release_request_opens_the_holders_modal_and_approving_grants_the_requester() {
+    let mut r = ring(None);
+    let req = request_from_device_2(&mut r);
+    assert_eq!(
+        r.app.mode,
+        AppMode::SyncReleaseConfirm,
+        "pending {:?}, error {:?}",
+        r.app
+            .store
+            .sync_pending()
+            .unwrap()
+            .iter()
+            .map(|o| format!("{:?}", o.body).chars().take(40).collect::<String>())
+            .collect::<Vec<_>>(),
+        r.app.sync.last_error
+    );
+    let view = r.app.sync.release.clone().unwrap();
+    assert_eq!(view.requester_id, r.d[2].did);
+    assert_eq!(view.host, "web");
+
+    r.app.handle_key(key_char('y')).unwrap();
+    pump(&mut r.app, "the grants", |a| {
+        a.sync.pending == 0 && !a.sync.syncing
+    });
+    assert!(r.app.store.sync_pending().unwrap().is_empty());
+    all_to_all(&r.d);
+    let share = crate::sync::quorum::peer_poll(&r.d[2].store, &req, 0)
+        .unwrap()
+        .expect("the requester finds the grant");
+    let mine = own_shares(&r.app.store, &r.d[1].id, &r.host)
+        .unwrap()
+        .remove(0)
+        .1;
+    assert_eq!(share, mine, "the requester got exactly the holder's share");
+}
+
+#[test]
+fn refusing_a_release_request_grants_nothing_and_does_not_ask_again() {
+    let mut r = ring(None);
+    let req = request_from_device_2(&mut r);
+    assert_eq!(r.app.mode, AppMode::SyncReleaseConfirm);
+    r.app.handle_key(key_char('n')).unwrap();
+    pump(&mut r.app, "the refusal", |a| {
+        a.sync.pending == 0 && !a.sync.syncing
+    });
+    all_to_all(&r.d);
+    assert!(crate::sync::quorum::peer_poll(&r.d[2].store, &req, 0)
+        .unwrap()
+        .is_none());
+    r.app.refresh_sync_view();
+    assert_eq!(
+        r.app.mode,
+        AppMode::Normal,
+        "the answered request is not asked again"
+    );
+}
