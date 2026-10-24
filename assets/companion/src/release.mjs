@@ -3,7 +3,7 @@
 // directly, the UI only renders the result.
 import { xchacha20poly1305 } from '../vendor/noble-ciphers-2.4.0/chacha.js';
 import {
-  bytesOf, concat, edSign, edVerify, hexOf, hybridUnwrap, sasWords, sealedBoxSeal, bip39Encode,
+  bytesOf, concat, edSign, edVerify, hexOf, sasWords, sealedBoxSeal, bip39Encode,
 } from './lib.mjs';
 import { decodeChallenge, decodePhoneMaterial, encodeShareResponse } from './quorum.mjs';
 import { describeOp, parseOp } from './ops.mjs';
@@ -29,13 +29,13 @@ const refuse = (checks, id, text) => ({ ok: false, refusal: text, checks: [...ch
 // name the index that opened it.
 export function unwrapPhoneShare(identity, material, hostBytes) {
   if (material.kind === 'hybrid') {
-    const plain = hybridUnwrap(identity.xSecret, identity.mlkemDk, material.share_blob);
+    const plain = identity.unwrap(material.share_blob);
     if (plain.length !== 16 + 33) throw new Error('wrapped share has the wrong length');
     if (hexOf(plain.slice(0, 16)) !== hexOf(hostBytes)) throw new Error('the share inside the material belongs to a different credential');
     if (plain[16] === 0) throw new Error('share index is zero');
     return plain.slice(16);
   }
-  const storageKey = hybridUnwrap(identity.xSecret, identity.mlkemDk, material.storage_blob);
+  const storageKey = identity.unwrap(material.storage_blob);
   if (storageKey.length !== 32) throw new Error('storage key has the wrong length');
   const b = material.share_blob;
   if (b.length < 24 + 16) throw new Error('envelope share is too short');

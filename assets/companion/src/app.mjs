@@ -7,18 +7,21 @@ import {
   PIN_MIN_CHARS, generateSecret, identityOfSecret, randomBytes, secretFromWords, secretToWords, unwrapSecret, wrapSecret,
 } from './keys.mjs';
 import {
-  appendReenrollCancel, courierOps, emptyState, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, saveState,
+  COURIER_TAIL, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, courierOps, emptyState, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, saveState,
 } from './state.mjs';
-import { approveRelease, evaluateChallenge } from './release.mjs';
-import { describeOp, opHashHex, parseOp, safeText } from './ops.mjs';
+import { TIMESTAMP_SKEW_GRACE_SECS, approveRelease, evaluateChallenge } from './release.mjs';
+import { describeOp, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
 import {
-  KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeEnroll, decodeFrame, decodeRecoveryNotice, encodeEnrollCommit,
+  KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
   encodeEnrollConfirm, encodeEnrollReveal, encodePhoneOps, transcriptHash,
 } from './frames.mjs';
 import { AUDIO_PROFILES, loopQr, playSamples, responseBurst, reverseQrFrames, toBase64 } from './channels.mjs';
 import { DocumentCollector, startCamera } from './scan.mjs';
+import { ownStorageKey, planReshare, publishReshare } from './reshare.mjs';
 
 const RECOVERY_TIMELOCK_SECS = 7 * 86400;
+const RED_CEREMONY_TTL_SECS = 3 * 86400; // limits.rs
+const MAX_QR_DOC_BYTES = 12000; // beyond this the animation is too long: text only
 
 function h(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
@@ -116,7 +119,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const go = async () => {
       msg.textContent = 'Unlocking...';
       try {
-        app.identity = identityOfSecret(await unwrapSecret(await app.kv.get('key'), pin.value));
+        app.identity = identityOfSecret(await unwrapSecret(await app.kv.get('key'), pin.value), Number(app.state.wrapEpoch || 0));
         home();
       } catch (e) {
         msg.textContent = e.message;
@@ -186,6 +189,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       btn('Scan a share request', () => scanRelease(), 'primary', 'scan-release'),
       btn('Enroll with a terminal', () => enroll(), '', 'enroll'),
       btn('Short codes I issued', () => snapshotList(), '', 'snapshots'),
+      btn('Export my ops as text', exportOps, '', 'export-ops'),
+      btn('Reshare and wrap keys', reshareScreen, '', 'reshare'),
       btn('Recovery and a new phone', () => recovery(), '', 'recovery'),
       btn('Show backup words', showBackup, '', 'show-backup'),
       btn('About and fingerprint', about, '', 'about'),
@@ -548,6 +553,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     );
   }
 
+  // The notice screen takes any document of kind 3: a phone recovery (its own flow) or a Red
+  // operation that needs this phone's co-signature. Everything shown comes from the op bytes.
   function recoveryNotice(bytes) {
     let n;
     let op;
@@ -555,11 +562,150 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       n = decodeRecoveryNotice(bytes);
       op = parseOp(n.op_canonical);
     } catch (e) {
-      return refusalScreen(`Recovery notice is malformed: ${e.message}`, []);
+      return refusalScreen(`Notice is malformed: ${e.message}`, []);
     }
-    if (op.kind !== 'PhoneReenroll') return refusalScreen(`This notice carries a ${op.kind} operation, not a phone recovery.`, []);
-    const aliases = { ...app.state.aliases, ...Object.fromEntries(Object.entries(app.state.ring).map(([i, d]) => [i, d.name])) };
-    const desc = describeOp(op, aliases);
+    if (op.kind === 'PhoneReenroll') return reenrollNotice(n, op);
+    if (isRedOp(op)) return redNotice(n, op);
+    return refusalScreen(`This notice carries a ${op.kind} operation, which needs nothing from this phone.`, []);
+  }
+
+  const aliasesNow = () => ({ ...app.state.aliases, ...Object.fromEntries(Object.entries(app.state.ring).map(([i, d]) => [i, d.name])) });
+
+  // Shows ops the terminal must ingest: a QR code when it is small enough, always the paste text
+  // (base64 of a kind 5 frame) for terminals without a camera, and the clipboard.
+  function opsOut({ heading, hint, ops, textId = 'ops-b64' }) {
+    const frame = encodePhoneOps(ops);
+    const text = toBase64(frame);
+    const nodes = [title(heading, hint)];
+    const stops = [];
+    if (frame.length <= MAX_QR_DOC_BYTES) {
+      const canvas = h('canvas', { class: 'qr', id: 'reverse-qr' });
+      nodes.push(canvas);
+      stops.push(loopQr(canvas, reverseQrFrames(frame), Math.min(560, globalThis.innerWidth - 32)).stop);
+    } else nodes.push(h('p', { class: 'mut', id: 'ops-too-big' }, `${frame.length} bytes: too long for a QR code, use the text.`));
+    const status = h('p', { class: 'mut', id: 'ops-status' }, `${ops.length} op(s), ${frame.length} bytes as text.`);
+    nodes.push(
+      h('textarea', { id: textId, readonly: true }, text), status,
+      btn('Copy the text', async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          status.textContent = 'Copied. Paste it into the terminal.';
+        } catch {
+          status.textContent = 'The browser refused the clipboard: select the text and copy it by hand.';
+        }
+      }, '', 'ops-copy'),
+      btn('Done', home, 'primary', 'send-done'),
+    );
+    show(...nodes);
+    app.cleanup.push(...stops);
+    navigator.clipboard && navigator.clipboard.writeText(text).catch(() => {});
+  }
+
+  function exportOps() {
+    const have = app.state.chain.length;
+    show(
+      title('Export my ops', 'The newest signed entries of this phone chain (a terminal takes at most 8 per delivery), as text for a terminal without a camera (paste it into the terminal) or as a QR code.'),
+      h('p', { class: 'mut', id: 'export-count' }, have ? `${have} op(s) in the chain.` : 'This phone has not written anything yet.'),
+      have ? btn(`The newest ${Math.min(have, COURIER_TAIL)}`, () => opsOut({ heading: 'Phone ops', hint: 'Newest entries of the chain.', ops: courierOps(app.state) }), 'primary', 'export-tail') : null,
+      back(),
+    );
+  }
+
+  // ---------------------------------------------------------------- reshare (C14)
+
+  function reshareScreen() {
+    const msg = h('p', { class: 'err', id: 'reshare-error' });
+    show(
+      title('Reshare and wrap keys', `Wrap key generation ${app.identity.wrapEpoch}. After a holder is revoked, every remaining holder rotates its wrap keys first; then the ring reshares and this phone adopts its new share here.`),
+      msg,
+      btn('Rotate wrap keys', async () => {
+        try {
+          const next = identityOfSecret(app.identity.secret, app.identity.wrapEpoch + 1);
+          appendWrapKeyRotate(app.state, app.identity, next, app.now(), null);
+          app.identity = next;
+          await save();
+          opsOut({ heading: 'Wrap keys rotated', hint: 'Deliver this to a terminal before the reshare is started: contributors wrap to the new keys. Older generations stay readable on this phone (they derive from the same 24 words).', ops: courierOps(app.state, 1) });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, '', 'rotate'),
+      btn('Adopt a reshare: load the epoch ops', () => scan({ heading: 'Load the reshare ops', hint: 'The terminal shows or copies the reshare ops addressed to this phone (QR code, or paste the text below).', expect: [KIND.PHONE_OPS], onBack: reshareScreen, onDoc: reshareLoad }), 'primary', 'reshare-load'),
+      back(),
+    );
+  }
+
+  function reshareLoad(bytes) {
+    let ops;
+    let epochs;
+    try {
+      ops = decodePhoneOps(bytes);
+      epochs = ops.map((o) => parseOp(o.canonical)).filter((o) => o.kind === 'ShareReshareBatch').map((o) => BigInt(o.fields.epoch));
+    } catch (e) {
+      return refusalScreen(`Not a list of reshare ops: ${e.message}`, []);
+    }
+    if (!epochs.length) return refusalScreen('These ops carry no reshare batch.', []);
+    const epoch = epochs.reduce((a, b) => (a > b ? a : b));
+    const existing = ownStorageKey(app.identity, app.state.chain, epoch);
+    const plan = planReshare(app.identity, ops, epoch, { ring: app.state.ring, existingStorage: existing });
+    if (!plan.ok) return refusalScreen(plan.error, []);
+    const msg = h('p', { class: 'err', id: 'reshare-error' });
+    show(
+      title('Adopt the reshare'),
+      h('div', { class: 'card', id: 'reshare-summary' },
+        h('div', {}, `Epoch ${epoch}, ${plan.holders.length} holders, this phone is holder number ${plan.myIndex}.`),
+        h('div', {}, `Credentials ready: ${plan.items.length}; waiting for a second contributor: ${plan.skipped.length}.`),
+        h('div', { class: 'mut' }, `Contributors: ${plan.contributors.map((c) => `${safeText(aliasesNow()[c.id] || c.id)} [${c.id}] (${c.verified ? 'signature verified' : 'signature not checked'}${c.session ? '' : ', no session key for this phone'})`).join('; ')}`),
+        h('div', { class: 'mut' }, existing ? 'A storage key of this epoch was already published.' : 'A new storage key is published with the new shares.')),
+      msg,
+      btn('Publish the new shares', async () => {
+        try {
+          const out = publishReshare(app.state, app.identity, plan, app.now());
+          await save();
+          opsOut({ heading: 'Shares adopted', hint: 'Deliver these ops to a terminal. The ring marks a credential adopted only after a real unlock with the new sharing.', ops: out });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, 'primary', 'reshare-publish'),
+      btn('Cancel', reshareScreen, '', 'back'),
+    );
+  }
+
+  function redNotice(n, op) {
+    const desc = describeOp(op, aliasesNow());
+    const known = app.state.ring[op.device_id];
+    const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : null;
+    if (sigOk === false) return refusalScreen(`The signature of ${op.device_id} does not verify over this operation.`, []);
+    const age = app.now() - Number(op.timestamp);
+    if (age > RED_CEREMONY_TTL_SECS) return refusalScreen(`This operation is ${Math.floor(age / 86400)} days old; a Red ceremony lapses after 3 days. Ask the terminal to propose it again.`, []);
+    if (age < -TIMESTAMP_SKEW_GRACE_SECS) return refusalScreen('This operation is dated in the future.', []);
+    const own = op.device_id === app.identity.deviceId;
+    // A trust certificate is authored by the phone itself: the phone's own signature is the proof.
+    const blocked = op.kind === 'CertIssue' && !own ? 'A trust certificate must be issued by the phone itself. This one was written by another device: do not approve it.' : null;
+    const msg = h('p', { class: 'err', id: 'red-error' });
+    show(
+      title('Red operation: needs this phone'),
+      h('div', { class: 'refusal', id: 'red-banner' }, `${op.kind} proposed by ${safeText(aliasesNow()[op.device_id] || 'a device this phone has not met')} [${op.device_id}]. It takes effect only with three proofs: this phone, a second attended device and a third factor. Your signature here is the phone's proof.`),
+      h('div', { class: 'headline', id: 'headline' }, desc.headline),
+      descriptionRows(desc),
+      h('p', { class: 'mut' }, sigOk ? 'The signature of the proposer verifies.' : 'This phone does not know the proposer, so its signature is not checked here.'),
+      h('p', { class: 'mut', id: 'red-hash' }, `Operation hash ${opHashHex(n.op_canonical)}`),
+      blocked ? h('p', { class: 'err', id: 'red-blocked' }, blocked) : null,
+      msg,
+      blocked ? null : btn('Approve: sign this operation with the phone', async () => {
+        try {
+          appendRedPhoneSign(app.state, app.identity, opHashHex(n.op_canonical), app.now(), { lamport: op.lamport, epoch: op.epoch });
+          await save();
+          opsOut({ heading: 'Signed', hint: 'Carry this to a terminal: it holds the phone proof for the operation above. Show the QR code or paste the text.', ops: courierOps(app.state) });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, 'danger', 'red-approve'),
+      btn('Refuse', home, '', 'refuse'),
+    );
+  }
+
+  function reenrollNotice(n, op) {
+    const desc = describeOp(op, aliasesNow());
     const known = app.state.ring[op.device_id];
     const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : null;
     if (sigOk === false) return refusalScreen(`The signature of ${op.device_id} does not verify over this notice.`, []);
@@ -574,18 +720,9 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       msg,
       btn('Cancel this recovery: I still have this phone', async () => {
         try {
-          const cancel = appendReenrollCancel(app.state, app.identity, opHashHex(n.op_canonical), app.now(), { lamport: op.lamport, epoch: op.epoch });
+          appendReenrollCancel(app.state, app.identity, opHashHex(n.op_canonical), app.now(), { lamport: op.lamport, epoch: op.epoch });
           await save();
-          const frame = encodePhoneOps(courierOps(app.state));
-          const canvas = h('canvas', { class: 'qr', id: 'reverse-qr' });
-          show(
-            title('Cancellation signed', 'Show the QR code to any terminal, or paste the text into it. It carries the cancellation and the head of this phone chain.'),
-            canvas, h('textarea', { id: 'cancel-b64', readonly: true }, toBase64(frame)),
-            btn('Done', home, 'primary', 'send-done'),
-          );
-          app.cleanup.push(loopQr(canvas, reverseQrFrames(frame), Math.min(560, globalThis.innerWidth - 32)).stop);
-          navigator.clipboard && navigator.clipboard.writeText(toBase64(frame)).catch(() => {});
-          return cancel;
+          opsOut({ heading: 'Cancellation signed', hint: 'Show the QR code to any terminal, or paste the text into it. It carries the cancellation and the head of this phone chain.', ops: courierOps(app.state), textId: 'cancel-b64' });
         } catch (e) {
           msg.textContent = e.message;
         }

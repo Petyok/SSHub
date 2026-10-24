@@ -58,6 +58,16 @@ function decodeOpList(body, at) {
 
 export const encodePhoneOps = (ops) => encodeFrame(KIND.PHONE_OPS, encodeOpList(ops));
 
+// Kind 5 carries ops in both directions: the phone's own ops to a terminal, and the reshare ops
+// of an epoch (sessions sealed to the phone, batches) from a terminal to the phone.
+export function decodePhoneOps(frame) {
+  const { kind, body } = decodeFrame(frame);
+  if (kind !== KIND.PHONE_OPS) throw new Error('not an ops frame');
+  const { ops, end } = decodeOpList(body, 0);
+  if (end !== body.length) throw new Error('ops frame has trailing bytes');
+  return ops;
+}
+
 export function decodeRecoveryNotice(frame) {
   const { kind, body } = decodeFrame(frame);
   if (kind !== KIND.RECOVERY_NOTICE) throw new Error('not a recovery notice');

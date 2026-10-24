@@ -6,7 +6,7 @@
 // the header (and under AAD) like the key file of contract section 1:
 //   "SSHP" || 1 || mem u32 BE || iters u32 BE || salt(16) || nonce(24) || ct(32 + 16)
 import { xchacha20poly1305 } from '../vendor/noble-ciphers-2.4.0/chacha.js';
-import { argon2idDerive, bip39Decode, bip39Encode, concat, deviceIdOf, identityFromIkm } from './lib.mjs';
+import { argon2idDerive, bip39Decode, bip39Encode, concat, deviceIdOf, deriveXof, hybridUnwrap, identityFromIkm, mlkemKeygen, x25519Pub } from './lib.mjs';
 
 export const PHONE_CONTEXT = 'sshub/sync/phone/v1';
 // 64 MiB x 3: about a second on a phone. A short PIN is the weak link whatever the profile is;
@@ -22,9 +22,49 @@ const rd32 = (b, at) => ((b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | 
 
 export const randomBytes = (n) => globalThis.crypto.getRandomValues(new Uint8Array(n));
 
-export function identityOfSecret(secret32) {
-  const id = identityFromIkm(secret32, PHONE_CONTEXT);
-  return { ...id, secret: secret32, deviceId: deviceIdOf(id.edPub) };
+// Wrap-key generations (C14). Generation 0 is the identity's own X25519 and ML-KEM pair; generation
+// e > 0 (published by a WrapKeyRotate op) is derived from the secret and e, so the 24 words still
+// restore every generation. Unlike a key file the phone therefore cannot truly retire an old
+// generation: a residual the design lists for phones.
+const WRAP_GEN_CONTEXT = 'sshub/sync/phone/wrap/v1';
+function wrapGeneration(secret32, epoch) {
+  if (epoch === 0) {
+    const id = identityFromIkm(secret32, PHONE_CONTEXT);
+    return { xSecret: id.xSecret, xPub: id.xPub, mlkemPub: id.mlkemPub, mlkemDk: id.mlkemDk };
+  }
+  const e = new Uint8Array(8);
+  new DataView(e.buffer).setBigUint64(0, BigInt(epoch));
+  const m = deriveXof(WRAP_GEN_CONTEXT, concat(secret32, e), 96);
+  const xSecret = m.slice(0, 32);
+  const kem = mlkemKeygen(m.slice(32, 96));
+  return { xSecret, xPub: x25519Pub(xSecret), mlkemPub: kem.publicKey, mlkemDk: kem.secretKey };
+}
+
+// The identity at wrap epoch `wrapEpoch`: signing key fixed, wrap keys of the newest generation,
+// `unwrap(blob)` tries every generation from the newest down.
+export function identityOfSecret(secret32, wrapEpoch = 0) {
+  const base = identityFromIkm(secret32, PHONE_CONTEXT);
+  const gens = [];
+  for (let e = 0; e <= wrapEpoch; e++) gens.push(wrapGeneration(secret32, e));
+  const cur = gens[gens.length - 1];
+  return {
+    ...base,
+    ...cur,
+    secret: secret32,
+    deviceId: deviceIdOf(base.edPub),
+    wrapEpoch,
+    unwrap(blob) {
+      let last = new Error('no wrap key generation');
+      for (let i = gens.length - 1; i >= 0; i--) {
+        try {
+          return hybridUnwrap(gens[i].xSecret, gens[i].mlkemDk, blob);
+        } catch (e) {
+          last = e;
+        }
+      }
+      throw last;
+    },
+  };
 }
 
 export const generateSecret = () => randomBytes(32);

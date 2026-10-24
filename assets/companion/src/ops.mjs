@@ -28,6 +28,8 @@ const DANGER = {
   ShareReshareBatch: '*', ShareReshareConfirmBatch: '*', WrapKeyRotate: '*', CertIssue: '*',
   CertRevoke: '*', CertHostOpened: '*', PhoneReenroll: '*', PhoneReenrollCancel: '*',
   RecoveryAck: '*', ModeChange: '*', HeadAttest: null,
+  // Red ceremony (C17): the three proof ops are inert, the other three are Red themselves.
+  RedApprove: null, RedPhoneSign: null, RedFactor: null, FactorRegister: '*', DeviceRoleChange: '*', BulkExport: '*',
 };
 export const KNOWN_KINDS = Object.keys(DANGER);
 
@@ -158,3 +160,42 @@ export function encodePhoneReenrollCancel(h, reenrollHashHex) {
 
 export const opHashHex = (canonical) => hexOf(blake3(canonical));
 export const signOp = (edSeed, canonical) => edSign(edSeed, canonical);
+
+// OpBody::RedPhoneSign { op_hash }: the phone's proof that it saw the Red op with this hash.
+export function encodeRedPhoneSign(h, opHashHexStr) {
+  return utf8(`${header(h)}{"RedPhoneSign":{"op_hash":${str(opHashHexStr)}}}}`);
+}
+
+// Red operations (design "The Red ceremony"): a Red op needs the phone's proof. A mirror
+// DeviceAdd and a DeviceRevoke of a mirror are Yellow in the ring; the phone cannot tell a
+// holder from a mirror in a revoke, so it signs any DeviceRevoke the user approves (the proof is inert).
+export function isRedOp(op) {
+  if (op.kind === 'DeviceAdd') return op.fields.role === 'Holder';
+  return ['DeviceRevoke', 'CertIssue', 'ModeChange', 'FactorRegister', 'DeviceRoleChange', 'BulkExport'].includes(op.kind);
+}
+
+export const b64enc = (bytes) => {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  return btoa(s);
+};
+export const b64dec = (text) => {
+  if (typeof text !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(text) || text.length % 4) throw new Error('not base64');
+  return Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+};
+
+// OpBody::WrapKeyRotate { device_id, wrap_epoch, x25519_pub, mlkem_pub }
+export function encodeWrapKeyRotate(h, r) {
+  return utf8(`${header(h)}{"WrapKeyRotate":{"device_id":${str(r.device_id)},"wrap_epoch":${asBig(r.wrap_epoch)},"x25519_pub":${str(hexOf(r.x25519_pub))},"mlkem_pub":${str(b64enc(r.mlkem_pub))}}}}`);
+}
+
+// OpBody::ShareStorageKey { epoch, sealed }
+export function encodeShareStorageKey(h, r) {
+  return utf8(`${header(h)}{"ShareStorageKey":{"epoch":${asBig(r.epoch)},"sealed":${str(b64enc(r.sealed))}}}}`);
+}
+
+// OpBody::ShareReshareConfirmBatch { epoch, items: [{ host_uid, sealed_share }] }
+export function encodeShareReshareConfirmBatch(h, r) {
+  const items = r.items.map((i) => `{"host_uid":${str(i.host_uid)},"sealed_share":${str(b64enc(i.sealed_share))}}`).join(',');
+  return utf8(`${header(h)}{"ShareReshareConfirmBatch":{"epoch":${asBig(r.epoch)},"items":[${items}]}}}`);
+}
