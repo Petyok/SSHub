@@ -39,10 +39,15 @@ fn verdict(store: &LauncherStore, op: &Op, now: i64) -> Result<(), String> {
 pub fn screen_pending(store: &LauncherStore, now: i64) -> Result<ScreenReport> {
     let mut report = ScreenReport::default();
     for op in store.sync_pending()? {
+        if super::ceremony::awaits_author(store, &op)? {
+            continue;
+        }
         if let Err(why) = verdict(store, &op, now) {
             store.sync_resolve_pending(&op.hash(), false)?;
             report.rejected.push((op.hash(), why));
         }
     }
+    // Red ops whose ceremony completed (or can never complete) are settled here too.
+    super::ceremony::settle_red_ops(store, now)?;
     Ok(report)
 }

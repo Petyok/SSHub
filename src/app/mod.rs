@@ -17,6 +17,7 @@ mod identities;
 mod import;
 mod keygen;
 mod keys;
+pub mod kit;
 mod local_shell;
 mod log_browser;
 mod mouse;
@@ -33,13 +34,14 @@ mod sftp;
 mod snippets;
 mod suggestions;
 pub mod sync;
+pub(crate) mod sync_view;
 mod tags;
 pub mod test_connect;
 mod theme_picker;
 mod tunnels;
 mod types;
 mod update;
-mod util;
+pub(crate) mod util;
 mod workspaces;
 
 #[cfg(test)]
@@ -961,8 +963,9 @@ impl App {
             ))
         };
         // Synced credentials answer from the gate; local ones pass through.
-        let password_store: Box<dyn crate::credentials::PasswordStore> =
-            Box::new(crate::credentials::QuorumGatedStore::new(inner_store));
+        let gated = crate::credentials::QuorumGatedStore::new(inner_store);
+        let gate = gated.gate_handle();
+        let password_store: Box<dyn crate::credentials::PasswordStore> = Box::new(gated);
 
         let mut app = Self::new_with_deps(
             config,
@@ -973,7 +976,7 @@ impl App {
                 password_store,
             },
         );
-        app.profile = Some(paths);
+        app.profile = Some(paths.clone());
         app.refresh_profile_count();
         if !keyring_available {
             app.host_notice =
@@ -990,6 +993,28 @@ impl App {
         // Also starts the ping worker.
         app.reload_hosts()?;
         app.refresh_auth_cache();
+
+        // Sync: the view from the store, and the worker that runs rounds over
+        // ssh (its identity loads on the first round, not now).
+        app.refresh_sync_view();
+        crate::sync::runtime::guard_synced_credentials(&gate, app.store.clone());
+        crate::sync::runtime::StoreReplicator::install(
+            &gate,
+            paths.clone(),
+            app.store.clone(),
+            crate::credentials::open_ungated_for_profile,
+        );
+        app.attach_sync_worker(crate::sync::client::spawn_sync_thread(
+            crate::sync::runtime::round_fn(crate::sync::runtime::RoundDeps::for_profile(
+                paths,
+                app.store.clone(),
+                gate,
+            )),
+        ));
+        app.queue_auto_sync();
+        if app.sync.configured {
+            app.sync.intents.push(sync::SyncIntent::Identify);
+        }
 
         // Spawn the OS auto-detect worker here (the on-disk constructor) rather
         // than in new_with_deps so unit tests that inject deps stay offline and

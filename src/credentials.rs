@@ -24,6 +24,10 @@ pub trait PasswordStore: Send + Sync {
     fn gate(&self) -> Option<&SecretGate> {
         None
     }
+    /// The same gate as a shared handle, for the unlocker that fills it.
+    fn shared_gate(&self) -> Option<std::sync::Arc<SecretGate>> {
+        None
+    }
 }
 
 /// Enough to reopen a [`PasswordStore`] in another process: never a secret.
@@ -65,10 +69,18 @@ impl StoreLocator {
 }
 
 /// The credential store of one profile: the OS keyring when usable, else the
-/// profile's `credentials.json`, always under the profile's key prefix.
+/// profile's `credentials.json`, always under the profile's key prefix. Synced
+/// credentials are answered by the gate, never read from the inner store.
 pub fn open_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn PasswordStore> {
+    Box::new(QuorumGatedStore::new(open_ungated_for_profile(paths)))
+}
+
+/// [`open_for_profile`] without the gate: for the one job that must read the
+/// local copies of secrets about to be synced (migration), and for keys the
+/// sync stage keeps itself (`sync-ring-secret`).
+pub fn open_ungated_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn PasswordStore> {
     let prefix = paths.credential_prefix();
-    let inner: Box<dyn PasswordStore> = if check_keyring_available() {
+    if check_keyring_available() {
         let _ = migrate_fallback_to_keyring(&paths.credentials_file());
         Box::new(NamespacedPasswordStore::new(Box::new(OsKeyring), prefix))
     } else {
@@ -76,8 +88,7 @@ pub fn open_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn Passwor
             Box::new(FilePasswordStore::new(paths.credentials_file())),
             prefix,
         ))
-    };
-    Box::new(QuorumGatedStore::new(inner))
+    }
 }
 
 /// Which credential-store entry holds a secret: a stored key (`host:3`,
@@ -87,9 +98,12 @@ pub fn open_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn Passwor
 pub enum SecretRef {
     Key(String),
     Lookup(String),
-    /// A synced credential already open in this process, for a child that
-    /// cannot open it itself (the askpass helper).
+    /// A synced credential already open in this process, held by whoever
+    /// stages it for a child that cannot open it itself (the askpass helper).
     Staged(StagedValue),
+    /// What the child sees of a [`SecretRef::Staged`]: a handle to ask the
+    /// staging process for, never the value.
+    Handle(String),
 }
 
 /// Plaintext of an opened synced credential. Zeroized on drop; `Debug` never
@@ -120,6 +134,8 @@ impl SecretRef {
             Self::Key(key) => store.get(key).ok().flatten(),
             Self::Lookup(spec) => store.lookup(spec).ok(),
             Self::Staged(value) => Some(value.value().to_string()),
+            // Only the staging process holds the value; the helper asks for it.
+            Self::Handle(_) => None,
         }
     }
 }
@@ -461,7 +477,9 @@ impl std::fmt::Display for Locked {
                 "{key} is a synced credential and is locked: it needs a second share"
             ),
             SecretRef::Lookup(spec) => write!(f, "secret lookup {spec} is locked"),
-            SecretRef::Staged(_) => write!(f, "a staged credential is locked"),
+            SecretRef::Staged(_) | SecretRef::Handle(_) => {
+                write!(f, "a staged credential is locked")
+            }
         }
     }
 }
@@ -477,9 +495,31 @@ type SyncedCheck = Box<dyn Fn(&str) -> bool + Send + Sync>;
 pub struct SecretGate {
     synced: std::sync::RwLock<Option<SyncedCheck>>,
     unlocked: std::sync::Mutex<HashMap<String, zeroize::Zeroizing<String>>>,
+    replicator: std::sync::OnceLock<Box<dyn Replicator>>,
+    /// Key files written for opened synced identities; removed when dropped.
+    key_files: std::sync::Mutex<HashMap<String, crate::sync::cred_ops::MaterialisedKey>>,
+}
+
+/// Turns a secret save into a replicated credential when the profile is in a
+/// ring: every write that goes through the gated store calls it first.
+pub trait Replicator: Send + Sync {
+    /// Save `password` (or clear it, `None`) of store key `key` as a synced
+    /// credential. `Ok(false)`: not a ring credential, store it locally.
+    fn replicate(&self, key: &str, password: Option<&str>) -> Result<bool>;
+    /// The key bytes of identity `identity_id` changed: replicate them too.
+    fn replicate_identity_key(&self, identity_id: i64) -> Result<bool>;
 }
 
 impl SecretGate {
+    /// Install the replicator once; a second call is ignored.
+    pub fn set_replicator(&self, replicator: Box<dyn Replicator>) {
+        let _ = self.replicator.set(replicator);
+    }
+
+    pub fn replicator(&self) -> Option<&dyn Replicator> {
+        self.replicator.get().map(|r| r.as_ref())
+    }
+
     /// Say which keys are synced credentials. Until this is called nothing is:
     /// every secret is local and passes through.
     pub fn set_synced_check(&self, check: impl Fn(&str) -> bool + Send + Sync + 'static) {
@@ -505,10 +545,16 @@ impl SecretGate {
 
     /// Open `key` for this process.
     pub fn insert(&self, key: impl Into<String>, value: zeroize::Zeroizing<String>) {
-        self.unlocked
+        let hash = value_hash(&value);
+        let old = self
+            .unlocked
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(key.into(), value);
+        open_values_add(hash);
+        if let Some(old) = old {
+            open_values_remove(value_hash(&old));
+        }
     }
 
     /// The opened plaintext of `key`, if it is open.
@@ -520,12 +566,84 @@ impl SecretGate {
             .cloned()
     }
 
+    /// An opened synced identity's key bytes: written to a 0600 file under the
+    /// per-user runtime directory (tmpfs), never anywhere else, so ssh can read
+    /// it. The file goes away on [`SecretGate::lock_all`] and when the gate drops.
+    pub fn insert_private_key(
+        &self,
+        key: &str,
+        text: zeroize::Zeroizing<String>,
+    ) -> anyhow::Result<()> {
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(std::path::PathBuf::from)
+            .filter(|p| p.is_dir())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no per-user runtime directory (XDG_RUNTIME_DIR): a synced key is never written anywhere else"
+                )
+            })?;
+        self.insert_private_key_in(
+            &runtime.join(format!("sshub-keys-{}", std::process::id())),
+            key,
+            text,
+        )
+    }
+
+    pub(crate) fn insert_private_key_in(
+        &self,
+        dir: &std::path::Path,
+        key: &str,
+        text: zeroize::Zeroizing<String>,
+    ) -> anyhow::Result<()> {
+        let id: i64 = key
+            .strip_prefix("identity:")
+            .and_then(|i| i.parse().ok())
+            .ok_or_else(|| anyhow::anyhow!("{key} is not an identity credential"))?;
+        // The file name only has to be unique per identity.
+        let mut uid = [0u8; 16];
+        uid[8..].copy_from_slice(&id.to_be_bytes());
+        let payload = crate::sync::cred_ops::CredPayload {
+            password: None,
+            private_key: Some(text.to_string()),
+        };
+        if let Some(file) = crate::sync::cred_ops::materialise_key(&payload, dir, &uid)? {
+            KEY_FILES
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(id, file.path().to_path_buf());
+            self.key_files
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(key.to_string(), file);
+        }
+        Ok(())
+    }
+
     /// Forget every opened secret (zeroized as they drop).
     pub fn lock_all(&self) {
-        self.unlocked
+        let files: Vec<_> = self
+            .key_files
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .clear();
+            .drain()
+            .collect();
+        for (key, _guard) in files {
+            if let Some(id) = key.strip_prefix("identity:").and_then(|i| i.parse().ok()) {
+                KEY_FILES
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&id);
+            }
+        }
+        let closed: Vec<_> = self
+            .unlocked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain()
+            .collect();
+        for (_, value) in closed {
+            open_values_remove(value_hash(&value));
+        }
     }
 
     /// The synced credentials among `refs` that are not open yet.
@@ -533,11 +651,73 @@ impl SecretGate {
         refs.iter()
             .filter(|r| match r {
                 SecretRef::Key(key) => self.is_synced(key) && self.get(key).is_none(),
-                SecretRef::Lookup(_) | SecretRef::Staged(_) => false,
+                SecretRef::Lookup(_) | SecretRef::Staged(_) | SecretRef::Handle(_) => false,
             })
             .cloned()
             .collect()
     }
+}
+
+impl Drop for SecretGate {
+    fn drop(&mut self) {
+        self.lock_all();
+    }
+}
+
+/// Key files of opened synced identities by identity id (see
+/// [`SecretGate::insert_private_key`]).
+static KEY_FILES: std::sync::Mutex<std::collections::BTreeMap<i64, std::path::PathBuf>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// The key file of synced identity `id` when it is open in this process: what
+/// ssh gets as `-i` for an identity whose key is not on this machine's disk.
+pub fn synced_identity_key_file(id: i64) -> Option<std::path::PathBuf> {
+    KEY_FILES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&id)
+        .filter(|p| p.exists())
+        .cloned()
+}
+
+// A process-wide count of the opened synced plaintexts, by hash, so a path that
+// only holds a secret's value (the askpass staging) can tell it is synced and
+// keep it off the disk. Hashes only: no second copy of a plaintext lives here.
+static OPEN_VALUES: std::sync::Mutex<Option<HashMap<[u8; 32], usize>>> =
+    std::sync::Mutex::new(None);
+
+fn value_hash(value: &str) -> [u8; 32] {
+    *blake3::hash(value.as_bytes()).as_bytes()
+}
+
+fn open_values_add(hash: [u8; 32]) {
+    let mut map = OPEN_VALUES.lock().unwrap_or_else(|e| e.into_inner());
+    *map.get_or_insert_with(HashMap::new)
+        .entry(hash)
+        .or_insert(0) += 1;
+}
+
+fn open_values_remove(hash: [u8; 32]) {
+    let mut map = OPEN_VALUES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = map.as_mut() {
+        if let Some(n) = map.get_mut(&hash) {
+            *n -= 1;
+            if *n == 0 {
+                map.remove(&hash);
+            }
+        }
+    }
+}
+
+/// Whether `value` is the plaintext of a synced credential that is open in
+/// this process. A local secret equal to one is treated the same: it takes the
+/// safer route.
+pub fn is_open_synced_value(value: &str) -> bool {
+    OPEN_VALUES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|map| map.contains_key(&value_hash(value)))
 }
 
 /// Decorator around a profile's store: a synced credential is answered from
@@ -579,6 +759,14 @@ impl PasswordStore for QuorumGatedStore {
     }
 
     fn set(&self, key: &str, password: &str) -> Result<()> {
+        if let Some(r) = self.gate.replicator() {
+            if r.replicate(key, Some(password))? {
+                // The user just typed it: it is open in this process.
+                self.gate
+                    .insert(key, zeroize::Zeroizing::new(password.to_string()));
+                return Ok(());
+            }
+        }
         if self.gate.is_synced(key) {
             anyhow::bail!(
                 "{key} is a synced credential: change it through sync, not the local store"
@@ -588,6 +776,13 @@ impl PasswordStore for QuorumGatedStore {
     }
 
     fn delete(&self, key: &str) -> Result<()> {
+        if let Some(r) = self.gate.replicator() {
+            if r.replicate(key, None)? {
+                self.gate
+                    .insert(key, zeroize::Zeroizing::new(String::new()));
+                return Ok(());
+            }
+        }
         if self.gate.is_synced(key) {
             anyhow::bail!(
                 "{key} is a synced credential: remove it through sync, not the local store"
@@ -606,6 +801,10 @@ impl PasswordStore for QuorumGatedStore {
 
     fn gate(&self) -> Option<&SecretGate> {
         Some(&self.gate)
+    }
+
+    fn shared_gate(&self) -> Option<std::sync::Arc<SecretGate>> {
+        Some(self.gate.clone())
     }
 }
 

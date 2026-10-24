@@ -161,6 +161,7 @@ pub fn body_tier(body: &OpBody) -> OpTier {
         | OpBody::RecoveryApprove { .. }
         | OpBody::FactorRegister { .. }
         | OpBody::DeviceRoleChange { .. }
+        | OpBody::ExemptionSet { .. }
         | OpBody::BulkExport { .. }
         | OpBody::ModeChange { .. } => OpTier::Red,
         // Cryptographic data only: it changes nothing a user could be tricked
@@ -169,6 +170,7 @@ pub fn body_tier(body: &OpBody) -> OpTier {
         | OpBody::RecoveryAck { .. }
         | OpBody::HeadAttest { .. }
         | OpBody::ShareGrant { .. }
+        | OpBody::CertExtend { .. }
         | OpBody::RedApprove { .. }
         | OpBody::RedPhoneSign { .. }
         | OpBody::RedFactor { .. }

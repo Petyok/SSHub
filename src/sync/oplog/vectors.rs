@@ -735,6 +735,45 @@ fn cases() -> Vec<(&'static str, Op)> {
             ),
         ),
         (
+            "exemption-set-on",
+            mk(
+                48,
+                48,
+                1,
+                2,
+                OpBody::ExemptionSet {
+                    device_id: other.clone(),
+                    slot: Some(peer(0x24)),
+                },
+            ),
+        ),
+        (
+            "exemption-set-off",
+            mk(
+                49,
+                49,
+                1,
+                2,
+                OpBody::ExemptionSet {
+                    device_id: other.clone(),
+                    slot: None,
+                },
+            ),
+        ),
+        (
+            "cert-extend",
+            mk(
+                50,
+                50,
+                1,
+                2,
+                OpBody::CertExtend {
+                    cert_id: [0x66; 32],
+                    extra_hosts: 50,
+                },
+            ),
+        ),
+        (
             "bulk-export",
             mk(
                 47,
@@ -942,5 +981,5 @@ fn every_body_variant_has_a_vector() {
         .iter()
         .map(|(_, op)| super::canonical::body_name(&op.body))
         .collect();
-    assert_eq!(names.len(), 33, "{names:?}");
+    assert_eq!(names.len(), 35, "{names:?}");
 }

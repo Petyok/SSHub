@@ -475,14 +475,27 @@ tree is needed at these sizes (0.6 to 0.9 MB for 1000 credentials).
 
 ### The mixed-mode exemption
 
-One machine may keep opening credentials with the master phrase inside a Quorum
-ring. The master-phrase slot is then bound to that device: the share replicates
-like all the others, but unwraps only for someone holding both the phrase and
-that machine's key. No invariant breaks. For that machine, "one stolen device is
-not enough" stops being true, so it is labelled an **exemption**, per row, and
-the alternative (an unattended holder + trust mode) is offered
-first — the exemption is usually requested for the laptop most likely to be
-stolen.
+One machine may keep opening credentials with the master phrase inside a Quorum ring. It is built as one
+extra Shamir share per credential, held by a **slot recipient** whose key exists only for someone holding
+**both** the master phrase and that machine's device key:
+
+`slot key = identity from_seed( BLAKE3 derive_key("sshub/sync/exempt/seed/v1", Argon2id(phrase, salt) || PRF(device key)) )`,
+where `PRF(device key)` is the hash of the device's deterministic signature over a fixed message (the key never
+leaves the device) and `salt` derives from the device id. The slot's public key is published in the log;
+every credential created afterwards gets a share wrapped to it, and existing credentials get theirs through a
+reshare (the slot is a permanent recipient like the paper: it takes no part in contributing and adopts nothing,
+it rebuilds its share at unlock time).
+
+The exempt machine owns two shares of every credential (its own and the slot's), so it opens alone: its
+device key unwraps its own share, the phrase plus the same device key unwrap the slot's. Stolen device key
+alone: one share, nothing. Phrase alone: no slot share, nothing. Stolen machine plus the phrase: opens,
+which is why it is labelled an **exemption**, per row ("exemption: master phrase"), never as a banner, and
+why it is offered only after the alternatives (a trust session with an unattended holder, Vault mode) have
+been shown. Other devices are unaffected: they still need a second share. No invariant breaks: the slot's
+share replicates like all the others and revoking the exemption (a Red op) reshares without the slot.
+
+Enabling or disabling it is a Red ceremony (`ExemptionSet`); the exempt device must be an attended holder
+terminal and cannot be the second approver of its own exemption.
 
 ## Share release
 
@@ -748,7 +761,22 @@ opens nothing, so it needs no secrecy and no special credentials.
    as a mirror and appends the `DeviceAdd`; every attended device holds that op
    as pending until one of its users approves it in review, so the joiner is
    known only to the Hub until then.
-7. **Promotion to holder is separate and Red**, and needs two holders online for
+7. **The join-time anchor.** A joiner does not review the ring that already existed. When the
+   enrollment is confirmed (SAS, or the SSH host key of an inviter without a screen), the inviter first
+   appends the joiner's `DeviceAdd`, then sends a **join anchor**: its resolved state at its current chain
+   heads (device table with roles and verification, hosts, groups, identities, credential ciphertexts and
+   wraps, certificates, factors) in the checkpoint bundle format, signed by the inviter alone. The joiner
+   adopts it as its starting state with the existing bootstrap machinery, trusting the inviter exactly as far
+   as the enrollment verified it (no second signature exists in a fresh ring, which is why this form is
+   valid only as a join anchor and never as a prune checkpoint). Consequences: the joiner's own admission is
+   inside the cut and is never in its review queue; 500 existing hosts are 0 approvals; only ops ABOVE the
+   cut, authored by anyone, are foreign changes under review. The joiner's pre-existing local hosts are not
+   published by joining; the UI offers to share them as an explicit step.
+   **Nothing is held silently.** Every op that is pending for any reason is in the review queue with its
+   reason: `tier`, `resurrection`, `revoke-conflict`, or `unknown-author` (an op whose author is not an
+   accepted device yet is quarantined, capped per device, and applies when the author is admitted, instead
+   of being dropped).
+8. **Promotion to holder is separate and Red**, and needs two holders online for
    the resharing protocol.
 
 Minimal topology: 1 machine + phone (Quorum k=2 works, without trust sessions and

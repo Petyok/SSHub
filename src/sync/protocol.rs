@@ -28,7 +28,7 @@ use serde_json::Value;
 use x25519_dalek::{EphemeralSecret, PublicKey as XPublic};
 
 use super::crypto::{verify, DeviceIdentity};
-use super::limits::{MAX_FRAME_BYTES, MAX_OPS_PER_TAIL};
+use super::limits::{CHECKPOINT_CHUNK_BYTES, MAX_FRAME_BYTES, MAX_OPS_PER_TAIL};
 use super::oplog::{
     DeviceId, DeviceStatus, ForkEvidence, HeadVerdict, IngestOutcome, Op, SignedHead,
 };
@@ -333,6 +333,18 @@ pub enum SyncMsg {
     },
     EnrollReveal(super::enroll::Reveal),
     EnrollConfirm(super::enroll::Confirm),
+    /// A chunk of the join anchor (contract 3c): the inviter's state, sent after the confirmation.
+    EnrollAnchor {
+        offset: u64,
+        total: u64,
+        #[serde(with = "b64")]
+        data: Vec<u8>,
+    },
+    /// The hash of the whole anchor, ending the transfer.
+    EnrollAnchorDone {
+        #[serde(with = "hex32")]
+        hash: [u8; 32],
+    },
     Bye {
         reason: String,
     },
@@ -360,6 +372,8 @@ impl SyncMsg {
             Self::EnrollCommit { .. } => "enroll_commit",
             Self::EnrollReveal(_) => "enroll_reveal",
             Self::EnrollConfirm(_) => "enroll_confirm",
+            Self::EnrollAnchor { .. } => "enroll_anchor",
+            Self::EnrollAnchorDone { .. } => "enroll_anchor_done",
             Self::Bye { .. } => "bye",
         }
     }
@@ -390,6 +404,8 @@ pub struct RoundSummary {
     pub peer_checkpoint: Option<[u8; 32]>,
     /// Devices whose tail the peer has pruned: bootstrap from its checkpoint.
     pub needs_checkpoint: Vec<DeviceId>,
+    /// Checkpoint adopted this round (we were behind past the peer's prune floor).
+    pub adopted: Option<[u8; 32]>,
 }
 
 /// A frame pipe. The SSH `Conn` implements it; tests use an in-memory pair.
@@ -536,7 +552,7 @@ fn handshake<L: SyncLink>(
         device_id: me.clone(),
         nonce: random32(),
         eph: XPublic::from(&eph).to_bytes(),
-        checkpoint: None,
+        checkpoint: store.sync_checkpoint_head().ok().flatten(),
     };
     let client = s.role == CLIENT;
     let their_hello = if client {
@@ -830,7 +846,7 @@ fn my_heads(store: &LauncherStore) -> Result<BTreeMap<DeviceId, (u64, [u8; 32])>
         .collect())
 }
 
-/// Sort per chain, ingest, and retry what failed only for order (unknown author, gap) once the rest landed.
+/// Sort per chain, ingest, and retry what failed only for order (gap) once the rest landed.
 pub(crate) fn ingest_ops(
     store: &LauncherStore,
     ops: Vec<Op>,
@@ -857,11 +873,7 @@ pub(crate) fn ingest_ops(
                     progress = true;
                 }
                 IngestOutcome::Rejected(why) if why == "duplicate op" => sum.duplicates += 1,
-                IngestOutcome::Rejected(why)
-                    if why == "unknown device" || why.starts_with("gap:") =>
-                {
-                    retry.push(op)
-                }
+                IngestOutcome::Rejected(why) if why.starts_with("gap:") => retry.push(op),
                 IngestOutcome::Rejected(why) => {
                     sum.rejected += 1;
                     if sum.reject_reasons.len() < 8 {
@@ -943,12 +955,31 @@ fn pull<L: SyncLink>(
                     if !sum.needs_checkpoint.contains(&device_id) {
                         sum.needs_checkpoint.push(device_id);
                     }
+                    // The peer announced a checkpoint in its hello: take it.
+                    if let (None, Some(hash)) = (sum.adopted, sum.peer_checkpoint) {
+                        if let Some(bytes) = fetch_checkpoint(s, hash)? {
+                            let peer = sum.peer.clone();
+                            store
+                                .sync_checkpoint_accept(&bytes, &peer, true)
+                                .map_err(|e| anyhow!("checkpoint rejected: {e:#}"))?;
+                            sum.adopted = Some(hash);
+                            progressed = true;
+                        }
+                    }
                 }
                 other => return s.unexpected("tail", &other),
             }
         }
         if !progressed {
             break;
+        }
+    }
+    // Proposals we know as ops but cannot verify yet: fetch their blobs.
+    for hash in store.sync_checkpoint_missing()? {
+        if let Some(bytes) = fetch_checkpoint(s, hash)? {
+            let peer = sum.peer.clone();
+            // A bad blob is the peer's problem, not a failed round.
+            let _ = store.sync_checkpoint_accept(&bytes, &peer, false);
         }
     }
     s.send(&SyncMsg::EndWants)?;
@@ -965,6 +996,63 @@ fn pull<L: SyncLink>(
         }
     }
     Ok(())
+}
+
+/// Largest checkpoint bundle we accept from a peer.
+pub(crate) const MAX_CHECKPOINT_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Ask the peer for a checkpoint bundle chunk by chunk. `None`: it does not
+/// hold the blob. The bytes are untrusted; the store verifies them.
+fn fetch_checkpoint<L: SyncLink>(
+    s: &mut Session<'_, L>,
+    hash: [u8; 32],
+) -> Result<Option<Vec<u8>>> {
+    let mut buf: Vec<u8> = Vec::new();
+    let mut total: Option<u64> = None;
+    loop {
+        s.send(&SyncMsg::WantCheckpoint {
+            hash,
+            offset: buf.len() as u64,
+        })?;
+        match s.recv()? {
+            SyncMsg::CheckpointChunk {
+                hash: h,
+                offset,
+                total: t,
+                data,
+            } => {
+                ensure!(
+                    h == hash && offset == buf.len() as u64,
+                    "protocol violation: checkpoint chunk out of order"
+                );
+                ensure!(
+                    data.len() <= CHECKPOINT_CHUNK_BYTES,
+                    "protocol violation: checkpoint chunk too large"
+                );
+                if t == 0 {
+                    return Ok(None);
+                }
+                ensure!(
+                    t <= MAX_CHECKPOINT_BYTES && total.is_none_or(|p| p == t),
+                    "protocol violation: bad checkpoint length"
+                );
+                total = Some(t);
+                ensure!(
+                    !data.is_empty(),
+                    "protocol violation: empty checkpoint chunk"
+                );
+                buf.extend_from_slice(&data);
+                ensure!(
+                    buf.len() as u64 <= t,
+                    "protocol violation: checkpoint longer than announced"
+                );
+                if buf.len() as u64 == t {
+                    return Ok(Some(buf));
+                }
+            }
+            other => return s.unexpected("checkpoint_chunk", &other),
+        }
+    }
 }
 
 fn serve_wants<L: SyncLink>(
@@ -985,9 +1073,22 @@ fn serve_wants<L: SyncLink>(
                     valid_device_id(&device_id),
                     "protocol violation: malformed device id in want_tail"
                 );
+                let tail = match store.sync_chain_tail(&device_id, after_seq) {
+                    Ok(t) => t,
+                    Err(e) => match e.downcast_ref::<super::oplog::Pruned>() {
+                        Some(p) => {
+                            s.send(&SyncMsg::Pruned {
+                                device_id,
+                                floor_seq: p.floor_seq,
+                            })?;
+                            continue;
+                        }
+                        None => return Err(e),
+                    },
+                };
                 let mut ops = Vec::new();
                 let mut bytes = 0usize;
-                for op in store.sync_chain_tail(&device_id, after_seq)? {
+                for op in tail {
                     let w = WireOp::of(&op);
                     if !ops.is_empty() && bytes + w.cost() > TAIL_FRAME_BUDGET {
                         break;
@@ -1001,8 +1102,23 @@ fn serve_wants<L: SyncLink>(
                 sum.sent += ops.len();
                 s.send(&SyncMsg::Tail { device_id, ops })?;
             }
+            SyncMsg::WantCheckpoint { hash, offset } => {
+                n += 1;
+                check_len("want requests", n, MAX_WANTS_PER_PHASE)?;
+                let bytes = store.sync_checkpoint_bytes(&hash)?.unwrap_or_default();
+                let start = usize::try_from(offset)
+                    .unwrap_or(usize::MAX)
+                    .min(bytes.len());
+                let end = (start + CHECKPOINT_CHUNK_BYTES).min(bytes.len());
+                s.send(&SyncMsg::CheckpointChunk {
+                    hash,
+                    offset,
+                    total: bytes.len() as u64,
+                    data: bytes[start..end].to_vec(),
+                })?;
+            }
             SyncMsg::EndWants => return Ok(()),
-            other => return s.unexpected("want_tail or end_wants", &other),
+            other => return s.unexpected("want_tail, want_checkpoint or end_wants", &other),
         }
     }
 }
@@ -1264,6 +1380,12 @@ pub fn run_round<L: SyncLink>(
     let res = round(conn, store, id, Some(peer), true, &mut sum, &mut seen);
     // Whatever arrived is checked against the stage 3 rules even if the round ended badly.
     let _ = super::screen::screen_pending(store, crate::store::now_ts());
+    let _ = super::checkpoint_driver::after_round(
+        store,
+        id,
+        crate::store::now_ts(),
+        &Default::default(),
+    );
     conclude(res, sum, Some(peer))
 }
 
@@ -1277,6 +1399,12 @@ pub fn run_sync_serve<L: SyncLink>(
     let mut seen = None;
     let res = round(conn, store, id, None, false, &mut sum, &mut seen);
     let _ = super::screen::screen_pending(store, crate::store::now_ts());
+    let _ = super::checkpoint_driver::after_round(
+        store,
+        id,
+        crate::store::now_ts(),
+        &Default::default(),
+    );
     conclude(res, sum, seen.as_ref())
 }
 

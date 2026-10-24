@@ -588,6 +588,35 @@ accepted. Tombstone state is `{lamport, device_id, ts}`: the op hash is not part
 the blob, so a pruned or bootstrapped store folds to the same bytes as one that kept
 the log.
 
+**Ceremony ops (Red ceremony, stage 3).** `RedApprove { op_hash }`, `RedPhoneSign
+{ op_hash }` and `RedFactor { op_hash, factor, sig }` are Green and inert (the
+ceremony code checks who authored them). `FactorRegister { factor, public, sealed,
+salt, sender }` (sealed empty for Paper, at most 128 bytes for EmailCode),
+`DeviceRoleChange { device_id, to }` and `BulkExport { requester, window_secs }`
+(1 to 3600) are Red. `DeviceRoleChange` updates `sync_devices.role` and the
+checkpoint fold (promotion and demotion). `DeviceRevoke` is Yellow when the target
+is a mirror and Red when it is a holder or unknown (`merge::effective_tier`;
+`Op::tier()` stays the conservative Red). `sync_resolve_pending` settles any
+pending op programmatically. Canonical forms: hashes and `public` are hex, `sig`
+is 128 hex characters, `salt` is 32 hex characters, `sealed` is base64.
+
+**Checkpoint wire and driver (C6).** The hello announces `sync_checkpoint_head()`.
+A `WantTail` below a peer's prune floor is answered `Pruned { device_id,
+floor_seq }`; the asker then sends `WantCheckpoint { hash, offset }` and receives
+`CheckpointChunk { hash, offset, total, data }` chunks of `CHECKPOINT_CHUNK_BYTES`
+(`total` 0: the peer does not hold the blob; at most 64 MiB; chunks must arrive in
+order). The bytes are `checkpoint::bundle_to_bytes` (proposal, signs, heads,
+state), untrusted until `sync_checkpoint_accept(bytes, peer, adopt)`: with
+`adopt` the bundle replaces the local log (`sync_bootstrap` rules with the peer
+as `Anchor`; refused when this device has local ops above the cut), otherwise it
+is recorded as a proposal to verify. Proposals known as ops without a blob are
+fetched in the same phase. After every round `checkpoint_driver::after_round`
+records proposals with the signs held, signs those that match the local fold
+(never on an unattended device), proposes when `due` (ops, bytes, minimum
+interval, a finished reshare), and prunes after the delay. A proposer keeps its
+own blob; blobs of proposals in flight are kept, accepted ones only for the
+newest.
+
 ### 2b. Checkpoints and pruning (C15)
 
 Design: `docs/host-sync-design.md`, section "Checkpoints and pruning". Owner: the op-log package.
@@ -827,6 +856,49 @@ prompt names the requester; plaintext never touches disk.
   words with `peer_has_screen = false` and the plain warning; the local machine invites when it has a ring,
   founds one when both are blank, joins P's ring when only P has one.
 
+### 3d. Synced identity keys: a private ssh-agent (C19)
+
+A synced identity's private key must never be written to disk on any OS (macOS has no tmpfs runtime dir,
+Linux sessions without logind have none either), so the earlier `materialise_key` file is replaced:
+
+* External `ssh` (sessions, tunnels, exec): `cred_ops::PrivateAgent` is one `ssh-agent -D -a <socket>` per
+  process in a 0700 temp dir, started on the first synced key. `add_key(pem, ttl, askpass)` feeds the key over
+  stdin to `ssh-add -t <ttl> -` (a passphrase through the existing askpass helper, `SSH_ASKPASS_REQUIRE=force`),
+  reads the new public line back with `ssh-add -L`, and writes the **public** key file. `ssh_args(&key)` returns
+  `-o IdentityAgent=<socket> -o IdentitiesOnly=yes -i <public file>`. Drop kills the agent and removes the dir.
+  TTL = the unlock TTL. A missing OpenSSH client makes the unlock fail loudly with that reason.
+* In-process libssh2 (SFTP): authenticate with the key bytes held in the gate, in memory
+  (`userauth_pubkey_memory`), no agent, no file.
+* Jump hosts: a `ProxyJump` hop must use the same `-o IdentityAgent` and `IdentitiesOnly`; the connect path
+  passes them to the jump command too (TUI worker, to verify on a real two-hop run).
+
+Who: core (me) `PrivateAgent`, `AskpassEnv`, `AgentKey` in `cred_ops.rs`; `materialise_key` is removed once the
+gate has moved over. TUI worker: the gate's `insert_private_key` starts or reuses one agent and stores the
+`AgentKey`; connect paths add `ssh_args`; lock/drop drops the agent; the sftp path uses memory auth.
+No private key byte on disk, ever; the agent socket and public files are the only artifacts.
+
+### 3c. Join-time anchor (C18): spec
+
+After `EnrollConfirm` succeeds and the inviter appended `DeviceAdd` for the joiner, the inviter sends the
+join anchor over the same authenticated enrollment channel and the joiner adopts it; new frames after
+`EnrollConfirm`: `EnrollAnchor { index: u32, total: u32, #[b64] bytes }` (chunks of at most
+`CHECKPOINT_CHUNK_BYTES`, at most `CHECKPOINT_BYTES` in all) and `EnrollAnchorDone { #[hex32] bundle_hash }`.
+The bundle is the C15 checkpoint bundle format (cut = the inviter's chain heads, canonical state blob, the
+inviter's signed head); it carries the signature of the inviter only and is accepted only through
+`sync_join_adopt(bundle, inviter)`, which verifies the inviter's signature and that the state hash recomputes,
+then adopts like `sync_bootstrap` with trust `BootstrapTrust::Enrollment(inviter)`. A bundle with one signature
+is never accepted as a prune checkpoint.
+
+Rules: (1) the joiner's own `DeviceAdd` is inside the cut and never pending on the joiner; (2) everything at or
+below the cut is the starting state, not reviewed; (3) ops above the cut are reviewed as usual; (4) an op
+whose author is not an accepted device is stored as pending with reason `unknown-author` (capped by
+`PENDING_QUARANTINE_MAX_PER_DEVICE`) instead of being rejected, and settles when the author is admitted;
+(5) `sync_pending()` returns every pending op and the review screens and `sync-review` list all of them with
+`sync_pending_reason`; (6) the joiner's local hosts stay local until the user chooses to share them.
+Op-log: `sync_join_anchor_build(&self, joiner: &DeviceId) -> Result<CheckpointBundle>`, `sync_join_adopt`,
+the `unknown-author` reason, `BootstrapTrust::Enrollment`. Core (me): the two frames in `enroll.rs` and the
+call order; TUI: the review listing and the progress text "adopting the ring (N hosts)".
+
 ### 4a. Stage 3 as built (WP3a, WP3c): supersedes the sketch above where they differ
 
 Code: `src/sync/{quorum,reshare,cred_ops,cert,modes,recovery}.rs` (plus the phone wire frames in `wire.rs`).
@@ -941,6 +1013,64 @@ Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, n
 * `BulkExport`: once complete, each holder releases shares for any host to `requester` until
   `op.timestamp + window_secs` without a prompt per host (like a certificate, recorded the same way).
 
+### 4c-2. Trust-session certificates on the phone (P1) and the phone in resharing
+
+* **CertIssue.** The phone is the AUTHOR and signer of the op; the user's choices reach it as a kind 9
+  `CertRequestWire` (`device_id`, scope, `expiry`, `max_new_hosts_per_day` 1..=50, `epoch_lo`, `epoch_hi`) that the
+  terminal shows (`cert::cert_request`). The phone shows the request, and on approval builds
+  `CertIssue { device_id, scope, expiry, max_new_hosts_per_day, epoch_lo, epoch_hi }` with the fields of the request
+  UNCHANGED (`CertRequestWire::to_body`), chains it on its own chain (header as for its `HeadAttest` ops) and returns it
+  in a kind 5 list. Limits the phone enforces before signing: `expiry - now` between 1 s and 90 days, budget 1..=50,
+  at most 64 hosts, scope never empty, no wildcard (there is none in the type).
+* **Attaching the ceremony.** `CertIssue` is a Red op proposed by the phone, so its phone proof is the op itself. The
+  second proof is a `RedApprove` by an attended Holder terminal that is neither the phone nor the delegate; the third
+  is a `RedFactor` (paper or email) bound to `op_hash` and the proposer (the phone's device id). Both are authored on
+  terminals; the phone does nothing more. The cert is valid for `cert_allows` once `settle_red_ops` applied it.
+* **CertRevoke** `{ cert_id }` (Yellow): written by the phone or by any attended holder; peers stop honouring the
+  certificate on their next sync. The phone page signs it like its cancel op.
+* **R3b daily budget extension.** New op `CertExtend { cert_id: [u8;32], extra_hosts: u32 }` (Green, inert), authored
+  by the phone that issued the certificate. It adds `extra_hosts` to the certificate's budget for the rolling day
+  that contains its timestamp (`max_new_hosts_per_day + sum of extensions in the last 24 hours`); limits:
+  `extra_hosts` between 1 and `CERT_NEW_HOSTS_PER_DAY`, at most one extension per certificate per rolling 24 hours,
+  none after expiry; it never changes scope or expiry. A holder that refuses for the budget answers
+  `ShareDeferred` with the reason; the terminal then shows a `CertExtendRequest` (wire kind 10:
+  `cert_id(32) || extra_hosts u32 BE`) for the phone to confirm and sign.
+* **The phone in resharing.** The phone is a RECEIVER only: it never contributes (it keeps no shares), so
+  `reissue_plan` needs only terminal holders as contributors. It receives its `ShareReshareSession` and the
+  epoch's `ShareReshareBatch` ops in a kind 5 list, unwraps its session keys with its wrap key, combines two
+  contributors' sub-shares and publishes `ShareStorageKey` and `ShareReshareConfirmBatch` exactly as a terminal does
+  (`reshare::reissue_receive`). Consequence for the rules: the contributor count is the number of remaining TERMINAL
+  holders, so a revocation needs at least two remaining terminal holders (a ring of two terminals and a phone cannot
+  revoke a terminal by resharing; the paper is offline and cannot contribute either).
+
+### 4e. Mixed-mode exemption (C10)
+
+Design: "The mixed-mode exemption". New op for the op-log worker:
+
+```rust
+ExemptionSet { device_id: DeviceId, slot: Option<DevicePublic> }   // Red, gated by the ceremony (4c)
+```
+
+`slot: Some(public)` enables, `None` disables. Effect: the projection sets `sync_devices.exempt` to 1 / 0 for
+`device_id` (the Sync tab reads `DeviceRow.exempt` and prints "exemption: master phrase" on that row); the op
+is otherwise inert and the core reads the newest `ExemptionSet` per device from the log. `slot.mlkem_pub` must
+validate like any `DevicePublic`.
+
+Core (this package, after the op lands):
+
+* `exemption::slot_identity(id, phrase, profile) -> DeviceIdentity` as in the design; `enable_body(id, phrase)`
+  builds `ExemptionSet { Some(slot public) }` on the exempt machine, `disable_body(device)` the `None` form.
+* Ring mode must be Quorum; the device must be an attended holder terminal; `ceremony::red_status` adds the rule that
+  the second approver is not `device_id`.
+* `quorum::share_recipients` adds the slot of every active exemption (not revoked device) as a recipient of new
+  credentials; `reshare` treats slots like the paper: permanent recipients, sub-shares hybrid-wrapped to the
+  slot key, never a session key; `revocation::next_actions` contributes when the set of permanent recipients
+  differs from the newest reshare's holder set (enable or disable) without a rotation step.
+* Unlock: `QuorumUnlocker` on an exempt device with the master phrase (`ShareSource::master_phrase`) derives the
+  slot identity and uses `own_shares(store, &slot, host)` at the same epoch as its own share as the second share,
+  asking no peer. Wrong phrase: no slot share unwraps, the normal paths continue.
+* The UI offers enabling only after showing the alternatives (trust session, Vault), and shows the label per row.
+
 ### 4d. Builders and screening for the UI (C4, C7)
 
 * `recovery::start_body(store, me, now, paper_recover: Option<&DeviceIdentity>, third_factor)` builds the
@@ -1051,8 +1181,10 @@ Additive to `SYNC_WIRE_V1` (frame kinds 1 and 2 are unchanged). Rust: `wire.rs`
 the share and ignores an extension.
 
 ```text
-kind 3 recovery notice (terminal to phone) = op_len u32 BE || op_canonical || op_signature(64)
-kind 5 phone ops       (phone to terminal) = n u8 || n * (op_len u32 BE || op_canonical || signature(64))
+kind 3 Red notice      (terminal to phone; any Red op, PhoneReenroll included) = op_len u32 BE || op_canonical || op_signature(64)
+kind 5 ops list        (BOTH directions) = n u8 || n * (op_len u32 BE || op_canonical || signature(64))
+                       phone to terminal: the phone's own ops; terminal to phone: the epoch's ShareReshareSession
+                       addressed to the phone and that epoch's ShareReshareBatch ops (it combines them, see 4c)
 kind 6 enroll commit   = role u8 || commit(32)
 kind 7 enroll reveal   = role u8 || reveal bytes (enroll.rs Reveal::bytes, opaque to the wire)
 kind 8 enroll confirm  = role u8 || ok u8 || signature(64)       role 0 = joining (phone), 1 = existing terminal
@@ -1073,6 +1205,11 @@ share reply plaintext (inside the C11 sealed box of the kind 2 frame):
 - The snapshot blob is the contract `SnapshotBlob::to_bytes` and `host_uid` names the credential it
   opens; the phone issues one per credential only while none is live (TTL 7 days recorded in the
   blob), the user can declare a blob dead (never delivered, or DEK reissued).
+- Kind 5 list limits: at most 8 ops, each at most 256 KiB (a 200 item `ShareReshareBatch` for a few holders is
+  about 100 KiB), at most 1 MiB in all.
+- Residual: the phone's wrap-key generations are derived from its secret and the generation number, so an old
+  generation can always be re-derived: unlike a terminal it cannot really retire previous wrap keys, and the
+  forward secrecy of C14 does not extend to the phone's own envelopes (it stays in the B6 residual list).
 - Manual entry: the phone shows `index` and the 24 BIP39 words of the 32 share bytes.
 - Phone identity: 32 random bytes are the secret; `BLAKE3 derive_key("sshub/sync/phone/v1", secret)`
   as 128 bytes = the usual identity split (section 1); the 24 BIP39 words are the backup. At rest
@@ -1145,3 +1282,16 @@ offline; no real credentials, no real user directories.
 
 The same table is appended to `docs/host-sync-design.md` as "Defaults chosen at
 implementation" by WP-DOCS.
+
+### 4f. Paper replication and the mandatory-paper rule (C5)
+
+`FactorRegister { Paper }` carries in `sealed` the paper's UNWRAP public key (`pub_to_bytes`: ed25519, x25519,
+ML-KEM-768; at most 1500 bytes) next to the recovery verifier in `public`. `quorum::paper_pub` reads the newest
+applied registration, so every device wraps new credentials to the paper and reshares include it
+(`quorum::paper_registration(phrase)` builds the op: the setup helper, a Red op whose first registration needs only
+the phone and a second device). Typed paper words open a credential as the second share next to the device's own:
+`unlock_paths::paper_second_share(store, host, epoch, phrase)`. A Quorum ring with exactly two live holders needs
+the paper (`quorum::paper_rule`): refused for new credentials, a mode change to Quorum and a revocation that would
+leave two holders. A reshare also runs when the holders differ from those the credentials are shared among
+(a promoted holder, an enabled or disabled exemption): `revocation::next_actions` returns `Contribute` and
+`Receive` without a rotation step.

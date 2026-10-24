@@ -68,6 +68,9 @@ pub fn validate_mode_change(store: &LauncherStore, op: &Op) -> Result<()> {
         *migrated_on == op.device_id,
         "a mode change names the machine that migrates: it must be the author"
     );
+    if *to == CredMode::Quorum {
+        super::quorum::paper_rule(store, super::quorum::live_holder_count(store)?)?;
+    }
     if *to == CredMode::Vault {
         let cosigner = cosigner
             .as_ref()

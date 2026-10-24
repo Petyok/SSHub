@@ -284,7 +284,7 @@ pub const KIND_ENROLL_CONFIRM: u8 = 8;
 /// A phone chain moves a few small ops per courier trip: more than this, or a bigger op, is not a
 /// phone and is refused before it is parsed further.
 pub const MAX_COURIER_OPS: usize = 8;
-pub const MAX_COURIER_OP_BYTES: usize = 64 * 1024;
+pub const MAX_COURIER_OP_BYTES: usize = 256 * 1024;
 
 /// An op together with its signature, as the phone carries it.
 pub type SignedOpBytes = (Vec<u8>, [u8; 64]);
@@ -336,6 +336,9 @@ pub(crate) fn encode_op_list(ops: &[SignedOpBytes]) -> Vec<u8> {
 
 /// Parses a list starting at `body[0]`; returns the ops and the number of bytes used.
 pub(crate) fn decode_op_list(body: &[u8]) -> Result<(Vec<SignedOpBytes>, usize)> {
+    if body.len() > MAX_FRAME_BYTES {
+        bail!("op list exceeds the frame cap");
+    }
     let Some((&n, _)) = body.split_first() else {
         bail!("op list truncated");
     };
@@ -553,6 +556,53 @@ impl CertRequestWire {
             max_new_hosts_per_day: self.max_new_hosts_per_day,
             epoch_lo: self.epoch_lo,
             epoch_hi: self.epoch_hi,
+        }
+    }
+}
+
+pub const KIND_CERT_EXTEND_REQUEST: u8 = 10;
+
+/// What the terminal shows the phone to extend a trust-session certificate's daily budget (R3b):
+/// `cert_id(32) || extra_hosts u32 BE`. The phone builds and signs `CertExtend` from it unchanged.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CertExtendRequestWire {
+    pub cert_id: [u8; 32],
+    pub extra_hosts: u32,
+}
+
+impl CertExtendRequestWire {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = frame_header(KIND_CERT_EXTEND_REQUEST);
+        out.extend_from_slice(&self.cert_id);
+        out.extend_from_slice(&self.extra_hosts.to_be_bytes());
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let body = unframe(bytes, KIND_CERT_EXTEND_REQUEST)?;
+        if body.len() != 36 {
+            bail!(
+                "a certificate extension request is 36 bytes, got {}",
+                body.len()
+            );
+        }
+        let extra_hosts = u32::from_be_bytes(body[32..].try_into().unwrap());
+        if extra_hosts == 0 || extra_hosts > super::limits::CERT_NEW_HOSTS_PER_DAY {
+            bail!(
+                "an extension is 1 to {} hosts",
+                super::limits::CERT_NEW_HOSTS_PER_DAY
+            );
+        }
+        Ok(Self {
+            cert_id: body[..32].try_into().unwrap(),
+            extra_hosts,
+        })
+    }
+
+    pub fn to_body(&self) -> super::oplog::OpBody {
+        super::oplog::OpBody::CertExtend {
+            cert_id: self.cert_id,
+            extra_hosts: self.extra_hosts,
         }
     }
 }

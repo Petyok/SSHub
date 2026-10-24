@@ -1,17 +1,15 @@
 //! The Sync tab (tab 7) and its modals.
 //!
-//! The UI reads one plain view model, [`SyncView`], that the sync stages fill:
-//! nothing here depends on the op-log, the store or the sync worker. The view
-//! types mirror the names of the contract's `DeviceRow`, `DeviceStatus`,
-//! `DeviceRole` and `CredMode`, but are the UI's own structs. Building a
-//! `SyncView` from store rows happens in exactly one place, a refresh method on
-//! `App` that the stage that owns the store adds next to this module; the
-//! fields are public so that method just assigns them.
+//! The UI reads one plain view model, [`SyncView`]. The view types mirror the
+//! names of the contract's `DeviceRow`, `DeviceStatus`, `DeviceRole` and
+//! `CredMode`, but are the UI's own structs. The store fills them in exactly
+//! one place, `App::refresh_sync_view` in `sync_view.rs`, which also resolves
+//! pending operations (review) straight in the store.
 //!
-//! What the UI wants done (sync now, enroll a host, approve a change, ...) goes
-//! out as a [`SyncIntent`] pushed on [`SyncView::intents`]; the worker side
-//! drains them. While [`SyncView::worker`] is false nothing drains them, so the
-//! keys that would queue one say so instead.
+//! What needs the network or another stage (sync now, enroll a host, unlock)
+//! goes out as a [`SyncIntent`] pushed on [`SyncView::intents`]; the worker
+//! side drains them. While [`SyncView::worker`] is false nothing drains them,
+//! so the keys that would queue one say so instead.
 
 use ratatui::style::Style;
 
@@ -102,6 +100,10 @@ pub struct DeviceView {
     /// Unix seconds of the last contact, `None` when never seen.
     pub last_seen: Option<i64>,
     pub head_seq: u64,
+    /// How this device was admitted, from the local enrollment record.
+    pub verified_by: Option<crate::sync::oplog::VerifiedBy>,
+    /// This machine itself (enrollment records it in the ring).
+    pub this: bool,
 }
 
 /// The active trust session, if one is open.
@@ -129,6 +131,8 @@ pub struct PendingOpView {
     pub device: String,
     pub summary: String,
     pub changes: Vec<ChangeView>,
+    /// Hash of the op, for approving or rejecting it in the store.
+    pub hash: [u8; 32],
 }
 
 /// How a share can reach the unlock modal.
@@ -139,6 +143,8 @@ pub enum UnlockPathKind {
     Clipboard,
     ShortCode,
     Words24,
+    /// The master phrase of a Vault ring.
+    Phrase,
 }
 
 impl UnlockPathKind {
@@ -149,7 +155,16 @@ impl UnlockPathKind {
             Self::Clipboard => "clipboard",
             Self::ShortCode => "short code",
             Self::Words24 => "24 words",
+            Self::Phrase => "master phrase",
         }
+    }
+}
+
+/// Set or add the status line of one unlock path.
+fn set_path_status(u: &mut UnlockView, kind: UnlockPathKind, status: String) {
+    match u.paths.iter_mut().find(|p| p.kind == kind) {
+        Some(p) => p.status = status,
+        None => u.paths.push(UnlockPathView { kind, status }),
     }
 }
 
@@ -178,9 +193,15 @@ pub struct UnlockView {
 /// The enrollment SAS screen.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SasView {
+    /// The host the enrollment runs against.
     pub peer: String,
+    /// The device name the peer claims.
+    pub peer_name: String,
     /// The words both screens must show, e.g. `harbor-globe-lantern-mint`.
     pub words: String,
+    /// A human at the other end sees the same words. When false the words prove
+    /// nothing and the admission rests on the SSH host key.
+    pub peer_has_screen: bool,
 }
 
 /// The fork alert: which device equivocated.
@@ -188,6 +209,8 @@ pub struct SasView {
 pub struct ForkView {
     pub device: String,
     pub detail: String,
+    /// What the proof consists of, one line each (hashes, seqs).
+    pub evidence: Vec<String>,
 }
 
 /// The holder-side share release confirmation. Names the requesting device.
@@ -196,12 +219,128 @@ pub struct ReleaseView {
     pub host: String,
     pub requester: String,
     pub requester_id: String,
+    /// Hash of the pending `ShareRelease` op this answers.
+    pub hash: [u8; 32],
 }
 
-/// Vault first run: the six words.
-#[derive(Debug, Clone, PartialEq)]
+/// What stage 3 stores for Vault: the master phrase and the ring secret.
+/// Zeroized on drop; `Debug` never prints them.
+#[derive(Clone, PartialEq, Eq)]
+pub struct OnboardingSecrets {
+    pub phrase: zeroize::Zeroizing<String>,
+    pub ring_secret: zeroize::Zeroizing<[u8; 16]>,
+}
+
+impl std::fmt::Debug for OnboardingSecrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("OnboardingSecrets(..)")
+    }
+}
+
+/// Where the Vault first run stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OnboardingStep {
+    /// The six words, shown once.
+    Show,
+    /// Two of the words, retyped from the paper.
+    Retype,
+    /// Choosing where the two sheets go; Enter writes them.
+    Kit,
+    /// Both sheets are written.
+    Done,
+}
+
+/// Vault first run: issue the phrase and ring secret, check the user wrote the
+/// phrase down, write the printable kit. The secrets live only here, in
+/// zeroizing buffers, until [`SyncIntent::OnboardingDone`] hands them on.
+#[derive(Clone, PartialEq)]
 pub struct OnboardingView {
-    pub words: Vec<String>,
+    pub step: OnboardingStep,
+    secrets: OnboardingSecrets,
+    /// Zero-based positions of the two words to retype, ascending.
+    pub quiz: [usize; 2],
+    pub quiz_done: usize,
+    pub typed: String,
+    pub phrase_path: String,
+    pub ring_path: String,
+    /// 0 edits `phrase_path`, 1 edits `ring_path`.
+    pub path_field: usize,
+    pub notice: Option<String>,
+}
+
+impl std::fmt::Debug for OnboardingView {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OnboardingView")
+            .field("step", &self.step)
+            .finish_non_exhaustive()
+    }
+}
+
+impl OnboardingView {
+    /// A new phrase (10 CSPRNG bytes as six EFF words) and ring secret.
+    pub fn issue() -> Result<Self> {
+        use rand_core::{OsRng, RngCore};
+        // 10 bytes can exceed 7776^6; draw again until the value is in range.
+        let mut entropy = zeroize::Zeroizing::new([0u8; 10]);
+        loop {
+            OsRng.fill_bytes(&mut entropy[..]);
+            if crate::sync::crypto::eff_encode(&entropy).is_ok() {
+                break;
+            }
+        }
+        let mut ring = [0u8; 16];
+        OsRng.fill_bytes(&mut ring);
+        let first = OsRng.next_u32() as usize % 6;
+        let second = (first + 1 + OsRng.next_u32() as usize % 5) % 6;
+        let home = std::env::var_os("HOME").map_or_else(|| ".".into(), std::path::PathBuf::from);
+        let path = |name: &str| home.join(name).to_string_lossy().into_owned();
+        Self::with_secrets(
+            &entropy,
+            ring,
+            [first.min(second), first.max(second)],
+            (
+                path("sshub-vault-phrase.html"),
+                path("sshub-vault-ring-secret.html"),
+            ),
+        )
+    }
+
+    /// The same with the secrets, quiz and paths chosen by the caller.
+    pub fn with_secrets(
+        entropy: &[u8; 10],
+        ring_secret: [u8; 16],
+        quiz: [usize; 2],
+        paths: (String, String),
+    ) -> Result<Self> {
+        Ok(Self {
+            step: OnboardingStep::Show,
+            secrets: OnboardingSecrets {
+                phrase: zeroize::Zeroizing::new(crate::sync::crypto::eff_encode(entropy)?),
+                ring_secret: zeroize::Zeroizing::new(ring_secret),
+            },
+            quiz,
+            quiz_done: 0,
+            typed: String::new(),
+            phrase_path: paths.0,
+            ring_path: paths.1,
+            path_field: 0,
+            notice: None,
+        })
+    }
+
+    /// The six words, for the one screen that shows them.
+    pub fn words(&self) -> Vec<&str> {
+        self.secrets.phrase.split_whitespace().collect()
+    }
+
+    pub fn secrets(&self) -> &OnboardingSecrets {
+        &self.secrets
+    }
+
+    /// The word the user is asked to retype now.
+    pub(crate) fn quiz_word(&self) -> &str {
+        self.words()[self.quiz[self.quiz_done.min(1)]]
+    }
 }
 
 /// A request from the UI to the sync worker.
@@ -213,16 +352,15 @@ pub enum SyncIntent {
     Enroll {
         host: String,
     },
-    Review {
-        approve: bool,
-    },
     SasMatches(bool),
     Trust {
         scope: usize,
         term_days: u32,
     },
+    /// The holder's answer to a release request: approve (and grant) or refuse.
     Release {
         approve: bool,
+        hash: [u8; 32],
     },
     UnlockCode(String),
     /// Open these synced credentials (store keys) so the action that needs
@@ -230,7 +368,11 @@ pub enum SyncIntent {
     Unlock {
         secrets: Vec<String>,
     },
-    OnboardingDone,
+    /// The Vault first run is finished: the phrase and ring secret for the
+    /// sync stage to store as the Vault configuration.
+    OnboardingDone(OnboardingSecrets),
+    /// Ask the worker which device this is (loads the device key).
+    Identify,
 }
 
 /// What runs once credentials are open.
@@ -283,6 +425,17 @@ pub struct SyncView {
     pub last_error: Option<String>,
     /// The host an enrollment was started for (names the SAS peer).
     pub enrolling: Option<String>,
+    /// Store keys the open unlock modal is for, and whether its round runs.
+    pub unlock_keys: Vec<String>,
+    pub unlock_running: bool,
+    /// This device's id, once the worker has loaded its identity.
+    pub this_device: Option<String>,
+    /// A behind peer and the host to re-enroll it through, after a round said so.
+    pub reenroll: Option<(String, String)>,
+    identify_after: bool,
+    /// Release requests this holder already answered (the op may stay pending
+    /// until the worker has resolved it).
+    pub answered_releases: Vec<[u8; 32]>,
     /// Mode the fork alert interrupted, restored on dismissal.
     fork_return: Option<AppMode>,
 }
@@ -363,6 +516,7 @@ impl App {
             _ if self.is_action(KeyAction::SyncNow, &key) => self.sync_now(),
             _ if self.is_action(KeyAction::SyncReview, &key) => self.sync_open_review(),
             _ if self.is_action(KeyAction::SyncTrust, &key) => self.sync_open_trust(),
+            _ if self.is_action(KeyAction::Connect, &key) => self.sync_open_selected(),
             _ => {}
         }
         Ok(())
@@ -386,9 +540,54 @@ impl App {
         if !self.sync_ready() {
             return;
         }
-        match self.sync.selected_device().map(|d| d.id.clone()) {
-            Some(device) => self.sync.intents.push(SyncIntent::SyncNow { device }),
+        match self.sync.selected_device().map(|d| (d.id.clone(), d.this)) {
+            Some((_, true)) => self.host_notice = Some("that is this device: pick another".into()),
+            Some((device, false)) => self.sync.intents.push(SyncIntent::SyncNow { device }),
             None => self.host_notice = Some("no device to sync with".into()),
+        }
+    }
+
+    /// Enter on a device row: the evidence of a compromised device, or the
+    /// guided way back for one that is behind or stale.
+    fn sync_open_selected(&mut self) {
+        let Some(d) = self.sync.selected_device().cloned() else {
+            return;
+        };
+        match d.status {
+            DeviceStatusView::Compromised => {
+                let evidence = self
+                    .store
+                    .sync_fork_evidence(&d.id)
+                    .ok()
+                    .flatten()
+                    .map(|e| super::sync_view::evidence_lines(&e))
+                    .unwrap_or_default();
+                self.raise_sync_fork_alert(ForkView {
+                    device: d.name.clone(),
+                    detail: format!("device id {}", d.id),
+                    evidence,
+                });
+            }
+            DeviceStatusView::Behind | DeviceStatusView::Stale => {
+                if !self.sync_ready() || d.this {
+                    return;
+                }
+                match self.sync.reenroll.clone().filter(|(id, _)| *id == d.id) {
+                    // A round already said it is behind: enroll again.
+                    Some((_, host)) => {
+                        self.sync.reenroll = None;
+                        self.sync.intents.push(SyncIntent::Enroll { host });
+                    }
+                    None => {
+                        self.host_notice = Some(format!(
+                            "syncing with {} first; if it reports behind again, press Enter once more to re-enroll it",
+                            d.name
+                        ));
+                        self.sync.intents.push(SyncIntent::SyncNow { device: d.id });
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -482,10 +681,36 @@ impl App {
             let cmd = match &intent {
                 SyncIntent::SyncNow { device } => SyncCmd::SyncNow(device.clone()),
                 SyncIntent::Enroll { host } => {
+                    self.sync.identify_after = true;
                     self.sync.enrolling = Some(host.clone());
                     SyncCmd::EnrollBegin(host.clone())
                 }
                 SyncIntent::SasMatches(ok) => SyncCmd::EnrollConfirmSas(*ok),
+                SyncIntent::Unlock { secrets } => {
+                    self.sync.unlock_keys = secrets.clone();
+                    self.sync.unlock_running = true;
+                    SyncCmd::Unlock(secrets.clone())
+                }
+                SyncIntent::UnlockCode(code) => {
+                    // A failed attempt ended the round: answering again
+                    // starts it over with the same credentials.
+                    if !self.sync.unlock_running && !self.sync.unlock_keys.is_empty() {
+                        self.sync.unlock_running = true;
+                        if let Some(w) = &self.sync_worker {
+                            let _ = w.send(SyncCmd::Unlock(self.sync.unlock_keys.clone()));
+                        }
+                    }
+                    SyncCmd::UnlockCode(code.clone())
+                }
+                SyncIntent::Identify => SyncCmd::Identify,
+                SyncIntent::Release { approve, hash } => SyncCmd::Release {
+                    approve: *approve,
+                    hash: *hash,
+                },
+                SyncIntent::OnboardingDone(secrets) => {
+                    self.sync.identify_after = true;
+                    SyncCmd::Onboard(Box::new(secrets.clone()))
+                }
                 // Answered by later stages, not by the transport worker.
                 _ => {
                     kept.push(intent);
@@ -516,9 +741,41 @@ impl App {
         match event {
             SyncEvent::Progress(line) => sync.progress = Some(line),
             SyncEvent::PendingArrived(n) => sync.pending += n,
-            SyncEvent::SasPrompt(words) => {
+            SyncEvent::SasPrompt(info) => {
                 let peer = sync.enrolling.clone().unwrap_or_else(|| "peer".into());
-                self.open_sync_sas(SasView { peer, words });
+                self.open_sync_sas(SasView {
+                    peer,
+                    peer_name: info.peer_name,
+                    words: info.words,
+                    peer_has_screen: info.peer_has_screen,
+                });
+            }
+            SyncEvent::ThisDevice(id) => {
+                for d in &mut sync.devices {
+                    d.this = d.id == id;
+                }
+                sync.this_device = Some(id);
+            }
+            SyncEvent::UnlockPrompt(text) => {
+                if let Some(u) = sync.unlock.as_mut() {
+                    set_path_status(u, UnlockPathKind::Phrase, text);
+                }
+            }
+            SyncEvent::UnlockPath(kind, status) => {
+                if let Some(u) = sync.unlock.as_mut() {
+                    set_path_status(u, kind, status);
+                }
+            }
+            SyncEvent::UnlockProgress { have, need } => {
+                if let Some(u) = sync.unlock.as_mut() {
+                    (u.have, u.need) = (have, need);
+                }
+            }
+            SyncEvent::UnlockChallenge(frames) => {
+                sync.qr_frame = 0;
+                if let Some(u) = sync.unlock.as_mut() {
+                    u.frames = frames;
+                }
             }
             SyncEvent::ForkDetected(id) => {
                 let device = sync
@@ -526,29 +783,57 @@ impl App {
                     .iter()
                     .find(|d| d.id == id)
                     .map_or_else(|| id.clone(), |d| d.name.clone());
+                let evidence = self
+                    .store
+                    .sync_fork_evidence(&id)
+                    .ok()
+                    .flatten()
+                    .map(|e| super::sync_view::evidence_lines(&e))
+                    .unwrap_or_default();
                 self.raise_sync_fork_alert(ForkView {
                     device,
                     detail: format!("device id {id}: two different histories under one identity"),
+                    evidence,
                 });
             }
             SyncEvent::BehindPeer(id) => {
-                if let Some(d) = sync
+                let name = sync
                     .devices
-                    .iter_mut()
-                    .find(|d| d.id == id && d.status == DeviceStatusView::Operational)
-                {
-                    d.status = DeviceStatusView::Behind;
-                }
+                    .iter()
+                    .find(|d| d.id == id)
+                    .map_or_else(|| id.clone(), |d| d.name.clone());
+                let host = self
+                    .profile
+                    .as_ref()
+                    .and_then(|p| crate::sync::runtime::Peers::load(p).ok())
+                    .and_then(|p| p.host_of(&id).map(str::to_string));
+                self.host_notice = Some(match &host {
+                    Some(h) => format!(
+                        "{name} is behind: it could not prove it is current, so nothing moved. Select it and press Enter to re-enroll it through {h} (a repeat ceremony; nothing about its role changes)"
+                    ),
+                    None => format!(
+                        "{name} is behind and no host is known for it: press t on its host in the hosts tab to re-enroll it"
+                    ),
+                });
+                self.sync.reenroll = host.map(|h| (id, h));
             }
             SyncEvent::Done => {
                 sync.syncing = false;
                 sync.progress = None;
                 sync.enrolling = None;
+                sync.unlock_running = false;
+                // Whatever the round moved is in the store now.
+                self.refresh_sync_view();
+                // A ring just came into being here: learn which device this is.
+                if std::mem::take(&mut self.sync.identify_after) && self.sync.configured {
+                    self.sync.intents.push(SyncIntent::Identify);
+                }
             }
             SyncEvent::Error(message) => {
                 sync.syncing = false;
                 sync.progress = None;
                 sync.enrolling = None;
+                sync.unlock_running = false;
                 if message == crate::sync::client::WORKER_STOPPED {
                     // The thread is gone: stop offering the keys that need it.
                     sync.worker = false;
@@ -570,6 +855,156 @@ impl App {
         self.mode = AppMode::SyncOnboarding;
     }
 
+    /// Vault first run: issue a master phrase and ring secret and walk the user
+    /// through writing them down and printing the kit.
+    pub fn start_vault_onboarding(&mut self) -> Result<()> {
+        let view = OnboardingView::issue()?;
+        self.open_sync_onboarding(view);
+        Ok(())
+    }
+
+    /// One key of the Vault onboarding: show, retype two words, write the kit,
+    /// finish. Nothing leaves this screen except the final intent.
+    fn onboarding_key(&mut self, key: KeyEvent) {
+        enum Next {
+            Stay,
+            WriteKit,
+            Finish,
+        }
+        let Some(o) = self.sync.onboarding.as_mut() else {
+            return;
+        };
+        let editing = key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT;
+        let mut next = Next::Stay;
+        match o.step {
+            OnboardingStep::Show => {
+                if key.code == KeyCode::Enter {
+                    o.step = OnboardingStep::Retype;
+                    o.typed.clear();
+                    o.notice = None;
+                }
+            }
+            OnboardingStep::Retype => match key.code {
+                KeyCode::Enter => {
+                    let (n, want) = (o.quiz[o.quiz_done.min(1)] + 1, o.quiz_word().to_string());
+                    if o.typed.trim().eq_ignore_ascii_case(&want) {
+                        o.quiz_done += 1;
+                        o.notice = None;
+                        if o.quiz_done >= 2 {
+                            o.step = OnboardingStep::Kit;
+                        }
+                    } else {
+                        o.notice = Some(format!("that is not word {n}: check the phrase on paper"));
+                    }
+                    o.typed.clear();
+                }
+                // Back to the words, before anything is printed.
+                KeyCode::Esc => {
+                    o.step = OnboardingStep::Show;
+                    o.quiz_done = 0;
+                    o.typed.clear();
+                    o.notice = None;
+                }
+                KeyCode::Backspace => {
+                    o.typed.pop();
+                }
+                KeyCode::Char(c) if editing && !c.is_control() => o.typed.push(c),
+                _ => {}
+            },
+            OnboardingStep::Kit => {
+                let field = if o.path_field == 0 {
+                    &mut o.phrase_path
+                } else {
+                    &mut o.ring_path
+                };
+                match key.code {
+                    KeyCode::Enter => next = Next::WriteKit,
+                    KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {
+                        o.path_field ^= 1;
+                    }
+                    KeyCode::Backspace => {
+                        field.pop();
+                    }
+                    KeyCode::Char(c) if editing && !c.is_control() => field.push(c),
+                    _ => {}
+                }
+            }
+            OnboardingStep::Done => {
+                if key.code == KeyCode::Enter {
+                    next = Next::Finish;
+                }
+            }
+        }
+        match next {
+            Next::Stay => {}
+            Next::WriteKit => self.write_onboarding_kit(),
+            Next::Finish => {
+                if let Some(o) = self.sync.onboarding.as_ref() {
+                    let secrets = o.secrets().clone();
+                    self.sync.intents.push(SyncIntent::OnboardingDone(secrets));
+                }
+                self.sync_close_modal();
+            }
+        }
+    }
+
+    /// Write the two sheets to the chosen paths, or say why not and write
+    /// neither: no overwrite, no shared path, no missing folder.
+    fn write_onboarding_kit(&mut self) {
+        use crate::app::kit;
+        let Some(o) = self.sync.onboarding.as_mut() else {
+            return;
+        };
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+        let expand = |raw: &str| {
+            let raw = raw.trim();
+            match (raw.strip_prefix("~/"), &home) {
+                (Some(rest), Some(home)) => home.join(rest),
+                _ => std::path::PathBuf::from(raw),
+            }
+        };
+        let (phrase_path, ring_path) = (expand(&o.phrase_path), expand(&o.ring_path));
+        let problem = if o.phrase_path.trim().is_empty() || o.ring_path.trim().is_empty() {
+            Some("choose a path for both sheets".to_string())
+        } else if phrase_path == ring_path {
+            Some("the two sheets need two different paths".to_string())
+        } else {
+            [&phrase_path, &ring_path].into_iter().find_map(|p| {
+                if p.exists() {
+                    Some(format!(
+                        "{} already exists: choose another path",
+                        p.display()
+                    ))
+                } else if p
+                    .parent()
+                    .is_some_and(|d| !d.as_os_str().is_empty() && !d.is_dir())
+                {
+                    Some(format!("{}: that folder does not exist", p.display()))
+                } else {
+                    None
+                }
+            })
+        };
+        if let Some(problem) = problem {
+            o.notice = Some(problem);
+            return;
+        }
+        let phrase_html = zeroize::Zeroizing::new(kit::phrase_sheet(&o.secrets.phrase));
+        let ring_html = zeroize::Zeroizing::new(kit::ring_sheet(&o.secrets.ring_secret));
+        if let Err(e) = kit::write_sheet(&phrase_path, &phrase_html) {
+            o.notice = Some(format!("{}: {e}", phrase_path.display()));
+            return;
+        }
+        if let Err(e) = kit::write_sheet(&ring_path, &ring_html) {
+            // Never leave half a kit behind.
+            let _ = std::fs::remove_file(&phrase_path);
+            o.notice = Some(format!("{}: {e}", ring_path.display()));
+            return;
+        }
+        o.notice = None;
+        o.step = OnboardingStep::Done;
+    }
+
     /// A fork proof arrived: take over the whole screen, over a live session
     /// too. Dismissing it restores the mode it interrupted.
     pub fn raise_sync_fork_alert(&mut self, view: ForkView) {
@@ -582,6 +1017,11 @@ impl App {
 
     /// Close a Sync modal and drop back to the dashboard.
     fn sync_close_modal(&mut self) {
+        if self.sync.unlock.is_some() && self.sync.unlock_running {
+            if let Some(w) = &self.sync_worker {
+                let _ = w.send(crate::sync::client::SyncCmd::UnlockCancel);
+            }
+        }
         let sync = &mut self.sync;
         sync.unlock = None;
         sync.sas = None;
@@ -618,7 +1058,8 @@ impl App {
             .filter_map(|r| match r {
                 crate::credentials::SecretRef::Key(k) => Some(k.clone()),
                 crate::credentials::SecretRef::Lookup(_)
-                | crate::credentials::SecretRef::Staged(_) => None,
+                | crate::credentials::SecretRef::Staged(_)
+                | crate::credentials::SecretRef::Handle(_) => None,
             })
             .collect();
         self.unlock_resume = Some(UnlockResume {
@@ -705,9 +1146,7 @@ impl App {
                 } else if up {
                     self.sync.review_selected = self.sync.review_selected.saturating_sub(1);
                 } else if plain('a') || plain('r') {
-                    self.sync.intents.push(SyncIntent::Review {
-                        approve: plain('a'),
-                    });
+                    self.sync_resolve_review(plain('a'));
                 }
             }
             AppMode::SyncUnlock => {
@@ -771,14 +1210,16 @@ impl App {
             AppMode::SyncReleaseConfirm => {
                 let approve = confirm || self.is_action(KeyAction::ConfirmYes, &key);
                 if approve || cancel || plain('n') {
-                    self.sync.intents.push(SyncIntent::Release { approve });
+                    if let Some(hash) = self.sync.release.as_ref().map(|r| r.hash) {
+                        self.sync.answered_releases.push(hash);
+                        self.sync
+                            .intents
+                            .push(SyncIntent::Release { approve, hash });
+                    }
                     self.sync_close_modal();
                 }
             }
-            AppMode::SyncOnboarding if confirm => {
-                self.sync.intents.push(SyncIntent::OnboardingDone);
-                self.sync_close_modal();
-            }
+            AppMode::SyncOnboarding => self.onboarding_key(key),
             _ => {}
         }
         Ok(())
@@ -798,6 +1239,8 @@ pub(crate) fn sample_sync_view() -> SyncView {
         exempt: false,
         last_seen: Some(1_700_000_000),
         head_seq: 7,
+        verified_by: Some(crate::sync::oplog::VerifiedBy::Sas),
+        this: false,
     };
     SyncView {
         configured: true,
@@ -814,6 +1257,7 @@ pub(crate) fn sample_sync_view() -> SyncView {
             hosts_opened: 3,
         }),
         review: vec![PendingOpView {
+            hash: [0; 32],
             device: "server".into(),
             summary: "edit host web-1".into(),
             changes: vec![ChangeView {
@@ -857,22 +1301,30 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
         }),
         sas: Some(SasView {
             peer: "laptop".into(),
+            peer_name: "laptop".into(),
             words: "harbor-globe-lantern-mint".into(),
+            peer_has_screen: true,
         }),
         fork: Some(ForkView {
             device: "server".into(),
             detail: "two different ops at seq 9".into(),
+            evidence: vec!["op 1a2b3c4d and op 5e6f7a8b at seq 9".into()],
         }),
         release: Some(ReleaseView {
             host: "web-1".into(),
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
+            hash: [7; 32],
         }),
-        onboarding: Some(OnboardingView {
-            words: ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]
-                .map(String::from)
-                .to_vec(),
-        }),
+        onboarding: Some(
+            OnboardingView::with_secrets(
+                &[7u8; 10],
+                [9u8; 16],
+                [1, 4],
+                ("/tmp/sheet-a.html".into(), "/tmp/sheet-b.html".into()),
+            )
+            .unwrap(),
+        ),
         ..sample_sync_view()
     }
 }
@@ -955,11 +1407,13 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT))
             .unwrap();
         assert_eq!(app.mode, AppMode::SyncReview);
+        // The sample's pending op is not in the store: resolving it says so.
         app.handle_key(key('a')).unwrap();
-        assert_eq!(
-            app.sync.intents.last(),
-            Some(&SyncIntent::Review { approve: true })
-        );
+        assert!(app
+            .host_notice
+            .as_deref()
+            .is_some_and(|n| n.starts_with("sync:")));
+        assert_eq!(app.sync.intents.len(), 1, "review never goes to the worker");
         app.handle_key(press(KeyCode::Esc)).unwrap();
         assert_eq!(app.mode, AppMode::Normal);
     }
@@ -1019,6 +1473,7 @@ mod tests {
         app.raise_sync_fork_alert(ForkView {
             device: "server".into(),
             detail: "two different ops at seq 9".into(),
+            evidence: Vec::new(),
         });
         assert_eq!(app.mode, AppMode::SyncForkAlert);
         // A letter would go to the PTY in session mode; the alert eats it.
@@ -1034,31 +1489,26 @@ mod tests {
         let mut app = configured_app();
         app.open_sync_sas(SasView {
             peer: "laptop".into(),
+            peer_name: "laptop".into(),
             words: "harbor-globe-lantern-mint".into(),
+            peer_has_screen: true,
         });
         app.handle_key(press(KeyCode::Enter)).unwrap();
         app.open_sync_release_confirm(ReleaseView {
             host: "web-1".into(),
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
+            hash: [7; 32],
         });
         app.handle_key(press(KeyCode::Esc)).unwrap();
-        app.open_sync_onboarding(OnboardingView {
-            words: vec!["a".into(); 6],
-        });
-        app.handle_key(press(KeyCode::Esc)).unwrap();
-        assert_eq!(
-            app.mode,
-            AppMode::SyncOnboarding,
-            "Esc does not skip the words"
-        );
-        app.handle_key(press(KeyCode::Enter)).unwrap();
         assert_eq!(
             app.sync.intents,
             vec![
                 SyncIntent::SasMatches(true),
-                SyncIntent::Release { approve: false },
-                SyncIntent::OnboardingDone,
+                SyncIntent::Release {
+                    approve: false,
+                    hash: [7; 32]
+                },
             ]
         );
         assert_eq!(app.mode, AppMode::Normal);
@@ -1101,7 +1551,10 @@ mod tests {
         let mut app = app_with_worker(Box::new(|_k, device, ctx| {
             assert_eq!(device, "id-server");
             ctx.emit(SyncEvent::Progress("talking".into()));
-            Ok(RoundSummary { pending_arrived: 3 })
+            Ok(RoundSummary {
+                pending_arrived: 3,
+                ..Default::default()
+            })
         }));
         app.sync.intents.push(SyncIntent::SyncNow {
             device: "id-server".into(),
@@ -1110,7 +1563,10 @@ mod tests {
         assert!(app.sync.syncing, "a request marks the round as running");
         assert!(app.sync.intents.is_empty());
         pump(&mut app, |a| !a.sync.syncing);
-        assert_eq!(app.sync.pending, 2 + 3, "arrived ops add to the count");
+        // The round is done: the count is re-read from the store (empty here).
+        assert_eq!(app.sync.pending, 0);
+        app.apply_sync_event(crate::sync::client::SyncEvent::PendingArrived(3));
+        assert_eq!(app.sync.pending, 3, "arrived ops add to the count");
         assert_eq!(app.sync.progress, None);
         assert_eq!(app.sync.last_error, None);
     }
@@ -1120,7 +1576,11 @@ mod tests {
         use crate::sync::client::{Round, RoundSummary, SyncCmd, SyncEvent};
         let mut app = app_with_worker(Box::new(|kind, _d, ctx| {
             assert_eq!(kind, Round::Enroll);
-            ctx.emit(SyncEvent::SasPrompt("harbor-globe-lantern-mint".into()));
+            ctx.emit(SyncEvent::SasPrompt(crate::sync::client::SasPromptInfo {
+                words: "harbor-globe-lantern-mint".into(),
+                peer_name: "laptop".into(),
+                peer_has_screen: true,
+            }));
             match ctx.recv_cmd(std::time::Duration::from_secs(5)) {
                 Some(SyncCmd::EnrollConfirmSas(true)) => Ok(RoundSummary::default()),
                 other => anyhow::bail!("not confirmed: {other:?}"),
@@ -1158,12 +1618,17 @@ mod tests {
         for (device, check) in [
             (
                 "behind",
-                (|a: &App| a.sync.devices[0].status == DeviceStatusView::Behind)
-                    as fn(&App) -> bool,
+                (|a: &App| {
+                    a.host_notice
+                        .as_deref()
+                        .is_some_and(|n| n.starts_with("laptop is behind"))
+                }) as fn(&App) -> bool,
             ),
             ("fork", |a: &App| a.mode == AppMode::SyncForkAlert),
             ("fail", |a: &App| a.sync.last_error.is_some()),
         ] {
+            // Each finished round re-reads the (empty) store: put the sample back.
+            app.sync.devices = sample_sync_view().devices;
             app.sync.intents.push(SyncIntent::SyncNow {
                 device: device.into(),
             });
@@ -1172,6 +1637,94 @@ mod tests {
         assert_eq!(app.sync.fork.as_ref().unwrap().device, "server");
         assert_eq!(app.sync.last_error.as_deref(), Some("peer said no"));
         assert_eq!(app.host_notice.as_deref(), Some("sync: peer said no"));
+    }
+
+    #[test]
+    fn unlock_path_events_fill_the_modal_per_path() {
+        use crate::sync::client::{RoundSummary, SyncEvent};
+        let mut app = app_with_worker(Box::new(|_k, _d, ctx| {
+            ctx.emit(SyncEvent::UnlockPrompt("type the words".into()));
+            ctx.emit(SyncEvent::UnlockPath(
+                UnlockPathKind::Peer,
+                "asked laptop".into(),
+            ));
+            ctx.emit(SyncEvent::UnlockPath(
+                UnlockPathKind::Peer,
+                "laptop is asking you".into(),
+            ));
+            ctx.emit(SyncEvent::UnlockProgress { have: 1, need: 2 });
+            ctx.emit(SyncEvent::UnlockChallenge(vec![vec![1, 2, 3]]));
+            Ok(RoundSummary::default())
+        }));
+        app.open_sync_unlock(UnlockView {
+            host: "web".into(),
+            have: 0,
+            need: 0,
+            paths: Vec::new(),
+            frames: Vec::new(),
+            code: String::new(),
+        });
+        app.sync.intents.push(SyncIntent::SyncNow {
+            device: "id-server".into(),
+        });
+        app.poll_sync();
+        pump(&mut app, |a| !a.sync.syncing);
+        let u = app.sync.unlock.as_ref().unwrap();
+        assert_eq!((u.have, u.need), (1, 2));
+        assert_eq!(u.frames, vec![vec![1, 2, 3]]);
+        let status = |k| {
+            u.paths
+                .iter()
+                .find(|p| p.kind == k)
+                .map(|p| p.status.as_str())
+        };
+        assert_eq!(status(UnlockPathKind::Phrase), Some("type the words"));
+        assert_eq!(status(UnlockPathKind::Peer), Some("laptop is asking you"));
+        assert_eq!(u.paths.len(), 2, "a path is updated, not repeated");
+    }
+
+    #[test]
+    fn a_behind_peer_offers_a_guided_re_enroll_through_its_recorded_host() {
+        use crate::sync::client::SyncEvent;
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::profile::ProfilePaths {
+            data_root: dir.path().to_path_buf(),
+            id: "t".into(),
+            name: "t".into(),
+            root: dir.path().to_path_buf(),
+            config_file: dir.path().join("config.toml"),
+            ssh_config: dir.path().join("ssh_config"),
+            compat: false,
+        };
+        let mut app = configured_app();
+        app.profile = Some(paths.clone());
+        app.active_tab = 6;
+        app.sync.devices[1].status = DeviceStatusView::Behind;
+        app.sync.selected = 1;
+        let id = app.sync.devices[1].id.clone();
+
+        // No host recorded: the way out is the hosts tab.
+        app.apply_sync_event(SyncEvent::BehindPeer(id.clone()));
+        assert!(app.sync.reenroll.is_none());
+        assert!(app.host_notice.as_deref().unwrap().contains("hosts tab"));
+
+        crate::sync::runtime::Peers::record(&paths, &id, "hub").unwrap();
+        app.apply_sync_event(SyncEvent::BehindPeer(id.clone()));
+        assert_eq!(app.sync.reenroll, Some((id.clone(), "hub".into())));
+        assert!(app.host_notice.as_deref().unwrap().contains("through hub"));
+
+        app.sync.intents.clear();
+        app.handle_key(press(KeyCode::Enter)).unwrap();
+        assert_eq!(
+            app.sync.intents,
+            vec![SyncIntent::Enroll { host: "hub".into() }]
+        );
+
+        // Without a round having said so, Enter syncs first.
+        app.sync.intents.clear();
+        app.sync.reenroll = None;
+        app.handle_key(press(KeyCode::Enter)).unwrap();
+        assert_eq!(app.sync.intents, vec![SyncIntent::SyncNow { device: id }]);
     }
 
     #[test]
@@ -1192,8 +1745,8 @@ mod tests {
     fn without_a_worker_queued_requests_are_kept_not_dropped() {
         let mut app = configured_app();
         app.sync.worker = false;
-        app.sync.intents.push(SyncIntent::OnboardingDone);
+        app.sync.intents.push(SyncIntent::UnlockCode("x".into()));
         app.poll_sync();
-        assert_eq!(app.sync.intents, vec![SyncIntent::OnboardingDone]);
+        assert_eq!(app.sync.intents, vec![SyncIntent::UnlockCode("x".into())]);
     }
 }

@@ -11,6 +11,7 @@
 //!     ├── metadata.db
 //!     ├── config.toml
 //!     ├── credentials.json    # fallback when the OS keyring is unavailable
+//!     ├── sync/               # device.key and peers.json: per profile, never transferred
 //!     ├── logs/
 //!     └── tunnels/
 //! ```

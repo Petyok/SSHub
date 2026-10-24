@@ -12,9 +12,12 @@ pub mod map;
 pub mod output;
 pub mod parse;
 pub mod sftp;
+pub mod sync_admin;
+pub mod sync_cmd;
 pub mod theme;
 pub mod transfer;
 pub mod tunnel;
+mod unlock;
 
 pub use context::CliContext;
 

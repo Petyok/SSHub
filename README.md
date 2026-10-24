@@ -337,6 +337,17 @@ sshub audit stats --days 7
 # The jump-host map as a Graphviz graph
 sshub map --dot | dot -Tsvg -o map.svg
 
+# Host sync between your own devices (end to end encrypted, over ssh)
+sshub sync-join laptop                        # enroll with the device at host "laptop": compare the words (or, if it has no screen, approve the admission)
+sshub sync-now                                # sync with every ring device that has a known host
+sshub sync-now laptop --format json           # one device, by name or id prefix
+sshub sync-status                             # ring devices, pending changes, credential mode
+sshub sync-review                             # changes waiting for review (id, author, field diffs)
+sshub sync-review --approve 3fa9c1            # or --reject; id = unique prefix (4+ hex chars)
+# Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected.
+# sync-serve / sync-enroll are what a peer runs over ssh; not for interactive use.
+# sync-status shows how each device was verified (sas, or ssh_host_key).
+
 # Inventory sync with ~/.ssh/config
 sshub import                                  # import hosts from ssh config (--from ssh)
 sshub import --from termius ./termius-export  # import a Termius export dir (L00t.csv)
@@ -555,16 +566,23 @@ In the host form, the ProxyJump field is the hop editor: `a` add a saved host, `
 
 ### Sync (tab 7)
 
-Sync keeps hosts and credentials identical on your own devices, end to end encrypted. Until a ring exists the tab says so and how to start or join one: `t` on the hosts tab enrolls a machine as one of your devices, and `sshub sync-join <a reachable device>` joins a blank machine. Once a ring exists the tab lists the devices with their status and role, the credential mode, the trust session and the number of changes waiting, and the tab bar shows `⇅N ⏳Nops` (red when a device is compromised).
+Sync keeps hosts and credentials identical on your own devices, end to end encrypted. Until a ring exists the tab says so and how to start or join one: `t` on the hosts tab enrolls a machine as one of your devices, and `sshub sync-join <a reachable device>` joins a blank machine. Enrollment shows four words. When both ends have a screen you compare them and answer yes only if they are identical (verified by SAS). When the other end has no terminal (for example `t` enrolls a server over a plain ssh command) the words prove nothing: the dialog says so, and you approve the admission on the strength of the SSH host key you verified for that host (recorded as verified by the SSH host key). Which of the two admitted a device is shown per device on this tab and in `sshub sync-status`. Roles follow ring membership, not who connected: the side that already has a ring invites, a blank side joins, and two different rings are never merged. Once a ring exists the tab lists the devices with their status and role, the credential mode, the trust session and the number of changes waiting, and the tab bar shows `⇅N ⏳Nops` (red when a device is compromised).
+
+Review lists each waiting change with its fields as `old -> new`; fields that can redirect a connection (address, port, user, proxy jump, remote command, credentials) are marked `!` and drawn in the error colour. `a` approves and applies the change, `r` rejects it; both act on the store at once. Sync state lives in the profile directory under `sync/`: `device.key` (this device's identity, encrypted; its passphrase is in the credential store) and `peers.json` (which ssh host reaches which device). Both are owner-only files, belong to one profile, and are never copied by profile transfers or the guided migration, which move hosts, groups, identities and tunnels only.
 
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Select a device |
 | `y` | Sync now with the selected device |
+| `Enter` | On a compromised device: its proof and what to do next. On a behind or stale one: sync first, then (if it is still behind) re-enroll it through its recorded host |
 | `R` | Review the changes waiting for approval (`a` approve, `r` reject, `Esc` close) |
 | `t` | Open a trust session: pick the scope first, then the term (7, 30 or 90 days) |
 
 A fork (a device that signed two different histories) takes over the whole screen and names the device; `Esc` closes the alert and the badge stays red. All five sync keys (`7`, `y`, `R`, `t` on the sync tab, `t` on the hosts tab) are rebindable in the keybind editor.
+
+Vault first run: the app issues a six-word master phrase (from the EFF list) and a ring secret, shows the words once, asks you to retype two of them, then writes the printable kit as two separate files at paths you choose: a phrase sheet and a ring secret sheet (the secret as a QR code and as text). Each carries the "do not photograph" warning, is created owner-only and never overwritten; the phrase is kept nowhere else on disk.
+
+When the first run finishes the ring exists on this machine: the master-phrase key is derived (one second or two, 1 GiB of memory), the ring secret goes to the profile's credential store, and this device becomes the ring's first entry. A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal, where you type the six words of the master phrase (the CLI asks on the terminal without echo). While the profile is in a ring, saving a password, a passphrase or an identity's key file (host form, identity form, key generation, the auth prompt's remember choice, `host add --password-stdin`, `identity add`) writes a replicated credential instead of a local keyring entry, and clearing one replicates the clearing; the value stays open in this process until it exits. Credentials that need a second device's share (Quorum rings) cannot be opened yet.
 
 ## Theming
 

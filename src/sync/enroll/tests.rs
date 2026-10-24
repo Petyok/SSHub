@@ -81,6 +81,22 @@ fn honest_enrollment_shows_the_same_words_and_leaves_a_working_pair() {
     assert_eq!(re.sas, rj.sas);
     assert_eq!(re.sas.split('-').count(), 4);
     assert_eq!(re.peer_name, "joining");
+    // The joiner starts from the inviter's state: its chain is there and nothing is waiting for review.
+    assert!(j
+        .store
+        .sync_chain_heads()
+        .unwrap()
+        .iter()
+        .any(|(d, _, _)| *d == e.did));
+    assert!(j.store.sync_pending().unwrap().is_empty());
+    let ids: Vec<_> = j
+        .store
+        .sync_devices()
+        .unwrap()
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    assert!(ids.contains(&e.did) && ids.contains(&j.did), "{ids:?}");
     let (pe, pj) = (
         load_pair(&e.store, &j.did).unwrap().unwrap(),
         load_pair(&j.store, &e.did).unwrap().unwrap(),
