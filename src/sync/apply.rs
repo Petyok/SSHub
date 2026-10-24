@@ -76,7 +76,16 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
         OpBody::ShareReshareSession { sealed, .. } | OpBody::ShareStorageKey { sealed, .. } => {
             cap("a sealed key", sealed.len(), MAX_SEALED_BYTES)
         }
-        OpBody::WrapKeyRotate { mlkem_pub, .. } => cap("an ML-KEM key", mlkem_pub.len(), 2048),
+        OpBody::WrapKeyRotate {
+            mlkem_pub,
+            wrap_epoch,
+            ..
+        } => {
+            if *wrap_epoch == 0 {
+                return Err("wrap_epoch starts at 1".into());
+            }
+            cap("an ML-KEM key", mlkem_pub.len(), 2048)
+        }
         OpBody::CredUpdate {
             ciphertext,
             wrapped_shares,
@@ -165,9 +174,6 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
                 return Err("cut and required must be sorted and unique".into());
             }
             Ok(())
-        }
-        OpBody::WrapKeyRotate { wrap_epoch, .. } if *wrap_epoch == 0 => {
-            Err("wrap_epoch starts at 1".into())
         }
         _ => Ok(()),
     }

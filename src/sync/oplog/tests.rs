@@ -3215,7 +3215,7 @@ fn an_oversized_op_is_refused_even_from_an_unknown_author() {
 #[test]
 fn a_bundle_over_the_cap_is_not_parsed() {
     let big = vec![b' '; crate::sync::protocol::MAX_CHECKPOINT_BYTES as usize + 1];
-    let e = bundle_from_bytes(&big).unwrap_err();
+    let e = crate::sync::oplog::checkpoint::bundle_from_bytes(&big).unwrap_err();
     assert!(e.to_string().contains("over"), "{e:#}");
 }
 
