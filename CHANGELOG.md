@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-24
+
 ### Added
 
 - **SFTP-style host transfer** - in the profile manager, `t`, pick the destination,
