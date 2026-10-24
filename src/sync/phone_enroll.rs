@@ -2,10 +2,12 @@
 //! phone is the INITIATOR of the commitments and the terminal the RESPONDER, exactly as the page
 //! does it:
 //!
-//! 1. the terminal shows its `Commit`; 2. it scans the phone's `Commit` and shows its `Reveal`;
+//! 1. the terminal shows its `Commit`;
+//! 2. it scans the phone's `Commit` and shows its `Reveal`;
 //! 3. it scans the phone's `Reveal`, checks it opens the commitment and shows the four words;
-//! 4. the user compares the words with the phone's: [`PhoneEnroll::answer`]; 5. it scans the phone's
-//! `Confirm` (a signature by the phone key over the transcript and the decision) and shows its own.
+//! 4. the user compares the words with the phone's: [`PhoneEnroll::answer`];
+//! 5. it scans the phone's `Confirm` (a signature by the phone key over the transcript and the
+//!    decision) and shows its own.
 //!
 //! A mismatch anywhere stops it and shows a declining `Confirm` so the phone stops too. On success
 //! [`admit_phone`] registers the phone and proposes its `DeviceAdd { Holder, Phone }`, a Red op: the

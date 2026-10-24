@@ -361,16 +361,16 @@ fn the_emailed_code_is_a_factor_and_its_sender_mails_only_when_the_other_proofs_
         owed_code_mails(&d[B].store, &d[B].did, now).unwrap().len(),
         1
     );
-    let mut got = Vec::new();
+    let got = std::cell::RefCell::new(Vec::new());
     let mut ok = |s: &str, b: &str| -> Result<()> {
-        got.push((s.to_string(), b.to_string()));
+        got.borrow_mut().push((s.to_string(), b.to_string()));
         Ok(())
     };
     assert_eq!(
         send_owed_codes(&d[B].store, &d[B].did, now, &mut ok).unwrap(),
         1
     );
-    assert!(got[0].1.contains(&code));
+    assert!(got.borrow()[0].1.contains(&code));
     assert_eq!(
         send_owed_codes(&d[B].store, &d[B].did, now, &mut ok).unwrap(),
         0

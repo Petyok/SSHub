@@ -81,7 +81,9 @@ pub(crate) fn toggle_mark(app: &mut App) {
                 sync.trust_marked.push(uid);
             }
         }
-        _ => app.host_notice = Some("Space marks single hosts; a group is chosen with Enter".into()),
+        _ => {
+            app.host_notice = Some("Space marks single hosts; a group is chosen with Enter".into())
+        }
     }
 }
 
@@ -94,7 +96,9 @@ pub(crate) fn chosen(sync: &super::sync::SyncView) -> Option<(CertScope, String)
         return Some((CertScope::Hosts(list), label));
     }
     Some((
-        sync.trust_scope_values.get(sync.trust_scope_selected)?.clone(),
+        sync.trust_scope_values
+            .get(sync.trust_scope_selected)?
+            .clone(),
         sync.trust_scopes.get(sync.trust_scope_selected)?.clone(),
     ))
 }
