@@ -130,7 +130,7 @@ fn build_message(cfg: &NotifyConfig, subject: &str, body: &str, now: SystemTime)
     let mut msg = String::new();
     push_header(&mut msg, "From", from);
     push_header(&mut msg, "To", &cfg.to.join(", "));
-    push_header(&mut msg, "Subject", subject);
+    push_header(&mut msg, "Subject", &encode_subject(subject));
     push_header(&mut msg, "Date", &rfc2822_date(now));
     push_header(
         &mut msg,
@@ -151,6 +151,50 @@ fn check_header(field: &str, value: &str) -> Result<()> {
         bail!("{field} contains a line break");
     }
     Ok(())
+}
+
+/// Subject header value. ASCII passes through; anything else becomes RFC 2047
+/// encoded-words (UTF-8, base64). Each word holds at most 45 bytes, so it stays
+/// within 75 characters, and words are folded with CRLF and a space.
+fn encode_subject(subject: &str) -> String {
+    if subject.is_ascii() {
+        return subject.to_string();
+    }
+    let mut chunks = Vec::new();
+    let mut chunk = String::new();
+    for ch in subject.chars() {
+        if chunk.len() + ch.len_utf8() > 45 {
+            chunks.push(std::mem::take(&mut chunk));
+        }
+        chunk.push(ch);
+    }
+    chunks.push(chunk);
+    chunks
+        .iter()
+        .map(|c| format!("=?UTF-8?B?{}?=", base64(c.as_bytes())))
+        .collect::<Vec<_>>()
+        .join("\r\n ")
+}
+
+fn base64(input: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in input.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(char::from(ALPHABET[((n >> (18 - 6 * i)) & 63) as usize]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 fn push_header(msg: &mut String, name: &str, value: &str) {
@@ -450,5 +494,59 @@ mod tests {
         assert!(text.contains("exit status: 75"), "{text}");
         assert!(text.contains("relay refused"), "{text}");
         assert!(!text.contains("RECOVERY-CODE-123"), "{text}");
+    }
+
+    /// sendmail ends the message at a line holding only `.` unless `-i` is given.
+    #[cfg(unix)]
+    #[test]
+    fn a_lone_dot_line_in_the_body_survives_with_dash_i() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = recording_sendmail(dir.path());
+        let command = format!("{} -t -i", fake.display());
+        send_with_timeout(
+            &cfg(Some(&command)),
+            "s",
+            "before\n.\nafter",
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        let stdin = std::fs::read_to_string(dir.path().join("stdin")).unwrap();
+        assert!(
+            stdin.ends_with("\r\n\r\nbefore\r\n.\r\nafter\r\n"),
+            "{stdin:?}"
+        );
+    }
+
+    #[test]
+    fn non_ascii_subject_is_rfc2047_encoded() {
+        assert_eq!(encode_subject("Recovery started"), "Recovery started");
+        assert_eq!(encode_subject("Тест"), "=?UTF-8?B?0KLQtdGB0YI=?=");
+    }
+
+    #[test]
+    fn long_non_ascii_subject_folds_into_short_encoded_words() {
+        let encoded = encode_subject(&"Восстановление ".repeat(8));
+        let words: Vec<&str> = encoded.split("\r\n ").collect();
+        assert!(words.len() > 1);
+        for word in &words {
+            assert!(
+                word.starts_with("=?UTF-8?B?") && word.ends_with("?=") && word.len() <= 75,
+                "{word}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cyrillic_subject_reaches_the_command_encoded() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = recording_sendmail(dir.path());
+        let command = format!("{} -t -i", fake.display());
+        send_with_timeout(&cfg(Some(&command)), "Тест", "b", Duration::from_secs(10)).unwrap();
+        let stdin = std::fs::read_to_string(dir.path().join("stdin")).unwrap();
+        assert!(
+            stdin.contains("\r\nSubject: =?UTF-8?B?0KLQtdGB0YI=?=\r\n"),
+            "{stdin}"
+        );
     }
 }
