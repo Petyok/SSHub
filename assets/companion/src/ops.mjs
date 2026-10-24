@@ -30,6 +30,8 @@ const DANGER = {
   RecoveryAck: '*', ModeChange: '*', HeadAttest: null,
   // Red ceremony (C17): the three proof ops are inert, the other three are Red themselves.
   RedApprove: null, RedPhoneSign: null, RedFactor: null, FactorRegister: '*', DeviceRoleChange: '*', BulkExport: '*',
+  // Added by the op-log package: a share handed to a requester, a recovery approval, checkpoints.
+  ShareGrant: '*', RecoveryApprove: '*', CheckpointPropose: null, CheckpointSign: null,
 };
 export const KNOWN_KINDS = Object.keys(DANGER);
 

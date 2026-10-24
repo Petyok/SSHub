@@ -163,3 +163,28 @@ test('a delivery that needs more than 8 ops is refused with the reason', () => {
   plan.items = Array.from({ length: 1500 }, () => plan.items[0]);
   assert.throws(() => publishReshare(emptyState(), phone, plan, 1893452500), /carries 8/);
 });
+
+// ------------------------------------------------------------ the op-log package's own vectors
+
+const finalVectors = JSON.parse(readFileSync(new URL('../../../tests/vectors/op/ops.json', import.meta.url), 'utf8'));
+
+test('every final op vector (all body variants incl. the Red ceremony ops) parses, verifies and is described', () => {
+  const signer = h(finalVectors.meta.signer_ed25519_pub_hex);
+  const kinds = new Set();
+  for (const v of finalVectors.vectors) {
+    const bytes = h(v.canonical_hex);
+    const op = parseOp(bytes);
+    kinds.add(op.kind);
+    assert.ok(edVerify(signer, bytes, h(v.signature_hex)), `${v.id}: signature`);
+    const d = describeOp(op);
+    assert.ok(d.rows.length >= 3, v.id);
+    const leafRows = d.rows.filter((r) => !['Op signed by', 'Op time', 'Op seq / epoch'].includes(r.label));
+    if (['FactorRegister', 'DeviceRoleChange', 'BulkExport'].includes(op.kind)) assert.ok(leafRows.every((r) => r.danger), `${v.id}: Red body fully highlighted`);
+    assert.equal(isRedOp(op), ['DeviceRevoke', 'CertIssue', 'ModeChange', 'FactorRegister', 'DeviceRoleChange', 'BulkExport'].includes(op.kind) || (op.kind === 'DeviceAdd' && op.fields.role === 'Holder'), v.id);
+  }
+  assert.ok(finalVectors.vectors.length >= 48);
+  for (const k of ['RedApprove', 'RedPhoneSign', 'RedFactor', 'FactorRegister', 'DeviceRoleChange', 'BulkExport']) assert.ok(kinds.has(k), k);
+  const v = finalVectors.vectors.find((x) => x.id === 'red-phone-sign');
+  const o = parseOp(h(v.canonical_hex));
+  assert.equal(hexOf(encodeRedPhoneSign(hdr(o), o.fields.op_hash)), v.canonical_hex, 'RedPhoneSign bytes equal the vector');
+});
