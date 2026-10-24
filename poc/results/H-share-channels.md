@@ -46,11 +46,25 @@ H3 (over-the-air success, 10 attempts) and H4 (channel matrix, 10 attempts per c
 - Chromium 156.0.8078.4 (container), Playwright 1.64.1, Node 22.23.4
 - jsQR 1.4.0 (Apache-2.0, vendored), qrcode-generator 1.4.4 (vendored)
 
+## Headless pipeline proof
+
+Driver: `assets/companion/poc/pipeline-proof.mjs`. Headless Chromium 156 with fake audio and video devices, page served from loopback. Audio input is the sender's FSK burst, camera input is a y4m QR. This is not over the air and not a phone.
+
+| pipeline | result | time to completion | notes |
+|----------|--------|--------------------|-------|
+| H audio receive, slow (60 ms symbols) | PASS | 8.5 s | trial 1, 56 B decoded, page errors 0 |
+| H audio receive, fast (30 ms symbols) | PASS | 5.0 s | trial 1, 56 B decoded, page errors 0 |
+| H camera QR receive (v10, 56 B) | PASS | 343 ms | 1 frame, page errors 0 |
+
+Final run: `gpu-verify/logs/pipeline-proof5-20261024T140512.log`. Across the earlier passing runs, slow took 5.5 s, fast took 2.0 s, and the camera took 319 to 332 ms. Slow exceeds the H3 target of under 5 s in the final run.
+
+Bug found by this proof: `share-transmit.html` sent the raw payload without `L.frame`, so `share-receive.html` could never decode its burst. Fixed in the same change. The offline bench framed its payloads, so it did not catch this.
+
 ## NOT run
 
 - H3 over-the-air success (phone to laptop speaker, 10 attempts, under 5 s).
 - H4 channel matrix (10 attempts per cell).
 - H5 channel order decision.
 - Camera-based QR reading (H2 over the air).
-- Task 2 and Task 4 UI: the offline self-test page is the only UI built. Task 5 matrix not run.
+- Button-driven trials are covered headless by the Headless pipeline proof above. Over-the-air phone-to-laptop trials are NOT run; see `MANUAL-RUNS.md`. Task 5 matrix not run.
 - Real speaker and microphone response (H1 noise is simulated only).

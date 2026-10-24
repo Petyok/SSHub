@@ -66,6 +66,14 @@ Finding: the spec estimate was width-based. At 80x24 the height binds, so v5 is 
 - zxing-cpp 3.1.1, OpenCV 5.0.0.93 (headless), numpy 2.4.6 (oracle venv)
 - xterm.js 5.5.0 (vendored), qrcode-generator 1.4.4 (vendored)
 
+## Headless pipeline proof
+
+| pipeline | result | time to completion | notes |
+|----------|--------|--------------------|-------|
+| C4 QR scanner (v5, 4096 B) | PASS | 12.93 s | 53 frames, sha256 af2ba40f7dde30b5c1e477a74dcd61d850b9121fd92a68659a1865b2580dcb80 MATCH, page errors 0 |
+
+Headless Chromium with a fake camera from y4m. Not a phone and not handheld. Log: `gpu-verify/logs/pipeline-proof5-20261024T140512.log`.
+
 ## NOT run
 
 - C4 handheld worst case (phone camera, 5 runs, 80x24).
