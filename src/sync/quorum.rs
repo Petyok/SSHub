@@ -697,12 +697,17 @@ impl Unlocker for QuorumUnlocker {
             let plain = self.open_one(&uid)?;
             let payload = super::cred_ops::CredPayload::from_bytes(&plain)
                 .map_err(|e| UnlockError::Failed(e.to_string()))?;
-            // The gate holds the password the TUI asks the store for; an identity key travels
-            // separately through `cred_ops::materialise`.
+            // The gate holds the password the TUI asks the store for; an identity key goes to the
+            // gate's key holder (a private ssh-agent, contract 3d), never to a file of its own.
             self.gate.insert(
                 key.clone(),
                 Zeroizing::new(payload.password.clone().unwrap_or_default()),
             );
+            if let Some(k) = payload.private_key.clone() {
+                self.gate
+                    .insert_private_key(key, Zeroizing::new(k))
+                    .map_err(|e| UnlockError::Failed(format!("{e:#}")))?;
+            }
         }
         Ok(())
     }
