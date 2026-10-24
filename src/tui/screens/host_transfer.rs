@@ -73,7 +73,15 @@ pub fn render_host_transfer(frame: &mut Frame, app: &App) {
     );
 
     let queue_y = panes_y + panes_h;
-    render_queue(buf, area.x, queue_y, area.width, screen, theme);
+    render_queue(
+        buf,
+        area.x,
+        queue_y,
+        area.width,
+        queue_h as usize - 1,
+        screen,
+        theme,
+    );
 
     let hint_y = area.y + area.height - 1;
     let (text, style) = match &screen.notice {
@@ -213,6 +221,7 @@ fn render_queue(
     x: u16,
     y: u16,
     width: u16,
+    rows: usize,
     screen: &HostTransferScreen,
     theme: &ResolvedTheme,
 ) {
@@ -243,7 +252,7 @@ fn render_queue(
         ellipsize(&header, budget),
         theme.style(StyleRole::SftpQueueHeader),
     );
-    for (i, staged) in screen.queue.iter().take(QUEUE_ROWS).enumerate() {
+    for (i, staged) in screen.queue.iter().take(rows).enumerate() {
         let (arrow, style) = if staged.pull {
             ("←", theme.style(StyleRole::SftpQueueDownload))
         } else {
@@ -256,10 +265,10 @@ fn render_queue(
             style,
         );
     }
-    if screen.queue.len() > QUEUE_ROWS {
+    if screen.queue.len() > rows {
         // The last visible row tells what is not drawn.
-        let more = screen.queue.len() - (QUEUE_ROWS - 1);
-        let row = y + QUEUE_ROWS as u16;
+        let more = screen.queue.len() - (rows - 1);
+        let row = y + rows as u16;
         buf.set_string(
             x + 1,
             row,
