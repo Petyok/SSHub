@@ -26,6 +26,7 @@ exclude = [
     "demo/.gitignore",
     ".github",
     ".codegraph",
+    "poc",
 ]
 
 [[bin]]
@@ -91,6 +92,20 @@ tui-term = "0.3"
 unicode-width = "0.2"
 vt100 = "0.16"
 
+# Host sync crypto (docs/host-sync-contract.md). The RustCrypto 0.10/0.5/dalek-2
+# generation is pinned for the whole epic; ml-kem is pinned exactly (its README
+# says it was never independently audited, hence hybrid wrapping with X25519).
+argon2 = "0.5"
+bip39 = "2"
+blake3 = "1"
+chacha20poly1305 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+hex = "0.4"
+ml-kem = { version = "=0.2.3", features = ["deterministic"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+zeroize = "1"
+
 # Per-host secret lookup (#142): search the Secret Service (KeePassXC) by one
 # attribute. Already in the tree through keyring's secret-service backend.
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -99,6 +114,7 @@ dbus-secret-service = { version = "4.1", features = ["crypto-rust"] }
 [dev-dependencies]
 assert_cmd = "2"
 predicates = "3"
+rand_chacha = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 [[test]]
