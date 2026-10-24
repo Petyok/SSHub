@@ -949,3 +949,114 @@ fn a_lying_peers_checkpoint_chunk_fails_verification_and_changes_nothing() {
     assert!(f.store.sync_chain_heads().unwrap().is_empty());
     assert!(f.store.sync_checkpoints().unwrap().is_empty());
 }
+
+#[test]
+fn an_offline_device_adopts_a_checkpoint_and_keeps_its_own_unsynced_ops_on_top() {
+    let now = crate::store::now_ts();
+    let (a, b, c) = (Dev::new(), Dev::new(), Dev::new());
+    for x in [&a, &b, &c] {
+        for y in [&a, &b, &c] {
+            if x.did != y.did {
+                x.trust(y);
+            }
+        }
+    }
+    c.store
+        .sync_append_local_at(
+            &c.id,
+            OpBody::HostUpsert {
+                host_uid: [90; 16],
+                fields: HostFields {
+                    name: Some("old".into()),
+                    ..Default::default()
+                },
+            },
+            now - 40 * 86_400,
+        )
+        .unwrap();
+    converge(&[&a, &b, &c]);
+    // c writes three more ops while it is offline.
+    let mine: Vec<[u8; 32]> = (0..3)
+        .map(|k| c.append(80 + k, &format!("offline{k}")).hash())
+        .collect();
+    let live = [&a, &b];
+    many_ops(&live, 1, 4);
+    checkpoint(&live, 0, now);
+    many_ops(&live, 100, 4);
+    checkpoint(&live, 1, now + 100);
+    many_ops(&live, 150, 2);
+    converge(&live);
+    assert!(
+        a.store
+            .sync_prune(now + 8 * 86_400 + 1_000)
+            .unwrap()
+            .ops_deleted
+            > 0
+    );
+
+    let (cs, _) = ok(round(&c, &a));
+    assert!(cs.adopted.is_some(), "{cs:?}");
+    // Its own ops are on top of the adopted base, unchanged.
+    let tail: Vec<[u8; 32]> = c
+        .store
+        .sync_chain_tail(&c.did, 1)
+        .unwrap()
+        .iter()
+        .map(|o| o.hash())
+        .collect();
+    assert_eq!(tail, mine);
+    // Everyone ends in the same state as a peer that got them normally.
+    for _ in 0..2 {
+        for (x, y) in [(&c, &a), (&a, &b), (&b, &a), (&c, &a)] {
+            ok(round(x, y));
+        }
+        for d in [&a, &b, &c] {
+            approve_all(d);
+        }
+    }
+    assert_eq!(c.hash(), b.hash());
+    assert_eq!(a.hash(), b.hash());
+    assert_eq!(
+        c.store.sync_projection_hash().unwrap(),
+        b.store.sync_projection_hash().unwrap()
+    );
+}
+
+#[test]
+fn an_own_chain_that_diverges_from_the_checkpoint_is_refused_naming_the_seq() {
+    let now = crate::store::now_ts();
+    let (devs, _) = pruned_ring(3, now);
+    let a = &devs[0];
+    // Another copy of device 2's key with a different first op: a fork of its own chain.
+    let twin = Dev::with(devs[2].id.clone());
+    twin.trust(a);
+    let head = a
+        .store
+        .sync_checkpoint_head()
+        .unwrap()
+        .expect("a serves a checkpoint");
+    let bytes = a.store.sync_checkpoint_bytes(&head).unwrap().unwrap();
+    let bundle = crate::sync::oplog::checkpoint::bundle_from_bytes(&bytes).unwrap();
+    let OpBody::CheckpointPropose { cut, .. } = &bundle.proposal.body else {
+        unreachable!()
+    };
+    let cut_seq = cut.iter().find(|c| c.device_id == twin.did).unwrap().seq;
+    // The twin wrote its own chain up to the cut: other ops, same seqs.
+    for k in 0..cut_seq {
+        twin.append(70 + (k as u8), &format!("twin{k}"));
+    }
+    let err = twin
+        .store
+        .sync_checkpoint_accept(&bytes, &a.did, true)
+        .unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("diverges") && msg.contains(&format!("seq {cut_seq}")),
+        "{msg}"
+    );
+    // Nothing changed: the twin's own op is still there.
+    assert_eq!(
+        twin.store.sync_chain_tail(&twin.did, 0).unwrap().len() as u64,
+        cut_seq
+    );
+}

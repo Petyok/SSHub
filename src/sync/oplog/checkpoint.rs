@@ -2110,9 +2110,12 @@ pub(crate) fn known_signs(conn: &Connection, proposal: &[u8; 32]) -> Result<Vec<
 }
 
 /// Adopt a checkpoint on a store that already has a log it can no longer
-/// extend (the peer pruned past it). Refuses when this device holds local ops
-/// above the cut; otherwise the old log is dropped and the bundle becomes the
-/// base, exactly as for a fresh device.
+/// extend (the peer pruned past it). The old log is dropped and the bundle
+/// becomes the base, exactly as for a fresh device. This device's own ops
+/// above the cut are kept: when they chain from the cut's head entry for this
+/// device they are re-ingested unchanged on top (already signed); foreign
+/// unsynced ops are not replayed, the next tail sync fetches them. An own
+/// chain that diverges from the checkpoint is refused, naming the seq.
 pub(crate) fn adopt(
     conn: &Connection,
     bundle: &CheckpointBundle,
@@ -2121,16 +2124,49 @@ pub(crate) fn adopt(
 ) -> Result<()> {
     let (cut, ..) = propose_parts(&bundle.proposal)?;
     let cut_map = cut_of(cut);
-    let mut stmt = conn.prepare("SELECT device_id, seq FROM sync_ops WHERE local = 1")?;
-    let local: Vec<(String, i64)> = stmt
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+    let mut stmt =
+        conn.prepare("SELECT op_hash FROM sync_ops WHERE local = 1 ORDER BY device_id, seq")?;
+    let hashes: Vec<Vec<u8>> = stmt
+        .query_map([], |r| r.get(0))?
         .collect::<std::result::Result<_, _>>()?;
     drop(stmt);
-    for (d, s) in local {
+    let mut replay: Vec<Op> = Vec::new();
+    for h in hashes {
+        let h: [u8; 32] = h.try_into().map_err(|_| anyhow!("stored hash"))?;
+        let Some(row) = load_op(conn, &h)? else {
+            continue;
+        };
+        let op = row.op;
+        let cut_seq = cut_map.get(&op.device_id).copied().unwrap_or(0);
+        if op.seq < cut_seq {
+            continue;
+        }
+        if op.seq == cut_seq {
+            let entry = cut
+                .iter()
+                .find(|c| c.device_id == op.device_id)
+                .expect("cut entry");
+            ensure!(
+                entry.op_hash == row.hash,
+                "own chain diverges from the checkpoint at seq {}",
+                op.seq
+            );
+            continue;
+        }
+        replay.push(op);
+    }
+    let mut next: BTreeMap<DeviceId, (u64, [u8; 32])> = BTreeMap::new();
+    for op in &replay {
+        let (seq, prev) = *next.entry(op.device_id.clone()).or_insert_with(|| {
+            let e = cut.iter().find(|c| c.device_id == op.device_id);
+            (e.map_or(0, |e| e.seq) + 1, e.map_or(ZERO, |e| e.op_hash))
+        });
         ensure!(
-            cut_map.get(&d).is_some_and(|c| s as u64 <= *c),
-            "this device has local ops above the checkpoint; sync them first"
+            op.seq == seq && op.prev_hash == prev,
+            "own chain does not continue from the checkpoint head at seq {}",
+            op.seq
         );
+        next.insert(op.device_id.clone(), (op.seq + 1, op.hash()));
     }
     // Rows the projection made go with the log they came from; bootstrap makes them again.
     for (kind, table) in [
@@ -2158,7 +2194,29 @@ pub(crate) fn adopt(
     ] {
         conn.execute(&format!("DELETE FROM {t}"), [])?;
     }
-    bootstrap(conn, bundle, trust, now)
+    bootstrap(conn, bundle, trust, now)?;
+    for op in replay {
+        let hash = op.hash();
+        let seq = op.seq;
+        match super::ingest::ingest(conn, op, now)? {
+            super::store_impl::IngestOutcome::Applied => {}
+            super::store_impl::IngestOutcome::Pending => {
+                // Our own change, decided when it was made.
+                conn.execute(
+                    "UPDATE sync_ops SET local = 1 WHERE op_hash = ?1",
+                    params![&hash[..]],
+                )?;
+                super::pending::resolve(conn, &hash, true, now)?;
+                continue;
+            }
+            other => bail!("could not replay own op at seq {seq} on the checkpoint: {other:?}"),
+        }
+        conn.execute(
+            "UPDATE sync_ops SET local = 1 WHERE op_hash = ?1",
+            params![&hash[..]],
+        )?;
+    }
+    Ok(())
 }
 
 /// Record a bundle we fetched (a proposal blob) or adopt one (we are behind
