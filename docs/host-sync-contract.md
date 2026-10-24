@@ -971,6 +971,34 @@ Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, n
   holders, so a revocation needs at least two remaining terminal holders (a ring of two terminals and a phone cannot
   revoke a terminal by resharing; the paper is offline and cannot contribute either).
 
+### 4e. Mixed-mode exemption (C10)
+
+Design: "The mixed-mode exemption". New op for the op-log worker:
+
+```rust
+ExemptionSet { device_id: DeviceId, slot: Option<DevicePublic> }   // Red, gated by the ceremony (4c)
+```
+
+`slot: Some(public)` enables, `None` disables. Effect: the projection sets `sync_devices.exempt` to 1 / 0 for
+`device_id` (the Sync tab reads `DeviceRow.exempt` and prints "exemption: master phrase" on that row); the op
+is otherwise inert and the core reads the newest `ExemptionSet` per device from the log. `slot.mlkem_pub` must
+validate like any `DevicePublic`.
+
+Core (this package, after the op lands):
+
+* `exemption::slot_identity(id, phrase, profile) -> DeviceIdentity` as in the design; `enable_body(id, phrase)`
+  builds `ExemptionSet { Some(slot public) }` on the exempt machine, `disable_body(device)` the `None` form.
+* Ring mode must be Quorum; the device must be an attended holder terminal; `ceremony::red_status` adds the rule that
+  the second approver is not `device_id`.
+* `quorum::share_recipients` adds the slot of every active exemption (not revoked device) as a recipient of new
+  credentials; `reshare` treats slots like the paper: permanent recipients, sub-shares hybrid-wrapped to the
+  slot key, never a session key; `revocation::next_actions` contributes when the set of permanent recipients
+  differs from the newest reshare's holder set (enable or disable) without a rotation step.
+* Unlock: `QuorumUnlocker` on an exempt device with the master phrase (`ShareSource::master_phrase`) derives the
+  slot identity and uses `own_shares(store, &slot, host)` at the same epoch as its own share as the second share,
+  asking no peer. Wrong phrase: no slot share unwraps, the normal paths continue.
+* The UI offers enabling only after showing the alternatives (trust session, Vault), and shows the label per row.
+
 ### 4d. Builders and screening for the UI (C4, C7)
 
 * `recovery::start_body(store, me, now, paper_recover: Option<&DeviceIdentity>, third_factor)` builds the

@@ -1,6 +1,7 @@
 //! Host sync (epic #13). Interface contract: `docs/host-sync-contract.md`.
 
 pub mod apply;
+pub mod ceremony;
 pub mod cert;
 pub mod client;
 pub mod codes;
