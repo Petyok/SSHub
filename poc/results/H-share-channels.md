@@ -68,3 +68,7 @@ Bug found by this proof: `share-transmit.html` sent the raw payload without `L.f
 - Camera-based QR reading (H2 over the air).
 - Button-driven trials are covered headless by the Headless pipeline proof above. Over-the-air phone-to-laptop trials are NOT run; see `MANUAL-RUNS.md`. Task 5 matrix not run.
 - Real speaker and microphone response (H1 noise is simulated only).
+
+## Over the air
+
+Scheduled for the next session, not run: H3 and H4 (phone speaker to laptop microphone, FSK, 10 attempts per cell) and the reverse QR (phone screen to the laptop webcam, H2). Driver: `assets/companion/scripts/phone-ota.mjs audio` (`--noqr` for FSK, `--only qr` for the reverse QR). What is measured today is the other direction only (terminal QR to the phone camera), see PoC C "Over the air".
