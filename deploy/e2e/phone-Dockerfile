@@ -1,0 +1,25 @@
+# The e2e phone: the committed companion page in headless Chromium plus phone-driver.mjs (see its header).
+# Same Node and Playwright pins as gpu-verify/remote/tools/Dockerfile; build context is the repository root.
+FROM node:22.23.4-bookworm-slim
+ARG PLAYWRIGHT_VERSION=1.64.1
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+ENV NODE_PATH=/usr/local/lib/node_modules
+RUN npm install -g playwright@${PLAYWRIGHT_VERSION} \
+ && playwright install --with-deps chromium \
+ && npm cache clean --force \
+ && rm -rf /var/lib/apt/lists/* \
+ && chmod -R a+rX /opt/ms-playwright
+
+# Driver libraries: the page's own modules (frames, scan, keys, ops), their vendored crypto, linked offline.
+COPY assets/companion /app/assets/companion
+RUN cd /app/assets/companion && node scripts/link-vendor.mjs \
+ && chmod -R a+rX /app
+COPY deploy/e2e/phone-driver.mjs /driver/phone-driver.mjs
+COPY deploy/e2e/phone-page /driver/phone-page
+RUN install -d -o 10001 -g 10001 /phone && chmod -R a+rX /driver
+
+USER 10001:10001
+WORKDIR /driver
+ENV PHONE_LIB=/app/assets/companion PHONE_PAGE_DIR=/driver/phone-page PHONE_PROFILE=/phone/profile
+ENTRYPOINT ["node", "/driver/phone-driver.mjs"]
+CMD ["serve"]

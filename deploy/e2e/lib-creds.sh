@@ -73,3 +73,16 @@ snowt() {
   echo "sync-now on $1 took $(( $(date +%s) - t0 ))s"
   printf '%s\n' "$out" | pjq -c '.[]? | {name, status, applied, pending, received, rejected}' 2>/dev/null || printf '%s\n' "$out" | cut -c1-300
 }
+
+# ---- the e2e phone (phone-driver.mjs, compose service `phone`): additive helpers --------------------------------
+# phone CMD [JSON]: one command against the phone daemon; prints the JSON answer, exit 1 when the page refused.
+phone() { c=$1; shift; $C exec -T phone node /driver/phone-driver.mjs "$c" "$@"; }
+# Wait (bounded) until the phone daemon answers.
+phone_ready() {
+  i=0
+  until phone info >/dev/null 2>&1; do
+    i=$((i + 1)); [ "$i" -le 90 ] || return 1; sleep 1
+  done
+}
+# Canonical bytes and signature (hex) of the op whose hash starts with $2, as peer $1 stores it. Read only.
+oprow() { sq "$1" "SELECT hex(canonical) || ' ' || hex(signature) FROM sync_ops WHERE lower(hex(op_hash)) LIKE lower('$2%') LIMIT 1"; }
