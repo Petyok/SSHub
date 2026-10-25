@@ -251,3 +251,49 @@ fn a_challenge_never_lives_longer_than_the_contract_says() {
         make_challenge(&f.d[0].store, &f.d[0].id, &f.host, &f.d[1].did, 1_000, 600).unwrap();
     assert_eq!(c.expiry, 1_000 + crate::sync::limits::CHALLENGE_EXPIRY_SECS);
 }
+
+#[test]
+fn a_snapshot_must_name_its_credential_and_only_one_stays_live() {
+    use crate::sync::crypto::Argon2Profile;
+    use crate::sync::snapshot::snapshot_seal_for;
+    let f = fixture();
+    let store = &f.d[0].store;
+    let cheap = Argon2Profile {
+        mem_kib: 64,
+        iters: 1,
+    };
+    let share = Share {
+        index: 2,
+        bytes: vec![9; 32],
+    };
+    let code = "K7Q2-9FMX-C41T-8PWD";
+    let mine = snapshot_seal_for(&f.host, &share, code, 1_000, cheap)
+        .unwrap()
+        .to_bytes();
+    let for_another = snapshot_seal_for(&[1u8; 16], &share, code, 1_000, cheap)
+        .unwrap()
+        .to_bytes();
+    assert!(remember_snapshot_at(store, &f.host, &for_another, 1_001).is_err());
+    remember_snapshot_at(store, &f.host, &mine, 1_001).unwrap();
+    assert_eq!(share_from_code(store, &f.host, code, 1_002).unwrap(), share);
+    // The same blob again is not a second one; a different live blob is refused.
+    remember_snapshot_at(store, &f.host, &mine, 1_003).unwrap();
+    let second = snapshot_seal_for(&f.host, &share, "M7Q2-9FMX-C41T-8PWE", 1_100, cheap)
+        .unwrap()
+        .to_bytes();
+    assert!(remember_snapshot_at(store, &f.host, &second, 1_100)
+        .unwrap_err()
+        .to_string()
+        .contains("live"));
+    // After the first expired, or was forgotten (a reissue), the next one is kept.
+    remember_snapshot_at(
+        store,
+        &f.host,
+        &second,
+        1_000 + crate::sync::limits::SNAPSHOT_TTL_SECS + 1,
+    )
+    .unwrap();
+    forget_snapshot(store, &f.host).unwrap();
+    assert!(share_from_code(store, &f.host, code, 1_002).is_err());
+    remember_snapshot_at(store, &f.host, &mine, 1_004).unwrap();
+}

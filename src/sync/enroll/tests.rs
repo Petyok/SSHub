@@ -670,3 +670,64 @@ fn a_failed_adoption_leaves_the_joiner_free_to_join_another_ring() {
         "the ring id is set only after a successful adoption"
     );
 }
+
+fn round_between(client: &Dev, server: &Dev) {
+    let (cl, sl) = pipe_pair();
+    std::thread::scope(|sc| {
+        let (mut cl, mut sl) = (cl, sl);
+        let h = sc.spawn(move || run_sync_serve(&server.store, &server.id, &mut sl));
+        let c = run_round(&mut cl, &client.store, &client.id, &server.did);
+        drop(cl);
+        let _ = h.join().unwrap();
+        c.unwrap();
+    });
+}
+
+fn role_table(d: &Dev) -> Vec<(String, DeviceRole)> {
+    let mut t: Vec<_> = d
+        .store
+        .sync_devices()
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.id, r.role))
+        .collect();
+    t.sort_by(|a, b| a.0.cmp(&b.0));
+    t
+}
+
+// e2e P3: the CLI-only ring (a founds via the hub, b joins via the hub, a approves, b and a meet directly).
+#[test]
+fn a_ring_built_with_sync_join_agrees_on_every_devices_role() {
+    let (hub, a, b) = (Dev::new(), Dev::new(), Dev::new());
+    let mut y1 = |_: &SasPrompt<'_>| true;
+    let mut y2 = |_: &SasPrompt<'_>| true;
+    // a founds the ring with the hub (a initiates, neither has a ring: the initiator invites).
+    let (r1, r2) = enroll_raw(&hub, &a, Some(&mut y1), Some(&mut y2));
+    let step1 = (r1.map(|o| o.role), r2.map(|o| o.role));
+    let (mut y1, mut y2) = (|_: &SasPrompt<'_>| true, |_: &SasPrompt<'_>| true);
+    let (r1, r2) = enroll_raw(&hub, &b, Some(&mut y1), Some(&mut y2));
+    let step2 = (r1.map(|o| o.role), r2.map(|o| o.role));
+    round_between(&a, &hub);
+    for op in a.store.sync_pending().unwrap() {
+        crate::sync::ceremony::resolve(&a.store, &op.hash(), true, crate::store::now_ts()).unwrap();
+    }
+    let (mut y1, mut y2) = (|_: &SasPrompt<'_>| true, |_: &SasPrompt<'_>| true);
+    let (r1, r2) = enroll_raw(&a, &b, Some(&mut y1), Some(&mut y2));
+    let step4 = (r1.map(|o| o.role), r2.map(|o| o.role));
+    let report = format!(
+        "steps: {step1:?} {step2:?} {step4:?}\nhub={:?} a={:?} b={:?}\nids hub={} a={} b={}",
+        role_table(&hub),
+        role_table(&a),
+        role_table(&b),
+        hub.did,
+        a.did,
+        b.did
+    );
+    for (n, s) in [("founding", &step1), ("b joins the hub", &step2), ("b meets a", &step4)] {
+        assert!(s.0.is_ok() && s.1.is_ok(), "{n} failed\n{report}");
+    }
+    assert!(
+        role_table(&a) == role_table(&b) && role_table(&a) == role_table(&hub),
+        "devices disagree about roles\n{report}"
+    );
+}

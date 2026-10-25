@@ -515,6 +515,9 @@ fn run<L: SyncLink>(
         VerifiedBy::SshHostKey
     };
     let known = store.sync_devices()?.iter().any(|d| d.id == peer_id);
+    // Two members of one ring meeting again (a repeat ceremony, rehabilitation): nothing to hand over, and
+    // the one that already has history cannot adopt an anchor. Roles stay what the ring says they are.
+    let repeat = my_ring.is_some() && my_ring == peer_hello.ring;
     let ring = match role {
         // The inviter admits the joiner as a mirror (Yellow on the rest of the ring) and, if it had no
         // ring yet, founds one: the ring id is the founder's device id.
@@ -571,33 +574,37 @@ fn run<L: SyncLink>(
                         anyhow!("device registered locally but the ring could not be told: {e}")
                     })?;
             }
-            send_anchor(&mut s, &bundle_to_bytes(&store.sync_join_anchor_build(id)?))?;
+            if !repeat {
+                send_anchor(&mut s, &bundle_to_bytes(&store.sync_join_anchor_build(id)?))?;
+            }
             ring
         }
         // The joiner trusts the inviter as a holder and takes over its ring.
         EnrollRole::Joiner => {
             let ring = peer_hello.ring.clone().unwrap_or_else(|| peer_id.clone());
-            // The ring that existed is the starting state, not something to review (contract 3c).
-            let bundle = bundle_from_bytes(&recv_anchor(&mut s, &mut ui)?)?;
-            let hosts = hosts_in(&bundle.state);
-            note(&mut ui, EnrollProgress::Adopting { hosts });
-            store.sync_join_adopt(
-                &bundle,
-                &BootstrapTrust::Enrollment {
-                    inviter: peer_id.clone(),
-                },
-            )?;
-            // A state carries no label for the inviter's own row; the joiner saw its name in the reveal.
-            store.with_conn(|c| {
-                c.execute(
-                    "UPDATE sync_devices SET name = ?2 WHERE device_id = ?1",
-                    rusqlite::params![peer_id, peer_reveal.name],
+            if !repeat {
+                // The ring that existed is the starting state, not something to review (contract 3c).
+                let bundle = bundle_from_bytes(&recv_anchor(&mut s, &mut ui)?)?;
+                let hosts = hosts_in(&bundle.state);
+                note(&mut ui, EnrollProgress::Adopting { hosts });
+                store.sync_join_adopt(
+                    &bundle,
+                    &BootstrapTrust::Enrollment {
+                        inviter: peer_id.clone(),
+                    },
                 )?;
-                Ok(())
-            })?;
-            // Only an adopted ring is ours: a failed adoption leaves the device free to join another.
-            set_ring_id(store, &ring)?;
-            note(&mut ui, EnrollProgress::Adopted { hosts });
+                // A state carries no label for the inviter's own row; the joiner saw its name in the reveal.
+                store.with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_devices SET name = ?2 WHERE device_id = ?1",
+                        rusqlite::params![peer_id, peer_reveal.name],
+                    )?;
+                    Ok(())
+                })?;
+                // Only an adopted ring is ours: a failed adoption leaves the device free to join another.
+                set_ring_id(store, &ring)?;
+                note(&mut ui, EnrollProgress::Adopted { hosts });
+            }
             store.sync_register_device(
                 &peer_pub,
                 &peer_reveal.name,
