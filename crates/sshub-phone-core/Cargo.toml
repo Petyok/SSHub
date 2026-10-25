@@ -1,0 +1,52 @@
+# Phase 1 skeleton of the native Android companion's Rust core (docs/host-sync-android.md).
+# Standalone package (own [workspace], own Cargo.lock) until the sshub-sync-proto extraction lands:
+# it compiles the REAL sync sources in place through #[path], so there is one implementation and
+# no copy. After the extraction these two #[path] lines become `sshub-sync-proto = { path = ... }`.
+[package]
+name = "sshub-phone-core"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-or-later"
+description = "SSHub phone companion core: shared sync primitives behind uniffi"
+
+[lib]
+name = "sshub_phone_core"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[features]
+cli = ["uniffi/cli"]
+
+[dependencies]
+uniffi = "=0.32.2"
+# The set src/sync/crypto + src/sync/limits need; same versions as the root Cargo.toml.
+anyhow = "1"
+argon2 = "0.5"
+base64 = "0.22"
+bip39 = "2"
+blake3 = "1"
+chacha20poly1305 = "0.10"
+hex = "0.4"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+ml-kem = { version = "=0.2.3", features = ["deterministic"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde_json = "1"
+sha2 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+zeroize = "1"
+
+[dev-dependencies]
+rand_chacha = "0.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+# no `strip`: uniffi library mode reads its metadata from symbols; AGP strips the .so when packaging
+opt-level = "s"
+
+[workspace]
