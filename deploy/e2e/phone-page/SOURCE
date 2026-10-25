@@ -1,2 +1,2 @@
-poc/phone 2db3418 (assets/companion/sshub-companion.html and FINGERPRINT, byte for byte)
+poc/phone 7fb1091 (assets/companion/sshub-companion.html and FINGERPRINT, byte for byte)
 Refresh: deploy/e2e/phone-refresh.sh <phone-worktree> <commit>
