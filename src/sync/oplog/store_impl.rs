@@ -271,6 +271,22 @@ impl LauncherStore {
         })
     }
 
+    /// [`Self::sync_ingest`] for a frame of ops in ONE transaction: one commit (one set of
+    /// fsyncs) instead of one per op, the cost that dominates a large log on a real disk.
+    /// Outcomes are in the order of `ops`; a database error rolls the whole batch back.
+    pub fn sync_ingest_batch(&self, ops: Vec<Op>) -> Result<Vec<IngestOutcome>> {
+        self.with_conn(|conn| {
+            let tx = tx(conn)?;
+            let now = now_ts();
+            let mut out = Vec::with_capacity(ops.len());
+            for op in ops {
+                out.push(ingest(&tx, op, now)?);
+            }
+            tx.commit()?;
+            Ok(out)
+        })
+    }
+
     /// Ops waiting for review, oldest first.
     pub fn sync_pending(&self) -> Result<Vec<Op>> {
         self.with_conn(pending::list)
