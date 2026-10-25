@@ -52,15 +52,15 @@ Contract section 8 says "no async runtime". `bluer` is async on tokio, so the ru
 - CLI: `--ble` on `sync-phone-enroll`, `sync-share-request`, `sync-notice`, `sync-cert-request`, `sync-phone-ops` (flag documented in each verb's `--help`, the usage text, README, man page). It prints `bluetooth: pick SSHub-XXXX in the phone page's device list`, statuses as `bluetooth:` lines and `sent:` when the phone has the frame; stdin keeps working next to it. In a build without the feature it exits 1 with "this build has no Bluetooth channel: build with `--features bluetooth`".
 - `examples/media-probe.rs --ble`: advertises, sends a 3000 byte synthetic frame, prints every frame the page sends back with its CRC-32.
 
-## vhci check on gpu-serv (read only, nothing loaded, nothing run beyond these)
+## Real BlueZ on virtual controllers (`hci_vhci` + `btvirt`)
 
-Commands: `ls -l /dev/vhci`, `cat /proc/modules | grep -i -E "bluetooth|vhci|btusb"`, `modinfo hci_vhci`, `uname -r`, `docker run --rm sshub-hostsync-tools:local sh -c "command -v bluetoothd btvirt btmgmt"`.
+What ran: `ble_bluez.rs` (the real `BluezTransport` through the public `listen_with`) against a real `bluetoothd` 5.66 (Debian bookworm image) on two virtual controllers, with a `bluer` GATT client on the second controller standing in for the page. No physical adapter was involved.
 
-- `/dev/vhci`: **exists** (`crw------- root root 10, 137`, a static devnode; opening it makes the kernel autoload the module), root only.
-- `hci_vhci` is **not loaded** (no bluetooth module in `/proc/modules`); the module file is installed (`/lib/modules/5.15.0-191-generic/kernel/drivers/bluetooth/hci_vhci.ko`), kernel 5.15.0-191-generic, `CONFIG_BT=m`, `CONFIG_BT_HCIVHCI=m`.
-- The tools image has no `bluetoothd`, `btvirt` or `btmgmt`.
-
-**Proposal (not done; needs the maintainer's approval because it loads a kernel module on the shared host):** (1) `modprobe hci_vhci` on gpu-serv (reversible with `rmmod`; virtual controllers are host-wide, there is no real Bluetooth on that machine to disturb, still the maintainer's call); (2) a throwaway container (`--rm`, root inside, `--device /dev/vhci --cap-add NET_ADMIN --cap-add NET_RAW`) with `dbus`, `bluez` and BlueZ's `btvirt` (Debian may not package it; building BlueZ with `--enable-testing` provides it) creating two virtual controllers hci0 and hci1; (3) `bluetoothd` on the system bus of the container; (4) an `#[ignore]` integration test: sshub's `BluezTransport` serving on hci0, a `bluer` GATT client (as the stand-in for the page) on hci1 discovering `SSHub-XXXX`, connecting, `startNotify` on TX, writing HELLO and exchanging frames through `Link::phone`, asserting the same results as the fake-transport tests. Needs one small code change first: an adapter selector (`SSHUB_BLE_ADAPTER`, default the first) so the test can pin hci0. What it would prove that nothing here does: that the `bluer` GATT application registers with a real BlueZ, that `AcquireWrite`/`AcquireNotify` deliver datagrams with the MTU we compute, advertising registration and removal, and reconnect behaviour. What it would not prove: Chrome on Android, real radio, the Android MTU exchange.
+- **Infra**: `tests/ble-vhci/Dockerfile` (the CI image plus `bluez`, `bluez-test-tools` for `btvirt`, `dbus`) and `tests/ble-vhci/run.sh` (private system D-Bus, `btvirt -l2`, `bluetoothd -E`, then the test binary). The container needs `--network host` (AF_BLUETOOTH sockets exist only in the initial network namespace), `--device /dev/vhci`, `NET_ADMIN`, `NET_RAW`; the host needs `hci_vhci` loaded (it pulls `bluetooth` and `ecdh_generic`; BlueZ's BNEP plugin makes the kernel load `bnep` too).
+- **Test**: `src/sync/media/ble_bluez/vhci_tests.rs`, `#[ignore]`d, run explicitly with `SSHUB_BLE_ADAPTER=hci0 SSHUB_BLE_TEST_CLIENT=hci1 cargo test --lib --features bluetooth vhci_tests -- --ignored --nocapture --test-threads=1`. `SSHUB_BLE_ADAPTER` is the new selector of the adapter the transport serves on (default: BlueZ's default adapter).
+- **Result**: pass. HELLO and the 244 byte message size (ATT MTU 512 on the virtual link); a kind 1 frame down and a kind 2 frame up at 200, 3000 and 20000 bytes, each byte for byte (about 0.01 s, 0.01 s, 0.03 s, no radio); disconnect, the terminal reports `still advertising as SSHub-TAG`, reconnect to the same peripheral with the same tag, the current frame is pushed again and a further frame goes up; closing the channel makes the client see BYE (user).
+- **On the air** (from the HCI trace, which is a stronger check than BlueZ's device properties): two reports, the advertisement (flags 0x06 and the one 128-bit service UUID) and the scan response (complete local name `SSHub-TAG`); no manufacturer data, service data, appearance, short name, class or any other name; none of the host or user names is in them.
+- **Limits of the virtual air**: `btdev` reports no RSSI, so the kernel never turns the reports into BlueZ `DeviceFound` events; the client therefore connects by address (`ConnectDevice`, which needs `bluetoothd -E`, passed by the run script) instead of through a scan result, and the air check reads the HCI trace of its own scan. The Android MTU negotiation, Web Bluetooth, the chooser and the radio remain the device session's.
 
 ## Commands
 
@@ -69,13 +69,13 @@ Commands: `ls -l /dev/vhci`, `cat /proc/modules | grep -i -E "bluetooth|vhci|btu
 - Link and driver tests alone: `cargo test --lib sync::media` and `cargo test --lib --features bluetooth sync::media::ble` (ble-t2-20261025T211345.log)
 - Dependency probes: ble-probe-20261025T202742.log (bluer tree, 76 packages), mac type-check iterations ble-mac-*.log
 - Device session: `host-sync-plan/handoff/ble-device-test.md`
+- Real BlueZ on virtual controllers: `ble-vhci.sh <worktree> <name> [keep|unload]` (host side `ble-vhci-host.sh`; logs `ble-vhci-*.log`).
 
 ## Not run
 
-- **No real radio, anywhere:** `ble_bluez.rs` (advertisement, GATT application, the select loop, MTU, device disconnect) compiled and linted only; `ble_mac.rs` type-checked only. The first run on hardware is the device session.
+- **No real radio, anywhere:** `ble_bluez.rs` ran against a real BlueZ only on virtual controllers (above); `ble_mac.rs` is type-checked only. The first run on hardware is the device session.
 - **The phone page side** (Web Bluetooth) is the page worker's; nothing here exercised Chrome, the chooser, `requestDevice`, the real Android MTU, `writeValueWithoutResponse` pacing.
 - Range, throughput and battery numbers: none measured (the device test collects them).
 - macOS behaviour beyond the type check: permission prompt, `maximumUpdateValueLength`, and the fact that a CoreBluetooth peripheral cannot disconnect a central (`drop_central` forgets the central and advertises again; the central leaves when its page does).
 - **No key in the TUI to drop the connected phone** (contract C20 says the TUI offers one): `ListenHandle::drop_central()` exists and is tested at the driver level; wiring a key into the unlock and enrollment modals is left to the TUI owner (modal key handling is theirs).
 - Windows: the feature builds; the channel reports that it is not implemented.
-- The vhci container test (proposal above).
