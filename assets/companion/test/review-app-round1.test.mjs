@@ -44,8 +44,10 @@ function challenge({ op, opSig = new Uint8Array(64), expiry = NOW + 100, request
     rnd(32, 1), be(expiry, 8), rnd(32, 2), be(requestId, 8), u32(opBytes.length), opBytes, opSig, u32(material.length), material,
   );
 }
-const shareReleaseOp = ({ device = requester.deviceId, lamport = 5, epoch = 3, ts = NOW - 10, reqId = '7', req = device } = {}) =>
-  `{"device_id":"${device}","seq":1,"lamport":${lamport},"prev_hash":"${'0'.repeat(64)}","timestamp":${ts},"epoch":${epoch},"alg":[1,1],"body":{"ShareRelease":{"host_uid":"${HOST}","request_id":${reqId},"requester":"${req}"}}}`;
+// eph: the ephemeral key the op names; the challenge() frame carries rnd(32, 2), so the default agrees with it.
+// eph = null writes the old three field body (no Rust path emits it any more).
+const shareReleaseOp = ({ device = requester.deviceId, lamport = 5, epoch = 3, ts = NOW - 10, reqId = '7', req = device, eph = '02'.repeat(32) } = {}) =>
+  `{"device_id":"${device}","seq":1,"lamport":${lamport},"prev_hash":"${'0'.repeat(64)}","timestamp":${ts},"epoch":${epoch},"alg":[1,1],"body":{"ShareRelease":{"host_uid":"${HOST}","request_id":${reqId},"requester":"${req}"${eph === null ? '' : `,"eph_x25519_pub":"${eph}"`}}}}`;
 const ctx = (ring = {}) => ({ now: NOW, identity: phone, ring, aliases: {} });
 
 // ---------------------------------------------------------------- F1: the parser terminates on every malformed input
@@ -366,3 +368,17 @@ test('sound: expiry window, kind, requester mismatch, wrong material host', () =
   assert.equal(evaluateChallenge(frame, ctx()).ok, true);
 });
 
+
+test('ShareRelease carries eph_x25519_pub: it must equal the challenge ephemeral key; the three field body is refused', () => {
+  const ok = evaluateChallenge(challenge({ op: shareReleaseOp() }), ctx());
+  assert.equal(ok.ok, true, ok.refusal);
+  const swapped = evaluateChallenge(challenge({ op: shareReleaseOp({ eph: '03'.repeat(32) }) }), ctx());
+  assert.equal(swapped.ok, false);
+  assert.match(swapped.refusal, /another ephemeral key/);
+  const old = evaluateChallenge(challenge({ op: shareReleaseOp({ eph: null }) }), ctx());
+  assert.equal(old.ok, false);
+  assert.match(old.refusal, /malformed/);
+  for (const eph of ['02'.repeat(31), 'zz'.repeat(32), '02'.repeat(32).toUpperCase()]) {
+    assert.equal(evaluateChallenge(challenge({ op: shareReleaseOp({ eph }) }), ctx()).ok, false, eph);
+  }
+});

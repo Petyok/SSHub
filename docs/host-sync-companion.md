@@ -143,6 +143,10 @@ A requester this phone has never met cannot be checked: the page refuses to enab
 the requester's device id (shown in the warning) into the box. Approve such a request only if you started it yourself
 on a terminal and its id is the one printed there.
 
+The signed request names the ephemeral key the reply is sealed to (`eph_x25519_pub`, next to the host, the request id
+and the requester). The page refuses a request whose signed key differs from the key in the challenge frame, and a
+request without the field (the older three-field form no terminal writes any more).
+
 Options before you approve: show a QR code, copy to the clipboard, play a sound (fast or slow), and optionally
 issue a short code. Tap **Approve and release**. The phone then fires every channel you left on:
 
