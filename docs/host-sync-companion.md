@@ -83,14 +83,18 @@ different phones.
 
 ## First run
 
-1. Open the page. Choose a PIN or passphrase of at least 6 characters (twice) and tap **Create a new key**.
+1. Open the page. Choose a PIN or passphrase of at least 10 characters (twice) and tap **Create a new key**.
 2. The page shows 24 backup words. They are the key itself: anyone with them can act as this phone, and with them
    you can restore it elsewhere. Write them on paper, in order. Do not photograph them. Tick the box and continue.
 3. The home screen shows this phone's device id and whether it is enrolled.
 
 The PIN protects the key in the browser's storage with Argon2id (64 MiB, 3 passes). A short PIN is the weak point
-of a stolen phone whatever the profile is; use a longer passphrase if the phone may be lost. The page locks when it
-is hidden (a tab switch or screen off) and asks for the PIN again.
+of a stolen phone whatever the profile is, so the page asks for 10 characters; use a longer passphrase if the phone may
+be lost. The page locks when it is hidden (a tab switch or screen off), wipes every key from memory and asks for the
+PIN again. After two wrong PINs in a row each further wrong try makes the page wait (5 s, doubling, at most an hour),
+and the wait survives a reload. Someone who can edit the browser's storage can reset that counter: it protects
+against a person holding the unlocked-looking screen, not against a copy of the storage, where only the length of the
+PIN and the Argon2id cost count.
 
 ## Enrollment
 
@@ -124,7 +128,15 @@ The approval screen is built from the signed operation bytes, not from any text 
   expiry, the terminal's one-time key and the material sent to the phone. Compare them with the words the terminal
   shows when it shows them; a mismatch means the request was altered on the way;
 - a list of checks (expiry, request and requester agree, signature, own share unwrapped for this credential);
+- the **age of the signed request**: the terminal signs the request right before it shows the challenge, so the page
+  refuses a request signed more than 12 minutes ago (120 s plus 600 s of clock skew), one dated in the future, and a
+  challenge whose expiry is more than 12 minutes after the signature (an old signed request wrapped in a fresh
+  challenge); a request older than 2 minutes that is still accepted has its time row highlighted;
 - a countdown: a request lives about 120 seconds.
+
+A requester this phone has never met cannot be checked: the page refuses to enable **Approve** until you have typed
+the requester's device id (shown in the warning) into the box. Approve such a request only if you started it yourself
+on a terminal and its id is the one printed there.
 
 Options before you approve: show a QR code, copy to the clipboard, play a sound (fast or slow), and optionally
 issue a short code. Tap **Approve and release**. The phone then fires every channel you left on:
@@ -141,7 +153,9 @@ issue a short code. Tap **Approve and release**. The phone then fires every chan
   first: anyone who sees them has this share.
 
 Every approval also appends one signed entry to the phone's own chain and carries it in the reply (the terminal
-delivers it to the ring). This is what shows the ring that the phone is alive.
+delivers it to the ring). This is what shows the ring that the phone is alive. The phone copies the logical clock and
+epoch of a request into that entry only when it verified the requester's signature, never from a requester it has not
+met, and it refuses to sign when a counter would leave the 64 bit range.
 
 ### Refusals
 
@@ -167,8 +181,10 @@ check that signature. Check the requester's id and name yourself.
 When you approve you can also issue a short code: 16 characters (for example `K7Q2-9FMX-C41T-8PWD`) that let
 the terminal open this credential later without the phone for 7 days. The code exists only on the phone screen;
 write it down or type it on the terminal. The phone issues **one live code per credential** and refuses a second
-while one is live. The Argon2id profile and the expiry are recorded inside the blob; a phone too slow for the
-normal profile falls back to a weaker one, which the terminal flags.
+while one is live. The Argon2id profile, the expiry and the credential's id (`host_uid`) are recorded inside the blob
+(header version 2, the id is part of the authenticated header), so a terminal can tell which credential a blob opens
+and refuse a second live blob for it; a phone too slow for the normal profile falls back to a weaker one, which the
+terminal flags.
 
 Menu **Short codes I issued** lists them. If the sealed blob never reached the terminal, or the credential was
 reissued, tap **Declare it dead** so a new code can be issued; the old blob is still valid until it expires if it
@@ -204,8 +220,10 @@ phone is the author and signer of the certificate, so a stolen terminal cannot i
   new hosts per day and the epoch range. The phone shows all of it from the bytes (the device by name, or "not met"
   with a warning, every listed host, the term in days with its end date, the budget) and, on **Approve**, signs the
   certificate with exactly those fields. It refuses, with the reason and no Approve button: a term that is over or
-  longer than 90 days, a budget outside 1 to 50, more than 64 hosts or none, an inverted epoch range, and a request
-  that names this phone. The certificate takes effect only after a second terminal and a third factor approve it;
+  longer than 90 days, a budget outside 1 to 50, more than 64 hosts or none, an inverted epoch range, an epoch range that
+  does not start at this phone's own epoch or is more than one epoch wide (a terminal asks for the phone's epoch plus
+  one, so a certificate ends with the next reshare; the epoch row is highlighted), and a request that names this
+  phone. The certificate takes effect only after a second terminal and a third factor approve it;
   carry the signed answer (QR or text) to the terminal.
 - **Request to extend the budget**: when a certificate has used its new hosts of the day, the terminal shows a
   request for 1 to 50 more. The phone refuses a certificate it did not issue, a revoked or expired one, and a second
@@ -238,14 +256,21 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
 - **Show backup words** in the menu needs the PIN again and shows the 24 words. They are the same words as at first
   run.
 - **Restore** on a fresh page: enter the 24 words and choose a new PIN. The restored phone is the same device as
-  before (same id, same keys): no recovery and no revocation are needed, but wipe the old phone. On the lock screen,
-  "Restore from 24 words instead" replaces the stored key and erases the enrollments and short-code list of the old
-  key from this browser.
+  before (same id, same keys), so no recovery and no revocation are needed, but wipe the old phone. **A restored phone
+  does not sign anything yet**: it has lost the record of its own chain, and a new entry with a sequence number the ring
+  already holds would look like a fork, which the ring treats as proof that the phone is compromised. The home screen
+  shows a red card until the phone has taken its chain: ask a terminal for this phone's own newest ops (a list the
+  terminal can show as a QR code or as text), tap **Take my chain from a terminal** and scan or paste it. The page checks that every op is by this key,
+  verifies each signature and that they form one chain, and continues after the newest. Only when this key has never
+  signed anything (a brand new key restored from its words) tap **This key never signed anything**. On the lock
+  screen, "Restore from 24 words instead" replaces the stored key and erases the enrollments and short-code list of
+  the old key from this browser, with the same rule.
 - Clearing site data, uninstalling the browser or switching origin deletes the stored key: you then need the words.
 
 ## If the phone is lost
 
-- If you have the 24 words: restore them on a new phone. Nothing else is needed, but anyone who holds the lost phone
+- If you have the 24 words: restore them on a new phone and take the phone's own chain from a terminal before it signs
+  anything (see Backup and restore). No recovery is needed, but anyone who holds the lost phone
   and knows or guesses the PIN can still approve requests, so consider the lost phone compromised until you have
   revoked it from a terminal.
 - If you have lost both the phone and the words: on a terminal start phone recovery (two other attended devices or
@@ -265,7 +290,16 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
   phone yet.
 - The fast audio reply is 8 seconds for 128 bytes and has not been measured over the air; the QR code is the primary
   channel.
-- A requester the phone has not met is warned about, not refused.
+- A requester the phone has not met is warned about and can be approved only after its device id is typed in.
+- A document of the wrong shape (a broken op, a list that is not JSON, a number outside the 64 bit fields) ends on a
+  refusal screen; the parser has a nesting and size limit (256 KiB per op) and never loops on unterminated input.
+- **The page is inside a meta Content-Security-Policy, which cannot set `frame-ancestors`**: a page that frames this
+  one is not stopped by the policy, and the policy needs `wasm-unsafe-eval` for the Argon2 code. Both are residual
+  risks of a single offline file served without headers. The page has no network access in either case (`default-src
+  'none'`, `connect-src 'none'`). Serve it from an origin you control, and over HTTPS, if you can add the headers
+  `frame-ancestors 'none'` there.
+- The fingerprint check needs the terminal to print the expected fingerprint; until the terminal does, compare with
+  the repository file.
 - The phone can rotate its wrap keys (Reshare and wrap keys), but its older generations derive from the same 24 words
   and can never be retired, so the forward secrecy of the reshare does not extend to the phone's own envelopes.
 - The phone's chain carries the last 8 entries with each reply; a long gap needs the phone to touch another terminal.
