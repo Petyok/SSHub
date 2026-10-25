@@ -1316,7 +1316,10 @@ byte = type, big-endian integers.
   its notification MTU minus 3), and `window` = 8. Both sides then use messages of at most that `chunk`
   bytes, DATA header included. `version` mismatch: the terminal answers ABORT(frame 0, reason 5) and BYE.
   The page cannot read the ATT MTU; if a write fails it MAY send HELLO again with a smaller proposal, which
-  restarts the session state (frames in flight are dropped).
+  restarts the session state: the terminal forgets a half-received frame, queues its own frame in flight again
+  under a new `frame_id` and answers a new HELLO_ACK. The page MUST treat a HELLO_ACK that arrives while the
+  session is open the same way (forget the half-received frame, queue its own frame in flight again under a
+  new `frame_id`).
 - **Frames.** A frame (kinds 1 to 10, `len >= 7`) is cut into DATA chunks. `frame_id` starts at 1 for each
   sender and each direction and wraps after 65535 to 1. One frame in flight per direction. Chunk 0 carries
   `len` and `crc32` (IEEE 802.3, over the whole frame) after the 7 byte header, so its payload is `chunk - 15`
@@ -1334,7 +1337,11 @@ byte = type, big-endian integers.
   every `window / 2` chunks and after the last chunk of a frame. The page awaits each GATT write promise before
   the next (`writeValueWithoutResponse` preferred, `writeValueWithResponse` fallback). A sender that sees no
   ACK for `BLE_ACK_SECS` (5) re-sends from the last acknowledged chunk, at most `BLE_RETRIES` (3) times, then
-  ABORT(6) and BYE(1).
+  ABORT(6) and BYE(1). An ACK may acknowledge chunks sent before a go-back: a sender accepts any ACK up to the
+  highest chunk it has sent. An ACK(next) equal to the last acknowledged `next` while chunks are outstanding
+  means the receiver saw a gap (or a repeat): the sender goes back to `next` once and waits for progress before
+  doing so again. A chunk of a frame the receiver already completed is answered with ACK(frame id, count) again
+  and delivers nothing twice.
 - **Timing.** HELLO must arrive within `BLE_HELLO_SECS` (10) of the connection or the terminal ends it. A
   frame must complete within `BLE_FRAME_SECS` (120). PING every `BLE_PING_SECS` (30) while idle; nothing heard
   for `BLE_IDLE_SECS` (90) ends the session with BYE(1). The channel lives exactly as long as the modal that
