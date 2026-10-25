@@ -1497,3 +1497,467 @@ fn rv_the_largest_accepted_op_fits_a_tail_frame() {
         r.err()
     );
 }
+
+// ============================================================ P7: a large log (measurement)
+
+/// A device on a file-backed database (fsync per commit, like a real profile).
+fn file_dev(dir: &std::path::Path, name: &str) -> Dev {
+    let id = Arc::new(DeviceIdentity::generate());
+    let did = id.public().device_id();
+    let store = Arc::new(LauncherStore::open(dir.join(format!("{name}.db"))).unwrap());
+    crate::sync::ceremony::test_force(&store, true);
+    Dev { store, id, did }
+}
+
+#[test]
+#[ignore = "measurement: run by hand with --ignored --nocapture"]
+fn p7_measure_a_round_over_a_large_log() {
+    use std::time::Instant;
+    let n: usize = std::env::var("P7_OPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4500);
+    let dir = tempfile::tempdir().unwrap();
+    let a = file_dev(dir.path(), "a");
+    let b = file_dev(dir.path(), "b");
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        x.trust(y);
+        x.store
+            .sync_register_device(
+                &x.id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let t = Instant::now();
+    for i in 0..n {
+        let mut uid = [0u8; 16];
+        uid[..8].copy_from_slice(&(i as u64).to_be_bytes());
+        a.store
+            .sync_append_local(
+                &a.id,
+                OpBody::CredUpdate {
+                    host_uid: uid,
+                    ciphertext: vec![9; 1000],
+                    wrapped_shares: vec![crate::sync::oplog::WrappedShare {
+                        recipient: b.did.clone(),
+                        alg: crate::sync::crypto::ALG_CURRENT,
+                        sealed: vec![1; 900],
+                    }],
+                },
+            )
+            .unwrap();
+    }
+    eprintln!("P7 append {n} ops on a: {:?}", t.elapsed());
+    let (bytes, _) = (a.store.sync_log_growth(0).unwrap().1, 0);
+    eprintln!("P7 log bytes: {bytes}");
+
+    let t = Instant::now();
+    let (cl, sv) = round(&b, &a);
+    eprintln!(
+        "P7 first round b<-a: {:?} client {:?} server {:?}",
+        t.elapsed(),
+        cl.as_ref()
+            .map(|s| (s.applied, s.pending_arrived, s.received, s.rejected))
+            .map_err(|e| e.to_string()),
+        sv.map(|s| s.sent).map_err(|e| e.to_string())
+    );
+    eprintln!("P7 b pending {}", b.store.sync_pending().unwrap().len());
+
+    let t = Instant::now();
+    let anchor = a.store.sync_join_anchor_build(&a.id);
+    eprintln!(
+        "P7 join anchor build: {:?} -> {:?}",
+        t.elapsed(),
+        anchor
+            .as_ref()
+            .map(|x| x.state.len())
+            .map_err(|e| e.to_string())
+    );
+
+    let now = crate::store::now_ts();
+    let t = Instant::now();
+    let proposed = a.store.sync_checkpoint_propose(&a.id, None, now);
+    eprintln!(
+        "P7 a proposes: {:?} {:?}",
+        t.elapsed(),
+        proposed.as_ref().map(|_| ()).map_err(|e| e.to_string())
+    );
+    let t = Instant::now();
+    let r = round(&b, &a);
+    eprintln!(
+        "P7 round with the proposal: {:?} client ok={}",
+        t.elapsed(),
+        r.0.is_ok()
+    );
+    let rows = |x: &Dev| -> Vec<String> {
+        x.store
+            .sync_checkpoints()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                format!(
+                    "{:?} signers={}/{}",
+                    c.status,
+                    c.signers.len(),
+                    c.required.len()
+                )
+            })
+            .collect()
+    };
+    eprintln!("P7 checkpoints a {:?} b {:?}", rows(&a), rows(&b));
+    let verdict = proposed.as_ref().ok().map(|(op, st)| {
+        b.store
+            .sync_checkpoint_verify(op, st)
+            .map_err(|e| e.to_string())
+    });
+    eprintln!("P7 b verifies the proposal while its pending ops wait: {verdict:?}");
+    let t = Instant::now();
+    approve_all(&b);
+    eprintln!("P7 b approves all {n}: {:?}", t.elapsed());
+    for k in 0..3 {
+        let t = Instant::now();
+        let _ = round(&b, &a);
+        let _ = round(&a, &b);
+        eprintln!(
+            "P7 settle round {k}: {:?}; a {:?} b {:?}",
+            t.elapsed(),
+            rows(&a),
+            rows(&b)
+        );
+    }
+}
+
+#[test]
+#[ignore = "measurement: run by hand with --ignored --nocapture"]
+fn p7_scaling_of_append_and_ingest() {
+    use std::time::Instant;
+    let n: usize = std::env::var("P7_OPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1000);
+    let mem = std::env::var("P7_MEM").is_ok();
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = if mem {
+        (Dev::new(), Dev::new())
+    } else {
+        (file_dev(dir.path(), "a"), file_dev(dir.path(), "b"))
+    };
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        x.trust(y);
+        x.store
+            .sync_register_device(
+                &x.id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let mut ops = Vec::new();
+    let mut t = Instant::now();
+    for i in 0..n {
+        let mut uid = [0u8; 16];
+        uid[..8].copy_from_slice(&(i as u64).to_be_bytes());
+        ops.push(
+            a.store
+                .sync_append_local(
+                    &a.id,
+                    OpBody::CredUpdate {
+                        host_uid: uid,
+                        ciphertext: vec![9; 1000],
+                        wrapped_shares: vec![crate::sync::oplog::WrappedShare {
+                            recipient: b.did.clone(),
+                            alg: crate::sync::crypto::ALG_CURRENT,
+                            sealed: vec![1; 900],
+                        }],
+                    },
+                )
+                .unwrap(),
+        );
+        if (i + 1) % 100 == 0 {
+            eprintln!(
+                "P7S mem={mem} append ops {}..{}: {:?} per 100",
+                i - 99,
+                i + 1,
+                t.elapsed()
+            );
+            t = Instant::now();
+        }
+    }
+    t = Instant::now();
+    for (i, op) in ops.into_iter().enumerate() {
+        b.store.sync_ingest(op).unwrap();
+        if (i + 1) % 100 == 0 {
+            eprintln!(
+                "P7S mem={mem} ingest ops {}..{}: {:?} per 100",
+                i - 99,
+                i + 1,
+                t.elapsed()
+            );
+            t = Instant::now();
+        }
+    }
+}
+
+// ======================================================== review round 2 (protocol)
+
+#[test]
+fn rv2_an_unattended_sybil_counts_as_a_checkpoint_signer_for_an_existing_device() {
+    let now = crate::store::now_ts();
+    let atk = ring(2);
+    let (m, m2) = (&atk[0], &atk[1]);
+    let v = Dev::new();
+    v.store
+        .sync_register_device(
+            &v.id.public(),
+            "self",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    v.trust(m);
+    // The ring knows the second attacker key as an unattended mirror (a "VPS" the user admitted).
+    v.trust_with(m2, Attendance::Unattended, DeviceKind::Terminal);
+    m.trust(&v);
+    m2.trust(&v);
+    v.store
+        .sync_append_local_at(
+            &v.id,
+            OpBody::HostUpsert {
+                host_uid: [0x77; 16],
+                fields: HostFields {
+                    name: Some("mine".into()),
+                    ..Default::default()
+                },
+            },
+            now - 40 * 86_400,
+        )
+        .unwrap();
+    m.append(0x10, "m-early");
+    ok(round(&v, m));
+    m.store
+        .sync_append_local(
+            &m.id,
+            OpBody::HostUpsert {
+                host_uid: [0xEE; 16],
+                fields: HostFields {
+                    name: Some("evil".into()),
+                    address: Some("evil.example".into()),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    let refs = [m, m2];
+    many_ops(&refs, 1, 4);
+    checkpoint(&refs, 0, now);
+    many_ops(&refs, 100, 4);
+    checkpoint(&refs, 1, now + 100);
+    many_ops(&refs, 150, 2);
+    converge(&refs);
+    assert!(
+        m.store
+            .sync_prune(now + 8 * 86_400 + 1_000)
+            .unwrap()
+            .ops_deleted
+            > 0
+    );
+    let (c, _) = round(&v, m);
+    let adopted = c.as_ref().map(|s| s.adopted.is_some()).unwrap_or(false);
+    let evil: Option<String> = v
+        .store
+        .with_conn(|c| {
+            Ok(
+                c.query_row("SELECT address FROM hosts WHERE name='evil'", [], |r| {
+                    r.get(0)
+                })
+                .ok(),
+            )
+        })
+        .unwrap();
+    assert!(
+        !adopted && evil.is_none(),
+        "adopted={adopted}; evil host applied without review={evil:?}; pending={}",
+        v.store.sync_pending().unwrap().len()
+    );
+}
+
+#[test]
+fn rv2_a_green_op_with_free_text_is_refused_before_it_is_stored_or_relayed() {
+    let d = ring(3);
+    let a = &d[0];
+    let refuse = |body: OpBody, what: &str| {
+        let e = a.store.sync_append_local(&a.id, body).unwrap_err();
+        assert!(e.to_string().contains("invalid op"), "{what}: {e:#}");
+    };
+    refuse(
+        OpBody::ShareReshareSession {
+            epoch: 1,
+            to: "x".repeat(700_000),
+            sealed: vec![],
+        },
+        "a device id of 700 KB",
+    );
+    refuse(
+        OpBody::HostUpsert {
+            host_uid: [1; 16],
+            fields: HostFields {
+                name: Some("h".into()),
+                tags: Some(vec!["x".repeat(4000); 190]),
+                ..Default::default()
+            },
+        },
+        "tags of 760 KB",
+    );
+    refuse(
+        OpBody::HostUpsert {
+            host_uid: [1; 16],
+            fields: HostFields {
+                name: Some("h".into()),
+                username: Some(Some("u".repeat(700_000))),
+                ..Default::default()
+            },
+        },
+        "a username of 700 KB",
+    );
+    refuse(
+        OpBody::CheckpointPropose {
+            cut: vec![crate::sync::oplog::CutEntry {
+                device_id: "y".repeat(100_000),
+                seq: 1,
+                op_hash: [0; 32],
+                lamport: 1,
+            }],
+            state_hash: [0; 32],
+            state_len: 0,
+            prev_checkpoint: [0; 32],
+            required: vec![],
+        },
+        "a cut entry named by text",
+    );
+    assert_eq!(a.store.sync_log_growth(0).unwrap().0, 0);
+}
+
+#[test]
+fn a_device_over_its_byte_quota_is_refused_and_prune_resets_the_count() {
+    let d = ring(2);
+    let (a, b) = (&d[0], &d[1]);
+    let op = a.append(1, "x");
+    b.store
+        .with_conn(|c| {
+            c.execute(
+                "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?1, ?2)",
+                rusqlite::params![
+                    format!("bytes:{}", a.did),
+                    (256i64 * 1024 * 1024).to_string().into_bytes()
+                ],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    match b.store.sync_ingest(op).unwrap() {
+        IngestOutcome::Rejected(why) => assert!(why.contains("byte quota"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn rv2_the_name_collision_tier_makes_the_review_queue_depend_on_arrival_order() {
+    let d = ring(4);
+    let refs: Vec<&Dev> = d.iter().collect();
+    let (a, b, c, e) = (&d[0], &d[1], &d[2], &d[3]);
+    let host = |dev: &Dev, uid: u8, name: &str, address: Option<&str>| {
+        dev.store
+            .sync_append_local(
+                &dev.id,
+                OpBody::HostUpsert {
+                    host_uid: [uid; 16],
+                    fields: HostFields {
+                        name: Some(name.into()),
+                        address: address.map(String::from),
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap()
+    };
+    host(a, 1, "e1", Some("e1.example"));
+    host(b, 2, "e2", Some("e2.example"));
+    converge(&refs);
+    let op_a = host(a, 1, "dup", None);
+    let op_b = host(b, 2, "dup", None);
+    // The same two ops, in the two possible orders (direct ingest: no id-dependent batching).
+    c.store.sync_ingest(op_a.clone()).unwrap();
+    c.store.sync_ingest(op_b.clone()).unwrap();
+    e.store.sync_ingest(op_b).unwrap();
+    e.store.sync_ingest(op_a).unwrap();
+    let pend = |x: &Dev| {
+        let mut v: Vec<_> = x
+            .store
+            .sync_pending()
+            .unwrap()
+            .iter()
+            .map(|o| o.hash())
+            .collect();
+        v.sort();
+        v
+    };
+    assert_eq!(
+        pend(c),
+        pend(e),
+        "two devices hold the same ops and a different review queue"
+    );
+}
+
+#[test]
+fn rv2_equivocation_proofs_share_a_byte_budget_in_the_heads_message() {
+    use crate::sync::protocol::MAX_FORK_BYTES;
+    let d = ring(5);
+    let (b, c) = (&d[3], &d[4]);
+    // Three devices equivocate with the largest legal host ops (about 44 KB each).
+    for (i, x) in d[..3].iter().enumerate() {
+        let big = |ch: &str| OpBody::HostUpsert {
+            host_uid: [0x40 + i as u8; 16],
+            fields: HostFields {
+                name: Some("h".into()),
+                label: Some(Some(ch.repeat(4000))),
+                remote_command: Some(Some(ch.repeat(4000))),
+                environment: Some(Some(ch.repeat(4000))),
+                os_icon: Some(Some(ch.repeat(4000))),
+                notes: Some(Some(ch.repeat(4000))),
+                secret_lookup: Some(Some(ch.repeat(4000))),
+                tags: Some(vec![ch.repeat(250); 64]),
+                ..Default::default()
+            },
+        };
+        let op1 = x.store.sync_append_local(&x.id, big("x")).unwrap();
+        let mut op2 = op1.clone();
+        op2.body = big("y");
+        op2.signature = x.id.sign(&op2.canonical_bytes());
+        b.store.sync_ingest(op1).unwrap();
+        c.store.sync_ingest(op2).unwrap();
+    }
+    let _ = round(b, c);
+    let heads = heads_msg(&c.store, &c.id).unwrap();
+    let total: usize = heads
+        .forks
+        .iter()
+        .map(|f| serde_json::to_vec(f).unwrap().len())
+        .sum();
+    assert!(!heads.forks.is_empty(), "no proof at all was sent");
+    assert!(
+        total <= MAX_FORK_BYTES,
+        "the proofs take {total} bytes of a Heads message"
+    );
+    let frame = serde_json::to_value(SyncMsg::Heads(heads)).unwrap();
+    assert!(crate::sync::transport::write_frame(&mut Vec::new(), &frame).is_ok());
+}
