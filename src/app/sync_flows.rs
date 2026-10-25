@@ -7,9 +7,9 @@ use super::sync::{DeviceStatusView, DeviceView};
 use super::sync_ui::MenuFn;
 use super::*;
 use crate::cli::sync_admin as admin;
-use crate::sync::crypto::{bip39_encode, paper_derive, PaperDomain};
+use crate::sync::crypto::bip39_encode;
 use crate::sync::identity_store::load_or_init_identity;
-use crate::sync::oplog::{CredMode, DeviceRole, ThirdFactor};
+use crate::sync::oplog::{CredMode, DeviceRole};
 use crate::sync::runtime::{JobEnv, RING_SECRET_KEY};
 
 pub(super) fn now() -> i64 {
