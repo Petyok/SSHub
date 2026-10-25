@@ -351,7 +351,37 @@ fn holder_only(body: &OpBody) -> bool {
             | OpBody::ShareReshareConfirmBatch { .. }
             | OpBody::WrapKeyRotate { .. }
             | OpBody::CertHostOpened { .. }
+            | OpBody::ShareGrant { .. }
     )
+}
+
+fn author_revoked(conn: &Connection, device: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id = ?1 AND status = 'revoked')",
+        params![device],
+        |r| r.get(0),
+    )?)
+}
+
+/// The op that holds the name `op` claims for another live entity, when the claim collides.
+pub(crate) fn collision_holder(conn: &Connection, op: &Op) -> Result<Option<[u8; 32]>> {
+    let Some((kind, uid, name)) = claimed_name(&op.body) else {
+        return Ok(None);
+    };
+    if op.tier() != OpTier::Green || !name_taken(conn, kind, &uid, &name)? {
+        return Ok(None);
+    }
+    let hash: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT f.op_hash FROM sync_fields f JOIN sync_entities e
+               ON e.kind = f.kind AND e.uid = f.uid
+             WHERE f.kind = ?1 AND f.field = 'name' AND f.value = ?2 AND f.uid != ?3 AND e.alive = 1
+             ORDER BY f.lamport DESC LIMIT 1",
+            params![kind.as_str(), serde_json::to_string(&name)?, &uid[..]],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(hash.and_then(|h| <[u8; 32]>::try_from(h).ok()))
 }
 
 /// The author of a [`holder_only`] op is an effective holder (and for `CertHostOpened` not
@@ -422,11 +452,18 @@ fn name_taken(conn: &Connection, kind: EntityKind, uid: &Uid, name: &str) -> Res
 }
 
 pub(crate) fn effective_tier(conn: &Connection, op: &Op) -> Result<OpTier> {
+    tier_of(conn, op, false)
+}
+
+fn tier_of(conn: &Connection, op: &Op, first: bool) -> Result<OpTier> {
     // A rename onto a name another live entity holds would silently re-point that name
-    // (the older claim wins the name, the other gets a suffix): a human decides.
-    if let Some((kind, uid, name)) = claimed_name(&op.body) {
-        if op.tier() == OpTier::Green && name_taken(conn, kind, &uid, &name)? {
-            return Ok(OpTier::Yellow);
+    // (the older claim wins the name, the other gets a suffix): a human decides. Judged at the
+    // first sight of the op only.
+    if first {
+        if let Some((kind, uid, name)) = claimed_name(&op.body) {
+            if op.tier() == OpTier::Green && name_taken(conn, kind, &uid, &name)? {
+                return Ok(OpTier::Yellow);
+            }
         }
     }
     if let OpBody::DeviceRevoke { device_id } = &op.body {
@@ -445,10 +482,14 @@ pub(crate) fn effective_tier(conn: &Connection, op: &Op) -> Result<OpTier> {
 }
 
 /// The state an op should be in given everything else in the log.
+/// `first`: the op is judged for the first time (ingest). Rules that depend on what else the
+/// store holds at that moment (a name another entity holds) apply only then: a later re-judgement
+/// of an op already applied must not turn it pending because of what arrived in between.
 pub(crate) fn desired_state(
     conn: &Connection,
     row: &OpRow,
     now: i64,
+    first: bool,
 ) -> Result<(State, Option<&'static str>)> {
     let op = &row.op;
     if row.state == State::Rejected {
@@ -460,16 +501,30 @@ pub(crate) fn desired_state(
     if row.state == State::Approved || row.local {
         return Ok((State::Approved, None));
     }
-    let tier = effective_tier(conn, op)?;
-    // A timestamp the author chose beyond the skew grace would stretch every window measured
-    // on it (the Red ceremony TTL, proof ages): a Red op like that is refused outright, anything
-    // else waits until the clock has caught up or a human approves it.
-    let future = op.timestamp > now.saturating_add(TIMESTAMP_SKEW_GRACE_SECS);
-    if future && tier == OpTier::Red {
-        return Ok((State::Rejected, Some("future-dated")));
-    }
-    if tier != OpTier::Green {
+    if !first && row.state == State::Pending && row.reason.as_deref() == Some("tier") {
+        // Held for a human (a name collision is not re-derived): only a human releases it.
         return Ok((State::Pending, Some("tier")));
+    }
+    let tier = tier_of(conn, op, first)?;
+    // A timestamp the author chose beyond the skew grace would stretch every window measured
+    // on it (the Red ceremony TTL, proof ages): such an op waits (a Red one for its ceremony
+    // too) until this device's clock has caught up. Never rejected: one clock running behind
+    // must not lose an honest op for good.
+    let future = op.timestamp > now.saturating_add(TIMESTAMP_SKEW_GRACE_SECS);
+    if tier != OpTier::Green {
+        return Ok((
+            State::Pending,
+            Some(if future && tier == OpTier::Red {
+                "future-dated"
+            } else {
+                "tier"
+            }),
+        ));
+    }
+    // A revoked device keeps its key: whatever it signs after this device learned of the
+    // revocation waits for a human, whatever lamport it chose.
+    if first && author_revoked(conn, &op.device_id)? {
+        return Ok((State::Pending, Some("revoked-author")));
     }
     if holder_only(&op.body) && !author_may_write(conn, op)? {
         return Ok((State::Pending, Some("not-holder")));
@@ -592,7 +647,7 @@ impl<'a> Settler<'a> {
                 )?,
             };
             for row in rows {
-                let (state, reason) = desired_state(self.conn, &row, self.now)?;
+                let (state, reason) = desired_state(self.conn, &row, self.now, false)?;
                 self.transition(&row, state, reason)?;
             }
             self.done.insert(work);

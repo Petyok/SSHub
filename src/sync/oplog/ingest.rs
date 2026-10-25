@@ -11,8 +11,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::fork;
 use super::merge::{
-    desired_state, forget_unverified, insert_op, insert_unverified, load_op, op_at, OpRow, Settler,
-    State,
+    collision_holder, desired_state, forget_unverified, insert_op, insert_unverified, load_op,
+    op_at, OpRow, Settler, State,
 };
 use super::op::*;
 use super::store_impl::IngestOutcome;
@@ -187,7 +187,7 @@ pub(crate) fn ingest_capped(
         reason: None,
         local: false,
     };
-    let (want, reason) = desired_state(conn, &probe, now)?;
+    let (want, reason) = desired_state(conn, &probe, now, true)?;
     if want == State::Pending {
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sync_pending_ops WHERE device_id = ?1",
@@ -216,6 +216,17 @@ pub(crate) fn ingest_capped(
     let row = load_op(conn, &hash)?.expect("just inserted");
     let mut settler = Settler::new(conn, now);
     settler.transition(&row, want, reason)?;
+    // Two claims to one name wait on every device, whichever arrived first: the claim this one
+    // collides with (applied without a human) goes back to review as well.
+    if want == State::Pending && reason == Some("tier") {
+        if let Some(holder) = collision_holder(conn, &op)? {
+            if let Some(h) = load_op(conn, &holder)? {
+                if h.state == State::Applied && !h.local {
+                    settler.transition(&h, State::Pending, Some("tier"))?;
+                }
+            }
+        }
+    }
     settler.run()?;
     reproject(conn, &settler.touched)?;
 
@@ -226,9 +237,6 @@ pub(crate) fn ingest_capped(
     Ok(match load_op(conn, &hash)?.map(|r| r.state) {
         Some(State::Applied | State::Approved) => IngestOutcome::Applied,
         Some(State::Pending) => IngestOutcome::Pending,
-        _ if reason == Some("future-dated") => {
-            IngestOutcome::Rejected("op is dated beyond the clock skew grace".into())
-        }
         _ => IngestOutcome::Rejected("void: signed at or after its author's revocation".into()),
     })
 }

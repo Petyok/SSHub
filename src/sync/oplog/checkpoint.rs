@@ -1032,7 +1032,7 @@ fn cut_from_json(s: &str) -> Result<Vec<CutEntry>> {
             let h = a[2].as_str().context("hash")?;
             let mut op_hash = [0u8; 32];
             for (i, b) in op_hash.iter_mut().enumerate() {
-                *b = u8::from_str_radix(&h[2 * i..2 * i + 2], 16)?;
+                *b = u8::from_str_radix(h.get(2 * i..2 * i + 2).context("hash length")?, 16)?;
             }
             Ok(CutEntry {
                 device_id: a[0].as_str().context("device")?.to_string(),
@@ -1750,9 +1750,17 @@ fn check_bundle(
         chain_hash(&bundle.state) == *state_hash && bundle.state.len() as u64 == state_len,
         "the state blob does not match the proposal"
     );
+    let local = matches!(trust, BootstrapTrust::Anchor(_));
+    if local {
+        // Before the state is parsed (it can be megabytes): the proposal must at least be signed
+        // by a device this one knows.
+        ensure!(
+            device_pub(conn, &proposal.device_id)?.is_some_and(|k| proposal.verify(&k)),
+            "the proposal is not signed by a device of its own table"
+        );
+    }
     let state: Value = serde_json::from_slice(&bundle.state).context("state is not JSON")?;
     let devices = state["devices"].as_array().cloned().unwrap_or_default();
-    let local = matches!(trust, BootstrapTrust::Anchor(_));
     if local {
         // A store with no log has no ring state to continue: it joins by enrollment (the
         // inviter's anchor) or by the ring fingerprint, never by taking a peer's word.
@@ -1819,6 +1827,11 @@ fn check_bundle(
         if *ph == proposal_hash && key_of_device(&s.device_id).is_some_and(|k| s.verify(&k)) {
             signers.insert(s.device_id.clone());
         }
+    }
+    if local {
+        // Only attended, operational terminals of THIS device's table sign for a ring; a key it
+        // lists as a mirror, an unattended device, a revoked or a compromised one is not a vote.
+        signers.retain(|d| attended_terminal(conn, d).unwrap_or(false));
     }
     if let BootstrapTrust::Enrollment { inviter } = trust {
         // Alone, by the inviter the user verified; its id is its key's id.
@@ -2109,11 +2122,8 @@ fn cut_from_state(state: &Value) -> Result<Vec<CutEntry>> {
 /// bootstrap, where no op ever ran the effects).
 fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
     let wins = fold_writes(conn, None)?;
-    let unhex = |s: &str| -> Vec<u8> {
-        (0..s.len() / 2)
-            .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap_or(0))
-            .collect()
-    };
+    // ASCII-checked: a non-hex byte in the state is an empty value, never a slice through a char.
+    let unhex = |s: &str| -> Vec<u8> { hex::decode(s).unwrap_or_default() };
     for ((section, key), w) in &wins {
         let v = &w.value;
         match section.as_str() {

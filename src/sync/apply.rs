@@ -50,6 +50,7 @@ pub type Touched = BTreeSet<(EntityKind, Uid)>;
 /// Static checks every op passes before it is chained: pure functions of the
 /// op, so every honest peer agrees on the verdict. An `Err` is the reason.
 pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
+    validate_ids(body)?;
     match body {
         OpBody::HostUpsert { host_uid, fields } => {
             reserved_check(EntityKind::Host, host_uid)?;
@@ -174,6 +175,67 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
                 return Err("cut and required must be sorted and unique".into());
             }
             Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+/// A device id is 16 lowercase hex digits and nothing else: every id a body carries is checked
+/// to its real shape, so no Green op can carry free text under a device id's name.
+fn device_id_ok(s: &str) -> std::result::Result<(), String> {
+    if s.len() == 16
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        Ok(())
+    } else {
+        Err("a device is named by 16 lowercase hex digits".into())
+    }
+}
+
+fn validate_ids(body: &OpBody) -> std::result::Result<(), String> {
+    let one = |s: &String| device_id_ok(s);
+    match body {
+        OpBody::ShareReshareSession { to, .. } => one(to),
+        OpBody::ShareReshareBatch {
+            new_holders, items, ..
+        } => {
+            new_holders.iter().try_for_each(one)?;
+            items
+                .iter()
+                .flat_map(|i| i.sub_shares.iter())
+                .try_for_each(|(d, _)| device_id_ok(d))
+        }
+        OpBody::CredUpdate { wrapped_shares, .. } => wrapped_shares
+            .iter()
+            .try_for_each(|w| device_id_ok(&w.recipient)),
+        OpBody::CheckpointPropose { cut, required, .. } => {
+            cut.iter().try_for_each(|c| device_id_ok(&c.device_id))?;
+            required.iter().try_for_each(one)
+        }
+        OpBody::ShareGrant { requester, .. } | OpBody::ShareRelease { requester, .. } => {
+            one(requester)
+        }
+        OpBody::DeviceRevoke { device_id }
+        | OpBody::DeviceRoleChange { device_id, .. }
+        | OpBody::ExemptionSet { device_id, .. }
+        | OpBody::CertIssue { device_id, .. }
+        | OpBody::WrapKeyRotate { device_id, .. } => one(device_id),
+        OpBody::BulkExport { requester, .. } => one(requester),
+        OpBody::ModeChange {
+            migrated_on,
+            cosigner,
+            ..
+        } => {
+            one(migrated_on)?;
+            cosigner.iter().try_for_each(one)
+        }
+        OpBody::FactorRegister { sender, .. } => sender.iter().try_for_each(one),
+        OpBody::PhoneReenroll {
+            signers, liveness, ..
+        } => {
+            signers.iter().try_for_each(one)?;
+            liveness.iter().try_for_each(|h| device_id_ok(&h.device_id))
         }
         _ => Ok(()),
     }
