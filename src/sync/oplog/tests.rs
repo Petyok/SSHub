@@ -2891,6 +2891,12 @@ fn control_characters_never_enter_names_text_or_device_names() {
         "a\u{200B}b",
         "a\u{FEFF}b",
         "a\u{2066}b\u{2069}",
+        "a\u{2060}b",
+        "a\u{2064}b",
+        "a\u{061C}b",
+        "a\u{2028}b",
+        "a\u{2029}b",
+        "a\u{00AD}b",
     ] {
         assert!(validates(&host(bad, None)).is_err(), "{bad:?}");
     }
@@ -2900,6 +2906,79 @@ fn control_characters_never_enter_names_text_or_device_names() {
     let add = |name: &str| add_device_body_named(name);
     assert!(validates(&add("laptop")).is_ok());
     assert!(validates(&add("lap\ntop\nBcc: x")).is_err());
+}
+
+// Every device id a body carries has a shape rule: a bad id is refused in each kind that holds one.
+// (The match in `validate_ids` has no wildcard, so a new variant cannot be added without a decision.)
+#[test]
+fn every_body_that_carries_a_device_id_refuses_a_malformed_one() {
+    let bad = "x\nBcc: y".to_string();
+    let bodies = vec![
+        OpBody::HeadAttest {
+            device_id: bad.clone(),
+            seq: 1,
+            chain_hash: [0; 32],
+        },
+        OpBody::DeviceRevoke {
+            device_id: bad.clone(),
+        },
+        OpBody::DeviceRoleChange {
+            device_id: bad.clone(),
+            to: DeviceRole::Mirror,
+        },
+        OpBody::ExemptionSet {
+            device_id: bad.clone(),
+            slot: None,
+        },
+        OpBody::BulkExport {
+            requester: bad.clone(),
+            window_secs: 60,
+        },
+        OpBody::ShareReshareSession {
+            epoch: 1,
+            to: bad.clone(),
+            sealed: vec![],
+        },
+        OpBody::ShareReshareBatch {
+            epoch: 1,
+            new_holders: vec![bad.clone()],
+            items: vec![],
+        },
+        OpBody::ShareGrant {
+            host_uid: [0; 16],
+            request_id: 1,
+            requester: bad.clone(),
+            epoch: 1,
+            sealed: vec![],
+        },
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            migrated_on: bad.clone(),
+            cosigner: None,
+        },
+        OpBody::FactorRegister {
+            factor: crate::sync::oplog::ThirdFactor::Paper,
+            public: [0; 32],
+            sealed: vec![],
+            salt: [0; 16],
+            sender: Some(bad.clone()),
+        },
+        OpBody::CheckpointPropose {
+            cut: vec![CutEntry {
+                device_id: bad.clone(),
+                seq: 1,
+                op_hash: [0; 32],
+                lamport: 1,
+            }],
+            state_hash: [0; 32],
+            state_len: 0,
+            prev_checkpoint: [0; 32],
+            required: vec![],
+        },
+    ];
+    for b in bodies {
+        assert!(validates(&b).is_err(), "{b:?}");
+    }
 }
 
 fn add_device_body_named(name: &str) -> OpBody {
