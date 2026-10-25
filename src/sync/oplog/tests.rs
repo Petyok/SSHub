@@ -3209,7 +3209,7 @@ fn an_oversized_op_is_refused_even_from_an_unknown_author() {
         sealed: vec![7; MAX_OP_BYTES],
     };
     assert!(rejected(&b.store.sync_ingest(op).unwrap()).contains("larger"));
-    assert!(MAX_OP_BYTES / 3 * 4 + 8 * 1024 < crate::sync::limits::MAX_FRAME_BYTES);
+    const { assert!(MAX_OP_BYTES / 3 * 4 + 8 * 1024 < crate::sync::limits::MAX_FRAME_BYTES) };
 }
 
 #[test]
