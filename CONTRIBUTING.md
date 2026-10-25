@@ -164,15 +164,15 @@ Rules that keep the suite green:
   occur. If the fallback only triggers when a service is absent, structure
   the code so the fallback is testable directly.
 
-Optional capture features (`audio`, `camera`, the phone-reply receivers in `src/sync/media/`) are
+Optional capture features (`audio`, `camera`, `bluetooth`, the phone receivers in `src/sync/media/`) are
 off by default and are not part of the default build or the default CI run. When you touch
 `src/sync/media/` or `Cargo.toml` features, check them once by hand. On Linux the `audio` feature
 needs the ALSA headers (`apt install libasound2-dev pkg-config`):
 
 ```bash
-cargo build --features audio,camera --example media-probe
-cargo clippy --all-targets --features audio,camera -- -D warnings
-cargo test --lib sync::media
+cargo build --features audio,camera,bluetooth --example media-probe
+cargo clippy --all-targets --features audio,camera,bluetooth -- -D warnings
+cargo test --lib --features bluetooth sync::media
 ```
 
 Run a specific test:

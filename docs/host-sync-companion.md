@@ -152,6 +152,10 @@ issue a short code. Tap **Approve and release**. The phone then fires every chan
 - **Sound**: a burst for the laptop microphone. The fast profile takes about 8 seconds for the reply and is the
   default; the slow profile (about 16 seconds) is for noisy rooms. Audio is opt-in on the terminal and unmeasured
   over the air.
+- **Bluetooth** (opt-in `bluetooth` build of the terminal; Chrome on Android): tap Connect, pick the entry named
+  `SSHub-` plus the four characters the terminal shows (they change every time), and the page and the terminal exchange the
+  same frames over the link. Nothing is paired and nothing about the link is trusted; the frames are signed and sealed as
+  everywhere else. iOS browsers cannot do this. Contract: C20 in `docs/host-sync-contract.md`.
 - **By hand**: expand "Type it by hand" for the share index and 24 words to type into the terminal. Look around
   first: anyone who sees them has this share.
 

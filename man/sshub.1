@@ -576,11 +576,16 @@ release binaries:
 needs the ALSA development files on Linux (libasound2\-dev on Debian and
 Ubuntu) and uses CoreAudio on macOS;
 .B camera
-needs nothing extra on Linux (V4L2) and uses AVFoundation on macOS. Developer
-check:
-.B cargo build \-\-features audio,camera
+needs nothing extra on Linux (V4L2) and uses AVFoundation on macOS;
+.B bluetooth
+(Bluetooth Low Energy, the phone page connects with Web Bluetooth) needs a running
+bluetoothd and an adapter on Linux (libdbus\-1\-dev to build) and uses CoreBluetooth on
+macOS. The phone verbs take
+.B \-\-ble
+to carry their frames over Bluetooth too. Developer check:
+.B cargo build \-\-features audio,camera,bluetooth
 and
-.BR "cargo clippy \-\-all\-targets \-\-features audio,camera \-\- \-D warnings" .
+.BR "cargo clippy \-\-all\-targets \-\-features audio,camera,bluetooth \-\- \-D warnings" .
 Design and threat model:
 .I docs/host\-sync\-design.md
 in the source tree.
