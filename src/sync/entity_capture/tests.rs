@@ -388,7 +388,7 @@ fn imports_produce_one_op_per_entity() {
     // A bulk of plain creates is one op each.
     for i in 0..25 {
         n.store
-            .create_host(&NewHost::launcher(&format!("bulk{i}"), "10.1.0.1"))
+            .create_host(&NewHost::launcher(format!("bulk{i}"), "10.1.0.1"))
             .unwrap();
     }
     assert_eq!(ops(&n.store, "HostUpsert").len(), 28);
