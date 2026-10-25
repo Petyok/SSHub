@@ -3376,7 +3376,7 @@ fn a_batch_ingest_gives_the_outcomes_and_state_of_one_op_at_a_time() {
         .into_iter()
         .map(|o| c.store.sync_ingest(o).unwrap())
         .collect();
-    assert_eq!(outcomes, single);
+    assert_eq!(format!("{outcomes:?}"), format!("{single:?}"));
     assert!(matches!(outcomes.last(), Some(IngestOutcome::Rejected(w)) if w.contains("duplicate")));
     assert_eq!(
         b.store.sync_state_hash().unwrap(),
