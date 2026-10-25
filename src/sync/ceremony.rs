@@ -326,6 +326,46 @@ pub(crate) fn received_at(store: &LauncherStore, op: &Op) -> Option<i64> {
         .flatten()
 }
 
+/// The phone's own proof for its admission: a `RedPhoneSign` for `hash` signed by the key in the
+/// `DeviceAdd` (the phone may still be an unknown author here, its ops waiting unverified), and by
+/// nobody else. Returns when this device received it.
+fn own_admission_proof(
+    store: &LauncherStore,
+    phone: &super::crypto::DevicePublic,
+    hash: &[u8; 32],
+    valid_proof: &dyn Fn(&Op) -> bool,
+) -> Result<Option<i64>> {
+    let id = phone.device_id();
+    let rows: Vec<(Vec<u8>, Vec<u8>, i64)> = store.with_conn(|c| {
+        let mut st = c.prepare(
+            "SELECT canonical, signature, received_at FROM sync_ops
+             WHERE device_id = ?1 AND (reason = 'unknown-author' OR
+                   (kind = 'RedPhoneSign' AND state IN ('applied', 'approved')))",
+        )?;
+        let rows = st.query_map(rusqlite::params![id], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    })?;
+    let mut first = None;
+    for (canonical, sig, received) in rows {
+        let Ok(sig) = <[u8; 64]>::try_from(sig) else {
+            continue;
+        };
+        let Ok(p) = Op::from_canonical(&canonical, sig) else {
+            continue;
+        };
+        if p.device_id == id
+            && matches!(&p.body, OpBody::RedPhoneSign { op_hash } if op_hash == hash)
+            && p.verify(&phone.ed25519_pub)
+            && valid_proof(&p)
+        {
+            first = Some(first.map_or(received, |t: i64| t.min(received)));
+        }
+    }
+    Ok(first)
+}
+
 /// Where the ceremony of `op` stands at `now`.
 pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus> {
     let hash = op.hash();
@@ -450,12 +490,30 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         _ => {}
     }
 
+    // A phone's admission: the phone is not a device of this view yet, so its proof for its OWN
+    // admission is the only one there can be, and it is checked against the key the DeviceAdd carries.
+    let admitted_phone = match &op.body {
+        OpBody::DeviceAdd {
+            device,
+            kind: DeviceKind::Phone,
+            ..
+        } => Some(device.clone()),
+        _ => None,
+    };
     // Phone participation: the op itself when the phone authored it.
     let authored_by_phone = phone.as_ref() == Some(proposer);
     let heard = |p: &Op| received_at(store, p).unwrap_or(p.timestamp);
     let mut complete_at = heard(op);
     if authored_by_phone {
         have.push(RedProof::Phone);
+    } else if let Some(dev) = &admitted_phone {
+        match own_admission_proof(store, dev, &hash, &valid_proof)? {
+            Some(t) => {
+                complete_at = complete_at.max(t);
+                have.push(RedProof::Phone);
+            }
+            None => missing.push(RedProof::Phone),
+        }
     } else if let Some(ph) = &phone {
         let first = ops_of(store, "RedPhoneSign", Some(ph))?
             .iter()
@@ -535,7 +593,9 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         _ => None,
     };
     let any_registered = paper.is_some() || email.is_some();
-    let bootstrap = replacing.is_some() && !any_registered;
+    // The first phone of a ring with no factor yet cannot wait for a factor: registering the first
+    // factor needs that phone's proof (the other half of the same bootstrap).
+    let bootstrap = (replacing.is_some() || admitted_phone.is_some()) && !any_registered;
     let mut factor_ok = false;
     let mut factor_named: Option<ThirdFactor> = None;
     let mut factor_at: Option<i64> = None;

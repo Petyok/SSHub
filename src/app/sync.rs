@@ -140,6 +140,8 @@ pub struct RedView {
     /// A participant rule the proofs break (the same device giving two of them ...): the change
     /// cannot complete as it stands.
     pub rule_violation: Option<String>,
+    /// Why a proof that looks available does not count (the emailed code's sender voted ...).
+    pub note: Option<String>,
     /// Only one attended holder terminal: the second device is waived, the paper needed.
     pub single_machine: bool,
 }
@@ -172,6 +174,8 @@ pub enum UnlockPathKind {
     Audio,
     /// The camera reading the phone's code.
     Camera,
+    /// The phone page connected over Bluetooth.
+    Bluetooth,
 }
 
 impl UnlockPathKind {
@@ -185,6 +189,7 @@ impl UnlockPathKind {
             Self::Phrase => "master phrase",
             Self::Audio => "microphone",
             Self::Camera => "camera",
+            Self::Bluetooth => "bluetooth",
         }
     }
 }

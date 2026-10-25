@@ -5791,9 +5791,11 @@ mod tests {
             rule_violation: Some(
                 "the sender of the emailed code also approved as second device".into(),
             ),
+            note: Some("the emailed code cannot count here".into()),
             single_machine: false,
         });
         let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "emailed code cannot count"));
         assert!(buffer_contains(&buffer, "rule broken"));
         assert!(buffer_contains(&buffer, "also approved as second device"));
     }

@@ -1727,3 +1727,99 @@ fn p7_scaling(mem: bool, n: usize, batched: bool) {
         }
     }
 }
+
+// ======================================================== review round 3 (protocol)
+
+#[test]
+fn rv3_two_unpromoted_mirrors_sign_for_a_device_that_was_away() {
+    let now = crate::store::now_ts();
+    let atk = ring(2);
+    let (m, m2) = (&atk[0], &atk[1]);
+    let honest = Dev::new();
+    let v = Dev::new();
+    v.store
+        .sync_register_device(
+            &v.id.public(),
+            "self",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    // The honest holder was last heard of long ago, so V does not count it as live.
+    v.trust(&honest);
+    // The compromised peer m is a holder; the sybil m2 is only an attended MIRROR in V's table.
+    v.trust(m);
+    v.store
+        .sync_register_device(
+            &m2.id.public(),
+            "sybil",
+            DeviceRole::Mirror,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    m.trust(&v);
+    m2.trust(&v);
+    v.store
+        .sync_append_local_at(
+            &v.id,
+            OpBody::HostUpsert {
+                host_uid: [0x77; 16],
+                fields: HostFields {
+                    name: Some("mine".into()),
+                    ..Default::default()
+                },
+            },
+            now - 40 * 86_400,
+        )
+        .unwrap();
+    m.append(0x10, "m-early");
+    ok(round(&v, m));
+    m.store
+        .sync_append_local(
+            &m.id,
+            OpBody::HostUpsert {
+                host_uid: [0xEE; 16],
+                fields: HostFields {
+                    name: Some("evil".into()),
+                    address: Some("evil.example".into()),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    let refs = [m, m2];
+    many_ops(&refs, 1, 4);
+    checkpoint(&refs, 0, now);
+    many_ops(&refs, 100, 4);
+    checkpoint(&refs, 1, now + 100);
+    many_ops(&refs, 150, 2);
+    converge(&refs);
+    assert!(
+        m.store
+            .sync_prune(now + 8 * 86_400 + 1_000)
+            .unwrap()
+            .ops_deleted
+            > 0
+    );
+    let (c, _) = round(&v, m);
+    let adopted = c.as_ref().map(|s| s.adopted.is_some()).unwrap_or(false);
+    let evil: Option<String> = v
+        .store
+        .with_conn(|c| {
+            Ok(
+                c.query_row("SELECT address FROM hosts WHERE name='evil'", [], |r| {
+                    r.get(0)
+                })
+                .ok(),
+            )
+        })
+        .unwrap();
+    assert!(
+        !adopted && evil.is_none(),
+        "adopted={adopted}; evil host applied without review={evil:?}"
+    );
+}

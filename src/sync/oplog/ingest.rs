@@ -25,7 +25,7 @@ fn reject(msg: impl Into<String>) -> Result<IngestOutcome> {
 }
 
 /// Stored bytes of one device's ops, applied or waiting, at most (prune brings it down).
-const DEVICE_BYTES_QUOTA: i64 = 256 * 1024 * 1024;
+const DEVICE_BYTES_QUOTA: i64 = 64 * 1024 * 1024;
 
 /// Unverified ops held for review at most, over all unknown authors and per claimed author.
 const UNKNOWN_AUTHOR_MAX: i64 = 256;
