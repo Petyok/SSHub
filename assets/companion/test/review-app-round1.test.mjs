@@ -11,7 +11,7 @@ import { approveRelease, evaluateChallenge } from '../src/release.mjs';
 import { certRequestProblems, describeCertRequest, issueCert } from '../src/cert.mjs';
 import { describeOp, parseOp, safeText } from '../src/ops.mjs';
 import { planReshare } from '../src/reshare.mjs';
-import { HEAD_PENDING_MESSAGE, adoptOwnChain, appendHeadAttest, confirmNoChain, courierOps, emptyState, issueSnapshot, recordSnapshot, restoredState } from '../src/state.mjs';
+import { HEAD_PENDING_MESSAGE, acceptHead, adoptOwnChain, appendHeadAttest, confirmNoChain, courierOps, emptyState, issueSnapshot, recordSnapshot, restoredState } from '../src/state.mjs';
 import { parseReveal, revealBytes } from '../src/frames.mjs';
 import { snapshotOpen } from '../src/quorum.mjs';
 import { scenario as buildScenario } from './reshare-scenario.mjs';
@@ -139,7 +139,11 @@ test('F3 a restored key does not author until it has its chain head; the head co
   const forged = ops.map((o) => ({ ...o, signature: new Uint8Array(64) }));
   assert.throws(() => adoptOwnChain(restoredState(), id, forged), /does not verify/);
   assert.throws(() => adoptOwnChain(restoredState(), id, [ops[1]].concat(ops[1])), /one chain|nothing/);
-  const r = adoptOwnChain(restored, identityOfSecret(secret), ops);
+  const first = adoptOwnChain(restored, identityOfSecret(secret), ops);
+  assert.equal(first.agreed, false, 'one list is not enough');
+  assert.throws(() => appendHeadAttest(restored, identityOfSecret(secret), NOW + 6, null), /must not sign yet/);
+  assert.equal(adoptOwnChain(restored, identityOfSecret(secret), ops).agreed, true);
+  const r = acceptHead(restored);
   assert.equal(r.head_seq, '2');
   const next = appendHeadAttest(restored, identityOfSecret(secret), NOW + 9, null);
   const op = parseOp(next.canonical);
@@ -151,7 +155,8 @@ test('F3 a key that never signed anything can say so, and then authors from seq 
   const s = restoredState();
   const id = identityOfSecret(rnd(32, 13));
   assert.throws(() => appendHeadAttest(s, id, NOW, null), /must not sign yet/);
-  confirmNoChain(s);
+  assert.throws(() => confirmNoChain(s, id, 'not the id'), /device id/);
+  confirmNoChain(s, id, ` ${id.deviceId.toUpperCase()} `);
   assert.equal(String(parseOp(appendHeadAttest(s, id, NOW, null).canonical).seq), '1');
 });
 
@@ -311,10 +316,11 @@ test('S2 two batches written by ONE device are not two contributors', () => {
   assert.equal(r.ok, false, 'one author with two from-bytes must not combine a share');
   const honest = buildScenario({ phone });
   assert.equal(planReshare(phone, honest.signed, 1, { ring: honest.ring }).ok, true);
+  // SU2: contributors this phone has not verified do not make a plan
   const plan = planReshare(phone, honest.signed, 1, { ring: {} });
-  assert.equal(plan.ok, true);
+  assert.equal(plan.ok, false);
+  assert.match(plan.error, /fewer than 2 contributors/);
   assert.ok(plan.contributors.every((c) => c.known === false), 'contributors the phone does not know are marked');
-  assert.equal(plan.seen.lamport, 0n, 'counters are not adopted from unverified ops');
 });
 
 test('S5 parseReveal accepts only 0 and 1 for the attended flag', () => {

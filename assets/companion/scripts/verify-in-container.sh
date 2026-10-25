@@ -20,7 +20,7 @@ cp sshub-companion.html /tmp/build1.html
 step build-again node build.mjs
 cmp sshub-companion.html /tmp/build1.html && echo "REPRODUCIBLE yes" || { echo "REPRODUCIBLE no"; fail=1; }
 step build-selftest node build.mjs --selftest
-step node-tests node --test test/phone.test.mjs test/phone2.test.mjs test/phone3.test.mjs test/review-app-round1.test.mjs test/quorum.test.mjs test/replay.test.js
+step node-tests node --test test/phone.test.mjs test/phone2.test.mjs test/phone3.test.mjs test/review-app-round1.test.mjs test/review-app-round2.test.mjs test/ble.test.mjs test/quorum.test.mjs test/replay.test.js
 step headless-replay node scripts/headless-check.mjs
 # The Rust terminal of the enrollment check (phone_fixtures e2e_enrollment_peer_for_the_page) runs next to the page flow
 # and exchanges the enrollment frames with it as files; compile first so it is ready when the page starts.
