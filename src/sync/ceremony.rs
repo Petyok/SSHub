@@ -96,7 +96,6 @@ pub(crate) fn test_force(store: &LauncherStore, on: bool) {
     meta_set(store, "test_all_in_force", if on { b"1" } else { b"" }).unwrap();
 }
 
-/// The newest op with `lamport <= upto` that made `device` a holder, if any, as `(lamport, op)`.
 /// Did `device` join the ring (its first `DeviceAdd`) after lamport `l`? A founder or a device adopted with an
 /// anchor has no `DeviceAdd` of its own: false.
 pub(crate) fn joined_after(store: &LauncherStore, device: &DeviceId, l: u64) -> Result<bool> {
@@ -108,6 +107,7 @@ pub(crate) fn joined_after(store: &LauncherStore, device: &DeviceId, l: u64) -> 
     Ok(first.is_some_and(|f| f > l))
 }
 
+/// The newest op with `lamport <= upto` that made `device` a holder, if any.
 fn establishing_op(
     store: &LauncherStore,
     device: &DeviceId,
@@ -156,7 +156,13 @@ fn holder_established(store: &LauncherStore, device: &DeviceId, upto: Option<u64
 
 fn revoke_in_force(store: &LauncherStore, device: &DeviceId, upto: Option<u64>) -> Result<bool> {
     let mut any = false;
+    let mut later = false;
     for op in ops_of(store, "DeviceRevoke", None)? {
+        if matches!(&op.body, OpBody::DeviceRevoke { device_id } if device_id == device)
+            && upto.is_some_and(|u| op.lamport > u)
+        {
+            later = true;
+        }
         if matches!(&op.body, OpBody::DeviceRevoke { device_id } if device_id == device)
             && !upto.is_some_and(|u| op.lamport > u)
         {
@@ -166,8 +172,9 @@ fn revoke_in_force(store: &LauncherStore, device: &DeviceId, upto: Option<u64>) 
             }
         }
     }
-    // No revoke op in the log (an anchor, or a revoked non-holder): the row stands.
-    Ok(!any)
+    // No revoke op in the log (an anchor, or a revoked non-holder): the row stands. A revoke that comes only
+    // AFTER this view means the device was not revoked yet in it.
+    Ok(!any && !later)
 }
 
 /// The device table as the ceremony sees it at `upto` (a lamport bound; `None` = now): a device whose
@@ -212,6 +219,50 @@ fn factor_message(op_hash: &[u8; 32], proposer: &DeviceId) -> Vec<u8> {
 
 /// A registered factor: verifying key, sealed seed (email), sender (email).
 type Registration = ([u8; 32], Vec<u8>, Option<DeviceId>);
+
+/// Has `factor` been PROVEN for `hash`: a `RedFactor` naming `hash`, newer than `after`, whose signature verifies under
+/// the key registered (and in force) before `registered_before`, over the message bound to `author` (the proposer of
+/// the op, or the device cancelling a recovery)? The emailed code does not count when its registered sender is `author`
+/// or one of `voters`: the mailbox duty is a participant of its own. Naming a factor in an op proves nothing.
+pub(crate) fn factor_proven(
+    store: &LauncherStore,
+    hash: &[u8; 32],
+    author: &DeviceId,
+    factor: &ThirdFactor,
+    registered_before_lamport: u64,
+    after: u64,
+    voters: &[DeviceId],
+) -> Result<bool> {
+    let Some((key, _, sender)) =
+        registered_before(store, factor.clone(), Some(registered_before_lamport))?
+    else {
+        return Ok(false);
+    };
+    if *factor == ThirdFactor::EmailCode {
+        if let Some(s) = &sender {
+            if s == author || voters.contains(s) {
+                return Ok(false);
+            }
+        }
+    }
+    for p in ops_of(store, "RedFactor", None)? {
+        if let OpBody::RedFactor {
+            op_hash,
+            factor: f,
+            sig,
+        } = &p.body
+        {
+            if op_hash == hash
+                && f == factor
+                && p.lamport > after
+                && verify(&key, &factor_message(hash, author), sig)
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
 
 /// The newest applied registration of `factor`.
 fn registered(store: &LauncherStore, factor: ThirdFactor) -> Result<Option<Registration>> {
@@ -544,7 +595,12 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         missing.push(RedProof::Factor(
             replacing
                 .clone()
-                .filter(|r| registered(store, r.clone()).ok().flatten().is_some()),
+                .filter(|r| {
+                    registered_before(store, r.clone(), Some(op.lamport))
+                        .ok()
+                        .flatten()
+                        .is_some()
+                }),
         ));
     }
     // The two completion ops of a Ready phone-loss recovery need no proof of the lost phone: the recovery
