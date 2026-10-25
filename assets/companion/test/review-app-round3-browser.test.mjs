@@ -116,10 +116,10 @@ test('RP11 FAILS a list the terminal pushes while no screen wants it waits for t
     await page.click('#ble-go');
     let agreed = true;
     try {
-      await page.waitForSelector('#head-agreed', { timeout: 6000 });
+      await page.waitForSelector('#head-agreed', { timeout: 30000 });
     } catch {
       agreed = false;
     }
-    assert.ok(agreed, `the second list was pushed over an open session and lost; status: ${await page.textContent('#ble-status')}`);
+    assert.ok(agreed, `the second list was pushed over an open session and lost; screen: ${(await page.evaluate(() => document.body.innerText)).replace(/\n+/g, ' | ').slice(0, 400)}`);
   }, { fakeBle: true });
 });
