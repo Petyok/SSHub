@@ -105,7 +105,7 @@ impl ShareSource for PromptShares {
             "Asked {} for a share. Waiting up to {} s: approve it there in the TUI or with `sshub sync-review --approve {}`.",
             super::theme::sanitize_foreign(&names.join(" or ")),
             self.wait.as_secs(),
-            &crate::cli::sync_cmd::op_id(&req.op.hash()),
+            crate::cli::sync_cmd::op_id(&req.op.hash()),
         );
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let found = wait_for_grant(self.wait, POLL_EVERY, || {
