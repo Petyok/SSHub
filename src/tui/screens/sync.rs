@@ -301,6 +301,12 @@ pub fn render_review(frame: &mut Frame, app: &App) {
                 color(app, ColorRole::StatusError),
             ));
         }
+        if let Some(note) = &red.note {
+            body.push(Line::styled(
+                format!("  note: {note}"),
+                app.theme().style(StyleRole::TextMuted),
+            ));
+        }
         if let Some(why) = &red.rule_violation {
             body.push(Line::styled(
                 format!("  rule broken: {why}"),

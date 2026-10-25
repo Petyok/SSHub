@@ -1072,6 +1072,41 @@ mod review {
         );
     }
 
+    // The note red_status sets reaches the review's view (TUI and sync-review read RedView).
+    #[test]
+    fn the_note_of_red_status_travels_to_the_review_view() {
+        let d = ring_phone(3);
+        let phrase = bip39_encode(&[0x35; 32]);
+        let reg = append(
+            &d[0],
+            crate::sync::quorum::paper_registration(&phrase).unwrap(),
+        );
+        complete(&d, &reg, 2, None);
+        let (body, code) = factor_register_email(&d[1].did).unwrap();
+        let ereg = append(&d[0], body);
+        complete(&d, &ereg, 2, Some(&phrase));
+        remember_email_code(&d[1].store, &d[1].id, &code).unwrap();
+        let op = append(
+            &d[0],
+            OpBody::BulkExport {
+                requester: d[0].did.clone(),
+                window_secs: 60,
+            },
+        );
+        sync_pull(&d);
+        append(&d[3], red_phone_sign_body(&op));
+        append(&d[1], red_approve_body(&op)); // the sender gives the second vote
+        sync_pull(&d);
+        let st = red_status(&d[2].store, &op, op.timestamp + 30).unwrap();
+        let note = st
+            .note
+            .clone()
+            .expect("red_status explains the dead email factor");
+        let rows = d[2].store.sync_devices().unwrap();
+        let view = crate::app::sync_view::pending_view(&d[2].store, &op, &rows, None);
+        assert_eq!(view.red.expect("a Red view").note, Some(note));
+    }
+
     // crypto F8: the phone looks as fresh as what it signed, not as the day a courier delivered it.
     #[test]
     fn phone_freshness_follows_what_the_phone_signed() {
