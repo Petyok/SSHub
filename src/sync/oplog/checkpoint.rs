@@ -1754,6 +1754,13 @@ fn check_bundle(
     );
     let local = matches!(trust, BootstrapTrust::Anchor(_));
     if local {
+        // A store with no log has no ring state to continue: it joins by enrollment (the
+        // inviter's anchor) or by the ring fingerprint, never by taking a peer's word.
+        let have: i64 = conn.query_row("SELECT COUNT(*) FROM sync_ops", [], |r| r.get(0))?;
+        ensure!(
+            have > 0,
+            "this device has no ring state yet: join through enrollment, a checkpoint from a peer is not enough"
+        );
         // Before the state is parsed (it can be megabytes): the proposal must at least be signed
         // by a device this one knows.
         ensure!(
@@ -1763,15 +1770,6 @@ fn check_bundle(
     }
     let state: Value = serde_json::from_slice(&bundle.state).context("state is not JSON")?;
     let devices = state["devices"].as_array().cloned().unwrap_or_default();
-    if local {
-        // A store with no log has no ring state to continue: it joins by enrollment (the
-        // inviter's anchor) or by the ring fingerprint, never by taking a peer's word.
-        let have: i64 = conn.query_row("SELECT COUNT(*) FROM sync_ops", [], |r| r.get(0))?;
-        ensure!(
-            have > 0,
-            "this device has no ring state yet: join through enrollment, a checkpoint from a peer is not enough"
-        );
-    }
     // This device's own chains (it cannot have signed a checkpoint it is catching up to).
     let mine: BTreeSet<DeviceId> = if local {
         let mut st = conn.prepare("SELECT DISTINCT device_id FROM sync_ops WHERE local = 1")?;
