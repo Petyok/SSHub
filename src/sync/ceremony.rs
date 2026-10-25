@@ -42,6 +42,12 @@ pub struct RedStatus {
     /// The op breaks a rule of its own kind that no later state can repair (a second phone, an exemption
     /// slot the exempt device did not make): it is never in force, whoever completed its proofs.
     pub rule_violation: Option<String>,
+    /// Why a proof that looks available does not count (the mailbox sender proposed or voted): the screens say so.
+    pub note: Option<String>,
+    /// When, on this device's clock, the last required counted proof first arrived: the earliest receipt of each
+    /// required kind, the latest of those and the op itself. Meaningful when `complete`; what a time window that
+    /// opens "when the ceremony completed" measures from. A junk proof naming the op moves nothing.
+    pub complete_at: i64,
 }
 
 /// Is `op` one of the Red ops this ceremony gates? (`PhoneReenroll` has its own path.)
@@ -91,6 +97,17 @@ pub(crate) fn test_force(store: &LauncherStore, on: bool) {
 }
 
 /// The newest op with `lamport <= upto` that made `device` a holder, if any, as `(lamport, op)`.
+/// Did `device` join the ring (its first `DeviceAdd`) after lamport `l`? A founder or a device adopted with an
+/// anchor has no `DeviceAdd` of its own: false.
+pub(crate) fn joined_after(store: &LauncherStore, device: &DeviceId, l: u64) -> Result<bool> {
+    let first = ops_of(store, "DeviceAdd", None)?
+        .into_iter()
+        .filter(|op| matches!(&op.body, OpBody::DeviceAdd { device: d, .. } if d.device_id() == *device))
+        .map(|op| op.lamport)
+        .min();
+    Ok(first.is_some_and(|f| f > l))
+}
+
 fn establishing_op(
     store: &LauncherStore,
     device: &DeviceId,
@@ -122,7 +139,9 @@ fn establishing_op(
 
 fn holder_established(store: &LauncherStore, device: &DeviceId, upto: Option<u64>) -> Result<bool> {
     let Some(op) = establishing_op(store, device, upto)? else {
-        return Ok(true); // a founder, or a holder adopted with an anchor
+        // A founder, or a holder adopted with an anchor; but not a device whose admission is LATER than the
+        // view (its row exists, it was not part of the ring yet).
+        return Ok(!upto.is_some_and(|u| joined_after(store, device, u).unwrap_or(false)));
     };
     let to_holder = match &op.body {
         OpBody::DeviceAdd { role, .. } => *role == DeviceRole::Holder,
@@ -268,8 +287,12 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     };
     let op_base = base_time(store, op);
     let expired = now - op_base > RED_CEREMONY_TTL_SECS;
-    let valid_proof =
-        |p: &Op| p.lamport > op.lamport && base_time(store, p) - op_base <= RED_CEREMONY_TTL_SECS;
+    // A proof is as old as the moment this device RECEIVED it: its stamp is the author's word, and a
+    // backdated stamp must not let a proof that arrived after the window complete the ceremony.
+    let valid_proof = |p: &Op| {
+        p.lamport > op.lamport
+            && received_at(store, p).unwrap_or(p.timestamp) - op_base <= RED_CEREMONY_TTL_SECS
+    };
     let mut have = Vec::new();
     let mut missing = Vec::new();
     let mut blocked = phone_verdict;
@@ -378,13 +401,21 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
 
     // Phone participation: the op itself when the phone authored it.
     let authored_by_phone = phone.as_ref() == Some(proposer);
+    let heard = |p: &Op| received_at(store, p).unwrap_or(p.timestamp);
+    let mut complete_at = heard(op);
     if authored_by_phone {
         have.push(RedProof::Phone);
     } else if let Some(ph) = &phone {
-        if ops_of(store, "RedPhoneSign", Some(ph))?.iter().any(|p| {
-            valid_proof(p)
-                && matches!(&p.body, OpBody::RedPhoneSign { op_hash } if *op_hash == hash)
-        }) {
+        let first = ops_of(store, "RedPhoneSign", Some(ph))?
+            .iter()
+            .filter(|p| {
+                valid_proof(p)
+                    && matches!(&p.body, OpBody::RedPhoneSign { op_hash } if *op_hash == hash)
+            })
+            .map(heard)
+            .min();
+        if let Some(t) = first {
+            complete_at = complete_at.max(t);
             have.push(RedProof::Phone);
         } else {
             missing.push(RedProof::Phone);
@@ -414,6 +445,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         .count();
     let single_machine_ring = others == 0 && !authored_by_phone;
     let mut approved = false;
+    let mut second_at: Option<i64> = None;
     let mut approvers: Vec<DeviceId> = Vec::new();
     for p in ops_of(store, "RedApprove", None)? {
         if !valid_proof(&p)
@@ -434,9 +466,11 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
             continue;
         }
         approved = true;
+        second_at = Some(second_at.map_or(heard(&p), |t: i64| t.min(heard(&p))));
         approvers.push(p.device_id.clone());
     }
     if approved {
+        complete_at = complete_at.max(second_at.unwrap_or(0));
         have.push(RedProof::SecondDevice);
     } else if !single_machine_ring {
         missing.push(RedProof::SecondDevice);
@@ -453,6 +487,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     let bootstrap = replacing.is_some() && !any_registered;
     let mut factor_ok = false;
     let mut factor_named: Option<ThirdFactor> = None;
+    let mut factor_at: Option<i64> = None;
     for p in ops_of(store, "RedFactor", None)? {
         let OpBody::RedFactor {
             op_hash,
@@ -488,9 +523,22 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         if verify(&key, &factor_message(&hash, proposer), sig) {
             factor_ok = true;
             factor_named = Some(factor.clone());
+            factor_at = Some(factor_at.map_or(heard(&p), |t: i64| t.min(heard(&p))));
+        }
+    }
+    let mut note = None;
+    if !factor_ok {
+        if let Some(sender) = email.as_ref().and_then(|e| e.2.as_ref()) {
+            if sender == proposer || approvers.contains(sender) {
+                note = Some(
+                    "the emailed code cannot count here: its registered sender proposed this change or gave the second-device vote; another attended holder must approve, or use the paper"
+                        .to_string(),
+                );
+            }
         }
     }
     if factor_ok {
+        complete_at = complete_at.max(factor_at.unwrap_or(0));
         have.push(RedProof::Factor(factor_named.clone()));
     } else if !bootstrap {
         missing.push(RedProof::Factor(
@@ -499,8 +547,44 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
                 .filter(|r| registered(store, r.clone()).ok().flatten().is_some()),
         ));
     }
+    // The two completion ops of a Ready phone-loss recovery need no proof of the lost phone: the recovery
+    // was the ceremony (contract 4h).
+    let completion = match &op.body {
+        // The view at the op's own lamport already counts the op itself as in force, so the target is
+        // recognised by what it is (a holder phone), not by being the live phone of that view.
+        OpBody::DeviceRevoke { device_id } => devices.iter().any(|d| {
+            d.id == *device_id && d.kind == DeviceKind::Phone && d.role == DeviceRole::Holder
+        }),
+        // Likewise the new phone is already a row of its own view: admitted only while no OTHER phone lives.
+        OpBody::DeviceAdd {
+            device,
+            kind: DeviceKind::Phone,
+            role: DeviceRole::Holder,
+            ..
+        } => !devices.iter().any(|d| {
+            d.kind == DeviceKind::Phone
+                && d.role == DeviceRole::Holder
+                && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+                && d.id != device.device_id()
+        }),
+        _ => false,
+    };
+    // The clock is this device's: the completion op's own stamp (what `in_force` passes) must not be able
+    // to pull the end of the time lock forward.
+    let recovery_now = now.min(received_at(store, op).unwrap_or(now));
+    let recovery_stands =
+        completion && super::recovery::ready_recovery_for(store, op, recovery_now)?;
+    if recovery_stands {
+        missing.clear();
+        have = vec![
+            RedProof::Phone,
+            RedProof::SecondDevice,
+            RedProof::Factor(None),
+        ];
+    }
     // A ring of one terminal needs the paper: with no second device it is the only independent proof left.
     if single_machine_ring
+        && !recovery_stands
         && !matches!(factor_named, Some(ThirdFactor::Paper))
         && !bootstrap
         && !missing.iter().any(|m| matches!(m, RedProof::Factor(_)))
@@ -516,6 +600,8 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         blocked,
         single_machine_ring,
         rule_violation,
+        note,
+        complete_at,
     })
 }
 

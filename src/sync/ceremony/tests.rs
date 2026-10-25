@@ -296,6 +296,49 @@ fn a_cert_issue_is_proposed_by_the_phone_and_needs_a_second_device_that_is_not_t
     assert!(red_status(&d[OBS].store, &cert, now).unwrap().complete);
 }
 
+// app round 2, F5: a dead email factor says why.
+#[test]
+fn the_ceremony_says_when_the_mailbox_sender_made_the_emailed_code_unusable() {
+    let d = world(&[R, A, B]);
+    let phrase = bip39_encode(&[0x34; 32]);
+    let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
+    append(&d[P], red_phone_sign_body(&reg));
+    append(&d[A], red_approve_body(&reg));
+    sync(&d);
+    for x in &d {
+        settle_red_ops(&x.store, reg.timestamp + 5).unwrap();
+    }
+    let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
+    let (body, _code) = factor_register_email(&d[B].did).unwrap();
+    let ereg = propose(&d, R, body);
+    append(&d[P], red_phone_sign_body(&ereg));
+    append(&d[A], red_approve_body(&ereg));
+    append(&d[R], red_factor_paper(&recover, &ereg));
+    sync(&d);
+    for x in &d {
+        settle_red_ops(&x.store, ereg.timestamp + 5).unwrap();
+    }
+    let op = propose(
+        &d,
+        R,
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            migrated_on: d[R].did.clone(),
+            cosigner: None,
+        },
+    );
+    append(&d[P], red_phone_sign_body(&op));
+    // The sender is the one who gave the second-device vote: its own code cannot be a separate factor.
+    append(&d[B], red_approve_body(&op));
+    sync(&d);
+    let st = status(&d, &op, op.timestamp + 30);
+    assert!(
+        st.note.as_deref().is_some_and(|n| n.contains("sender")),
+        "{st:?}"
+    );
+    assert!(!st.complete);
+}
+
 #[test]
 fn the_emailed_code_is_a_factor_and_its_sender_mails_only_when_the_other_proofs_are_in() {
     let d = world(&[R, A, B]);
@@ -1050,6 +1093,101 @@ mod review {
         pull(&d[0], &d[2]);
         let seen = crate::sync::quorum::phone_signed_at(&d[2].store, &d[0].did, now).unwrap();
         assert!(seen <= op.timestamp + 5, "{seen} vs {}", op.timestamp);
+    }
+
+    // crypto round 2, F1: a proof is as old as its receipt, whatever stamp its author chose.
+    #[test]
+    fn a_backdated_late_factor_does_not_complete_a_stale_ceremony() {
+        let d = ring_phone(3);
+        let phrase = bip39_encode(&[0x31; 32]);
+        let reg = append(
+            &d[0],
+            crate::sync::quorum::paper_registration(&phrase).unwrap(),
+        );
+        complete(&d, &reg, 1, None);
+        let now = crate::store::now_ts();
+        let t0 = now - 10 * 86_400;
+        let op = d[0]
+            .store
+            .sync_append_local_at(
+                &d[0].id,
+                OpBody::BulkExport {
+                    requester: d[0].did.clone(),
+                    window_secs: 60,
+                },
+                t0,
+            )
+            .unwrap();
+        sync_pull(&d);
+        d[3].store
+            .sync_append_local_at(&d[3].id, red_phone_sign_body(&op), t0 + 3_600)
+            .unwrap();
+        d[1].store
+            .sync_append_local_at(&d[1].id, red_approve_body(&op), t0 + 3_600)
+            .unwrap();
+        sync_pull(&d);
+        assert!(!in_force(&d[0].store, &op).unwrap(), "no factor yet");
+        let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
+        d[2].store
+            .sync_append_local_at(&d[2].id, red_factor_paper(&recover, &op), now)
+            .unwrap();
+        sync_pull(&d);
+        assert!(
+            !in_force(&d[0].store, &op).unwrap(),
+            "control: a late proof is refused"
+        );
+        d[1].store
+            .sync_append_local_at(&d[1].id, red_factor_paper(&recover, &op), t0 + 7_200)
+            .unwrap();
+        sync_pull(&d);
+        assert!(
+            !in_force(&d[0].store, &op).unwrap(),
+            "a factor proof received ten days late completed the ceremony because its stamp is backdated"
+        );
+    }
+
+    // crypto round 2, F3: only a holder's grant answers a share request.
+    #[test]
+    fn a_grant_from_a_non_holder_does_not_pre_empt_the_real_one() {
+        let d = ring(3);
+        quorum_mode(&d[0]);
+        all_to_all(&d);
+        let host = [77u8; 16];
+        cred_put(&d[0].store, &d[0].id, &host, &payload("p")).unwrap();
+        all_to_all(&d);
+        let m = mirror_in(&d);
+        for x in &d {
+            deliver(&m, x);
+            deliver(x, &m);
+        }
+        let req = crate::sync::quorum::peer_request(&d[0].store, &d[0].id, &host).unwrap();
+        let OpBody::ShareRelease { eph_x25519_pub, .. } = &req.op.body else {
+            unreachable!()
+        };
+        deliver(&d[0], &m);
+        append(
+            &m,
+            OpBody::ShareGrant {
+                host_uid: host,
+                request_id: req.request_id,
+                requester: d[0].did.clone(),
+                epoch: 0,
+                sealed: crate::sync::share_release::seal_share_response(
+                    eph_x25519_pub,
+                    &crate::sync::crypto::Share {
+                        index: 2,
+                        bytes: vec![1; 32],
+                    },
+                ),
+            },
+        );
+        deliver(&m, &d[0]);
+        assert!(
+            crate::sync::quorum::peer_poll(&d[0].store, &req, 0)
+                .unwrap()
+                .is_none(),
+            "a grant written by a mirror was handed to the unlocker as the holder's share"
+        );
     }
 
     // protocol S5/app F11: foreign names are plain text in mails and screens.

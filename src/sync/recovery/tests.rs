@@ -657,6 +657,129 @@ mod over_the_log {
         assert!(w.verdict(&by_hub, by_hub.timestamp).is_err());
     }
 
+    // crypto round 2, O1: a Ready recovery completes: the lost phone is revoked, the new one admitted, and
+    // the new phone supplies the phone proof of the next Red ceremony.
+    #[test]
+    fn a_ready_recovery_ends_with_a_new_phone_that_can_sign() {
+        use crate::sync::ceremony::{in_force, red_approve_body, red_phone_sign_body, red_status};
+        use crate::sync::quorum::{paper_registration, phone_device};
+        use crate::sync::recovery::{ack_body, approve_body, completion_bodies, start_body};
+        let w = world();
+        for x in &w.d {
+            crate::sync::ceremony::test_force(&x.store, false);
+        }
+        let now = crate::store::now_ts();
+        let long_ago = now - 9 * 86_400;
+        let at =
+            |d: &Dev, body: OpBody, t: i64| d.store.sync_append_local_at(&d.id, body, t).unwrap();
+        let start = start_body(
+            &w.d[R].store,
+            &w.d[R].id,
+            long_ago,
+            None,
+            ThirdFactor::Paper,
+        )
+        .unwrap();
+        let op = at(&w.d[R], start, long_ago);
+        // Too early: the requester cannot revoke the phone yet.
+        let premature = at(
+            &w.d[R],
+            OpBody::DeviceRevoke {
+                device_id: w.d[P].did.clone(),
+            },
+            long_ago + 5,
+        );
+        w.sync();
+        assert!(!in_force(&w.d[OBS].store, &premature).unwrap());
+        at(&w.d[A], approve_body(&op).unwrap(), long_ago + 60);
+        at(&w.d[B], approve_body(&op).unwrap(), long_ago + 61);
+        at(
+            &w.d[A],
+            ack_body(&op, long_ago + 120).unwrap(),
+            long_ago + 120,
+        );
+        w.sync();
+        // Everybody first saw all of it nine days ago (the clock of the time lock is each device's own).
+        for x in &w.d {
+            x.store
+                .with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_ops SET received_at = timestamp WHERE timestamp < received_at",
+                        [],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert_eq!(w.verdict(&op, now).unwrap(), ReenrollVerdict::Ready);
+        // Ready: a revocation stamped before the lock ended stays out (its clock is its own stamp), the one
+        // issued now stands without the lost phone's signature, and the replacement is admitted once.
+        assert!(!in_force(&w.d[OBS].store, &premature).unwrap());
+        let new = Dev::new();
+        crate::sync::ceremony::test_force(&new.store, false);
+        let bodies =
+            completion_bodies(&w.d[R].store, &op, now, &new.id.public(), "new phone").unwrap();
+        let revoke = at(&w.d[R], bodies[0].clone(), now);
+        let add = at(&w.d[R], bodies[1].clone(), now + 1);
+        w.sync();
+        assert!(
+            in_force(&w.d[OBS].store, &revoke).unwrap(),
+            "{:?}",
+            red_status(&w.d[OBS].store, &revoke, now)
+        );
+        assert!(
+            in_force(&w.d[OBS].store, &add).unwrap(),
+            "{:?}",
+            red_status(&w.d[OBS].store, &add, now)
+        );
+        assert_eq!(
+            phone_device(&w.d[OBS].store).unwrap(),
+            Some(new.did.clone())
+        );
+        // A second admission through the same recovery is refused.
+        let again = Dev::new();
+        let add2 = at(
+            &w.d[R],
+            OpBody::DeviceAdd {
+                device: again.id.public(),
+                name: "another".into(),
+                role: DeviceRole::Holder,
+                attendance: Attendance::Attended,
+                kind: DeviceKind::Phone,
+                verified_by: VerifiedBy::Sas,
+            },
+            now + 1,
+        );
+        w.sync();
+        assert!(!in_force(&w.d[OBS].store, &add2).unwrap());
+        // The new phone is the ring's phone: it signs the next Red ceremony.
+        let reg = at(&w.d[R], paper_registration("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art").unwrap(), now + 2);
+        w.sync();
+        for i in [R, A, B] {
+            new.trust_with(&w.d[i], Attendance::Attended, DeviceKind::Terminal);
+        }
+        new.trust_with(&w.d[P], Attendance::Attended, DeviceKind::Phone);
+        deliver(&w.d[R], &new);
+        // The new phone has the log from the requester now, but the lock ran long before: its clock for the
+        // recovery is what the requester's receipts say, as on the other devices.
+        new.store
+            .with_conn(|c| {
+                c.execute(
+                    "UPDATE sync_ops SET received_at = timestamp WHERE timestamp < received_at",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        append(&new, red_phone_sign_body(&reg));
+        append(&w.d[A], red_approve_body(&reg));
+        w.sync();
+        deliver(&new, &w.d[OBS]);
+        deliver(&new, &w.d[A]);
+        let st = red_status(&w.d[OBS].store, &reg, now + 3).unwrap();
+        assert!(st.complete, "{st:?}");
+    }
+
     #[test]
     fn a_mirror_cannot_approve_or_acknowledge_a_recovery() {
         let w = world();
