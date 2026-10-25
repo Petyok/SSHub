@@ -326,6 +326,9 @@ fn sync_share_request_challenge_decodes_and_the_phones_reply_opens_the_credentia
     let ch = ShareChallenge::new(&d[0].store, &d[0].id, &host).unwrap();
     // The kind 1 text decodes and names a challenge for this host.
     let wire = ChallengeWire::decode(&B64.decode(&ch.text).unwrap()).unwrap();
+    // Bluetooth carries the same bytes, as a frame its channel accepts.
+    assert_eq!(ch.frame, B64.decode(&ch.text).unwrap());
+    assert!(crate::sync::media::ble_link::valid_frame(&ch.frame));
     // The phone answers with its share, sealed to the challenge's ephemeral key.
     let share = own_shares(&d[2].store, &d[2].id, &host)
         .unwrap()
@@ -443,4 +446,20 @@ fn sync_cert_request_names_the_chosen_scope_and_never_everything() {
         &parse(&["--host".into(), "nope".into()]).unwrap()
     )
     .is_err());
+}
+
+#[test]
+fn the_ble_flag_is_parsed_and_a_build_without_bluetooth_says_so() {
+    assert!(parse(&["--ble".into()]).unwrap().ble);
+    assert!(!parse(&[]).unwrap().ble);
+    #[cfg(not(feature = "bluetooth"))]
+    {
+        let err = BleLink::new(false, crate::sync::media::ListenOpts::SHARE_RESPONSE)
+            .err()
+            .expect("no Bluetooth channel in this build");
+        assert!(
+            format!("{err:#}").contains("--features bluetooth"),
+            "{err:#}"
+        );
+    }
 }
