@@ -1319,7 +1319,7 @@ byte = type, big-endian integers.
   restarts the session state (frames in flight are dropped).
 - **Frames.** A frame (kinds 1 to 10, `len >= 7`) is cut into DATA chunks. `frame_id` starts at 1 for each
   sender and each direction and wraps after 65535 to 1. One frame in flight per direction. Chunk 0 carries
-  `len` and `crc32` (IEEE 802.3, over the whole frame) after the 6 byte header, so its payload is `chunk - 15`
+  `len` and `crc32` (IEEE 802.3, over the whole frame) after the 7 byte header, so its payload is `chunk - 15`
   bytes; chunks 1 and up have `chunk - 7` payload bytes; `count = 1 + ceil(max(0, len - (chunk - 15)) / (chunk
   - 7))`. The last chunk is as short as needed.
 - **Receiver rules** (the terminal enforces them on what the phone sends; the page SHOULD enforce them on what
