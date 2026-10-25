@@ -10,6 +10,11 @@
 //!
 //! Wire form: `"SSHN" || 1 || mem u32 BE || iters u32 BE || issued_at i64 BE || salt(16) ||
 //! nonce(24) || ct`; everything before `ct` is associated data. `sealed` is `nonce || ct`.
+//!
+//! Version 2 (what the page issues now) names the credential inside the associated data:
+//! `"SSHN" || 2 || mem || iters || issued_at || salt(16) || host_uid(16) || nonce(24) || ct`. A blob
+//! can then be refused for any credential but its own, and the terminal keeps at most one live blob
+//! per credential. Version 1 stays readable (vectors, older phones) and is unbound.
 
 use anyhow::{anyhow, bail, Result};
 use chacha20poly1305::{
@@ -26,14 +31,18 @@ use super::limits::{
 };
 
 const MAGIC: &[u8; 4] = b"SSHN";
-const VERSION: u8 = 1;
+const VERSION_1: u8 = 1;
+const VERSION_2: u8 = 2;
 const HEADER: usize = 4 + 1 + 4 + 4 + 8 + 16;
+const HEADER_V2: usize = HEADER + 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapshotBlob {
     pub salt: [u8; 16],
     pub profile: Argon2Profile,
     pub issued_at: i64,
+    /// The credential this blob is for (version 2); `None` for a version 1 blob.
+    pub host_uid: Option<[u8; 16]>,
     /// `nonce(24) || ciphertext+tag`.
     pub sealed: Vec<u8>,
 }
@@ -48,11 +57,18 @@ impl SnapshotBlob {
     fn header(&self) -> Vec<u8> {
         let mut h = Vec::with_capacity(HEADER);
         h.extend_from_slice(MAGIC);
-        h.push(VERSION);
+        h.push(if self.host_uid.is_some() {
+            VERSION_2
+        } else {
+            VERSION_1
+        });
         h.extend_from_slice(&self.profile.mem_kib.to_be_bytes());
         h.extend_from_slice(&self.profile.iters.to_be_bytes());
         h.extend_from_slice(&self.issued_at.to_be_bytes());
         h.extend_from_slice(&self.salt);
+        if let Some(host) = &self.host_uid {
+            h.extend_from_slice(host);
+        }
         h
     }
 
@@ -64,17 +80,25 @@ impl SnapshotBlob {
         if b.len() < HEADER + 24 + 16 || &b[..4] != MAGIC {
             bail!("not a snapshot blob");
         }
-        if b[4] != VERSION {
-            bail!("unsupported snapshot version {}", b[4]);
-        }
+        let (host_uid, body) = match b[4] {
+            VERSION_1 => (None, HEADER),
+            VERSION_2 => {
+                if b.len() < HEADER_V2 + 24 + 16 {
+                    bail!("not a snapshot blob");
+                }
+                (Some(b[HEADER..HEADER_V2].try_into().unwrap()), HEADER_V2)
+            }
+            v => bail!("unsupported snapshot version {v}"),
+        };
         Ok(Self {
+            host_uid,
             profile: Argon2Profile {
                 mem_kib: u32::from_be_bytes(b[5..9].try_into().unwrap()),
                 iters: u32::from_be_bytes(b[9..13].try_into().unwrap()),
             },
             issued_at: i64::from_be_bytes(b[13..21].try_into().unwrap()),
             salt: b[21..37].try_into().unwrap(),
-            sealed: b[37..].to_vec(),
+            sealed: b[body..].to_vec(),
         })
     }
 }
@@ -106,7 +130,23 @@ pub fn snapshot_seal_with_profile(
     let mut nonce = [0u8; 24];
     OsRng.fill_bytes(&mut salt);
     OsRng.fill_bytes(&mut nonce);
-    seal_with(share, code, now, profile, salt, nonce)
+    seal_with(share, code, now, profile, salt, nonce, None)
+}
+
+/// A version 2 blob: bound to `host`, sealed with the published floor profile unless the phone passes a
+/// weaker one.
+pub fn snapshot_seal_for(
+    host: &[u8; 16],
+    share: &Share,
+    code: &str,
+    now: i64,
+    profile: Argon2Profile,
+) -> Result<SnapshotBlob> {
+    let mut salt = [0u8; 16];
+    let mut nonce = [0u8; 24];
+    OsRng.fill_bytes(&mut salt);
+    OsRng.fill_bytes(&mut nonce);
+    seal_with(share, code, now, profile, salt, nonce, Some(*host))
 }
 
 pub(crate) fn seal_with(
@@ -116,12 +156,14 @@ pub(crate) fn seal_with(
     profile: Argon2Profile,
     salt: [u8; 16],
     nonce: [u8; 24],
+    host_uid: Option<[u8; 16]>,
 ) -> Result<SnapshotBlob> {
     let key = key_for(code, &salt, profile)?;
     let mut blob = SnapshotBlob {
         salt,
         profile,
         issued_at: now,
+        host_uid,
         sealed: Vec::new(),
     };
     let mut plain = Zeroizing::new(vec![share.index]);
@@ -137,6 +179,21 @@ pub(crate) fn seal_with(
         .expect("XChaCha20-Poly1305 encrypt");
     blob.sealed = [nonce.as_slice(), ct.as_slice()].concat();
     Ok(blob)
+}
+
+/// [`snapshot_open`] for the credential `host`: a version 2 blob for another credential is refused before
+/// any Argon2 work. A version 1 blob names no credential and passes (the AEAD of the credential itself
+/// is the later check).
+pub fn snapshot_open_for(
+    blob: &SnapshotBlob,
+    host: &[u8; 16],
+    code: &str,
+    now: i64,
+) -> Result<Share> {
+    if blob.host_uid.is_some_and(|h| h != *host) {
+        bail!("this snapshot is for another credential");
+    }
+    snapshot_open(blob, code, now)
 }
 
 /// Opens a snapshot: TTL and profile bounds are checked before any Argon2 work.
@@ -239,6 +296,38 @@ mod tests {
         };
         assert!(snapshot_open(&bomb, code, 1_001).is_err(), "memory bomb");
         assert!(SnapshotBlob::from_bytes(&blob.to_bytes()[..40]).is_err());
+    }
+
+    #[test]
+    fn version_two_names_its_credential_and_binds_it_into_the_aead() {
+        let code = "K7Q2-9FMX-C41T-8PWD";
+        let (host, other) = ([7u8; 16], [8u8; 16]);
+        let blob = snapshot_seal_for(&host, &share(), code, 1_000, CHEAP).unwrap();
+        assert_eq!(blob.host_uid, Some(host));
+        let wire = blob.to_bytes();
+        assert_eq!(wire[4], 2);
+        assert_eq!(&wire[37..53], &host);
+        assert_eq!(SnapshotBlob::from_bytes(&wire).unwrap(), blob);
+        assert_eq!(
+            snapshot_open_for(&blob, &host, code, 1_001).unwrap(),
+            share()
+        );
+        assert!(snapshot_open_for(&blob, &other, code, 1_001)
+            .unwrap_err()
+            .to_string()
+            .contains("another credential"));
+        // Swapping the named credential breaks the AEAD even for a caller that does not check it.
+        let mut forged = blob.clone();
+        forged.host_uid = Some(other);
+        assert!(snapshot_open(&forged, code, 1_001).is_err());
+        // A version 1 blob stays readable and unbound.
+        let v1 = snapshot_seal_with_profile(&share(), code, 1_000, CHEAP).unwrap();
+        assert_eq!(v1.to_bytes()[4], 1);
+        assert_eq!(
+            snapshot_open_for(&v1, &other, code, 1_001).unwrap(),
+            share()
+        );
+        assert!(SnapshotBlob::from_bytes(&wire[..50]).is_err());
     }
 
     #[test]

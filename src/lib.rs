@@ -123,6 +123,12 @@ pub fn run_app() -> Result<()> {
 ///   -> load profile config -> App::new_with_profile -> dashboard
 /// ```
 pub fn run_app_with(opts: profile::StartupOptions) -> Result<()> {
+    let result = run_app_inner(opts);
+    app::kit::print_reminder();
+    result
+}
+
+fn run_app_inner(opts: profile::StartupOptions) -> Result<()> {
     let auto_quit = std::env::var("SSHUB_AUTO_QUIT")
         .or_else(|_| std::env::var("SSH_LAUNCHER_AUTO_QUIT"))
         .ok();

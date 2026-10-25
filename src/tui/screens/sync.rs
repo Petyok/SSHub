@@ -301,6 +301,12 @@ pub fn render_review(frame: &mut Frame, app: &App) {
                 color(app, ColorRole::StatusError),
             ));
         }
+        if let Some(why) = &red.rule_violation {
+            body.push(Line::styled(
+                format!("  rule broken: {why}"),
+                color(app, ColorRole::StatusError),
+            ));
+        }
         if red.expired {
             body.push(Line::styled(
                 "  the time for this ceremony ran out: reject it and propose it again",
@@ -663,7 +669,7 @@ pub fn render_release_confirm(frame: &mut Frame, app: &App) {
             theme.style(StyleRole::TextBright),
         ),
         Line::styled(
-            format!("to open {}", r.host),
+            format!("to open {} (asked {} s ago)", r.host, r.age_secs),
             theme.style(StyleRole::TextPrimary),
         ),
         Line::raw(""),

@@ -5779,6 +5779,26 @@ mod tests {
     }
 
     #[test]
+    fn the_review_shows_a_broken_ceremony_rule() {
+        let mut app = test_app_with_hosts();
+        app.mode = AppMode::SyncReview;
+        app.sync = crate::app::sync::sample_sync_view();
+        app.sync.review[0].red = Some(crate::app::sync::RedView {
+            have: vec!["phone signature".into()],
+            missing: vec!["emailed code".into()],
+            expired: false,
+            blocked: None,
+            rule_violation: Some(
+                "the sender of the emailed code also approved as second device".into(),
+            ),
+            single_machine: false,
+        });
+        let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "rule broken"));
+        assert!(buffer_contains(&buffer, "also approved as second device"));
+    }
+
+    #[test]
     fn overlays_do_not_panic_on_a_tiny_terminal() {
         // Regression: popup geometry used u16::clamp(min, max) with max derived
         // from the terminal size, which asserted min<=max and crashed the TUI

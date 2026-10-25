@@ -63,7 +63,7 @@ Rust paths are under `crate::sync` (`src/sync/`), declared in `src/lib.rs` as
   DEK, so old wrapped shares stay decryptable forever by a holder's long-lived
   wrap key. Order of a revocation: remaining holders `rotate_wrap_keys` and
   publish `WrapKeyRotate`; the reshare wraps to the new keys; after adoption
-  (every credential confirmed by a real unlock, or `WRAP_KEY_RETIRE_AFTER_SECS`)
+  (every credential confirmed by a real unlock; never on a timer)
   each holder calls `retire_previous_wrap_keys`. `Vec<u8>` fields of ops are
   base64 strings (standard alphabet, padded) in the canonical form. Residuals:
   a key file copied before retirement, holders that cannot rotate (paper,
@@ -1116,8 +1116,15 @@ most 3; Green, inert data) with `sealed` as above; the requester finds it on its
 (`quorum::peer_request`, `quorum::grant_bodies`, `quorum::peer_poll`; `ShareRelease` carries `eph_x25519_pub`). The grant is sealed to the EPHEMERAL key, never to the
 requester's wrap key: a grant wrapped to a long-lived key would let one stolen requester device open the
 credential forever. The ephemeral secret lives in the requester's memory only; if sshub exits the request
-is made again. No `sync-release` CLI verb: an attended holder approves in its TUI, an unattended holder
-releases only on the trust-session path.
+is made again. An unattended holder releases only on the trust-session path. There is no `sync-release`
+verb; the command line takes part through two existing commands instead. **Requester:** the CLI unlocker
+(`cli::unlock::PromptShares`, used by `host connect`, `host resolve` and the other blocking commands) calls
+`peer_request`, then loops `sync_with` each reachable attended holder and `peer_poll` until a grant arrives or
+`SSHUB_UNLOCK_WAIT` seconds (default 120, 0 = do not ask) pass. **Holder:** `sshub sync-review --approve <id>` on a
+`ShareRelease` runs `cli::sync_cmd::approve_release`: it refuses a request older than
+`limits::CHALLENGE_EXPIRY_SECS`, appends the `grant_bodies` and resolves the op. The explicit approval is that
+command (the listing names the requester, its full device id and the request age, the TUI modal shows the
+same). The phone and trust-session paths are not tried from the CLI.
 
 **Phone reply (QR, clipboard, audio).** The input is the bytes of a `ShareResponseWire`. The clipboard text
 is the base64 of exactly those bytes (standard alphabet, padded, whitespace ignored), what the page copies
@@ -1202,6 +1209,11 @@ share reply plaintext (inside the C11 sealed box of the kind 2 frame):
   lamport seen, `epoch` the highest seen. A recovery cancellation is a `PhoneReenrollCancel` with
   `by_phone: true`, `third_factor: null`, `reenroll_hash` = BLAKE3 of the `PhoneReenroll` op bytes,
   delivered in a kind 5 frame. The terminal that receives them ingests them like any other ops.
+- Snapshot blob header version 2 (written by the page since review round 1): `"SSHN" || 2 || mem u32 BE || iters u32 BE ||
+  issued_at i64 BE || salt(16) || host_uid(16) || nonce(24) || ct`; everything before the nonce, `host_uid` included, is the AEAD
+  associated data, so a blob names the credential it opens and a terminal can refuse a second live blob for one `host_uid`
+  (OWED on the Rust side: `snapshot.rs` still reads version 1 only; `phone_fixtures.rs` opens version 2 with a local shim).
+  Version 1 stays readable.
 - The snapshot blob is the contract `SnapshotBlob::to_bytes` and `host_uid` names the credential it
   opens; the phone issues one per credential only while none is live (TTL 7 days recorded in the
   blob), the user can declare a blob dead (never delivered, or DEK reissued).
@@ -1284,7 +1296,6 @@ offline; no real credentials, no real user directories.
 | `CHECKPOINT_CHUNK_BYTES` | `256 KiB` | state blob chunk on the wire |
 | `TOMBSTONE_KEEP_SECS` | `90 * 86_400` | tombstones carried in checkpoint states |
 | `RING_FINGERPRINT_WORDS` | `8` | 88 bit ring fingerprint |
-| `WRAP_KEY_RETIRE_AFTER_SECS` | `7 * 86_400` | previous wrap keys are dropped when all credentials are confirmed or after this long |
 | `RESHARE_ITEMS_PER_OP` | `200` | credentials per `ShareReshareBatch` or `ShareReshareConfirmBatch` op |
 | `SAS_WORDS`, `MASTER_PHRASE_WORDS`, `PAPER_WORDS` | 4, 6, 24 | word counts |
 

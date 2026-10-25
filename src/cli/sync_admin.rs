@@ -754,8 +754,13 @@ pub(crate) fn factor_register(
                 Some(s) => find_device(store, s)?.id,
                 None => id.public().device_id(),
             };
+            // The code lives, sealed, on the device that mails it: register from that device.
+            ensure!(
+                sender_id == id.public().device_id(),
+                "the emailed-code factor is registered ON its sender: run this on the device that will mail the code"
+            );
             let (body, code) = ceremony::factor_register_email(&sender_id)?;
-            ceremony::remember_email_code(store, &code)?;
+            ceremony::remember_email_code(store, id, &code)?;
             (body, Some(code))
         }
     };
@@ -1147,7 +1152,7 @@ pub fn print_help(cmd: &str) {
         "sync-role" => ("sync-role <device> holder|mirror [--format plain|json]", "Promote a mirror to holder or demote a holder (Red)."),
         "sync-approve" => ("sync-approve <op-id> [--format plain|json]", "Approve a pending Red op as this attended device (the second-device vote)."),
         "sync-factor" => ("sync-factor <op-id> (--paper | --email-code) [--format plain|json]", "Add the third factor to a Red op. The 24 paper words or the emailed code are read without echo."),
-        "sync-factor-register" => ("sync-factor-register (paper | email) [--sender <device>] [--format plain|json]", "Register a third factor. Paper reads the 24 words without echo; email creates a code and shows it once."),
+        "sync-factor-register" => ("sync-factor-register (paper | email) [--sender <device>] [--format plain|json]", "Register a third factor. Paper reads the 24 words without echo; email creates a code and shows it once. The code is kept, sealed, only on its sender, so register it on the device that will mail it (--sender names only this device; another device is refused)."),
         "sync-recovery" => ("sync-recovery (start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status) [--format plain|json]", "Re-enroll the phone: start, approve or acknowledge as another attended device, cancel, or show the state of every recovery."),
         "sync-mode" => ("sync-mode (vault | quorum) [--cosigner <device>] [--format plain|json]", "Change the credential mode (Red), in two steps: the first call proposes it and shows the ceremony; run it again once the ring agreed to re-encrypt the credentials. From the command line only Vault to Quorum can open the credentials; the master phrase is read without echo."),
         "sync-exemption" => ("sync-exemption (on | off) <device> [--format plain|json]", "Switch the master-phrase exemption of a device off (Red). Switching it on needs the TUI."),

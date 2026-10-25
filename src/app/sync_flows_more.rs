@@ -72,8 +72,9 @@ pub(crate) fn exemption_on(app: &mut App) {
         "  - a trust session (a certificate that lets a holder release shares),".into(),
         "  - the Vault mode (master phrase and ring secret, no quorum).".into(),
         String::new(),
-        "Enabling is a Red change: a second attended device and a third factor".into(),
-        "must approve it. Esc cancels.".into(),
+        "Enabling is a Red change authored by the exempt machine itself: it runs".into(),
+        "here, on THIS machine, and cannot be done for another one. A second".into(),
+        "attended device and a third factor must approve it. Esc cancels.".into(),
     ];
     app.sync_prompt(
         "Master-phrase exemption: enable on this machine",

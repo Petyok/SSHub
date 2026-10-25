@@ -420,7 +420,13 @@ fn a_share_release_names_the_requester_and_the_host_in_the_review() {
         .unwrap();
     let rows = app.store.sync_devices().unwrap();
     let view = crate::app::sync_view::pending_view(&app.store, &op, &rows, None);
-    assert_eq!(view.summary, "release a share of web to laptop");
+    // The approver sees who, the requester's full id and how old the request is.
+    let want = format!(
+        "release a share of web to laptop (device {}, asked ",
+        author.id.public().device_id()
+    );
+    assert!(view.summary.starts_with(&want), "{}", view.summary);
+    assert!(view.summary.ends_with(" s ago)"), "{}", view.summary);
 }
 
 #[test]
@@ -457,4 +463,35 @@ fn enter_on_a_compromised_device_shows_the_proof_and_the_next_steps() {
         fork.evidence
     );
     assert!(fork.evidence.iter().any(|l| l.contains("hash")));
+}
+
+#[test]
+fn a_save_that_could_not_be_recorded_for_sync_shows_in_the_status_line() {
+    struct Failing;
+    impl crate::store::LocalChangeSink for Failing {
+        fn changed(
+            &self,
+            _: &rusqlite::Connection,
+            _: crate::store::ChangeScope,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("the op log is busy")
+        }
+    }
+    let mut app = test_app(vec![]);
+    app.store.set_local_change_sink(Box::new(Failing));
+    // The row is saved; only the sync record failed.
+    app.store
+        .create_host(&crate::store::NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    app.poll_sync();
+    let notice = app.host_notice.clone().unwrap_or_default();
+    assert!(
+        notice.contains("saved, but not recorded for sync")
+            && notice.contains("the op log is busy"),
+        "{notice}"
+    );
+    // Shown once.
+    app.host_notice = None;
+    app.poll_sync();
+    assert!(app.host_notice.is_none());
 }

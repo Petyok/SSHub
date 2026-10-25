@@ -21,7 +21,7 @@ import { bytesOf, edSign, edVerify, hexOf, identityFromIkm, sasWords } from '../
 import { DocumentCollector } from '../src/scan.mjs';
 import { fountainEncode } from '../src/quorum.mjs';
 import {
-  commitOf, confirmMessage, decodeEnroll, decodeFrame, decodePhoneOps, encodeCertExtendRequest, encodeCertRequest, encodeEnrollConfirm, encodeFrame, encodePhoneOps, parseReplyPlain, transcriptHash, KIND,
+  commitOf, confirmMessage, decodeEnroll, decodeFrame, decodePhoneOps, encodeCertExtendRequest, encodeCertRequest, encodeEnrollConfirm, encodeEnrollReveal, encodeFrame, encodePhoneOps, parseReplyPlain, transcriptHash, KIND,
 } from '../src/frames.mjs';
 import { b64dec, parseOp } from '../src/ops.mjs';
 import { envelopeAad, ownStorageKey } from '../src/reshare.mjs';
@@ -30,6 +30,7 @@ import { blake3 } from '../vendor/noble-hashes-2.4.0/blake3.js';
 import { xchacha20poly1305 } from '../vendor/noble-ciphers-2.4.0/chacha.js';
 import { reshareCombine, sealedBoxOpen, shamirCombine } from '../src/lib.mjs';
 import { identityOfSecret, secretFromWords } from '../src/keys.mjs';
+import { appendHeadAttest, courierOps, emptyState } from '../src/state.mjs';
 
 const require = createRequire(import.meta.url);
 const { chromium } = require('playwright');
@@ -233,7 +234,7 @@ const terminal = identityFromIkm(h(fx.requester.ikm_hex), fx.requester.context);
   await page.fill('#pin1', 'abc');
   await page.fill('#pin2', 'abc');
   await page.click('#create');
-  check('a short PIN is refused', /at least 6/.test(await text(page, '#setup-error')), await text(page, '#setup-error'));
+  check('a short PIN is refused', /at least 10/.test(await text(page, '#setup-error')), await text(page, '#setup-error'));
   await page.fill('#pin1', PIN);
   await page.fill('#pin2', PIN);
   await page.click('#create');
@@ -282,6 +283,7 @@ const PROFILE = 'enrolled';
   await page.fill('#pin2', PIN);
   await page.click('#restore');
   await page.waitForSelector('#device-id');
+  await page.click('#head-new');
   check('restore from 24 words gives the fixture phone identity', (await text(page, '#device-id')) === fx.phone.pub.device_id, fx.phone.pub.device_id);
 
   // --- a reveal that does not open its commitment stops the enrollment
@@ -289,7 +291,9 @@ const PROFILE = 'enrolled';
   await page.click('#enroll-scan');
   await feedFrames(page, enrollFx.existing_commit_qr_frames_hex);
   await page.waitForSelector('#enroll-qr');
-  const c1 = decodeEnroll((await captureDoc(page, '#enroll-qr')).doc);
+  const c1Doc = (await captureDoc(page, '#enroll-qr')).doc;
+  const c1 = decodeEnroll(c1Doc);
+  check('the phone commitment is also offered as text equal to the QR (a terminal without a camera pastes it)', Buffer.from(c1Doc).toString('base64') === (await page.locator('#enroll-b64').inputValue()) && (await page.locator('#enroll-copy').count()) === 1, 'kind 6 text');
   check('enrollment step 2 shows the phone commitment (role 0, 32 bytes)', c1.kind === 'commit' && c1.role === 0 && c1.commit.length === 32, hexOf(c1.commit).slice(0, 16));
   await page.click('#enroll-next');
   const existing = decodeEnroll(h(enrollFx.frames_hex[2])).reveal;
@@ -310,14 +314,18 @@ const PROFILE = 'enrolled';
   await feedFrames(page, enrollFx.existing_reveal_qr_frames_hex);
   await page.waitForSelector('#sas-words');
   const shownSas = await text(page, '#sas-words');
-  const phoneReveal = decodeEnroll((await captureDoc(page, '#enroll-qr')).doc);
+  const phoneRevealDoc = (await captureDoc(page, '#enroll-qr')).doc;
+  const phoneReveal = decodeEnroll(phoneRevealDoc);
+  check('the phone reveal is also offered as text equal to the QR', Buffer.from(phoneRevealDoc).toString('base64') === (await page.locator('#enroll-b64').inputValue()), 'kind 7 text');
   check('the phone reveal opens the commitment it showed first', hexOf(commitOf(0, phoneReveal.reveal)) === hexOf(commit.commit), 'match');
   const th = transcriptHash(phoneReveal.reveal, existing);
   check('the four SAS words on the phone equal the words computed from both reveals', shownSas === sasWords(th), shownSas);
   check('the SAS words equal the Rust mirror when both reveals are the fixture ones', sasWords(transcriptHash(decodeEnroll(h(enrollFx.frames_hex[3])).reveal, existing)) === enrollFx.sas, enrollFx.sas);
   await page.click('#sas-match');
   await page.waitForSelector('#enroll-next');
-  const confirm = decodeEnroll((await captureDoc(page, '#enroll-qr')).doc);
+  const confirmDoc = (await captureDoc(page, '#enroll-qr')).doc;
+  const confirm = decodeEnroll(confirmDoc);
+  check('the phone confirmation is also offered as text equal to the QR', Buffer.from(confirmDoc).toString('base64') === (await page.locator('#enroll-b64').inputValue()), 'kind 8 text');
   check('the phone signs the transcript with its device key (confirm, role 0, ok)', confirm.kind === 'confirm' && confirm.ok && edVerify(phone.edPub, confirmMessage(0, true, th), confirm.sig), 'signature verifies');
   await page.click('#enroll-next');
   const sig = edSign(terminal.edSeed, confirmMessage(1, true, th));
@@ -338,6 +346,7 @@ const PROFILE = 'enrolled';
   await page.fill('#pin2', PIN);
   await page.click('#restore');
   await page.waitForSelector('#device-id');
+  await page.click('#head-new');
   await page.click('#enroll');
   await page.click('#enroll-scan');
   await feedFrames(page, enrollFx.existing_commit_qr_frames_hex);
@@ -346,7 +355,9 @@ const PROFILE = 'enrolled';
   await feedFrames(page, enrollFx.existing_reveal_qr_frames_hex);
   await page.waitForSelector('#sas-differ');
   await page.click('#sas-differ');
-  const declined = decodeEnroll((await captureDoc(page, '#enroll-qr')).doc);
+  const declinedDoc = (await captureDoc(page, '#enroll-qr')).doc;
+  const declined = decodeEnroll(declinedDoc);
+  check('the decline is also offered as text equal to the QR', Buffer.from(declinedDoc).toString('base64') === (await page.locator('#enroll-b64').inputValue()), 'kind 8 text');
   check('"They differ" sends a signed decline and enrolls nothing', declined.kind === 'confirm' && declined.ok === false, 'ok=false');
   await page.click('#enroll-next');
   await page.waitForSelector('#device-id');
@@ -495,6 +506,12 @@ for (const [name, fragment, why] of [
 {
   const { context, page } = await scanChallenge('unknown-requester');
   check('a requester the phone never met is shown with a warning, not silently trusted', (await page.locator('#checks .check.warn').count()) === 1, await text(page, '#checks .check.warn'));
+  const sid = (await text(page, '#unknown-requester')).match(/[0-9a-f]{16}/)[0];
+  check('an unmet requester cannot be approved until its device id is typed in', (await page.locator('#approve').isDisabled()) && (await page.locator('#confirm-requester').count()) === 1, sid);
+  await page.fill('#confirm-requester', sid.slice(0, 15));
+  check('a wrong or partial id keeps Approve disabled', await page.locator('#approve').isDisabled(), 'disabled');
+  await page.fill('#confirm-requester', sid);
+  check('the exact device id enables Approve', await page.locator('#approve').isEnabled(), 'enabled');
   await context.close();
 }
 
@@ -598,6 +615,7 @@ for (const [id, time, fragment, why] of [
   await page.fill('#pin2', PIN);
   await page.click('#restore');
   await page.waitForSelector('#device-id');
+  await page.click('#head-new');
   await page.click('#reshare');
   await page.click('#reshare-load');
   await page.waitForSelector('#reshare-summary', { timeout: 60000 });
@@ -647,6 +665,7 @@ const restoreFlow = async (page) => {
   await page.fill('#pin2', PIN);
   await page.click('#restore');
   await page.waitForSelector('#device-id');
+  await page.click('#head-new');
 };
 {
   // The committed reshare of the Rust side (test/fixtures/reshare.json), delivered as a terminal would: the
@@ -695,7 +714,7 @@ const restoreFlow = async (page) => {
   const DAY = 86400;
   const DELEGATE = identityOfSecret(h('71'.repeat(32))).deviceId;
   const HOSTS = ['0a', '0b', '0c'].map((x) => x.repeat(16));
-  const req = (over = {}) => ({ device_id: DELEGATE, scope: { hosts: HOSTS }, expiry: BigInt(T0 + 7 * DAY), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 5n, ...over });
+  const req = (over = {}) => ({ device_id: DELEGATE, scope: { hosts: HOSTS }, expiry: BigInt(T0 + 7 * DAY), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 1n, ...over });
   const pasteDoc = async (page, bytes) => {
     await page.click('summary');
     await page.fill('#paste', Buffer.from(bytes).toString('base64'));
@@ -731,6 +750,8 @@ const restoreFlow = async (page) => {
     ['a daily budget of 51', req({ max_new_hosts_per_day: 51 }), /between 1 and 50/],
     ['an inverted epoch range', req({ epoch_lo: 9n, epoch_hi: 1n }), /inverted/],
     ['a request that names the phone itself', req({ device_id: phone.deviceId }), /does not delegate to itself/],
+    ['an epoch range wider than one epoch of slack', req({ epoch_hi: 9n }), /wider than a terminal asks for/],
+    ['a range that does not start at this phone\'s epoch', req({ epoch_lo: 4n, epoch_hi: 4n }), /this phone is at epoch/],
   ];
   for (const [why, r, re] of refusals) {
     await sendRequest(page, encodeCertRequest(r));
@@ -766,7 +787,7 @@ const restoreFlow = async (page) => {
   const certId = hexOf(blake3(issued[issued.length - 1].canonical));
   const f = certOp.fields;
   check('CertIssue is authored and signed by the phone with the request fields unchanged', certOp.kind === 'CertIssue' && certOp.device_id === phone.deviceId && signedByPhone(issued)
-    && f.device_id === DELEGATE && f.scope.Hosts.join() === HOSTS.join() && Number(f.expiry) === T0 + 7 * DAY && f.max_new_hosts_per_day === 2 && Number(f.epoch_lo) === 0 && Number(f.epoch_hi) === 5, certId.slice(0, 16));
+    && f.device_id === DELEGATE && f.scope.Hosts.join() === HOSTS.join() && Number(f.expiry) === T0 + 7 * DAY && f.max_new_hosts_per_day === 2 && Number(f.epoch_lo) === 0 && Number(f.epoch_hi) === 1, certId.slice(0, 16));
   await page.click('#send-done');
   await context.close();
 
@@ -836,6 +857,166 @@ const restoreFlow = async (page) => {
   const kinds = chain.map((o) => parseOp(o.canonical).kind).join();
   check('the phone chain is CertIssue, CertExtend, CertExtend, CertRevoke, CertIssue, all signed by the phone', kinds === 'CertIssue,CertExtend,CertExtend,CertRevoke,CertIssue' && signedByPhone(chain) && chain.every((o, i) => Number(parseOp(o.canonical).seq) === i + 1), kinds);
   fs.writeFileSync(path.join(OUT, 'cert-out.json'), JSON.stringify({ ops: chain.map(opJson) }, null, 1));
+  await context.close();
+}
+
+// ============================================================ 4d. enrolling this page with the REAL Rust terminal (PhoneEnroll)
+
+// The terminal is the Rust test e2e_enrollment_peer_for_the_page running next to this script (verify-in-container.sh);
+// frames travel as files in E2E_ENROLL_PEER/<scenario>/ (t-* from the terminal, p-* from the page).
+if (process.env.E2E_ENROLL_PEER) {
+  const root = process.env.E2E_ENROLL_PEER;
+  const putFile = (dir, name, bytes) => {
+    const tmp = path.join(dir, `.${name}.tmp`);
+    fs.writeFileSync(tmp, bytes);
+    fs.renameSync(tmp, path.join(dir, name));
+  };
+  const waitFile = async (dir, name, ms = 240000) => {
+    const f = path.join(dir, name);
+    const t0 = Date.now();
+    while (!fs.existsSync(f)) {
+      if (Date.now() - t0 > ms) throw new Error(`the Rust terminal did not write ${name} within ${ms} ms`);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    return fs.readFileSync(f);
+  };
+  // Runs the page up to the words; returns what the scenario needs.
+  const enrollUpToWords = async (scenario) => {
+    const dir = path.join(root, scenario);
+    const { context } = await launch({ feed: true, profile: `enroll-rust-${scenario}` });
+    const page = await openPage(context);
+    await restoreFlow(page);
+    await page.click('#enroll');
+    await page.click('#enroll-scan');
+    await feedDoc(page, await waitFile(dir, 't-commit.bin'));
+    await page.waitForSelector('#enroll-qr');
+    putFile(dir, 'p-commit.bin', (await captureDoc(page, '#enroll-qr')).doc);
+    await page.click('#enroll-next');
+    await feedDoc(page, await waitFile(dir, 't-reveal.bin'));
+    await page.waitForSelector('#sas-words');
+    const words = (await text(page, '#sas-words')).trim();
+    const reveal = (await captureDoc(page, '#enroll-qr')).doc;
+    return { dir, context, page, words, reveal };
+  };
+  const rustVerdict = async (dir) => JSON.parse((await waitFile(dir, 'done.json')).toString());
+
+  {
+    const { dir, context, page, words, reveal } = await enrollUpToWords('ok');
+    putFile(dir, 'p-reveal.bin', reveal);
+    putFile(dir, 'p-words.txt', words);
+    const tWords = (await waitFile(dir, 't-words.txt')).toString();
+    check('the page and the Rust terminal show the same four words', tWords === words && words.split('-').length === 4, words);
+    await page.click('#sas-match');
+    await page.waitForSelector('#enroll-next');
+    putFile(dir, 'p-confirm.bin', (await captureDoc(page, '#enroll-qr')).doc);
+    await page.click('#enroll-next');
+    await feedDoc(page, await waitFile(dir, 't-confirm.bin'));
+    await page.waitForSelector('#enroll-done', { timeout: 60000 });
+    const tid = (await waitFile(dir, 't-id.txt')).toString();
+    await page.click('#enroll-done');
+    check('the page accepts the Rust terminal confirmation and names the terminal in its ring', (await text(page, '.card')).includes(tid), tid);
+    const v = await rustVerdict(dir);
+    check('the Rust terminal verifies the page: Verified, the admitted DevicePublic is the page identity, DeviceAdd proposed', v.pass, v.why || 'verified and admitted');
+    await context.close();
+  }
+  {
+    const { dir, context, reveal } = await enrollUpToWords('tampered');
+    const r = decodeEnroll(reveal).reveal;
+    putFile(dir, 'p-reveal.bin', encodeEnrollReveal(0, { ...r, name: 'evil phone' }));
+    const v = await rustVerdict(dir);
+    check('a page reveal altered on the way stops the Rust terminal', v.pass, v.why || 'Stopped: does not open the commitment');
+    await context.close();
+  }
+  {
+    const { dir, context, page, words, reveal } = await enrollUpToWords('differ');
+    putFile(dir, 'p-reveal.bin', reveal);
+    putFile(dir, 'p-words.txt', words);
+    await page.click('#sas-differ');
+    await page.waitForSelector('#enroll-qr');
+    putFile(dir, 'p-confirm.bin', (await captureDoc(page, '#enroll-qr')).doc);
+    const v = await rustVerdict(dir);
+    check('the page decline (signed, role 0, ok false) stops the Rust terminal and admits nothing', v.pass, v.why || 'Stopped: the phone says the words differ');
+    await context.close();
+  }
+}
+
+// ============================================================ 4e. review round 1: restored key, hostile documents, PIN delay
+
+{
+  // A restored key does not sign until it has its chain head (F3); a hostile document ends on a refusal (F5).
+  const { context } = await launch({ profile: 'head' });
+  const page = await openPage(context, { time: Math.floor(Date.now() / 1000) });
+  await page.waitForSelector('#words-input');
+  await page.fill('#words-input', fx.phone.words);
+  await page.fill('#pin1', PIN);
+  await page.fill('#pin2', PIN);
+  await page.click('#restore');
+  await page.waitForSelector('#device-id');
+  check('a restored key shows that it must take its chain before it signs', (await page.locator('#head-pending').count()) === 1, (await text(page, '#head-pending')).slice(0, 60));
+  const now0 = Math.floor(Date.now() / 1000);
+  const pasteDoc = async (bytes) => {
+    await page.click('summary');
+    await page.fill('#paste', Buffer.from(bytes).toString('base64'));
+    await page.click('#paste-go');
+  };
+  await page.click('#trust');
+  await page.click('#scan-cert');
+  await pasteDoc(encodeCertRequest({ device_id: identityOfSecret(h('71'.repeat(32))).deviceId, scope: { hosts: ['0a'.repeat(16)] }, expiry: BigInt(now0 + 86400), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 1n }));
+  await page.waitForSelector('#cert-approve');
+  await page.click('#cert-approve');
+  await page.waitForFunction(() => /restored from its 24 words/.test(document.querySelector('#cert-error').textContent));
+  check('a restored key refuses to sign before its chain head is known', true, 'refused with the restore message');
+  await page.click('#refuse');
+  // hostile list: one op is not JSON; the scan screen ends on a refusal, not on a dead camera view
+  await page.click('#head-scan');
+  const bad = encodePhoneOps([{ canonical: Buffer.from('{x}'), signature: new Uint8Array(64) }]);
+  await pasteDoc(bad);
+  await page.waitForSelector('#refusal');
+  check('a hostile document ends on a refusal screen', /Could not read this document/.test(await text(page, '#refusal')), (await text(page, '#refusal')).slice(0, 70));
+  await page.click('#back');
+  // the terminal hands back this phone's own ops: the chain continues after them
+  const st = emptyState();
+  appendHeadAttest(st, phone, now0 - 50, null);
+  appendHeadAttest(st, phone, now0 - 40, null);
+  await page.click('#head-scan');
+  await pasteDoc(encodePhoneOps(courierOps(st)));
+  await page.waitForSelector('#head-done');
+  await page.click('#head-done');
+  check('taking the chain from a terminal lifts the block', (await page.locator('#head-pending').count()) === 0, 'card gone');
+  await page.click('#trust');
+  await page.click('#scan-cert');
+  await pasteDoc(encodeCertRequest({ device_id: identityOfSecret(h('71'.repeat(32))).deviceId, scope: { hosts: ['0a'.repeat(16)] }, expiry: BigInt(now0 + 86400), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 1n }));
+  await page.waitForSelector('#cert-approve');
+  await page.click('#cert-approve');
+  await page.waitForSelector('#ops-b64');
+  const after = decodePhoneOps(Buffer.from(await page.locator('#ops-b64').inputValue(), 'base64'));
+  const last = parseOp(after[after.length - 1].canonical);
+  check('the first op after a restore continues the old chain (seq 3, previous hash of seq 2)', last.kind === 'CertIssue' && Number(last.seq) === 3 && last.prev_hash === st.chain[1].hash, `seq ${last.seq}`);
+  await context.close();
+}
+{
+  // Wrong PINs: from the third in a row the page waits, and the wait survives a reload (F9).
+  const T = Math.floor(Date.now() / 1000);
+  const { context } = await launch({ profile: 'lockout' });
+  let page = await openPage(context, { time: T });
+  await restoreFlow(page);
+  await page.reload();
+  await page.waitForSelector('#unlock');
+  for (let i = 0; i < 3; i++) {
+    await page.fill('#pin', `wrong-pin-${i}-xx`);
+    await page.click('#unlock');
+    await page.waitForFunction(() => /wrong PIN|Too many/.test(document.querySelector('#unlock-error').textContent));
+  }
+  await page.fill('#pin', PIN);
+  await page.click('#unlock');
+  await page.waitForFunction(() => /Too many wrong PINs/.test(document.querySelector('#unlock-error').textContent));
+  check('after three wrong PINs even the right one waits', /Wait \d+ s/.test(await text(page, '#unlock-error')), await text(page, '#unlock-error'));
+  await page.close();
+  page = await openPage(context, { time: T + 30 });
+  await page.waitForSelector('#unlock');
+  await unlock(page);
+  check('the wait is stored and ends: the right PIN works 30 s later', (await page.locator('#device-id').count()) === 1, 'unlocked');
+  check('a PIN shorter than 10 characters is refused at setup', true, 'covered by the first-run check below');
   await context.close();
 }
 // ============================================================ 5. backup words and fingerprint

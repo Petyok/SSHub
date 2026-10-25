@@ -16,6 +16,8 @@ import {
   certRequestProblems, describeCertRequest, extendCert, extendProblems, issueCert, issuedCerts, revokeCert,
 } from '../src/cert.mjs';
 import { envelopeAad, planReshare } from '../src/reshare.mjs';
+import { DocumentCollector, SWITCH_AFTER_FRAMES } from '../src/scan.mjs';
+import { fountainEncode } from '../src/quorum.mjs';
 
 const here = new URL('./fixtures/', import.meta.url);
 const opVectors = JSON.parse(readFileSync(new URL('ops.vectors.json', here), 'utf8'));
@@ -37,7 +39,7 @@ const i64be = (n) => {
 };
 
 const request = (over = {}) => ({
-  device_id: DELEGATE, scope: { hosts: [HOST_A, HOST_B] }, expiry: BigInt(NOW + 7 * DAY), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 5n, ...over,
+  device_id: DELEGATE, scope: { hosts: [HOST_A, HOST_B] }, expiry: BigInt(NOW + 7 * DAY), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 1n, ...over,
 });
 // What the page receives: the request through the kind 9 wire, as a terminal would show it.
 const wire = (r) => decodeCertRequest(encodeCertRequest(r));
@@ -71,7 +73,7 @@ test('kind 9 and kind 10 have the byte layout of wire.rs', () => {
   const r = request({ scope: { group: '06'.repeat(16) } });
   const expected = concat(
     MAGIC, Uint8Array.of(9), h(DELEGATE), Uint8Array.of(0), h('06'.repeat(16)),
-    i64be(NOW + 7 * DAY), Uint8Array.of(0, 0, 0, 2), new Uint8Array(8), Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 5),
+    i64be(NOW + 7 * DAY), Uint8Array.of(0, 0, 0, 2), new Uint8Array(8), Uint8Array.of(0, 0, 0, 0, 0, 0, 0, 1),
   );
   assert.equal(hexOf(encodeCertRequest(r)), hexOf(expected));
   assert.deepEqual(decodeCertRequest(expected), r);
@@ -127,7 +129,7 @@ test('the phone authors CertIssue with the request fields UNCHANGED, chained on 
   assert.equal(op.device_id, phone.deviceId, 'the phone is the author');
   assert.equal(op.seq, 1);
   assert.deepEqual(op.fields, {
-    device_id: DELEGATE, scope: { Hosts: [HOST_A, HOST_B] }, expiry: NOW + 7 * DAY, max_new_hosts_per_day: 2, epoch_lo: 0, epoch_hi: 5,
+    device_id: DELEGATE, scope: { Hosts: [HOST_A, HOST_B] }, expiry: NOW + 7 * DAY, max_new_hosts_per_day: 2, epoch_lo: 0, epoch_hi: 1,
   });
   assert.ok(edVerify(phone.edPub, first.canonical, first.signature));
   assert.equal(first.entry.hash, opHashHex(first.canonical), 'the certificate id is the op hash');
@@ -181,7 +183,7 @@ test('every limit of CertIssue is enforced before signing, and a refusal writes 
   }
   assert.equal(state.chain.length, 0);
   // the edges themselves are accepted
-  for (const r of [request({ expiry: BigInt(NOW + 1) }), request({ expiry: BigInt(NOW + 90 * DAY) }), request({ max_new_hosts_per_day: 1 }), request({ max_new_hosts_per_day: 50 }), request({ epoch_lo: 5n, epoch_hi: 5n })]) {
+  for (const r of [request({ expiry: BigInt(NOW + 1) }), request({ expiry: BigInt(NOW + 90 * DAY) }), request({ max_new_hosts_per_day: 1 }), request({ max_new_hosts_per_day: 50 }), request({ epoch_lo: 0n, epoch_hi: 0n })]) {
     const s = emptyState();
     assert.doesNotThrow(() => issueCert(s, phone, wire(r), NOW));
     assert.equal(s.chain.length, 1);
@@ -267,4 +269,63 @@ test('planReshare on the committed Rust reshare fixture reproduces the committed
   assert.equal(planReshare(phone, subset, reshareFx.epoch, { ring }).ok, true);
   const batch = subset.map((o) => parseOp(o.canonical)).find((p) => p.kind === 'ShareReshareBatch');
   assert.equal(b64dec(batch.fields.items[0].commitments[0]).length, 32);
+});
+
+// ------------------------------------------------------------ the scan collector follows a document switch
+
+test('the collector ignores a stray foreign frame, but follows another document that keeps arriving', () => {
+  const doc = (n, seed) => Uint8Array.from({ length: n }, (_, i) => (i * 7 + seed) & 255);
+  const A = doc(1300, 1);
+  const B = doc(900, 2);
+  const fa = fountainEncode(A, 84, 25);
+  const fb = fountainEncode(B, 84, 25);
+  assert.ok(fa.length > 12 && fb.length > 12);
+  const have = (c) => c.progress().have;
+
+  // one stray frame of B in the middle of A: progress is kept and A completes
+  let c = new DocumentCollector();
+  for (let i = 0; i < 5; i++) assert.equal(c.push(fa[i]), null);
+  const kept = have(c);
+  assert.equal(c.push(fb[0]), null);
+  assert.equal(have(c), kept, 'a stray foreign frame does not reset progress');
+  let got = null;
+  for (let i = 5; i < fa.length && !got; i++) got = c.push(fa[i]);
+  assert.deepEqual(got, A);
+
+  // B alternating with A never counts as a switch (the frames are not consecutive)
+  c = new DocumentCollector();
+  got = null;
+  for (let i = 0; i < fa.length && !got; i++) {
+    got = c.push(fa[i]);
+    if (!got) c.push(fb[i % fb.length]);
+  }
+  assert.deepEqual(got, A, 'alternating frames keep following the first document');
+
+  // the terminal switches to B while the phone holds part of A: after SWITCH_AFTER_FRAMES of B it follows B
+  c = new DocumentCollector();
+  for (let i = 0; i < 8; i++) c.push(fa[i]);
+  assert.ok(have(c) > 0);
+  for (let i = 0; i < SWITCH_AFTER_FRAMES - 1; i++) assert.equal(c.push(fb[i]), null);
+  assert.ok(have(c) > 0, 'still holding the first document before the threshold');
+  got = null;
+  for (let i = SWITCH_AFTER_FRAMES - 1; i < fb.length * 2 && !got; i++) got = c.push(fb[i % fb.length]);
+  assert.deepEqual(got, B, 'the new document is followed and completes');
+
+  // a completed document followed by another one: the next document is taken up
+  c = new DocumentCollector();
+  got = null;
+  for (let i = 0; i < fa.length && !got; i++) got = c.push(fa[i]);
+  assert.deepEqual(got, A);
+  got = null;
+  for (let i = 0; i < fb.length * 2 && !got; i++) got = c.push(fb[i % fb.length]);
+  assert.deepEqual(got, B);
+
+  // a short foreign document (one lap shorter than the threshold) is taken up after one lap of its frames
+  const small = fountainEncode(doc(100, 3), 84, 25);
+  assert.ok(small.length < SWITCH_AFTER_FRAMES);
+  c = new DocumentCollector();
+  for (let i = 0; i < 4; i++) c.push(fa[i]);
+  got = null;
+  for (let i = 0; i < small.length * 2 && !got; i++) got = c.push(small[i % small.length]);
+  assert.deepEqual(got, doc(100, 3), 'a one-frame document is read even while another is partial');
 });

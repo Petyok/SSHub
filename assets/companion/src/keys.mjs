@@ -12,7 +12,9 @@ export const PHONE_CONTEXT = 'sshub/sync/phone/v1';
 // 64 MiB x 3: about a second on a phone. A short PIN is the weak link whatever the profile is;
 // the profile only prices an offline guess against a stolen browser profile.
 export const PIN_PROFILE = { mem_kib: 65536, iters: 3 };
-export const PIN_MIN_CHARS = 6;
+export const PIN_MIN_CHARS = 10;
+// Seconds to wait after the n-th wrong PIN in a row: none for two, then 5 s doubling up to an hour.
+export const pinDelaySecs = (n) => (n < 3 ? 0 : Math.min(3600, 5 * 2 ** (n - 3)));
 const MAGIC = new Uint8Array([0x53, 0x53, 0x48, 0x50]); // "SSHP"
 const HEADER = 4 + 1 + 4 + 4 + 16 + 24;
 const MAX_MEM_KIB = 512 * 1024;
@@ -53,6 +55,15 @@ export function identityOfSecret(secret32, wrapEpoch = 0) {
     secret: secret32,
     deviceId: deviceIdOf(base.edPub),
     wrapEpoch,
+    // Zeroes every secret this identity holds (the secret, the signing seed, every wrap generation).
+    wipe() {
+      secret32.fill(0);
+      base.edSeed.fill(0);
+      for (const g of gens) {
+        g.xSecret.fill(0);
+        g.mlkemDk.fill(0);
+      }
+    },
     unwrap(blob) {
       let last = new Error('no wrap key generation');
       for (let i = gens.length - 1; i >= 0; i--) {

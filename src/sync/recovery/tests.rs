@@ -658,6 +658,67 @@ mod over_the_log {
     }
 
     #[test]
+    fn a_mirror_cannot_approve_or_acknowledge_a_recovery() {
+        let w = world();
+        let m = Dev::new();
+        for x in w.d.iter().chain(std::iter::once(&m)) {
+            x.store
+                .sync_register_device(
+                    &m.id.public(),
+                    "mirror",
+                    DeviceRole::Mirror,
+                    Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+        }
+        let op = w.reenroll(false, None, None);
+        let now = op.timestamp + 60;
+        append(
+            &m,
+            OpBody::RecoveryApprove {
+                reenroll_hash: op.hash(),
+            },
+        );
+        append(
+            &m,
+            OpBody::RecoveryAck {
+                reenroll_hash: op.hash(),
+                seen_at: now,
+            },
+        );
+        for y in &w.d {
+            deliver(&m, y);
+        }
+        assert_eq!(
+            w.verdict(&op, now).unwrap(),
+            ReenrollVerdict::AwaitingApproval { have: 0, need: 2 }
+        );
+        append(
+            &w.d[A],
+            OpBody::RecoveryApprove {
+                reenroll_hash: op.hash(),
+            },
+        );
+        append(
+            &w.d[B],
+            OpBody::RecoveryApprove {
+                reenroll_hash: op.hash(),
+            },
+        );
+        w.sync();
+        for y in &w.d {
+            deliver(&m, y);
+        }
+        assert_eq!(
+            w.verdict(&op, now).unwrap(),
+            ReenrollVerdict::AwaitingAck,
+            "a mirror's acknowledgement did not start the clock"
+        );
+    }
+
+    #[test]
     fn the_builders_drive_a_recovery_from_start_to_completion() {
         use crate::sync::recovery::{
             ack_body, approve_body, cancel_body, clear_snapshots, completion_bodies, start_body,
@@ -685,7 +746,7 @@ mod over_the_log {
             .is_empty());
         append(&w.d[A], approve_body(&op).unwrap());
         append(&w.d[B], approve_body(&op).unwrap());
-        append(&w.d[A], ack_body(&op, now).unwrap());
+        let ack = append(&w.d[A], ack_body(&op, now).unwrap());
         w.sync();
         assert!(
             unacknowledged(&w.d[A].store, &w.d[A].id, now)
@@ -693,7 +754,9 @@ mod over_the_log {
                 .is_empty(),
             "acknowledged once"
         );
-        let ready_at = now + RECOVERY_TIMELOCK_SECS;
+        // The clock starts when this device first saw the acknowledgement, never before what it claims.
+        let seen = crate::sync::ceremony::received_at(&w.d[OBS].store, &ack).unwrap();
+        let ready_at = seen.max(now) + RECOVERY_TIMELOCK_SECS;
         assert_eq!(
             w.verdict(&op, now + 5).unwrap(),
             ReenrollVerdict::NeedsMoreTime { ready_at }
