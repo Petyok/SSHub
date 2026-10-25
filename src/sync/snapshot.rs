@@ -57,7 +57,11 @@ impl SnapshotBlob {
     fn header(&self) -> Vec<u8> {
         let mut h = Vec::with_capacity(HEADER);
         h.extend_from_slice(MAGIC);
-        h.push(if self.host_uid.is_some() { VERSION_2 } else { VERSION_1 });
+        h.push(if self.host_uid.is_some() {
+            VERSION_2
+        } else {
+            VERSION_1
+        });
         h.extend_from_slice(&self.profile.mem_kib.to_be_bytes());
         h.extend_from_slice(&self.profile.iters.to_be_bytes());
         h.extend_from_slice(&self.issued_at.to_be_bytes());
@@ -304,7 +308,10 @@ mod tests {
         assert_eq!(wire[4], 2);
         assert_eq!(&wire[37..53], &host);
         assert_eq!(SnapshotBlob::from_bytes(&wire).unwrap(), blob);
-        assert_eq!(snapshot_open_for(&blob, &host, code, 1_001).unwrap(), share());
+        assert_eq!(
+            snapshot_open_for(&blob, &host, code, 1_001).unwrap(),
+            share()
+        );
         assert!(snapshot_open_for(&blob, &other, code, 1_001)
             .unwrap_err()
             .to_string()
@@ -316,7 +323,10 @@ mod tests {
         // A version 1 blob stays readable and unbound.
         let v1 = snapshot_seal_with_profile(&share(), code, 1_000, CHEAP).unwrap();
         assert_eq!(v1.to_bytes()[4], 1);
-        assert_eq!(snapshot_open_for(&v1, &other, code, 1_001).unwrap(), share());
+        assert_eq!(
+            snapshot_open_for(&v1, &other, code, 1_001).unwrap(),
+            share()
+        );
         assert!(SnapshotBlob::from_bytes(&wire[..50]).is_err());
     }
 

@@ -723,7 +723,11 @@ fn a_ring_built_with_sync_join_agrees_on_every_devices_role() {
         a.did,
         b.did
     );
-    for (n, s) in [("founding", &step1), ("b joins the hub", &step2), ("b meets a", &step4)] {
+    for (n, s) in [
+        ("founding", &step1),
+        ("b joins the hub", &step2),
+        ("b meets a", &step4),
+    ] {
         assert!(s.0.is_ok() && s.1.is_ok(), "{n} failed\n{report}");
     }
     assert!(

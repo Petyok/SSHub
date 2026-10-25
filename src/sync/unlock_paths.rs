@@ -14,11 +14,11 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 
 use super::codes::normalize_code;
 use super::crypto::{bip39_decode, Share};
+use super::limits::{SNAPSHOT_TTL_SECS, TIMESTAMP_SKEW_GRACE_SECS};
 use super::oplog::{DeviceId, HostUid};
 use super::protocol::RoundSummary;
 use super::quorum::{holder_index, meta_get, meta_set, sharing_holders, Challenge};
 use super::share_release::{unwrap_share_reply, ReplyExt};
-use super::limits::{SNAPSHOT_TTL_SECS, TIMESTAMP_SKEW_GRACE_SECS};
 use super::snapshot::{snapshot_open_for, SnapshotBlob};
 use super::wire::ShareResponseWire;
 use crate::store::{uid_hex, LauncherStore};

@@ -77,7 +77,8 @@ pub(crate) fn build() -> Vec<Value> {
     };
     let code = "K7Q2-9FMX-C41T-8PWD";
     let (salt, nonce) = ([0x41u8; 16], [0x42u8; 24]);
-    let blob = snapshot::seal_with(&share, code, 1_000_000, TEST_PROFILE, salt, nonce, None).unwrap();
+    let blob =
+        snapshot::seal_with(&share, code, 1_000_000, TEST_PROFILE, salt, nonce, None).unwrap();
     let params = json!({ "salt": hx(&salt), "nonce": hx(&nonce), "profile": { "profile": "TEST", "mem_kib": TEST_PROFILE.mem_kib, "iters": TEST_PROFILE.iters } });
     v.push(vector("snapshot-seal", "snapshot_seal", params, json!({ "share_index": share.index, "share_bytes": hx(&share.bytes), "code": code, "issued_at": 1_000_000 }), json!({ "blob": hx(&blob.to_bytes()) })));
     for (id, c, now) in [
