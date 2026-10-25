@@ -378,7 +378,7 @@ test('ShareRelease carries eph_x25519_pub: it must equal the challenge ephemeral
   const old = evaluateChallenge(challenge({ op: shareReleaseOp({ eph: null }) }), ctx());
   assert.equal(old.ok, false);
   assert.match(old.refusal, /malformed/);
-  for (const eph of ['02'.repeat(31), 'zz'.repeat(32), '02'.repeat(32).toUpperCase()]) {
+  for (const eph of ['02'.repeat(31), 'zz'.repeat(32), 'AB'.repeat(32)]) {
     assert.equal(evaluateChallenge(challenge({ op: shareReleaseOp({ eph }) }), ctx()).ok, false, eph);
   }
 });
