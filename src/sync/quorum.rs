@@ -109,6 +109,21 @@ pub(crate) fn meta_set(store: &LauncherStore, key: &str, value: &[u8]) -> Result
     })
 }
 
+/// Reshare-family ops (`ShareReshareBatch`, `ShareReshareSession`) of one kind, oldest first, authored by
+/// holders in force that are not marked compromised. Anyone enrolled can append these Green ops; only a
+/// holder's count: a mirror cannot close a revocation, split the holder set or poison a reshare.
+pub(crate) fn reshare_ops(store: &LauncherStore, kind: &str) -> Result<Vec<Op>> {
+    let holders: Vec<DeviceId> = super::ceremony::effective_devices(store, None)?
+        .into_iter()
+        .filter(|d| d.role == DeviceRole::Holder && d.status != DeviceStatus::Compromised)
+        .map(|d| d.id)
+        .collect();
+    Ok(ops_of(store, kind, None)?
+        .into_iter()
+        .filter(|o| holders.contains(&o.device_id))
+        .collect())
+}
+
 /// Applied or approved ops of one kind, oldest first, optionally by one author.
 pub(crate) fn ops_of(
     store: &LauncherStore,
@@ -295,6 +310,8 @@ pub(crate) fn phone_device_in(devices: &[super::oplog::DeviceRow]) -> Result<Opt
         .iter()
         .filter(|d| {
             d.kind == super::oplog::DeviceKind::Phone
+                // Only a phone that is a holder in force supplies the ceremony's phone proof.
+                && d.role == DeviceRole::Holder
                 && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
         })
         .map(|d| d.id.clone())
@@ -416,7 +433,7 @@ pub fn sharing_holders(store: &LauncherStore, host: &HostUid, epoch: u64) -> Res
             .filter(|r| Some(r) != vault.as_ref())
             .collect()
     } else {
-        ops_of(store, "ShareReshareBatch", None)?
+        reshare_ops(store, "ShareReshareBatch")?
             .into_iter()
             .find_map(|op| match op.body {
                 OpBody::ShareReshareBatch {
@@ -616,7 +633,8 @@ pub fn make_challenge(
         Challenge {
             op,
             nonce,
-            expiry: now + ttl_secs,
+            // Never answerable longer than the contract says, whatever a caller asks for.
+            expiry: now + ttl_secs.min(super::limits::CHALLENGE_EXPIRY_SECS),
             eph_x25519_pub: eph,
             request_id,
             phone_material: material,
@@ -854,8 +872,10 @@ pub fn release_share_for(
                 phone_head_ts,
                 now,
             )?;
-            (!store.sync_cert_hosts_opened(&cert.id)?.contains(host))
-                .then(|| super::cert::cert_opened_body(cert, host))
+            (!super::cert::recorded_openings(store, cert)?
+                .iter()
+                .any(|(h, _)| h == host))
+            .then(|| super::cert::cert_opened_body(cert, host))
         }
     };
     Ok((
@@ -893,7 +913,7 @@ pub fn trust_grant(
         let grant = Grant::Cert {
             cert: &cert,
             issuer_ed25519: row.public.ed25519_pub,
-            phone_head_ts: row.last_seen,
+            phone_head_ts: phone_signed_at(store, &phone, now)?,
             now,
         };
         match release_share_for(store, id, host, epoch, eph_x25519_pub, requester, grant) {
@@ -902,6 +922,19 @@ pub fn trust_grant(
         }
     }
     Err(last)
+}
+
+/// The newest moment the phone itself signed something, never later than when this device saw it: a courier
+/// that delivers old ops late does not make the phone look fresh.
+pub fn phone_signed_at(store: &LauncherStore, phone: &DeviceId, now: i64) -> Result<i64> {
+    let newest: Option<i64> = store.with_conn(|c| {
+        Ok(c.query_row(
+            "SELECT MAX(MIN(timestamp, received_at)) FROM sync_ops WHERE device_id = ?1",
+            rusqlite::params![phone],
+            |r| r.get(0),
+        )?)
+    })?;
+    Ok(newest.unwrap_or(0).min(now))
 }
 
 /// Releases `share` to a requester's ephemeral key after the holder's user approved.

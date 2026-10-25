@@ -198,7 +198,7 @@ impl SyncRuntime {
         }
         let _ = crate::sync::ceremony::send_owed_codes(
             &self.store,
-            &self.identity.public().device_id(),
+            &self.identity,
             crate::store::now_ts(),
             &mut |subject, body| crate::sync::notify::send_notification(notify, subject, body),
         );

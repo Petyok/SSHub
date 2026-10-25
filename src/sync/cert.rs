@@ -124,8 +124,9 @@ pub fn cert_allows(
     }
     // Hosts already opened under this certificate are free; a new one counts against the
     // ring-wide daily budget, read from the log.
-    if !store.sync_cert_hosts_opened(&cert.id)?.contains(host) {
-        let used = store.sync_cert_new_hosts_since(&cert.id, now - DAY)?;
+    let openings = recorded_openings(store, cert)?;
+    if !openings.iter().any(|(h, _)| h == host) {
+        let used = openings.iter().filter(|(_, at)| *at >= now - DAY).count() as u32;
         ensure!(
             used < cert
                 .max_new_hosts_per_day
@@ -134,6 +135,40 @@ pub fn cert_allows(
         );
     }
     Ok(())
+}
+
+/// The hosts opened under `cert` and when, as recorded by the enforcing side: `CertHostOpened` ops by
+/// holders in force that are neither the delegate nor the device that is asking. A delegate writing its
+/// own "opened" records, or a mirror doing it, buys nothing. The time is the op's stamp, never later
+/// than when this device first saw it.
+pub fn recorded_openings(
+    store: &LauncherStore,
+    cert: &DelegationCert,
+) -> Result<Vec<(HostUid, i64)>> {
+    let holders: Vec<DeviceId> = super::ceremony::effective_devices(store, None)?
+        .into_iter()
+        .filter(|d| {
+            d.role == DeviceRole::Holder
+                && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+        })
+        .map(|d| d.id)
+        .collect();
+    let mut seen: Vec<(HostUid, i64)> = Vec::new();
+    for op in super::quorum::ops_of(store, "CertHostOpened", None)? {
+        let OpBody::CertHostOpened { cert_id, host_uid } = &op.body else {
+            continue;
+        };
+        if *cert_id != cert.id || op.device_id == cert.device_id || !holders.contains(&op.device_id)
+        {
+            continue;
+        }
+        let at = super::ceremony::base_time(store, &op);
+        match seen.iter_mut().find(|(h, _)| h == host_uid) {
+            Some(e) => e.1 = e.1.min(at),
+            None => seen.push((*host_uid, at)),
+        }
+    }
+    Ok(seen)
 }
 
 /// Extra new hosts the phone granted for the rolling day ending at `now` (R3b): `CertExtend` ops by the
