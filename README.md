@@ -348,7 +348,7 @@ sshub sync-revoke <device>                    # revoke a device (Red for a holde
 sshub sync-role <device> holder|mirror        # promote or demote (Red)
 sshub sync-approve <op-id>                    # second-device vote on a Red change
 sshub sync-factor <op-id> --paper|--email-code   # third factor, read without echo
-sshub sync-factor-register paper|email [--sender <device>]
+sshub sync-factor-register paper|email [--sender <this device>]   # the emailed code is kept, sealed, only on its sender: register on the device that will mail it
 sshub sync-recovery start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status
 sshub sync-mode vault|quorum [--cosigner <device>]   # two steps: the first call proposes the change (Red); run it again once its ceremony completed to re-encrypt the credentials
 sshub sync-exemption on|off <device>          # master-phrase exemption (on needs the TUI)
@@ -620,7 +620,7 @@ First run on a machine with no ring: the app issues a six-word master phrase (fr
 
 Joining: `t` on the hosts tab or `sshub sync-join <host>`. Enrollment shows four words. When both ends have a screen you compare them and answer yes only if they are identical (verified by SAS). When the other end has no terminal (for example `t` enrolls a server over a plain ssh command) the words prove nothing: the dialog says so, and you approve the admission on the strength of the SSH host key you verified for that host (recorded as verified by the SSH host key). Which of the two admitted a device is shown per device on this tab and in `sshub sync-status`. Roles follow ring membership, not who connected: the side that already has a ring invites, a blank side joins, and two different rings are never merged.
 
-A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal. In Vault mode you type the six words (the CLI asks on the terminal without echo). In Quorum mode the modal asks holders that may release under a trust session, asks attended holders to approve on their screen, and arms the phone: it shows the phone's challenge code and accepts the pasted reply, the 16 character short code or the 24 words, and, in builds with the opt-in `audio` and `camera` features, listens for the phone's sound or reads its code by itself while the modal is open (the modal says when a listener is not compiled in or finds no device). A synced identity's key never touches a disk: it lives in a private `ssh-agent` of this process (and in memory for SFTP) until you lock or quit.
+A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal. In Vault mode you type the six words (the CLI asks on the terminal without echo). In Quorum mode the CLI writes a share release, syncs with the attended holders it has a host for and waits up to `SSHUB_UNLOCK_WAIT` seconds (default 120) for one of them to approve it: in its TUI, or with `sshub sync-review --approve <id>` there (the id is printed). The CLI does not try the phone or trust-session paths. In Quorum mode the modal asks holders that may release under a trust session, asks attended holders to approve on their screen, and arms the phone: it shows the phone's challenge code and accepts the pasted reply, the 16 character short code or the 24 words, and, in builds with the opt-in `audio` and `camera` features, listens for the phone's sound or reads its code by itself while the modal is open (the modal says when a listener is not compiled in or finds no device). A synced identity's key never touches a disk: it lives in a private `ssh-agent` of this process (and in memory for SFTP) until you lock or quit.
 
 While the profile is in a ring, saving a password, a passphrase or an identity's key file (host form, identity form, key generation, the auth prompt's remember choice, `host add --password-stdin`, `identity add`) writes a replicated credential instead of a local keyring entry, and clearing one replicates the clearing. `M` then "Move this machine's saved secrets into the ring" replicates what was saved before.
 
@@ -792,6 +792,7 @@ cargo run -- --dry-run # quick sanity check
 | `SSHUB_DRY_RUN`    | Exit immediately without TUI              |
 | `SSHUB_AUTO_QUIT`  | `1` = quit after first draw, `q` = send quit key |
 | `SSHUB_VERSION_LABEL` | Replace the tab-bar version label; set but empty hides it (demo recordings) |
+| `SSHUB_UNLOCK_WAIT` | Seconds a CLI command (`host connect`, `host resolve`, ...) waits in Quorum mode for a holder to approve its share release (default 120; `0` does not ask) |
 | `SSHUB_INSTALL_CHANNEL` | Declare how sshub was installed (`npm`, `cargo`, `source`, ...); picks the `Shift+U` update route and the tab-bar suffix (the npm shim sets `npm`) |
 
 ## Tech stack

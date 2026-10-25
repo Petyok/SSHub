@@ -273,6 +273,7 @@ ENVIRONMENT:
     SSHUB_DRY_RUN             Exit immediately (fallback: SSH_LAUNCHER_DRY_RUN)
     SSHUB_AUTO_QUIT           Headless smoke (fallback: SSH_LAUNCHER_AUTO_QUIT): 1 = quit after first draw, q = quit via q key
     SSHUB_VERSION_LABEL       Replace the tab-bar version label; set but empty hides it
+    SSHUB_UNLOCK_WAIT         Seconds a CLI command waits for a holder to approve a share release (default 120; 0 = do not ask)
     SSHUB_INSTALL_CHANNEL     How sshub was installed (npm, cargo, source, …); picks the update route
 
     Directory overrides disable profiles (compat mode): the override directory

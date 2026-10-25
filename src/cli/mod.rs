@@ -17,7 +17,7 @@ pub mod sync_cmd;
 pub mod theme;
 pub mod transfer;
 pub mod tunnel;
-mod unlock;
+pub(crate) mod unlock;
 
 pub use context::CliContext;
 

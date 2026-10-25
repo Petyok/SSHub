@@ -525,7 +525,8 @@ Approve a pending Red op as this attended device.
 Add the third factor to a Red op; the secret is read without echo.
 .TP
 .B sshub sync\-factor\-register \fBpaper\fR|\fBemail\fR \fR[\fB\-\-sender\fR \fIDEVICE\fR]
-Register a third factor.
+Register a third factor. The emailed code is kept, sealed, only on its sender: register it on
+the device that will mail it (\fB\-\-sender\fR may only name this device).
 .TP
 .B sshub sync\-recovery \fBstart\fR \fR[\fB\-\-paper\fR]|\fBapprove\fR \fIOP\fR|\fBack\fR \fIOP\fR|\fBcancel\fR \fIOP\fR \fB\-\-factor\fR \fBpaper\fR|\fBemail\fR|\fBstatus\fR
 Phone re-enrollment.
@@ -611,6 +612,11 @@ and the update check.
 .TP
 .B SSHUB_VERSION_LABEL
 Replace the version label in the tab bar; set but empty hides it.
+.TP
+.B SSHUB_UNLOCK_WAIT
+Seconds a command waits, in Quorum mode, for an attended holder to approve its share
+release (default 120; 0 does not ask). The holder approves in its TUI or with
+.BR "sshub sync\-review \-\-approve" .
 .TP
 .B SSHUB_INSTALL_CHANNEL
 How sshub was installed

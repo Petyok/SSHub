@@ -546,6 +546,17 @@ at once; the TUI listens to all of them and the first success wins.
 A **USB cable** is the better channel and arrives with the native app: a browser
 page cannot act as a USB device. The protocol does not change.
 
+### Attended release from the command line
+
+The terminal's attended path has a command-line form with no new verb. A blocking CLI command in Quorum mode
+writes the same `ShareRelease` the TUI writes, syncs with the attended holders it has a host for and waits for
+a grant, bounded by `SSHUB_UNLOCK_WAIT` (default 120 s, 0 disables). The holder approves with
+`sshub sync-review --approve <id>` (or in its TUI); that is an explicit act, not a default, and the line it
+approves names the requester, its full device id and how old the request is. A request older than the challenge
+lifetime (120 s) is refused on both sides: the holder's TUI does not ask about it and `--approve` rejects it.
+The ephemeral key stays in the requester process, so a killed command simply asks again. The phone and
+trust-session paths remain TUI-only.
+
 ### Short-code snapshots
 
 A share cannot be pre-encrypted (the phone only learns it at challenge time), so

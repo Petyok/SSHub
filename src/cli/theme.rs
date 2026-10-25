@@ -501,9 +501,20 @@ fn positionals_without_options(args: &[String]) -> Result<Vec<String>, i32> {
 /// DEL, is left exactly as written. The JSON and TOML formats need none of this:
 /// serde escapes control characters there already.
 fn sanitize_plain(text: &str) -> String {
+    escape_controls(text, false)
+}
+
+/// [`sanitize_plain`] for text a ring peer wrote (names, notes, commands in a
+/// review): C1 (`U+0080..U+009F`, where some terminals take a CSI or OSC
+/// introducer) is escaped as well.
+pub(crate) fn sanitize_foreign(text: &str) -> String {
+    escape_controls(text, true)
+}
+
+fn escape_controls(text: &str, c1: bool) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
-        if ch <= '\u{001f}' || ch == '\u{007f}' {
+        if ch <= '\u{001f}' || ch == '\u{007f}' || (c1 && ('\u{0080}'..='\u{009f}').contains(&ch)) {
             let _ = write!(out, "\\u{{{:04x}}}", ch as u32);
         } else {
             out.push(ch);

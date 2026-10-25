@@ -232,6 +232,11 @@ fn mail_owed_codes(
     }
 }
 
+/// A string a ring peer wrote, safe to print: control characters shown escaped.
+fn plain(text: &str) -> String {
+    super::theme::sanitize_foreign(text)
+}
+
 fn is_yes(line: &str) -> bool {
     matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
 }
@@ -327,37 +332,47 @@ fn runtime(paths: &ProfilePaths) -> Result<SyncRuntime> {
     Ok(SyncRuntime::new(paths.clone(), Arc::new(store), identity))
 }
 
-/// `sync-join`'s prompt: the words on stdout, the anchor's progress on stderr.
-struct JoinPrompt<'a> {
+/// `sync-join`'s prompt: the words on `out`, the anchor's progress on `err`, the
+/// answer from `input` (the terminal's stdin, stdout and stderr in the CLI).
+struct JoinPrompt<'a, I, O, E> {
     host: &'a str,
+    input: I,
+    out: O,
+    err: E,
 }
 
-impl SasConfirm for JoinPrompt<'_> {
+impl<I: BufRead, O: Write, E: Write> SasConfirm for JoinPrompt<'_, I, O, E> {
     fn confirm(&mut self, p: &SasPrompt<'_>) -> bool {
+        let out = &mut self.out;
         if p.peer_has_screen {
-            println!("Compare these words with the other device: {}", p.sas);
-            println!("Peer: {}", p.peer_name);
-            print!("Do they match? [y/N] ");
+            let _ = writeln!(out, "Compare these words with the other device: {}", p.sas);
+            let _ = writeln!(out, "Peer: {}", p.peer_name);
+            let _ = write!(out, "Do they match? [y/N] ");
         } else {
-            println!("SAS words: {}", p.sas);
-            println!("Peer: {}", p.peer_name);
-            println!("{NO_SCREEN_NOTE} {}.", self.host);
-            print!("Admit this device? [y/N] ");
+            let _ = writeln!(out, "SAS words: {}", p.sas);
+            let _ = writeln!(out, "Peer: {}", p.peer_name);
+            let _ = writeln!(out, "{NO_SCREEN_NOTE} {}.", self.host);
+            let _ = write!(out, "Admit this device? [y/N] ");
         }
-        let _ = std::io::stdout().flush();
+        let _ = out.flush();
         let mut line = String::new();
-        std::io::stdin().read_line(&mut line).is_ok() && is_yes(&line)
+        self.input.read_line(&mut line).is_ok() && is_yes(&line)
     }
 
     fn progress(&mut self, p: EnrollProgress) {
-        eprintln!("{}", crate::sync::runtime::progress_line(p));
+        let _ = writeln!(self.err, "{}", crate::sync::runtime::progress_line(p));
     }
 }
 
 fn join(paths: &ProfilePaths, host: &str) -> Result<i32> {
     let rt = runtime(paths)?;
     let cancel = Arc::new(AtomicBool::new(false));
-    let mut ui = JoinPrompt { host };
+    let mut ui = JoinPrompt {
+        host,
+        input: std::io::stdin().lock(),
+        out: std::io::stdout(),
+        err: std::io::stderr(),
+    };
     match rt.join(host, &mut ui, &cancel) {
         Ok(o) => {
             let how = match o.verified_by {
@@ -492,10 +507,11 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
     let mut attempted = false;
     let mut array = Vec::new();
     for (id, name, outcome) in &results {
+        let shown = plain(name);
         match outcome {
             Outcome::Skipped => {
                 if !json_out {
-                    println!("{name}: skipped (no host known); {HOW_TO_RECORD_A_HOST}");
+                    println!("{shown}: skipped (no host known); {HOW_TO_RECORD_A_HOST}");
                 }
                 array.push(json!({
                     "device": id, "name": name, "status": "skipped",
@@ -504,7 +520,7 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
             }
             Outcome::Admitting => {
                 if !json_out {
-                    println!("{name}: not admitted yet (waiting for approval: sshub sync-review)");
+                    println!("{shown}: not admitted yet (waiting for approval: sshub sync-review)");
                 }
                 array.push(json!({
                     "device": id, "name": name, "status": "pending_admission",
@@ -515,7 +531,7 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
                 attempted = true;
                 failed = true;
                 if !json_out {
-                    println!("{name}: offline/failed: {r}");
+                    println!("{shown}: offline/failed: {r}");
                 }
                 array.push(json!({"device": id, "name": name, "status": "failed", "error": r}));
             }
@@ -524,12 +540,12 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
                 if !s.forks.is_empty() {
                     fork = true;
                     if !json_out {
-                        println!("FORK DETECTED: {name}");
+                        println!("FORK DETECTED: {shown}");
                     }
                 }
                 if !json_out {
                     let mut line = format!(
-                        "{name}: ok applied {}, pending {}, received {}, sent {}",
+                        "{shown}: ok applied {}, pending {}, received {}, sent {}",
                         s.applied, s.pending_arrived, s.received, s.sent
                     );
                     if !s.behind.is_empty() {
@@ -612,7 +628,10 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
                 })
             })
             .collect();
-        let doc = json!({"devices": devices, "pending": pending, "credential_mode": mode});
+        let doc = json!({
+            "devices": devices, "pending": pending, "credential_mode": mode,
+            "companion_fingerprint": crate::sync::companion::COMPANION_FINGERPRINT,
+        });
         println!("{}", serde_json::to_string_pretty(&doc)?);
         return Ok(0);
     }
@@ -623,7 +642,7 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     for r in &rows {
         println!(
             "{} ({}) role {} status {} last seen {} head {} host {} verified {}",
-            r.name,
+            plain(&r.name),
             short(&r.id),
             lower(r.role),
             lower(r.status),
@@ -635,7 +654,54 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     }
     println!("Pending changes: {pending}");
     println!("Credential mode: {mode}");
+    println!(
+        "Phone page of this build: {} ({})",
+        crate::sync::companion::COMPANION_FINGERPRINT,
+        crate::sync::companion::COMPARE_HINT
+    );
     Ok(0)
+}
+
+/// Approve the pending `ShareRelease` `hash` as this holder: refused when stale (the requester's
+/// wait is over), otherwise the grants for the shares this device holds are written and the
+/// request is resolved. The one function behind `sync-review --approve` on a release.
+pub(crate) fn approve_release(
+    store: &LauncherStore,
+    identity: &DeviceIdentity,
+    hash: &[u8; 32],
+    now: i64,
+) -> Result<()> {
+    let op = store
+        .sync_pending()?
+        .into_iter()
+        .find(|o| o.hash() == *hash)
+        .context("that request is no longer waiting")?;
+    anyhow::ensure!(
+        matches!(op.body, crate::sync::oplog::OpBody::ShareRelease { .. }),
+        "that change is not a share release"
+    );
+    release_fresh(&op, now)?;
+    // The grants are built from an approved request: resolve first, as the TUI does.
+    crate::sync::ceremony::resolve(store, hash, true, now)?;
+    for body in crate::sync::quorum::grant_bodies(store, identity, &op)? {
+        store.sync_append_local(identity, body)?;
+    }
+    Ok(())
+}
+
+/// A share release is answered only while its requester can still be waiting.
+fn release_fresh(op: &crate::sync::oplog::Op, now: i64) -> Result<()> {
+    let age = now - op.timestamp;
+    anyhow::ensure!(
+        age.abs() <= crate::sync::limits::CHALLENGE_EXPIRY_SECS,
+        "this request is {age} s old: too old to answer, the requester has to ask again"
+    );
+    Ok(())
+}
+
+/// The 12-hex-digit id `sync-review` shows for a pending op.
+pub(crate) fn op_id(hash: &[u8; 32]) -> String {
+    hex(hash)[..12].to_string()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -684,7 +750,24 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             .find(|v| v.hash == hash)
             .expect("resolved above");
         let id = hex(&hash)[..12].to_string();
-        crate::sync::ceremony::resolve(&store, &hash, *approve, crate::store::now_ts())?;
+        // A share release is answered with the grants the TUI's confirmation would write: the
+        // explicit approval is this `--approve` (the listing names the requester, its full id and
+        // the request's age).
+        let is_release = *approve
+            && store.sync_pending()?.iter().any(|o| {
+                o.hash() == hash
+                    && matches!(o.body, crate::sync::oplog::OpBody::ShareRelease { .. })
+            });
+        if is_release {
+            approve_release(
+                &store,
+                &open_identity(paths)?,
+                &hash,
+                crate::store::now_ts(),
+            )?;
+        } else {
+            crate::sync::ceremony::resolve(&store, &hash, *approve, crate::store::now_ts())?;
+        }
         let verb = if *approve { "Approved" } else { "Rejected" };
         if json_out {
             let doc = json!({
@@ -692,7 +775,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             });
             println!("{}", serde_json::to_string_pretty(&doc)?);
         } else {
-            println!("{verb} {id}: {}", view.summary);
+            println!("{verb} {id}: {}", plain(&view.summary));
         }
         return Ok(0);
     }
@@ -705,7 +788,8 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
                     "reason": v.reason,
                     "ceremony": v.red.as_ref().map(|r| json!({
                         "have": r.have, "missing": r.missing, "expired": r.expired,
-                        "blocked": r.blocked, "single_machine": r.single_machine,
+                        "blocked": r.blocked, "rule_violation": r.rule_violation,
+                        "single_machine": r.single_machine,
                     })),
                     "changes": v.changes.iter().map(|c| json!({
                         "field": c.field, "from": c.from, "to": c.to, "dangerous": c.dangerous,
@@ -721,10 +805,20 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
         return Ok(0);
     }
     for v in &views {
-        println!("{}  {}  {}", &hex(&v.hash)[..12], v.device, v.summary);
+        println!(
+            "{}  {}  {}",
+            &hex(&v.hash)[..12],
+            plain(&v.device),
+            plain(&v.summary)
+        );
         for c in &v.changes {
             let mark = if c.dangerous { "[!]" } else { "   " };
-            println!("  {mark} {}: {} -> {}", c.field, c.from, c.to);
+            println!(
+                "  {mark} {}: {} -> {}",
+                c.field,
+                plain(&c.from),
+                plain(&c.to)
+            );
         }
         if let Some(red) = &v.red {
             println!("  Red change, three proofs needed:");
@@ -735,7 +829,10 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
                 println!("    missing: {m}");
             }
             if let Some(why) = &red.blocked {
-                println!("    impossible as it stands: {why}");
+                println!("    impossible as it stands: {}", plain(why));
+            }
+            if let Some(why) = &red.rule_violation {
+                println!("    rule broken: {}", plain(why));
             }
             if red.expired {
                 println!("    expired: reject it and propose it again");
@@ -842,6 +939,85 @@ mod tests {
         assert_eq!(resolve_prefix(&all, "abcd01"), Ok(b));
         assert!(resolve_prefix(&all, "12").unwrap_err().contains("4 hex"));
         assert!(resolve_prefix(&all, "zzzz").is_err());
+    }
+
+    /// `sync-join` against an in-process existing device: the words go to stdout, the
+    /// adoption of the ring is reported line by line on stderr.
+    #[test]
+    fn join_reports_the_ring_being_adopted_on_stderr() {
+        use crate::sync::enroll::run_sync_join;
+        use crate::sync::protocol::tests::Dev;
+        let peer = Dev::new();
+        crate::sync::quorum::meta_set(&peer.store, "ring_id", peer.did.as_bytes()).unwrap();
+        let me = Dev::new();
+        let (a, b) = std::os::unix::net::UnixStream::pair().unwrap();
+        let (peer_store, peer_id) = (peer.store.clone(), peer.id.clone());
+        let hub = std::thread::spawn(move || {
+            let mut conn = Conn::new(
+                b.try_clone().unwrap(),
+                b,
+                Limits::default(),
+                Arc::new(AtomicBool::new(false)),
+            );
+            let mut ui = |_: &SasPrompt<'_>| true;
+            run_sync_enroll(&mut conn, &peer_store, &peer_id, "hub", true, Some(&mut ui))
+        });
+        let mut conn = Conn::new(
+            a.try_clone().unwrap(),
+            a,
+            Limits::default(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let mut ui = JoinPrompt {
+            host: "hub",
+            input: std::io::Cursor::new(b"y\n".to_vec()),
+            out: Vec::new(),
+            err: Vec::new(),
+        };
+        run_sync_join(&mut conn, &me.store, &me.id, "me", true, Some(&mut ui)).unwrap();
+        hub.join().unwrap().unwrap();
+        let err = String::from_utf8(ui.err).unwrap();
+        let lines: Vec<&str> = err.lines().collect();
+        assert!(lines[0].starts_with("receiving the ring ("), "{err}");
+        assert!(
+            lines[lines.len() - 2].starts_with("adopting the ring ("),
+            "{err}"
+        );
+        assert!(
+            lines[lines.len() - 1].starts_with("adopted the ring ("),
+            "{err}"
+        );
+        let out = String::from_utf8(ui.out).unwrap();
+        assert!(
+            out.contains("Compare these words with the other device: "),
+            "{out}"
+        );
+        assert!(out.ends_with("Do they match? [y/N] "), "{out}");
+    }
+
+    #[test]
+    fn a_stale_share_release_is_refused_and_a_fresh_one_is_not() {
+        use crate::sync::oplog::OpBody;
+        let author = LauncherStore::open_in_memory().unwrap();
+        let id = DeviceIdentity::generate();
+        let op = author
+            .sync_append_local(
+                &id,
+                OpBody::ShareRelease {
+                    host_uid: [1; 16],
+                    request_id: 1,
+                    requester: id.public().device_id(),
+                    eph_x25519_pub: [2; 32],
+                },
+            )
+            .unwrap();
+        assert!(release_fresh(&op, op.timestamp + 5).is_ok());
+        let e = release_fresh(&op, op.timestamp + 3_600).unwrap_err();
+        assert!(e.to_string().contains("too old"), "{e}");
+        assert!(
+            release_fresh(&op, op.timestamp - 3_600).is_err(),
+            "future-dated too"
+        );
     }
 
     #[test]

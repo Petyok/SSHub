@@ -1116,8 +1116,15 @@ most 3; Green, inert data) with `sealed` as above; the requester finds it on its
 (`quorum::peer_request`, `quorum::grant_bodies`, `quorum::peer_poll`; `ShareRelease` carries `eph_x25519_pub`). The grant is sealed to the EPHEMERAL key, never to the
 requester's wrap key: a grant wrapped to a long-lived key would let one stolen requester device open the
 credential forever. The ephemeral secret lives in the requester's memory only; if sshub exits the request
-is made again. No `sync-release` CLI verb: an attended holder approves in its TUI, an unattended holder
-releases only on the trust-session path.
+is made again. An unattended holder releases only on the trust-session path. There is no `sync-release`
+verb; the command line takes part through two existing commands instead. **Requester:** the CLI unlocker
+(`cli::unlock::PromptShares`, used by `host connect`, `host resolve` and the other blocking commands) calls
+`peer_request`, then loops `sync_with` each reachable attended holder and `peer_poll` until a grant arrives or
+`SSHUB_UNLOCK_WAIT` seconds (default 120, 0 = do not ask) pass. **Holder:** `sshub sync-review --approve <id>` on a
+`ShareRelease` runs `cli::sync_cmd::approve_release`: it refuses a request older than
+`limits::CHALLENGE_EXPIRY_SECS`, appends the `grant_bodies` and resolves the op. The explicit approval is that
+command (the listing names the requester, its full device id and the request age, the TUI modal shows the
+same). The phone and trust-session paths are not tried from the CLI.
 
 **Phone reply (QR, clipboard, audio).** The input is the bytes of a `ShareResponseWire`. The clipboard text
 is the base64 of exactly those bytes (standard alphabet, padded, whitespace ignored), what the page copies

@@ -420,7 +420,13 @@ fn a_share_release_names_the_requester_and_the_host_in_the_review() {
         .unwrap();
     let rows = app.store.sync_devices().unwrap();
     let view = crate::app::sync_view::pending_view(&app.store, &op, &rows, None);
-    assert_eq!(view.summary, "release a share of web to laptop");
+    // The approver sees who, the requester's full id and how old the request is.
+    let want = format!(
+        "release a share of web to laptop (device {}, asked ",
+        author.id.public().device_id()
+    );
+    assert!(view.summary.starts_with(&want), "{}", view.summary);
+    assert!(view.summary.ends_with(" s ago)"), "{}", view.summary);
 }
 
 #[test]

@@ -195,6 +195,12 @@ fn a_jump_host_with_a_synced_key_gets_its_own_block_in_a_config_that_keeps_the_u
         text.find("Include ~/.ssh/config").unwrap(),
     );
     assert!(hop_at < own_at);
+    // `Include` inside a `Host` block is skipped for every other host: `Match all` ends the block,
+    // so the user's configuration still applies to the destination (F6).
+    let match_all = text
+        .find("\nMatch all\n")
+        .expect("Match all before the Include");
+    assert!(hop_at < match_all && match_all < own_at);
     assert!(
         !text.contains("Host other"),
         "a hop without a synced key gets nothing"
