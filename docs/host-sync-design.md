@@ -515,9 +515,10 @@ terminal and cannot be the second approver of its own exemption.
   (nonce/expiry); substituting a foreign ephemeral key is impossible (the
   recipient key is signed); reusing an approval for a different requester is
   impossible (the op header is signed).
-- `ShareRelease { host_id, request_id, requester: DeviceId }` — the requester is
-  in the body as well as the header, so a holder that enforces on the body alone
-  still sees it.
+- `ShareRelease { host_uid, request_id, requester: DeviceId, eph_x25519_pub }` (four
+  fields): the requester is in the body as well as the header, so a holder that
+  enforces on the body alone still sees it, and the ephemeral key the grant is
+  sealed to is part of the op, never a long-lived key.
 - The phone's own wrapped share arrives inside the challenge; the phone stores no
   credential keys.
 
@@ -694,8 +695,29 @@ and drops the seed. Without the mailbox the log alone yields nothing; without th
 alone yields nothing. Sender and mailbox are one participant, which is why the sender may not be the
 proposer or the second approver.
 
-**Bulk export** is a loop of share releases made without a prompt per host for a short window
-after a completed Red ceremony (`BulkExport`), not a new kind of secret handling.
+**Bulk export** opens a window of at most one hour (`BulkExport`, counted from the moment its ceremony
+completed, not from the proposer's clock) in which the requesting terminal may write the plain list of
+its credentials to a file, a loop of ordinary share releases without a prompt per host. The window is
+enforced on the requester (`export::active_window`); a holder never releases outside a certificate or a
+prompt. It is not a new kind of secret handling. The file lands in `$XDG_RUNTIME_DIR` by default and the
+TUI reminds the user to delete it.
+
+**Rules the implementation settled (review rounds 1 to 3).**
+
+- *Holder-only kinds.* The share machinery (`ShareReshareSession`, `ShareStorageKey`, `ShareReshareBatch`,
+  `ShareReshareConfirmBatch`, `WrapKeyRotate`, `CertHostOpened`, `ShareGrant`) is written by holders only;
+  an op of those kinds from a mirror is stored as pending and never applied.
+- *Proofs are aged by local receipt.* Whether a Red proof falls inside the ceremony window is measured from
+  when this device received it (`received_at`), not from the stamp its author wrote, so a future-dated stamp
+  cannot keep a proof alive and a late arrival cannot reach back. The author's clock is only informational
+  within `TIMESTAMP_SKEW_GRACE_SECS`.
+- *The factor-free first phone is ring setup only.* The one case where a phone is admitted before any third
+  factor exists is the first phone of a ring: no factor registered and no other phone ever admitted (a revoked
+  phone still counts). After that, replacing a phone or a factor always needs a proven factor.
+- *Hop edits are Yellow when they move a connection.* Renaming a host that is the host part of another host's
+  jump hop is Yellow, and a hop whose target was renamed away is marked unusable instead of silently
+  pointing at another machine.
+
 
 ## Phone loss / re-enrollment (recovery without deadlock)
 
@@ -725,7 +747,15 @@ may satisfy two of its requirements.
    justify its "live" set, so other devices reject a set that excludes a device
    they know to be fresh.
 
-**Cancelling:** from a device, requires the third factor (otherwise a compromised
+**The third factor is proven, not asserted.** Starting a recovery and cancelling one from a device each need a
+`RedFactor` over the exact op hash, signed with the paper or email key registered in advance; an op without
+that proof stays `AwaitingFactor` and no clock runs. `sync-factor <op-id>` and the TUI factor prompt write it.
+Once the time lock has ended the recovery is `Ready` for `RECOVERY_READY_WINDOW_SECS` (3 days); if nobody
+completes it in that window it `Lapsed` and must be started again, so an old forgotten op cannot be completed
+months later. On completion the old phone is revoked, the new one admitted and the shares are reshared; the
+Sync tab shows `AwaitingFactor` and `Lapsed` with a hint for each.
+
+**Cancelling:** from a device, requires the proven third factor (otherwise a compromised
 peer DoSes recovery with endless cancellations, risking nothing). **A live phone
 cancels with no factor at all**: the fact of its signature proves the "lost"
 phone is alive, i.e. the recovery is an attack; demanding paper there is harmful
@@ -864,6 +894,50 @@ mirror at a permanent address as the meeting point.
 Sharing hosts with **other people** is explicitly out of scope for this epic: a
 second owner changes revocation rights, visibility boundaries and the meaning of
 the quorum. It builds on these primitives later; it does not reshape them now.
+
+## Defaults chosen
+
+Every default a user meets, with the reason. Code: `src/sync/limits.rs` (one diff changes a default); byte-level
+meaning: `docs/host-sync-contract.md` section 9.
+
+| Setting | Value | Why |
+|---|---|---|
+| Challenge lifetime (`CHALLENGE_EXPIRY_SECS`) | 120 s | long enough to find the phone and scan; short enough that a photographed challenge is useless |
+| Challenge nonce | 32 bytes | no practical collision, replay is stopped by expiry as well |
+| Red ceremony TTL (`RED_CEREMONY_TTL_SECS`) | 3 days | time to reach the phone, the second device and the paper; a stale half-done ceremony is dropped, never applied |
+| Recovery time lock (`RECOVERY_TIMELOCK_SECS`) | 7 days | the owner of a "lost" phone has a week to notice and cancel |
+| Recovery ready window (`RECOVERY_READY_WINDOW_SECS`) | 3 days after the time lock | an old op cannot be completed long after; start again |
+| Live device window (`LIVE_DEVICE_WINDOW_SECS`) | 14 days | a device counts as alive for a recovery if its signed head is that recent |
+| Device `Behind` / `Stale` (`BEHIND_AFTER_SECS`, `STALE_AFTER_SECS`) | 14 / 30 days | longer than normal contact gaps (holidays), shorter than the tombstone horizon |
+| Phone freshness (`PHONE_FRESH_SECS`, warning `PHONE_FRESH_WARN_SECS`) | 14 days, warn at 7 | a certificate needs a phone head newer than this; must exceed the normal contact cadence |
+| Certificate term (`CERT_TERM_*`) | 7, 30 or 90 days; default 30, cap 90 | a trust session is a delegation and expires on its own |
+| New hosts per certificate per day (`CERT_NEW_HOSTS_PER_DAY`) | 50, ring-wide | one budget instead of a ceremony per host, small enough to cap a stolen certificate |
+| Hosts in one certificate request (`MAX_CERT_REQUEST_HOSTS`) | 64 | what a phone screen can show and review |
+| Snapshot code / lifetime (`SNAPSHOT_CODE_CHARS`, `SNAPSHOT_TTL_SECS`) | 16 Crockford characters (80 bits), 7 days | offline-grind resistant with the Argon2 floor; a week covers a trip |
+| Snapshot Argon2 floor | 256 MiB, 4 passes | what a mid-range phone can do; the real profile rides in the blob |
+| Master phrase stretching | Argon2id 1 GiB, 1 pass, 6 EFF words | laptop class; 6 of 7776 words is 77 bits |
+| Emailed code stretching | Argon2id 19 MiB, 2 passes | the code carries at least 100 bits, memory buys nothing |
+| Device key file passphrase | Argon2id 64 MiB, 3 passes | normally a random key from the OS keyring |
+| Argon2 bounds from a blob | at most 2 GiB, 16 passes | an untrusted blob cannot make a device allocate without limit |
+| QR frame / rate / parity | 250 B (84 B in 80x24, 331 B in 120x40), 8 fps, 25% parity | measured in PoC C; a lost frame returns next lap |
+| Phone reply QR | 106 B frames, 4 fps | phone screen to a webcam, measured in PoC H |
+| Frame cap, JSON depth, ops per tail | 1 MiB, 32, 2000 | bounds on what an untrusted peer can make a device buffer |
+| Transport timeouts | hello 10 s, round 120 s, idle 30 s, connect to hello 4.5 s | a dead host fails fast; PoC F |
+| Checkpoint trigger / spacing | 5000 ops or 8 MiB; at most daily; 7 days after a reshare | keeps the log bounded without churn |
+| Prune delay / spans kept | 7 days after acceptance; 2 | a slow device can still fetch the previous cut |
+| Checkpoint signers | 2 attended plus every live attended | no single device decides what history is dropped |
+| Tombstone keep | 90 days | longer than `Stale`, so a returning device sees the deletion |
+| Pending quarantine | 10 000 ops per device | stops a peer from filling the disk with unknown-author ops |
+| Clock skew grace | 10 minutes | informational only; time never orders ops |
+| Reshare batch | 200 credentials per op | keeps an op under the frame cap |
+| Words | SAS 4, master phrase 6, paper 24, ring fingerprint 8 | 4 words are protected by the commitment scheme, a static fingerprint needs 88 bits |
+| Name length (device, host label) | 64 bytes | what the review screens can show without truncating |
+| Attended unlock wait (`SSHUB_UNLOCK_WAIT`) | 120 s, at most 3600 | one challenge lifetime; raise it for a slow holder |
+| Phone share request wait (`--wait`) | 120 s default and maximum | the same challenge lifetime |
+| Bulk export window | at most 3600 s | one hour of plain export, counted from ceremony completion |
+| Bluetooth advertising | 300 s per arming | a pairing-like window that closes by itself |
+| Bluetooth link | hello 10 s, ack 5 s x 3, frame 120 s, ping 30 s, idle 90 s, window 8, chunk 244 (20 to 512) | measured with a virtual clock; see the poc results |
+| Auto sync on start | on (`[sync] auto_sync_on_start`) | one round with devices that have a known host at start; set it to false to connect only on request |
 
 ## Release order
 
