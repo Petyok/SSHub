@@ -657,14 +657,18 @@ mod review {
             append(&d[1], cert_opened_body(&cert, h));
         }
         all_to_all(&d);
-        let allowed = hosts
-            .iter()
-            .filter(|h| cert_allows(&cert, &pk, &d[2].store, &d[1].did, h, at, at).is_ok())
-            .count();
-        assert!(allowed <= 1, "{allowed} hosts got through a budget of 1");
-        // A holder's record does count: the host it opened is free afterwards.
-        append(&d[2], cert_opened_body(&cert, &hosts[0]));
-        all_to_all(&d);
+        // The delegate's own records buy nothing: holders release host by host, each release recorded by
+        // the holder that made it, and the budget of one new host a day is spent by the first.
+        let mut allowed = 0;
+        for h in &hosts {
+            if cert_allows(&cert, &pk, &d[2].store, &d[1].did, h, at, at).is_ok() {
+                allowed += 1;
+                append(&d[2], cert_opened_body(&cert, h));
+                all_to_all(&d);
+            }
+        }
+        assert_eq!(allowed, 1, "{allowed} hosts got through a budget of 1");
+        // A holder's record does count: the host it opened is free afterwards, on any holder.
         assert!(cert_allows(&cert, &pk, &d[3].store, &d[1].did, &hosts[0], at, at).is_ok());
         assert!(cert_allows(&cert, &pk, &d[3].store, &d[1].did, &hosts[1], at, at).is_err());
     }
