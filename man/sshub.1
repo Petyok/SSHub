@@ -528,6 +528,24 @@ Add the third factor to a Red op; the secret is read without echo.
 Register a third factor. The emailed code is kept, sealed, only on its sender: register it on
 the device that will mail it (\fB\-\-sender\fR may only name this device).
 .TP
+.B sshub sync\-phone\-enroll
+Enroll the phone from this terminal as text. Prints the terminal's frames; read the phone's frames
+(base64, one per line) and then \fBy\fR or \fBn\fR for the four words from standard input. A verified phone is
+registered and its admission proposed (a Red change).
+.TP
+.B sshub sync\-notice \fIOP\fR
+Print the kind 3 notice (base64) of a Red op for the phone.
+.TP
+.B sshub sync\-phone\-ops
+Take in the ops the phone copied (kind 5, base64) from standard input and print what applied.
+.TP
+.B sshub sync\-share\-request \fIHOST\fR \fR[\fB\-\-wait\fR \fISECS\fR]
+Print the kind 1 challenge for the phone, read its kind 2 reply from standard input and open the credential
+in this process.
+.TP
+.B sshub sync\-cert\-request \fR(\fB\-\-group\fR \fINAME\fR|\fB\-\-host\fR \fINAME\fR...) [\fB\-\-days\fR \fIN\fR] [\fB\-\-budget\fR \fIN\fR]
+Print the kind 9 trust-session request for the phone. Every verb takes \fB\-\-format\fR \fBplain\fR|\fBjson\fR.
+.TP
 .B sshub sync\-recovery \fBstart\fR \fR[\fB\-\-paper\fR]|\fBapprove\fR \fIOP\fR|\fBack\fR \fIOP\fR|\fBcancel\fR \fIOP\fR \fB\-\-factor\fR \fBpaper\fR|\fBemail\fR|\fBstatus\fR
 Phone re-enrollment.
 .TP

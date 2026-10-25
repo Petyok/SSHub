@@ -1,0 +1,628 @@
+//! The phone's terminal side as verbs: thin wrappers over the calls the TUI uses
+//! (`sync::phone_enroll`, `sync::wire`, `sync::hub`, `sync::unlock_paths`, `sync::cert`), so a
+//! script or a headless machine can enrol a phone, show it a Red op, take its ops in and answer a
+//! share challenge. Frames travel as text: base64 of the frame, exactly what the phone page
+//! copies and accepts. Plain output is one `key: value` line per item; `--format json` writes one
+//! JSON object per line (events) or one object (single results).
+
+use std::io::{BufRead, Write};
+use std::time::Duration;
+
+use anyhow::{bail, ensure, Context, Result};
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use serde_json::{json, Value};
+
+use super::theme::sanitize_foreign as plain;
+use crate::profile::ProfilePaths;
+use crate::store::LauncherStore;
+use crate::sync::crypto::DeviceIdentity;
+use crate::sync::identity_store::load_or_init_identity;
+use crate::sync::phone_enroll::{admit_phone, PhoneEnroll, Step};
+
+pub const COMMANDS: [&str; 5] = [
+    "sync-phone-enroll",
+    "sync-notice",
+    "sync-phone-ops",
+    "sync-share-request",
+    "sync-cert-request",
+];
+
+pub fn is_phone_command(cmd: &str) -> bool {
+    COMMANDS.contains(&cmd)
+}
+
+const EMPTY_RING: &str = "No sync ring on this profile yet.";
+
+/// A line the verbs print: its plain form and its JSON form.
+fn emit(out: &mut impl Write, json_out: bool, event: &str, text: String, mut doc: Value) {
+    let _ = if json_out {
+        doc["event"] = json!(event);
+        writeln!(out, "{doc}")
+    } else {
+        writeln!(out, "{event}: {text}")
+    };
+    let _ = out.flush();
+}
+
+fn b64(bytes: &[u8]) -> String {
+    B64.encode(bytes)
+}
+
+/// Frame text from the phone (whitespace ignored), or an error that leaves the session going.
+fn unb64(line: &str) -> Result<Vec<u8>> {
+    B64.decode(line.split_whitespace().collect::<String>())
+        .context("that is not base64: paste the frame as the phone shows it")
+}
+
+// ------------------------------------------------------------- enrollment
+
+/// One enrollment of a phone as a text session. `feed` takes the lines the user (or a script)
+/// types; the answer to the four words is `y` or `n`, every other line is a phone frame.
+pub struct EnrollSession<'a> {
+    store: &'a LauncherStore,
+    id: &'a DeviceIdentity,
+    enroll: PhoneEnroll,
+    first: Vec<u8>,
+    comparing: bool,
+    pub done: Option<bool>,
+    json: bool,
+}
+
+impl<'a> EnrollSession<'a> {
+    pub fn new(store: &'a LauncherStore, id: &'a DeviceIdentity, name: &str, json: bool) -> Self {
+        let (enroll, first) = PhoneEnroll::begin(id, name);
+        Self {
+            store,
+            id,
+            enroll,
+            first,
+            comparing: false,
+            done: None,
+            json,
+        }
+    }
+
+    /// The first frame for the phone to read.
+    pub fn start(&self, out: &mut impl Write) {
+        emit(
+            out,
+            self.json,
+            "frame",
+            b64(&self.first),
+            json!({"frame": b64(&self.first)}),
+        );
+    }
+
+    pub fn feed(&mut self, line: &str, out: &mut impl Write) {
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+        let step =
+            if self.comparing && matches!(line.to_lowercase().as_str(), "y" | "yes" | "n" | "no") {
+                self.comparing = false;
+                self.enroll
+                    .answer(self.id, matches!(line.to_lowercase().as_str(), "y" | "yes"))
+            } else {
+                unb64(line).and_then(|bytes| self.enroll.scan(self.id, &bytes))
+            };
+        match step {
+            Ok(step) => self.show(step, out),
+            Err(e) => emit(
+                out,
+                self.json,
+                "error",
+                format!("{e:#}"),
+                json!({"error": format!("{e:#}")}),
+            ),
+        }
+    }
+
+    fn show(&mut self, step: Step, out: &mut impl Write) {
+        let j = self.json;
+        match step {
+            Step::Show(frame) => emit(out, j, "frame", b64(&frame), json!({"frame": b64(&frame)})),
+            Step::Compare { words, phone_name } => {
+                self.comparing = true;
+                let name = plain(&phone_name);
+                emit(
+                    out,
+                    j,
+                    "words",
+                    format!("{words} (the phone calls itself {name}; answer y if the phone shows the same four words, n if not)"),
+                    json!({"words": words, "phone_name": phone_name}),
+                );
+            }
+            Step::Wait => emit(
+                out,
+                j,
+                "wait",
+                "the phone's confirmation is next".into(),
+                json!({}),
+            ),
+            Step::Verified(v) => {
+                let admitted = admit_phone(self.store, self.id, &v).and_then(|op| {
+                    super::sync_admin::op_report(
+                        self.store,
+                        &op,
+                        format!("{} is enrolled; its admission is proposed", plain(&v.name)),
+                        crate::store::now_ts(),
+                    )
+                });
+                match admitted {
+                    Ok(r) => {
+                        emit(
+                            out,
+                            j,
+                            "frame",
+                            b64(&v.frame),
+                            json!({"frame": b64(&v.frame), "final": true}),
+                        );
+                        for l in &r.lines {
+                            emit(out, j, "admitted", l.clone(), json!({"line": l}));
+                        }
+                        self.done = Some(true);
+                    }
+                    Err(e) => {
+                        emit(
+                            out,
+                            j,
+                            "error",
+                            format!("{e:#}"),
+                            json!({"error": format!("{e:#}")}),
+                        );
+                        self.done = Some(false);
+                    }
+                }
+            }
+            Step::Stopped { why, frame } => {
+                if let Some(f) = frame {
+                    emit(
+                        out,
+                        j,
+                        "frame",
+                        b64(&f),
+                        json!({"frame": b64(&f), "final": true}),
+                    );
+                }
+                emit(out, j, "stopped", plain(&why), json!({"why": why}));
+                self.done = Some(false);
+            }
+        }
+    }
+}
+
+fn phone_enroll(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    input: impl BufRead,
+    out: &mut impl Write,
+    json_out: bool,
+) -> Result<i32> {
+    let mut s = EnrollSession::new(store, id, &crate::sync::runtime::device_name(), json_out);
+    s.start(out);
+    for line in input.lines() {
+        s.feed(&line?, out);
+        if let Some(ok) = s.done {
+            return Ok(if ok { 0 } else { 1 });
+        }
+    }
+    bail!("the input ended before the phone was verified")
+}
+
+// ----------------------------------------------------------------- notice
+
+/// The kind 3 text for the Red op whose id starts with `prefix`.
+pub fn notice_text(store: &LauncherStore, prefix: &str) -> Result<(String, String)> {
+    let op = crate::sync::hub::op_by_hash_prefix(store, prefix)?;
+    ensure!(
+        crate::sync::ceremony::is_gated(store, &op)?,
+        "that op is not a Red change: the phone has nothing to approve"
+    );
+    let hash: String = op.hash().iter().map(|b| format!("{b:02x}")).collect();
+    Ok((hash, b64(&crate::sync::hub::op_notice(&op).encode())))
+}
+
+// -------------------------------------------------------------- phone ops
+
+/// Ingest the phone's kind 5 text; what applied, and the ceremony of every Red op it touches.
+pub fn phone_ops(
+    store: &LauncherStore,
+    text: &str,
+) -> Result<(crate::sync::protocol::RoundSummary, Vec<String>)> {
+    let summary = crate::sync::unlock_paths::phone_ops_from_text(store, text)?;
+    let mut ceremony = Vec::new();
+    let now = crate::store::now_ts();
+    for op in store.sync_pending()? {
+        if crate::sync::ceremony::is_gated(store, &op)? {
+            let st = crate::sync::ceremony::red_status(store, &op, now)?;
+            ceremony.push(format!(
+                "{}: {}",
+                super::sync_cmd::op_id(&op.hash()),
+                if st.complete { "complete" } else { "waiting" }
+            ));
+        }
+    }
+    Ok((summary, ceremony))
+}
+
+// ------------------------------------------------------------ share reply
+
+/// The challenge for `host` as text, plus what is needed to open the phone's reply.
+pub struct ShareChallenge {
+    pub text: String,
+    challenge: crate::sync::quorum::Challenge,
+    eph: zeroize::Zeroizing<[u8; 32]>,
+    phone_ed25519: [u8; 32],
+}
+
+impl ShareChallenge {
+    pub fn new(
+        store: &LauncherStore,
+        id: &DeviceIdentity,
+        host: &crate::store::HostUid,
+    ) -> Result<Self> {
+        let phone = crate::sync::quorum::phone_device(store)?.context("the ring has no phone")?;
+        let phone_ed25519 = store
+            .sync_devices()?
+            .into_iter()
+            .find(|d| d.id == phone)
+            .map(|d| d.public.ed25519_pub)
+            .context("the phone is not in the ring")?;
+        let (challenge, eph) = crate::sync::quorum::make_challenge(
+            store,
+            id,
+            host,
+            &phone,
+            crate::store::now_ts(),
+            crate::sync::limits::CHALLENGE_EXPIRY_SECS,
+        )?;
+        Ok(Self {
+            text: b64(&challenge.to_wire().encode()),
+            challenge,
+            eph,
+            phone_ed25519,
+        })
+    }
+
+    /// Open the phone's kind 2 text; its courier ops and snapshot are taken in.
+    pub fn open(&self, store: &LauncherStore, reply: &str) -> Result<crate::sync::crypto::Share> {
+        let r = crate::sync::unlock_paths::open_phone_reply_clipboard(
+            reply,
+            &self.challenge,
+            &self.eph,
+            &self.phone_ed25519,
+        )?;
+        if let Some(ext) = &r.ext {
+            crate::sync::unlock_paths::apply_reply_ext(store, ext)?;
+        }
+        Ok(r.share)
+    }
+}
+
+/// A share the phone already gave, as the unlocker's second share.
+struct GivenShare(crate::sync::crypto::Share);
+
+impl crate::sync::quorum::ShareSource for GivenShare {
+    fn master_phrase(&self) -> Option<zeroize::Zeroizing<String>> {
+        None
+    }
+
+    fn second_share(
+        &self,
+        _host: &crate::store::HostUid,
+        _epoch: u64,
+        _mine: &crate::sync::crypto::Share,
+    ) -> std::result::Result<crate::sync::crypto::Share, crate::credentials::UnlockError> {
+        Ok(self.0.clone())
+    }
+}
+
+/// One line from `input`, or `None` after `wait`.
+fn line_within(input: impl BufRead + Send + 'static, wait: Duration) -> Option<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut input = input;
+        let mut line = String::new();
+        let _ = input.read_line(&mut line);
+        let _ = tx.send(line);
+    });
+    rx.recv_timeout(wait).ok().filter(|l| !l.trim().is_empty())
+}
+
+// -------------------------------------------------------------- arguments
+
+struct Args {
+    json: bool,
+    wait: u64,
+    days: u32,
+    budget: u32,
+    group: Option<String>,
+    hosts: Vec<String>,
+    pos: Vec<String>,
+}
+
+fn parse(args: &[String]) -> std::result::Result<Args, String> {
+    let mut a = Args {
+        json: false,
+        wait: 300,
+        days: 30,
+        budget: 10,
+        group: None,
+        hosts: Vec::new(),
+        pos: Vec::new(),
+    };
+    let mut i = 0;
+    let value = |i: usize, flag: &str| {
+        args.get(i + 1)
+            .filter(|v| !v.starts_with("--"))
+            .cloned()
+            .ok_or_else(|| format!("{flag} requires a value"))
+    };
+    while i < args.len() {
+        let f = args[i].as_str();
+        match f {
+            "--format" => {
+                a.json = match value(i, f)?.as_str() {
+                    "plain" => false,
+                    "json" => true,
+                    other => return Err(format!("unknown format '{other}'")),
+                };
+                i += 2;
+            }
+            "--wait" => {
+                a.wait = value(i, f)?
+                    .parse()
+                    .map_err(|_| "--wait takes seconds".to_string())?;
+                i += 2;
+            }
+            "--days" => {
+                a.days = value(i, f)?
+                    .parse()
+                    .map_err(|_| "--days takes a number".to_string())?;
+                i += 2;
+            }
+            "--budget" => {
+                a.budget = value(i, f)?
+                    .parse()
+                    .map_err(|_| "--budget takes a number".to_string())?;
+                i += 2;
+            }
+            "--group" => {
+                a.group = Some(value(i, f)?);
+                i += 2;
+            }
+            "--host" => {
+                a.hosts.push(value(i, f)?);
+                i += 2;
+            }
+            _ if f.starts_with('-') => return Err(format!("unknown option '{f}'")),
+            _ => {
+                a.pos.push(f.to_string());
+                i += 1;
+            }
+        }
+    }
+    Ok(a)
+}
+
+// -------------------------------------------------------------------- run
+
+pub fn run(
+    cmd: &str,
+    args: &[String],
+    resolve: impl FnOnce() -> Result<ProfilePaths>,
+) -> Result<i32> {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help(cmd);
+        return Ok(0);
+    }
+    let a = match parse(args) {
+        Ok(a) => a,
+        Err(msg) => {
+            eprintln!("sshub: {msg}\n       run `sshub {cmd} --help` for usage");
+            return Ok(2);
+        }
+    };
+    let want = |n: usize, what: &str| -> Option<i32> {
+        (a.pos.len() != n).then(|| {
+            eprintln!("sshub: {cmd} needs {what}\n       run `sshub {cmd} --help` for usage");
+            2
+        })
+    };
+    let bad = match cmd {
+        "sync-phone-enroll" | "sync-phone-ops" => want(0, "no argument"),
+        "sync-notice" => want(1, "one op id"),
+        "sync-share-request" => want(1, "one host name"),
+        "sync-cert-request" => want(0, "no argument (use --group or --host)"),
+        _ => None,
+    };
+    if let Some(code) = bad {
+        return Ok(code);
+    }
+    let paths = resolve()?;
+    match execute(cmd, &a, &paths) {
+        Ok(code) => Ok(code),
+        Err(e) => {
+            eprintln!("sshub: {cmd}: {e:#}");
+            Ok(1)
+        }
+    }
+}
+
+fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
+    let store = LauncherStore::open(paths.launcher_db()).context("open the launcher database")?;
+    ensure!(!store.sync_devices()?.is_empty(), "{EMPTY_RING}");
+    let secrets = crate::credentials::open_for_profile(paths);
+    let id = load_or_init_identity(paths, secrets.as_ref())?;
+    let mut out = std::io::stdout();
+    match cmd {
+        "sync-phone-enroll" => phone_enroll(&store, &id, std::io::stdin().lock(), &mut out, a.json),
+        "sync-notice" => {
+            let (op, text) = notice_text(&store, &a.pos[0])?;
+            emit(
+                &mut out,
+                a.json,
+                "notice",
+                text.clone(),
+                json!({"op": op, "notice": text}),
+            );
+            Ok(0)
+        }
+        "sync-phone-ops" => {
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+            let (s, ceremony) = phone_ops(&store, &text)?;
+            emit(
+                &mut out,
+                a.json,
+                "ops",
+                format!(
+                    "{} received, {} applied, {} waiting for approval",
+                    s.received, s.applied, s.pending_arrived
+                ),
+                json!({"received": s.received, "applied": s.applied, "pending": s.pending_arrived, "red": ceremony}),
+            );
+            if !a.json {
+                for c in &ceremony {
+                    emit(&mut out, false, "red", c.clone(), json!({}));
+                }
+            }
+            Ok(0)
+        }
+        "sync-share-request" => share_request(paths, &store, &id, a, &mut out),
+        "sync-cert-request" => {
+            let me = id.public().device_id();
+            let (labels, scopes) = crate::app::sync_trust::scope_choices(&store);
+            let scope = pick_scope(&labels, &scopes, a)?;
+            let wire = crate::sync::cert::cert_request(
+                &store,
+                &me,
+                scope,
+                i64::from(a.days) * 86_400,
+                a.budget,
+                1,
+                crate::store::now_ts(),
+            )?;
+            let text = b64(&wire.encode());
+            emit(
+                &mut out,
+                a.json,
+                "request",
+                text.clone(),
+                json!({"request": text}),
+            );
+            Ok(0)
+        }
+        _ => unreachable!("dispatched by is_phone_command"),
+    }
+}
+
+/// The trust-session scope from `--group NAME` or one or more `--host NAME`, by the labels the
+/// TUI's scope step offers.
+fn pick_scope(
+    labels: &[String],
+    scopes: &[crate::sync::oplog::CertScope],
+    a: &Args,
+) -> Result<crate::sync::oplog::CertScope> {
+    use crate::sync::oplog::CertScope;
+    match (&a.group, a.hosts.is_empty()) {
+        (Some(g), true) => {
+            let want = format!("group {g} (");
+            let i = labels
+                .iter()
+                .position(|l| l.starts_with(&want))
+                .with_context(|| format!("no group named {g}"))?;
+            Ok(scopes[i].clone())
+        }
+        (None, false) => {
+            let mut uids = Vec::new();
+            for h in &a.hosts {
+                let want = format!("host {h}");
+                let i = labels
+                    .iter()
+                    .position(|l| *l == want)
+                    .with_context(|| format!("no host named {h}"))?;
+                if let CertScope::Hosts(u) = &scopes[i] {
+                    uids.extend(u.iter().copied());
+                }
+            }
+            ensure!(
+                uids.len() <= crate::sync::wire::MAX_CERT_REQUEST_HOSTS,
+                "a trust session lists at most {} hosts",
+                crate::sync::wire::MAX_CERT_REQUEST_HOSTS
+            );
+            uids.sort_unstable();
+            Ok(CertScope::Hosts(uids))
+        }
+        _ => bail!("give --group NAME or one or more --host NAME (never everything)"),
+    }
+}
+
+fn share_request(
+    paths: &ProfilePaths,
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    a: &Args,
+    out: &mut impl Write,
+) -> Result<i32> {
+    let ctx = super::context::CliContext::bootstrap_with(paths.clone())?;
+    let host = ctx.managed_host_by_name(&a.pos[0])?;
+    let uid = store
+        .host_uid(host.id)?
+        .context("that host has no synced identity yet")?;
+    let ch = ShareChallenge::new(store, id, &uid)?;
+    emit(
+        out,
+        a.json,
+        "challenge",
+        ch.text.clone(),
+        json!({"challenge": ch.text}),
+    );
+    let line = line_within(
+        std::io::BufReader::new(std::io::stdin()),
+        Duration::from_secs(a.wait),
+    )
+    .with_context(|| format!("no reply from the phone within {} s", a.wait))?;
+    let share = ch.open(store, &line)?;
+    let unlocker = super::unlock::unlocker_with(&ctx, Box::new(GivenShare(share)))?;
+    let key = crate::credentials::host_key(host.id);
+    crate::credentials::ensure_unlocked(&[crate::credentials::SecretRef::Key(key)], &unlocker)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    emit(
+        out,
+        a.json,
+        "opened",
+        format!(
+            "{} (the credential is open in this process only)",
+            plain(&host.name)
+        ),
+        json!({"host": host.name, "opened": true}),
+    );
+    Ok(0)
+}
+
+// ------------------------------------------------------------------- help
+
+pub fn print_help(cmd: &str) {
+    let (synopsis, text) = match cmd {
+        "sync-phone-enroll" => ("sync-phone-enroll [--format plain|json]", "Enroll a phone from this terminal, as text. Prints the terminal's first frame (`frame:`); read each of the phone's frames (kind 6, 7, 8, base64) from stdin, one per line, and print the next frame to show. After the phone's reveal it prints the four words (`words:`): answer `y` or `n` on stdin. On a verified phone it registers it and proposes its admission (a Red change) and prints the last frame for the phone. Needs a ring. Exit 0 verified, 1 stopped or input ended."),
+        "sync-notice" => ("sync-notice <op-id> [--format plain|json]", "Print the kind 3 notice (base64) of a Red op, for the phone to read: the op as signed, so the phone can show what it is asked to approve. <op-id> is a unique prefix (4+ hex characters) of the op's hash."),
+        "sync-phone-ops" => ("sync-phone-ops [--format plain|json]", "Take in the ops the phone copied (kind 5, base64) from stdin, chain them into the log and print what applied and the ceremony of every pending Red op. A malformed text changes nothing."),
+        "sync-share-request" => ("sync-share-request <host> [--wait <seconds>] [--format plain|json]", "Ask the phone for its share of <host>'s credential: prints the kind 1 challenge (base64), then reads the phone's kind 2 reply from stdin (up to --wait seconds, default 300), opens it, takes in its courier ops and opens the credential with this device's share. The credential is open in this process only: run it to prove the path and to take in the phone's ops; `host connect` does its own unlock."),
+        "sync-cert-request" => ("sync-cert-request (--group NAME | --host NAME...) [--days N] [--budget N] [--format plain|json]", "Print the kind 9 trust-session request (base64) for the phone to approve: a group or listed hosts (at most 64, never everything), a term in days (default 30) and a budget of new hosts a day (default 10). The phone's answer goes in with sync-phone-ops. The kind 10 extension is TUI-only."),
+        _ => return,
+    };
+    println!(
+        "sshub {cmd} - {}",
+        text.split(". ").next().unwrap_or("").trim_end_matches('.')
+    );
+    println!();
+    println!("USAGE:");
+    println!("    sshub [--profile NAME] {synopsis}");
+    println!();
+    println!("{text}");
+}
+
+#[cfg(test)]
+mod tests;

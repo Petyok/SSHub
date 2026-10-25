@@ -28,6 +28,7 @@ pub fn print_command_help(cmd: &str) {
         "sync-status" => print_sync_status(),
         "sync-review" => print_sync_review(),
         c if super::sync_admin::is_admin_command(c) => super::sync_admin::print_help(c),
+        c if super::sync_phone_cmd::is_phone_command(c) => super::sync_phone_cmd::print_help(c),
         "import" => print_import(),
         "export" => print_export(),
         "completions" => print_completions(),

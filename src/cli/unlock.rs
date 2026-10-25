@@ -245,6 +245,37 @@ impl Drop for NoEcho {
 /// The unlocker a CLI command uses when none was injected: needs a ring on
 /// this profile; the ring secret comes from the credential store.
 pub(crate) fn default_unlocker(ctx: &CliContext) -> Result<QuorumUnlocker> {
+    // No ring: say so before anything creates a device key.
+    ensure!(
+        !ctx.store.sync_devices()?.is_empty(),
+        "{}",
+        needs_share_message()
+    );
+    let runtime = runtime_of(ctx)?;
+    unlocker_with(
+        ctx,
+        Box::new(PromptShares {
+            runtime,
+            wait: unlock_wait(),
+            every: POLL_EVERY,
+        }),
+    )
+}
+
+fn runtime_of(ctx: &CliContext) -> Result<crate::sync::runtime::SyncRuntime> {
+    let local = crate::credentials::open_ungated_for_profile(&ctx.profile);
+    Ok(crate::sync::runtime::SyncRuntime::new(
+        ctx.profile.clone(),
+        ctx.store.clone(),
+        load_or_init_identity(&ctx.profile, local.as_ref())?,
+    ))
+}
+
+/// The ring's unlocker with `source` as the way to get the second share.
+pub(crate) fn unlocker_with(
+    ctx: &CliContext,
+    source: Box<dyn ShareSource>,
+) -> Result<QuorumUnlocker> {
     let gate = ctx
         .password_store()
         .shared_gate()
@@ -256,11 +287,6 @@ pub(crate) fn default_unlocker(ctx: &CliContext) -> Result<QuorumUnlocker> {
     );
     let local = crate::credentials::open_ungated_for_profile(&ctx.profile);
     let identity = load_or_init_identity(&ctx.profile, local.as_ref())?;
-    let runtime = crate::sync::runtime::SyncRuntime::new(
-        ctx.profile.clone(),
-        ctx.store.clone(),
-        load_or_init_identity(&ctx.profile, local.as_ref())?,
-    );
     let ring = local
         .get(RING_SECRET_KEY)?
         .and_then(|t| parse_ring_secret(&t).ok());
@@ -268,11 +294,7 @@ pub(crate) fn default_unlocker(ctx: &CliContext) -> Result<QuorumUnlocker> {
         ctx.store.clone(),
         Arc::new(identity),
         gate,
-        Box::new(PromptShares {
-            runtime,
-            wait: unlock_wait(),
-            every: POLL_EVERY,
-        }),
+        source,
         ring,
     ))
 }

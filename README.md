@@ -355,6 +355,11 @@ sshub sync-exemption on|off <device>          # master-phrase exemption (on need
 sshub sync-export --window <seconds> --out <path> [--wait <seconds>]   # bulk export (Red, window <= 3600 s, 0600 file)
 sshub sync-migrate [--remove-local]           # replicate this profile's saved secrets
 sshub sync-import-kit                         # second machine: set up the Vault from the kit and the phrase
+sshub sync-phone-enroll                       # enroll the phone as text: frames (base64) on stdin and stdout, the four words, then y or n
+sshub sync-notice <op-id>                     # the kind 3 notice (base64) of a Red op for the phone
+sshub sync-phone-ops < ops.txt                # take in the ops the phone copied (kind 5, base64); prints what applied
+sshub sync-share-request <host> [--wait 300]  # kind 1 challenge out, the phone's kind 2 reply on stdin, opens the credential in this process
+sshub sync-cert-request (--group G | --host H...) [--days 30] [--budget 10]   # kind 9 trust-session request for the phone
 # Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected. Admin verbs: 0 ok, 1 error, 2 usage.
 # sync-serve / sync-enroll are what a peer runs over ssh (frames on stdin and stdout); not for interactive use.
 

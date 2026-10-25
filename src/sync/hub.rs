@@ -254,5 +254,39 @@ pub fn recovery_notice(
     })
 }
 
+/// The one op of the log whose hash starts with `prefix` (lowercase hex, at least 4 characters).
+pub fn op_by_hash_prefix(store: &LauncherStore, prefix: &str) -> Result<Op> {
+    let p = prefix.to_lowercase();
+    if p.len() < 4 || !p.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("'{prefix}' is not an op id (at least 4 hex characters)");
+    }
+    let rows: Vec<(Vec<u8>, Vec<u8>)> = store.with_conn(|c| {
+        let mut stmt = c.prepare(
+            "SELECT canonical, signature FROM sync_ops WHERE lower(hex(op_hash)) LIKE ?1 || '%' LIMIT 3",
+        )?;
+        let it = stmt.query_map(params![p], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(it.collect::<rusqlite::Result<Vec<_>>>()?)
+    })?;
+    match rows.as_slice() {
+        [] => bail!("no op matches '{prefix}'"),
+        [(canonical, sig)] => Op::from_canonical(
+            canonical,
+            sig.as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("stored signature"))?,
+        ),
+        _ => bail!("'{prefix}' matches several ops; use more characters"),
+    }
+}
+
+/// The notice (kind 3) of any op the phone is to judge: the op as signed. For a Red op the phone
+/// shows what it is asked to approve and signs the ceremony proof.
+pub fn op_notice(op: &Op) -> RecoveryNoticeWire {
+    RecoveryNoticeWire {
+        op_canonical: op.canonical_bytes(),
+        op_signature: op.signature,
+    }
+}
+
 #[cfg(test)]
 mod tests;
