@@ -140,6 +140,8 @@ pub struct RedView {
     /// A participant rule the proofs break (the same device giving two of them ...): the change
     /// cannot complete as it stands.
     pub rule_violation: Option<String>,
+    /// Why a proof that looks available does not count (the emailed code's sender voted ...).
+    pub note: Option<String>,
     /// Only one attended holder terminal: the second device is waived, the paper needed.
     pub single_machine: bool,
 }
