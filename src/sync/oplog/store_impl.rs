@@ -275,16 +275,31 @@ impl LauncherStore {
     /// fsyncs) instead of one per op, the cost that dominates a large log on a real disk.
     /// Outcomes are in the order of `ops`; a database error rolls the whole batch back.
     pub fn sync_ingest_batch(&self, ops: Vec<Op>) -> Result<Vec<IngestOutcome>> {
-        self.with_conn(|conn| {
-            let tx = tx(conn)?;
-            let now = now_ts();
-            let mut out = Vec::with_capacity(ops.len());
-            for op in ops {
-                out.push(ingest(&tx, op, now)?);
+        // Chunks of 100: the store lock is released between them (the UI shares it), and an error
+        // costs one chunk, not the frame. A chunk that fails is retried one op at a time, so every
+        // op before the failing one is kept.
+        let mut out = Vec::with_capacity(ops.len());
+        for chunk in ops.chunks(100) {
+            let attempt = self.with_conn(|conn| {
+                let tx = tx(conn)?;
+                let now = now_ts();
+                let mut done = Vec::with_capacity(chunk.len());
+                for op in chunk {
+                    done.push(ingest(&tx, op.clone(), now)?);
+                }
+                tx.commit()?;
+                Ok(done)
+            });
+            match attempt {
+                Ok(done) => out.extend(done),
+                Err(_) => {
+                    for op in chunk {
+                        out.push(self.sync_ingest(op.clone())?);
+                    }
+                }
             }
-            tx.commit()?;
-            Ok(out)
-        })
+        }
+        Ok(out)
     }
 
     /// Ops waiting for review, oldest first.

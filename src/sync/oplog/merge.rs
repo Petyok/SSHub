@@ -405,17 +405,33 @@ pub(crate) fn collision_holder(conn: &Connection, op: &Op) -> Result<Option<[u8;
     if op.tier() != OpTier::Green || !name_taken(conn, kind, &uid, &name)? {
         return Ok(None);
     }
-    let hash: Option<Vec<u8>> = conn
-        .query_row(
-            "SELECT f.op_hash FROM sync_fields f JOIN sync_entities e
-               ON e.kind = f.kind AND e.uid = f.uid
-             WHERE f.kind = ?1 AND f.field = 'name' AND f.value = ?2 AND f.uid != ?3 AND e.alive = 1
-             ORDER BY f.lamport DESC LIMIT 1",
-            params![kind.as_str(), serde_json::to_string(&name)?, &uid[..]],
-            |r| r.get(0),
-        )
-        .optional()?;
-    Ok(hash.and_then(|h| <[u8; 32]>::try_from(h).ok()))
+    // The entities that hold the name, and for each the op that is its effective name writer (the
+    // newest name write of an op in force): that op, and only that, is what a collision puts back
+    // under review.
+    let mut st = conn.prepare(
+        "SELECT uid FROM sync_entities WHERE kind = ?1 AND alive = 1 AND name = ?2 AND uid != ?3",
+    )?;
+    let holders: Vec<Vec<u8>> = st
+        .query_map(params![kind.as_str(), name, &uid[..]], |r| r.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    let wanted = serde_json::to_string(&name)?;
+    for holder in holders {
+        let writer: Option<(Vec<u8>, String)> = conn
+            .query_row(
+                "SELECT f.op_hash, f.value FROM sync_fields f JOIN sync_ops o ON o.op_hash = f.op_hash
+                 WHERE f.kind = ?1 AND f.uid = ?2 AND f.field = 'name' AND o.state IN ('applied','approved')
+                 ORDER BY f.lamport DESC, f.device_id DESC, f.seq DESC LIMIT 1",
+                params![kind.as_str(), holder],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        if let Some((hash, value)) = writer {
+            if value == wanted {
+                return Ok(<[u8; 32]>::try_from(hash).ok());
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// The author of a [`holder_only`] op is an effective holder (and for `CertHostOpened` not
@@ -600,7 +616,10 @@ pub(crate) fn desired_state(
     }
     // A revoked device keeps its key: whatever it signs after this device learned of the
     // revocation waits for a human, whatever lamport it chose.
-    if first && author_revoked(conn, &op.device_id)? {
+    // (And an op already held for this reason stays held when its author is judged again.)
+    if (first || (row.state == State::Pending && row.reason.as_deref() == Some("revoked-author")))
+        && author_revoked(conn, &op.device_id)?
+    {
         return Ok((State::Pending, Some("revoked-author")));
     }
     if holder_only(&op.body) && !author_may_write(conn, op)? {
