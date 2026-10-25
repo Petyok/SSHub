@@ -869,8 +869,10 @@ pub(crate) fn ingest_ops(
     for _pass in 0..4 {
         let mut retry = Vec::new();
         let mut progress = false;
-        for op in queue {
-            match store.sync_ingest(op.clone())? {
+        // One transaction for the whole pass: a frame of ops costs one commit.
+        let outcomes = store.sync_ingest_batch(queue.clone())?;
+        for (op, outcome) in queue.into_iter().zip(outcomes) {
+            match outcome {
                 IngestOutcome::Applied => {
                     sum.applied += 1;
                     progress = true;
