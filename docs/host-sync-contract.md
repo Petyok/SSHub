@@ -277,7 +277,10 @@ pub enum OpBody {                              // canonical form: section 0 (C2)
     DeviceRevoke  { device_id: DeviceId },
     // requester is in the body as well as the header: a holder that checks only
     // the body must still see WHO asks.
-    ShareRelease  { host_uid: HostUid, request_id: u64, requester: DeviceId },
+    // The signed body is exactly {host_uid, request_id, requester, eph_x25519_pub}: the ephemeral key
+    // the grant is sealed to is part of what the requester signed. A phone MUST refuse a challenge whose
+    // frame ephemeral key differs from the signed one.
+    ShareRelease  { host_uid: HostUid, request_id: u64, requester: DeviceId, eph_x25519_pub: [u8; 32] },
     // Forward-secure resharing (C14, PoC B). The contributor is the op's device.
     // One per (contributor, recipient) per epoch: hybrid_wrap(to.pub, 32 byte session key).
     ShareReshareSession { epoch: u64, to: DeviceId, sealed: Vec<u8> },
