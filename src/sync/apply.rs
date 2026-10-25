@@ -944,6 +944,10 @@ fn project_host(
         None => {
             let mut new = NewHost::launcher(name, &address);
             new.source = HostSource::Launcher;
+            // A host the ring did not give a port or transport INHERITS them (its group's, ssh's):
+            // the row holds NULL, so a later explicit 22 or ssh by the user is told apart from it.
+            new.port = None;
+            new.transport = None;
             let created = store::create_host_on(conn, &new)?;
             set_uid(conn, EntityKind::Host, created.id, uid)?;
             created.id
