@@ -25,6 +25,8 @@ const NO_WORKER: &str = "sync is not available in this build yet";
 pub const TRUST_TTL_DAYS: [u32; 3] = [7, 30, 90];
 /// Index of the default term in [`TRUST_TTL_DAYS`].
 pub const TRUST_TTL_DEFAULT: usize = 1;
+/// Keys are ignored this long after the share release confirmation opens.
+const RELEASE_KEY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Health of a device in the ring (the contract's `DeviceStatus`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,6 +127,23 @@ pub struct ChangeView {
     pub dangerous: bool,
 }
 
+/// Where the Red ceremony of a pending change stands.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RedView {
+    /// Proofs present, one line each.
+    pub have: Vec<String>,
+    /// Proofs still missing, one line each.
+    pub missing: Vec<String>,
+    pub expired: bool,
+    /// A rule that makes the change impossible (too few live holders ...).
+    pub blocked: Option<String>,
+    /// A participant rule the proofs break (the same device giving two of them ...): the change
+    /// cannot complete as it stands.
+    pub rule_violation: Option<String>,
+    /// Only one attended holder terminal: the second device is waived, the paper needed.
+    pub single_machine: bool,
+}
+
 /// One pending operation awaiting review.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingOpView {
@@ -133,6 +152,10 @@ pub struct PendingOpView {
     pub changes: Vec<ChangeView>,
     /// Hash of the op, for approving or rejecting it in the store.
     pub hash: [u8; 32],
+    /// Why it waits (`tier`, `unknown-author`, ...), when the store says.
+    pub reason: Option<String>,
+    /// The ceremony of a Red change; `None` for everything else.
+    pub red: Option<RedView>,
 }
 
 /// How a share can reach the unlock modal.
@@ -145,6 +168,10 @@ pub enum UnlockPathKind {
     Words24,
     /// The master phrase of a Vault ring.
     Phrase,
+    /// The microphone listening for the phone's sound.
+    Audio,
+    /// The camera reading the phone's code.
+    Camera,
 }
 
 impl UnlockPathKind {
@@ -156,6 +183,8 @@ impl UnlockPathKind {
             Self::ShortCode => "short code",
             Self::Words24 => "24 words",
             Self::Phrase => "master phrase",
+            Self::Audio => "microphone",
+            Self::Camera => "camera",
         }
     }
 }
@@ -221,6 +250,8 @@ pub struct ReleaseView {
     pub requester_id: String,
     /// Hash of the pending `ShareRelease` op this answers.
     pub hash: [u8; 32],
+    /// How old the request was when it opened.
+    pub age_secs: i64,
 }
 
 /// What stage 3 stores for Vault: the master phrase and the ring secret.
@@ -292,7 +323,7 @@ impl OnboardingView {
         OsRng.fill_bytes(&mut ring);
         let first = OsRng.next_u32() as usize % 6;
         let second = (first + 1 + OsRng.next_u32() as usize % 5) % 6;
-        let home = std::env::var_os("HOME").map_or_else(|| ".".into(), std::path::PathBuf::from);
+        let home = kit::default_dir();
         let path = |name: &str| home.join(name).to_string_lossy().into_owned();
         Self::with_secrets(
             &entropy,
@@ -353,10 +384,6 @@ pub enum SyncIntent {
         host: String,
     },
     SasMatches(bool),
-    Trust {
-        scope: usize,
-        term_days: u32,
-    },
     /// The holder's answer to a release request: approve (and grant) or refuse.
     Release {
         approve: bool,
@@ -373,6 +400,8 @@ pub enum SyncIntent {
     OnboardingDone(OnboardingSecrets),
     /// Ask the worker which device this is (loads the device key).
     Identify,
+    /// An admin job to run on the worker with the device identity.
+    Job(crate::sync::runtime::JobBox),
 }
 
 /// What runs once credentials are open.
@@ -404,13 +433,19 @@ pub struct SyncView {
     pub review_selected: usize,
     /// Scope choices for a new trust session (groups, host lists).
     pub trust_scopes: Vec<String>,
+    /// What each of `trust_scopes` certifies, in the same order.
+    pub trust_scope_values: Vec<crate::sync::oplog::CertScope>,
     pub trust_scope_selected: usize,
+    /// Hosts marked with Space in the scope step; when any, they are the scope.
+    pub trust_marked: Vec<crate::sync::oplog::HostUid>,
     pub trust_ttl_selected: usize,
     pub unlock: Option<UnlockView>,
     pub sas: Option<SasView>,
     /// Set by a fork proof; stays set after the alert is dismissed.
     pub fork: Option<ForkView>,
     pub release: Option<ReleaseView>,
+    /// When the release confirmation opened: keys are ignored for its first moments.
+    pub release_opened: Option<std::time::Instant>,
     pub onboarding: Option<OnboardingView>,
     /// Requests for the worker, oldest first.
     pub intents: Vec<SyncIntent>,
@@ -516,6 +551,7 @@ impl App {
             _ if self.is_action(KeyAction::SyncNow, &key) => self.sync_now(),
             _ if self.is_action(KeyAction::SyncReview, &key) => self.sync_open_review(),
             _ if self.is_action(KeyAction::SyncTrust, &key) => self.sync_open_trust(),
+            _ if self.is_action(KeyAction::SyncAdmin, &key) => self.open_sync_admin(),
             _ if self.is_action(KeyAction::Connect, &key) => self.sync_open_selected(),
             _ => {}
         }
@@ -591,6 +627,14 @@ impl App {
         }
     }
 
+    pub(crate) fn sync_open_trust_pub(&mut self) {
+        self.sync_open_trust();
+    }
+
+    pub(crate) fn sync_open_review_pub(&mut self) {
+        self.sync_open_review();
+    }
+
     fn sync_open_review(&mut self) {
         if !self.sync.configured {
             self.host_notice = Some(NOT_SET_UP.into());
@@ -608,7 +652,9 @@ impl App {
         } else if self.sync.trust_scopes.is_empty() {
             self.host_notice = Some("no group or host list to scope a trust session to".into());
         } else {
-            self.sync.trust_scope_selected = 0;
+            self.sync.trust_scope_selected =
+                super::sync_trust::default_scope(&self.store, &self.sync.trust_scopes);
+            self.sync.trust_marked.clear();
             self.sync.trust_ttl_selected = TRUST_TTL_DEFAULT;
             self.mode = AppMode::TrustSessionScope;
         }
@@ -641,10 +687,13 @@ impl App {
 
     /// App-tick hook: step the unlock QR's frame at 8 fps while its modal is up.
     pub(crate) fn advance_sync_qr(&mut self, now: std::time::Instant) {
-        if self.mode != AppMode::SyncUnlock {
-            return;
-        }
-        let count = self.sync.unlock.as_ref().map_or(0, |u| u.frames.len());
+        let count = match (self.mode, self.sync_ui.as_ref()) {
+            (AppMode::SyncUnlock, _) => self.sync.unlock.as_ref().map_or(0, |u| u.frames.len()),
+            (AppMode::SyncPrompt, Some(super::sync_ui::SyncUi::Prompt { frames, .. })) => {
+                frames.len()
+            }
+            _ => return,
+        };
         let sync = &mut self.sync;
         crate::tui::widgets::qr_frames::advance(&mut sync.qr_frame, &mut sync.qr_last, now, count);
     }
@@ -652,6 +701,21 @@ impl App {
     pub fn open_sync_sas(&mut self, view: SasView) {
         self.sync.sas = Some(view);
         self.mode = AppMode::SyncSas;
+    }
+
+    /// Run `job` on the sync worker with the device identity: the way every
+    /// admin operation appends ops. Its returned line becomes the notice.
+    pub(crate) fn run_sync_job(
+        &mut self,
+        job: impl FnOnce(&crate::sync::runtime::JobEnv) -> Result<String> + Send + 'static,
+    ) {
+        if !self.sync.worker {
+            self.host_notice = Some(NO_WORKER.into());
+            return;
+        }
+        self.sync
+            .intents
+            .push(SyncIntent::Job(crate::sync::runtime::JobBox::new(job)));
     }
 
     /// Hand the worker the protocol package built; the tab's keys then work.
@@ -664,8 +728,13 @@ impl App {
     /// worker's events into the [`SyncView`]. This is the one place worker
     /// events become view state.
     pub fn poll_sync(&mut self) {
+        // A save that could not be recorded for sync is still saved: say so in the status line.
+        if let Some(warning) = self.store.take_sync_warning() {
+            self.host_notice = Some(format!("saved, but not recorded for sync: {warning}"));
+        }
         self.poll_unlock_resume();
         self.forward_sync_intents();
+        super::sync_phone::tick(self);
         while let Some(Ok(event)) = self.sync_worker.as_ref().map(|w| w.try_recv()) {
             self.apply_sync_event(event);
         }
@@ -676,7 +745,6 @@ impl App {
         if self.sync_worker.is_none() || self.sync.intents.is_empty() {
             return;
         }
-        let mut kept = Vec::new();
         for intent in std::mem::take(&mut self.sync.intents) {
             let cmd = match &intent {
                 SyncIntent::SyncNow { device } => SyncCmd::SyncNow(device.clone()),
@@ -703,6 +771,7 @@ impl App {
                     SyncCmd::UnlockCode(code.clone())
                 }
                 SyncIntent::Identify => SyncCmd::Identify,
+                SyncIntent::Job(job) => SyncCmd::Job(job.clone()),
                 SyncIntent::Release { approve, hash } => SyncCmd::Release {
                     approve: *approve,
                     hash: *hash,
@@ -710,11 +779,6 @@ impl App {
                 SyncIntent::OnboardingDone(secrets) => {
                     self.sync.identify_after = true;
                     SyncCmd::Onboard(Box::new(secrets.clone()))
-                }
-                // Answered by later stages, not by the transport worker.
-                _ => {
-                    kept.push(intent);
-                    continue;
                 }
             };
             if !matches!(cmd, SyncCmd::EnrollConfirmSas(_)) {
@@ -732,7 +796,6 @@ impl App {
                 ));
             }
         }
-        self.sync.intents = kept;
     }
 
     fn apply_sync_event(&mut self, event: crate::sync::client::SyncEvent) {
@@ -750,6 +813,12 @@ impl App {
                     peer_has_screen: info.peer_has_screen,
                 });
             }
+            SyncEvent::Notice(message) if message.is_empty() => {}
+            SyncEvent::Notice(message) if message.contains('\n') => {
+                let lines = message.lines().map(str::to_string).collect();
+                self.sync_info("Done", lines);
+            }
+            SyncEvent::Notice(message) => self.host_notice = Some(message),
             SyncEvent::ThisDevice(id) => {
                 for d in &mut sync.devices {
                     d.this = d.id == id;
@@ -847,6 +916,7 @@ impl App {
 
     pub fn open_sync_release_confirm(&mut self, view: ReleaseView) {
         self.sync.release = Some(view);
+        self.sync.release_opened = Some(std::time::Instant::now());
         self.mode = AppMode::SyncReleaseConfirm;
     }
 
@@ -1145,8 +1215,10 @@ impl App {
                     self.sync.review_selected = (self.sync.review_selected + 1).min(last);
                 } else if up {
                     self.sync.review_selected = self.sync.review_selected.saturating_sub(1);
-                } else if plain('a') || plain('r') {
-                    self.sync_resolve_review(plain('a'));
+                } else if let KeyCode::Char(c @ ('a' | 'r' | 'p' | 'e')) = key.code {
+                    if key.modifiers.is_empty() {
+                        self.sync_review_key(c);
+                    }
                 }
             }
             AppMode::SyncUnlock => {
@@ -1182,6 +1254,8 @@ impl App {
                 let last = self.sync.trust_scopes.len().saturating_sub(1);
                 if cancel {
                     self.mode = AppMode::Normal;
+                } else if plain(' ') {
+                    super::sync_trust::toggle_mark(self);
                 } else if confirm {
                     self.mode = AppMode::TrustSessionTtl;
                 } else if down {
@@ -1195,11 +1269,8 @@ impl App {
                 if cancel {
                     self.mode = AppMode::TrustSessionScope;
                 } else if confirm {
-                    self.sync.intents.push(SyncIntent::Trust {
-                        scope: self.sync.trust_scope_selected,
-                        term_days: TRUST_TTL_DAYS[self.sync.trust_ttl_selected],
-                    });
                     self.mode = AppMode::Normal;
+                    super::sync_trust::begin(self, TRUST_TTL_DAYS[self.sync.trust_ttl_selected]);
                 } else if down {
                     self.sync.trust_ttl_selected =
                         (self.sync.trust_ttl_selected + 1).min(TRUST_TTL_DAYS.len() - 1);
@@ -1208,7 +1279,16 @@ impl App {
                 }
             }
             AppMode::SyncReleaseConfirm => {
-                let approve = confirm || self.is_action(KeyAction::ConfirmYes, &key);
+                // A modal that opens while the user is pressing Enter must not approve by itself:
+                // keys are ignored at first, and only an explicit `y` releases.
+                if self
+                    .sync
+                    .release_opened
+                    .is_some_and(|t| t.elapsed() < RELEASE_KEY_DELAY)
+                {
+                    return Ok(());
+                }
+                let approve = plain('y');
                 if approve || cancel || plain('n') {
                     if let Some(hash) = self.sync.release.as_ref().map(|r| r.hash) {
                         self.sync.answered_releases.push(hash);
@@ -1258,6 +1338,8 @@ pub(crate) fn sample_sync_view() -> SyncView {
         }),
         review: vec![PendingOpView {
             hash: [0; 32],
+            reason: None,
+            red: None,
             device: "server".into(),
             summary: "edit host web-1".into(),
             changes: vec![ChangeView {
@@ -1268,6 +1350,10 @@ pub(crate) fn sample_sync_view() -> SyncView {
             }],
         }],
         trust_scopes: vec!["group staging".into(), "group prod".into()],
+        trust_scope_values: vec![
+            crate::sync::oplog::CertScope::Group([1; 16]),
+            crate::sync::oplog::CertScope::Group([2; 16]),
+        ],
         ..SyncView::default()
     }
 }
@@ -1315,6 +1401,7 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
             hash: [7; 32],
+            age_secs: 12,
         }),
         onboarding: Some(
             OnboardingView::with_secrets(
@@ -1430,14 +1517,9 @@ mod tests {
         assert_eq!(TRUST_TTL_DAYS[app.sync.trust_ttl_selected], 30);
         app.handle_key(press(KeyCode::Down)).unwrap();
         app.handle_key(press(KeyCode::Enter)).unwrap();
-        assert_eq!(app.mode, AppMode::Normal);
-        assert_eq!(
-            app.sync.intents,
-            vec![SyncIntent::Trust {
-                scope: 1,
-                term_days: 90
-            }]
-        );
+        // The term is chosen: the budget is asked next (the sample's scopes are
+        // labels only, so the flow stops there with a notice).
+        assert!(app.mode == AppMode::Normal || app.mode == AppMode::SyncPrompt);
     }
 
     #[test]
@@ -1499,7 +1581,9 @@ mod tests {
             requester: "new laptop".into(),
             requester_id: "id-9".into(),
             hash: [7; 32],
+            age_secs: 3,
         });
+        age_the_release_modal(&mut app);
         app.handle_key(press(KeyCode::Esc)).unwrap();
         assert_eq!(
             app.sync.intents,
@@ -1512,6 +1596,46 @@ mod tests {
             ]
         );
         assert_eq!(app.mode, AppMode::Normal);
+    }
+
+    fn age_the_release_modal(app: &mut App) {
+        app.sync.release_opened =
+            Some(std::time::Instant::now() - std::time::Duration::from_secs(2));
+    }
+
+    fn release_modal() -> App {
+        let mut app = configured_app();
+        app.open_sync_release_confirm(ReleaseView {
+            host: "web-1".into(),
+            requester: "new laptop".into(),
+            requester_id: "id-9".into(),
+            hash: [7; 32],
+            age_secs: 3,
+        });
+        app
+    }
+
+    #[test]
+    fn a_release_needs_an_explicit_y_after_the_first_moments() {
+        // Keys pressed as the modal opens (even `y`) are ignored.
+        let mut app = release_modal();
+        app.handle_key(press(KeyCode::Char('y'))).unwrap();
+        assert_eq!(app.mode, AppMode::SyncReleaseConfirm);
+        assert!(app.sync.intents.is_empty());
+        // Enter never approves, even later.
+        age_the_release_modal(&mut app);
+        app.handle_key(press(KeyCode::Enter)).unwrap();
+        assert_eq!(app.mode, AppMode::SyncReleaseConfirm);
+        assert!(app.sync.intents.is_empty());
+        // An explicit `y` does.
+        app.handle_key(press(KeyCode::Char('y'))).unwrap();
+        assert_eq!(
+            app.sync.intents,
+            vec![SyncIntent::Release {
+                approve: true,
+                hash: [7; 32]
+            }]
+        );
     }
 
     #[test]

@@ -7,8 +7,8 @@
 //!    holder set, wrapped to the NEW keys (`reshare::reissue_plan`); the paper is a permanent holder;
 //! 3. each new holder combines two contributors' sub-shares and publishes its envelope
 //!    (`reshare::reissue_receive`);
-//! 4. when every credential was confirmed by a real unlock (or after `WRAP_KEY_RETIRE_AFTER_SECS`) each
-//!    holder retires its previous wrap keys.
+//! 4. only when every credential was confirmed by a real unlock (never on a timer) each holder retires its
+//!    previous wrap keys.
 //!
 //! The functions read the log, so a device that was offline simply finds its next step when it returns.
 //! Nothing here persists the identity file: after [`perform`] returned a `WrapKeyRotate` or `Retire`
@@ -19,9 +19,9 @@ use std::collections::BTreeSet;
 use anyhow::{bail, ensure, Result};
 
 use super::crypto::DeviceIdentity;
-use super::limits::{LIVE_DEVICE_WINDOW_SECS, WRAP_KEY_RETIRE_AFTER_SECS};
+use super::limits::LIVE_DEVICE_WINDOW_SECS;
 use super::oplog::{DeviceId, DeviceKind, DeviceRole, DeviceStatus, OpBody};
-use super::quorum::{ops_of, paper_pub};
+use super::quorum::{ops_of, paper_pub, reshare_ops};
 use super::reshare::{next_epoch, reissue_plan, reissue_receive, unadopted};
 use crate::store::LauncherStore;
 
@@ -44,8 +44,7 @@ pub enum RevocationAction {
 }
 
 fn live_holders(store: &LauncherStore) -> Result<Vec<super::oplog::DeviceRow>> {
-    Ok(store
-        .sync_devices()?
+    Ok(super::ceremony::effective_devices(store, None)?
         .into_iter()
         .filter(|d| {
             d.role == DeviceRole::Holder
@@ -81,13 +80,17 @@ pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Re
 
 /// The newest revoked holder whose reshare is not finished: `(op lamport, timestamp, revoked id)`.
 fn open_revocation(store: &LauncherStore) -> Result<Option<(u64, i64, DeviceId)>> {
-    let devices = store.sync_devices()?;
-    let batches = ops_of(store, "ShareReshareBatch", None)?;
+    let devices = super::ceremony::effective_devices(store, None)?;
+    let batches = reshare_ops(store, "ShareReshareBatch")?;
     let mut open = None;
     for op in ops_of(store, "DeviceRevoke", None)? {
         let OpBody::DeviceRevoke { device_id } = &op.body else {
             continue;
         };
+        // A revocation nobody completed reshares nothing.
+        if !super::ceremony::in_force(store, &op)? {
+            continue;
+        }
         let was_holder = devices
             .iter()
             .any(|d| d.id == *device_id && d.role == DeviceRole::Holder);
@@ -117,7 +120,7 @@ pub fn next_actions(
     now: i64,
 ) -> Result<Vec<RevocationAction>> {
     let me = id.public().device_id();
-    let devices = store.sync_devices()?;
+    let devices = super::ceremony::effective_devices(store, None)?;
     let am_holder = devices
         .iter()
         .any(|d| d.id == me && d.role == DeviceRole::Holder && d.status != DeviceStatus::Revoked);
@@ -126,17 +129,17 @@ pub fn next_actions(
     }
     // Stage 4 first: it does not depend on an open revocation.
     let mut out = Vec::new();
-    let latest_epoch = ops_of(store, "ShareReshareBatch", None)?
+    let latest_epoch = reshare_ops(store, "ShareReshareBatch")?
         .iter()
         .filter_map(|o| match &o.body {
             OpBody::ShareReshareBatch { epoch, .. } => Some((*epoch, o.timestamp)),
             _ => None,
         })
         .max();
-    if let Some((epoch, started)) = latest_epoch {
-        if id.wrap_key_generations() > 1
-            && (unadopted(store, epoch)?.is_empty() || now - started >= WRAP_KEY_RETIRE_AFTER_SECS)
-        {
+    if let Some((epoch, _)) = latest_epoch {
+        // Never on a timer: until every credential was adopted by a real unlock, the previous wrap
+        // keys are the only way to read the shares of the old sharing.
+        if id.wrap_key_generations() > 1 && unadopted(store, epoch)?.is_empty() {
             out.push(RevocationAction::Retire);
         }
     }
@@ -144,7 +147,7 @@ pub fn next_actions(
     // holder of it, has not confirmed. Independent of the revocation being open: the first batch
     // already closes it.
     if let Some((epoch, _)) = latest_epoch {
-        let batches: Vec<_> = ops_of(store, "ShareReshareBatch", None)?
+        let batches: Vec<_> = reshare_ops(store, "ShareReshareBatch")?
             .into_iter()
             .filter(
                 |b| matches!(&b.body, OpBody::ShareReshareBatch { epoch: e, .. } if *e == epoch),
@@ -189,7 +192,7 @@ pub fn next_actions(
     if let Some(p) = paper_pub(store)? {
         expected.insert(p.device_id());
     }
-    let epoch = ops_of(store, "ShareReshareBatch", None)?
+    let epoch = reshare_ops(store, "ShareReshareBatch")?
         .iter()
         .filter(|b| b.lamport > lamport)
         .find_map(|b| match &b.body {
@@ -217,7 +220,7 @@ pub fn next_actions(
 /// exemption was enabled or disabled (C10). No wrap-key rotation is needed: nobody lost access.
 fn membership_reshare(store: &LauncherStore, me: &DeviceId) -> Result<Option<RevocationAction>> {
     use super::oplog::CredMode;
-    if store.sync_cred_mode()? != CredMode::Quorum
+    if super::ceremony::effective_cred_mode(store)? != CredMode::Quorum
         || super::reshare::quorum_credentials(store)?.is_empty()
     {
         return Ok(None);
@@ -236,7 +239,7 @@ fn membership_reshare(store: &LauncherStore, me: &DeviceId) -> Result<Option<Rev
     for (_, slot) in super::exemption::active_slots(store)? {
         expected.insert(slot.device_id());
     }
-    let batches = ops_of(store, "ShareReshareBatch", None)?;
+    let batches = reshare_ops(store, "ShareReshareBatch")?;
     let latest = batches
         .iter()
         .filter_map(|b| match &b.body {

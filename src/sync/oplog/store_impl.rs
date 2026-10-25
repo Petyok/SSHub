@@ -142,8 +142,21 @@ impl LauncherStore {
     /// [`Self::sync_append_local`] with an explicit clock (checkpoint proposals
     /// are built for the timestamp they carry; tests use it to age a ring).
     pub fn sync_append_local_at(&self, id: &DeviceIdentity, body: OpBody, now: i64) -> Result<Op> {
-        validate_body(&body).map_err(|e| anyhow!("invalid op: {e}"))?;
-        self.with_conn(|conn| {
+        self.with_conn(|conn| append_local_on(conn, id, body, now))
+    }
+}
+
+/// Chain, sign and apply a local change on `conn` (the body of
+/// [`LauncherStore::sync_append_local_at`]); the caller holds no transaction.
+pub(crate) fn append_local_on(
+    conn: &Connection,
+    id: &DeviceIdentity,
+    body: OpBody,
+    now: i64,
+) -> Result<Op> {
+    validate_body(&body).map_err(|e| anyhow!("invalid op: {e}"))?;
+    {
+        {
             let tx = tx(conn)?;
             let public = id.public();
             let device = register(
@@ -189,6 +202,10 @@ impl LauncherStore {
                 signature: [0u8; 64],
             };
             op.signature = id.sign(&op.canonical_bytes());
+            ensure!(
+                op.canonical_bytes().len() <= MAX_OP_BYTES,
+                "invalid op: larger than the wire allows ({MAX_OP_BYTES} bytes)"
+            );
             let hash = insert_op(&tx, &op, State::Rejected, None, true, now)?;
             let row = load_op(&tx, &hash)?.context("just inserted")?;
             let mut settler = Settler::new(&tx, now);
@@ -201,9 +218,11 @@ impl LauncherStore {
             )?;
             tx.commit()?;
             Ok(op)
-        })
+        }
     }
+}
 
+impl LauncherStore {
     /// Ops of `device` after `after_seq`, oldest first, at most one tail frame.
     pub fn sync_chain_tail(&self, device: &DeviceId, after_seq: u64) -> Result<Vec<Op>> {
         self.with_conn(|conn| {
@@ -709,9 +728,11 @@ impl LauncherStore {
         peer: &DeviceId,
         adopt: bool,
     ) -> Result<[u8; 32]> {
+        // Remote bytes are parsed before the connection is taken: a parser bug must not poison it.
+        let bundle = checkpoint::bundle_from_bytes(bytes)?;
         self.with_conn(|conn| {
             let tx = tx(conn)?;
-            let h = checkpoint::accept_bytes(&tx, bytes, peer, adopt, now_ts())?;
+            let h = checkpoint::accept_bundle(&tx, bundle, peer, adopt, now_ts())?;
             tx.commit()?;
             Ok(h)
         })

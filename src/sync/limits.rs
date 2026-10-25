@@ -80,9 +80,6 @@ pub const HELLO_TIMEOUT_SECS: u64 = 10;
 pub const CONNECT_TO_HELLO_MS: u64 = 4_500;
 pub const ROUND_TIMEOUT_SECS: u64 = 120;
 pub const IDLE_TIMEOUT_SECS: u64 = 30;
-/// Previous wrapping keys are dropped when every credential is confirmed under the new
-/// sharing or after this long, whichever comes first.
-pub const WRAP_KEY_RETIRE_AFTER_SECS: i64 = 7 * DAY;
 /// Credentials per `ShareReshareBatch` or `ShareReshareConfirmBatch` op.
 pub const RESHARE_ITEMS_PER_OP: usize = 200;
 /// Checkpoints (docs/host-sync-design.md, "Checkpoints and pruning"): proposed after this many

@@ -332,8 +332,7 @@ pub fn liveness_set(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Ve
 }
 
 fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
-    Ok(store
-        .sync_devices()?
+    Ok(super::ceremony::effective_devices(store, None)?
         .into_iter()
         .filter(|d| {
             !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
@@ -343,7 +342,10 @@ fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
 }
 
 fn attended_live(row: &DeviceRow) -> bool {
-    row.attendance == super::oplog::Attendance::Attended
+    // Approvers and ackers are holders in force: a mirror (or a device whose promotion never completed)
+    // is not a participant of a recovery.
+    row.role == super::oplog::DeviceRole::Holder
+        && row.attendance == super::oplog::Attendance::Attended
         && !matches!(
             row.status,
             DeviceStatus::Revoked | DeviceStatus::Compromised
@@ -397,7 +399,7 @@ pub fn validate_phone_reenroll(
         bail!("not a PhoneReenroll op");
     };
     let hash = op.hash();
-    let devices = store.sync_devices()?;
+    let devices = super::ceremony::effective_devices(store, None)?;
     let requester = devices
         .iter()
         .find(|d| d.id == op.device_id)
@@ -459,7 +461,7 @@ pub fn validate_phone_reenroll(
     m.apply(Event::Propose(Proposal {
         hash,
         requester: op.device_id.clone(),
-        timestamp: op.timestamp,
+        timestamp: super::ceremony::base_time(store, op),
         initiated_at: *initiated_at,
         authorization: if *via_paper {
             Authorization::Paper {
@@ -505,7 +507,10 @@ pub fn validate_phone_reenroll(
                     a.seq,
                     Event::Ack {
                         by: a.device_id.clone(),
-                        seen_at: *seen_at,
+                        // The clock is this device's own first sight of the ack, never earlier than the
+                        // claim: a backdated acknowledgement cannot start the time lock early.
+                        seen_at: super::ceremony::received_at(store, &a)
+                            .map_or(*seen_at, |r| r.max(*seen_at)),
                         attended,
                     },
                 ));
@@ -619,7 +624,7 @@ pub fn cancel_body(reenroll: &Op, by_phone: bool, factor: Option<ThirdFactor>) -
 /// open. The UI shows each one and, once it is on screen, appends [`ack_body`].
 pub fn unacknowledged(store: &LauncherStore, me: &DeviceIdentity, now: i64) -> Result<Vec<Op>> {
     let mine = me.public().device_id();
-    let devices = store.sync_devices()?;
+    let devices = super::ceremony::effective_devices(store, None)?;
     if devices.iter().any(|d| d.id == mine && !attended_live(d)) {
         return Ok(Vec::new());
     }

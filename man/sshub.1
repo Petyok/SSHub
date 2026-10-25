@@ -415,7 +415,10 @@ host), pending change count and credential mode. Never creates a device key.
 List the changes waiting for review: a 12-character id, the author device, a
 summary and one line per field (marked
 .B [!]
-when dangerous). With
+when dangerous). Every waiting change is listed with the reason it waits
+(in brackets; the
+.B reason
+field of the JSON items) and a Red change with the proofs of its ceremony. With
 .B \-\-approve
 or
 .B \-\-reject
@@ -522,13 +525,33 @@ Approve a pending Red op as this attended device.
 Add the third factor to a Red op; the secret is read without echo.
 .TP
 .B sshub sync\-factor\-register \fBpaper\fR|\fBemail\fR \fR[\fB\-\-sender\fR \fIDEVICE\fR]
-Register a third factor.
+Register a third factor. The emailed code is kept, sealed, only on its sender: register it on
+the device that will mail it (\fB\-\-sender\fR may only name this device).
+.TP
+.B sshub sync\-phone\-enroll
+Enroll the phone from this terminal as text. Prints the terminal's frames; read the phone's frames
+(base64, one per line) and then \fBy\fR or \fBn\fR for the four words from standard input. A verified phone is
+registered and its admission proposed (a Red change).
+.TP
+.B sshub sync\-notice \fIOP\fR
+Print the kind 3 notice (base64) of a Red op for the phone.
+.TP
+.B sshub sync\-phone\-ops
+Take in the ops the phone copied (kind 5, base64) from standard input and print what applied.
+.TP
+.B sshub sync\-share\-request \fIHOST\fR \fR[\fB\-\-wait\fR \fISECS\fR]
+Print the kind 1 challenge for the phone, read its kind 2 reply from standard input and open the credential
+in this process.
+.TP
+.B sshub sync\-cert\-request \fR(\fB\-\-group\fR \fINAME\fR|\fB\-\-host\fR \fINAME\fR...) [\fB\-\-days\fR \fIN\fR] [\fB\-\-budget\fR \fIN\fR]
+Print the kind 9 trust-session request for the phone. Every verb takes \fB\-\-format\fR \fBplain\fR|\fBjson\fR.
 .TP
 .B sshub sync\-recovery \fBstart\fR \fR[\fB\-\-paper\fR]|\fBapprove\fR \fIOP\fR|\fBack\fR \fIOP\fR|\fBcancel\fR \fIOP\fR \fB\-\-factor\fR \fBpaper\fR|\fBemail\fR|\fBstatus\fR
 Phone re-enrollment.
 .TP
 .B sshub sync\-mode \fBvault\fR|\fBquorum\fR \fR[\fB\-\-cosigner\fR \fIDEVICE\fR]
-Change the credential mode (Red).
+Change the credential mode (Red), in two steps: the first call proposes the change
+and shows the ceremony, a later call (after the ring agreed) re-encrypts the credentials.
 .TP
 .B sshub sync\-exemption \fBon\fR|\fBoff\fR \fIDEVICE\fR
 Master-phrase exemption of a device.
@@ -546,6 +569,21 @@ All of these accept
 .B \-\-format plain|json
 and the global
 .BR \-\-profile .
+.PP
+The phone's sound and webcam receivers are opt-in cargo features, off in
+release binaries:
+.B audio
+needs the ALSA development files on Linux (libasound2\-dev on Debian and
+Ubuntu) and uses CoreAudio on macOS;
+.B camera
+needs nothing extra on Linux (V4L2) and uses AVFoundation on macOS. Developer
+check:
+.B cargo build \-\-features audio,camera
+and
+.BR "cargo clippy \-\-all\-targets \-\-features audio,camera \-\- \-D warnings" .
+Design and threat model:
+.I docs/host\-sync\-design.md
+in the source tree.
 .SH EXIT STATUS
 .TP
 .B 0
@@ -592,6 +630,11 @@ and the update check.
 .TP
 .B SSHUB_VERSION_LABEL
 Replace the version label in the tab bar; set but empty hides it.
+.TP
+.B SSHUB_UNLOCK_WAIT
+Seconds a command waits, in Quorum mode, for an attended holder to approve its share
+release (default 120; 0 does not ask). The holder approves in its TUI or with
+.BR "sshub sync\-review \-\-approve" .
 .TP
 .B SSHUB_INSTALL_CHANNEL
 How sshub was installed
@@ -653,6 +696,35 @@ else the last used one. In compatibility mode the directory is
 .I ~/.config/sshub/themes
 (honors
 .BR SSHUB_CONFIG_DIR ).
+.TP
+.I [sync]
+section of
+.IR config.toml :
+.B auto_sync_on_start
+(default true) runs one sync round with every device that has a known host when
+the TUI starts;
+.B [sync.notify]
+(off until
+.B command
+is set) mails recovery announcements and third-factor codes from
+.BR "sshub sync\-serve" :
+.B command
+is split into arguments without a shell and must read the recipients from the
+headers and pass
+.BR \-i ,
+for example
+.BR "/usr/sbin/sendmail \-t \-i" ;
+.B to
+and
+.B from
+fill the headers. SMTP credentials belong to that command, never to this file.
+.TP
+.I sync/ (in a profile)
+.I device.key
+(this device's identity, encrypted) and
+.I peers.json
+(which ssh host reaches which device): owner-only, per profile, never copied by
+profile transfers.
 .TP
 .I ~/.ssh/config
 Read-only source of ssh_config hosts merged into the launcher. A profile can

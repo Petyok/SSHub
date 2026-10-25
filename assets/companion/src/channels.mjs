@@ -5,8 +5,12 @@
 import qrcode from '../vendor/qrcode-generator-1.4.4/qrcode.cjs';
 import { fountainEncode } from './quorum.mjs';
 
-export const QR_FRAME_BYTES = 250; // limits.rs QR_FRAME_PAYLOAD_BYTES: QR version 10, level M
-export const QR_FPS = 8;
+// Reply QR frame size: the byte capacity of QR version 6, level M (106 B), so a 68 mm phone screen
+// gives modules of 1.4 mm, the size a fixed-focus laptop webcam read in the over-the-air test (PoC H
+// "Reverse QR"). The fountain format is unchanged (the decoder takes the block size from the frame
+// length); only the number of frames grows. The terminal's own challenge frames keep limits.rs.
+export const QR_FRAME_BYTES = 106;
+export const QR_FPS = 4;
 export const QR_PARITY_PERCENT = 25;
 
 export function crc16(bytes) {
@@ -90,14 +94,22 @@ export function qrFor(bytes) {
   return qr;
 }
 
-// Black modules on a white field with a 4 module quiet zone, whatever the page theme is.
-export function drawQr(canvas, qr, cssPx) {
+// Black modules on a white field with a 4 module quiet zone, whatever the page theme is. The code is
+// as wide as the screen: an integer number of DEVICE pixels per module (scale = floor(width * dpr /
+// (modules + 8))), CSS size = canvas / dpr so the browser maps one canvas pixel to one device pixel
+// (image-rendering: pixelated). The width is the smaller screen side so a rotated phone still shows
+// the whole code; position:relative lets it leave the padded page column.
+export function drawQr(canvas, qr, dpr = globalThis.devicePixelRatio || 1) {
   const n = qr.getModuleCount();
   const quiet = 4;
-  const scale = Math.max(2, Math.floor(cssPx / (n + 2 * quiet)));
+  const widthCss = Math.min(globalThis.innerWidth, globalThis.innerHeight);
+  const scale = Math.max(1, Math.floor((widthCss * dpr) / (n + 2 * quiet)));
   const size = (n + 2 * quiet) * scale;
   canvas.width = size;
   canvas.height = size;
+  canvas.style.width = `${size / dpr}px`;
+  canvas.style.height = `${size / dpr}px`;
+  canvas.style.left = `calc(50% - ${size / dpr / 2}px)`;
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, size, size);
@@ -109,9 +121,9 @@ export function drawQr(canvas, qr, cssPx) {
 export const reverseQrFrames = (payload) => fountainEncode(payload, QR_FRAME_BYTES, QR_PARITY_PERCENT).map(qrFor);
 
 // Loops the frames at QR_FPS onto a canvas. Returns { stop(), frameIndex() }.
-export function loopQr(canvas, qrs, cssPx, fps = QR_FPS) {
+export function loopQr(canvas, qrs, fps = QR_FPS) {
   let i = 0;
-  const show = () => drawQr(canvas, qrs[i % qrs.length], cssPx);
+  const show = () => drawQr(canvas, qrs[i % qrs.length]);
   show();
   const timer = qrs.length > 1 ? setInterval(() => { i++; show(); canvas.dataset.frame = String(i % qrs.length); }, 1000 / fps) : null;
   return { stop: () => timer && clearInterval(timer), frameIndex: () => i % qrs.length };

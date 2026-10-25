@@ -4,21 +4,25 @@
 // only, never innerHTML.
 import { bytesOf, edSign, edVerify, hexOf, sasWords, x25519Pub, deviceIdOf } from './lib.mjs';
 import {
-  PIN_MIN_CHARS, generateSecret, identityOfSecret, randomBytes, secretFromWords, secretToWords, unwrapSecret, wrapSecret,
+  PIN_MIN_CHARS, generateSecret, pinDelaySecs, identityOfSecret, randomBytes, secretFromWords, secretToWords, unwrapSecret, wrapSecret,
 } from './keys.mjs';
 import {
-  appendReenrollCancel, courierOps, emptyState, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, saveState,
+  COURIER_TAIL, HEAD_PENDING_MESSAGE, adoptOwnChain, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, confirmNoChain, courierOps, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, restoredState, saveState,
 } from './state.mjs';
-import { approveRelease, evaluateChallenge } from './release.mjs';
-import { describeOp, opHashHex, parseOp, safeText } from './ops.mjs';
+import { TIMESTAMP_SKEW_GRACE_SECS, approveRelease, evaluateChallenge } from './release.mjs';
+import { describeOp, iso, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
 import {
-  KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeEnroll, decodeFrame, decodeRecoveryNotice, encodeEnrollCommit,
+  KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeCertExtendRequest, decodeCertRequest, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
   encodeEnrollConfirm, encodeEnrollReveal, encodePhoneOps, transcriptHash,
 } from './frames.mjs';
+import { certRequestProblems, describeCert, describeCertRequest, describeTerm, extendCert, extendProblems, issueCert, issuedCerts, revokeCert } from './cert.mjs';
 import { AUDIO_PROFILES, loopQr, playSamples, responseBurst, reverseQrFrames, toBase64 } from './channels.mjs';
 import { DocumentCollector, startCamera } from './scan.mjs';
+import { ownStorageKey, planReshare, publishReshare } from './reshare.mjs';
 
 const RECOVERY_TIMELOCK_SECS = 7 * 86400;
+const RED_CEREMONY_TTL_SECS = 3 * 86400; // limits.rs
+const MAX_QR_DOC_BYTES = 12000; // beyond this the animation is too long: text only
 
 function h(tag, attrs = {}, ...kids) {
   const e = document.createElement(tag);
@@ -43,10 +47,28 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
   };
   const save = () => saveState(app.kv, app.state);
   const lock = () => {
-    if (app.identity) app.identity.secret.fill(0);
+    if (app.identity) app.identity.wipe();
     app.identity = null;
     home();
   };
+
+  // PIN attempts: a persisted failure counter with a growing delay (the third wrong try waits 5 s, then it doubles up to
+  // an hour). Someone who can edit the storage can reset it, so it only helps against the screen; the PIN length and the
+  // Argon2id profile are what price an offline guess.
+  const FAILS = 'unlock-fails';
+  async function tryPin(pin) {
+    const f = (await app.kv.get(FAILS)) || { count: 0, until: 0 };
+    const wait = Math.ceil(f.until - app.now());
+    if (wait > 0) throw new Error(`Too many wrong PINs. Wait ${wait} s before the next try.`);
+    try {
+      const secret = await unwrapSecret(await app.kv.get('key'), pin);
+      if (f.count) await app.kv.set(FAILS, { count: 0, until: 0 });
+      return secret;
+    } catch (e) {
+      if (e.message === 'wrong PIN') await app.kv.set(FAILS, { count: f.count + 1, until: app.now() + pinDelaySecs(f.count + 1) });
+      throw e;
+    }
+  }
   document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && app.identity && lock());
 
   const title = (t, sub) => [h('h1', {}, t), sub ? h('p', { class: 'mut' }, sub) : null];
@@ -76,7 +98,9 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       msg.textContent = 'Deriving the key...';
       await app.kv.set('key', await wrapSecret(secret, pin1.value));
       app.identity = identityOfSecret(secret);
-      app.state.enrolled = null;
+      if (fresh) app.state.enrolled = null;
+      else app.state = restoredState(); // same device id as before: no signing until the chain head is known
+      await app.kv.set(FAILS, { count: 0, until: 0 });
       await save();
       if (fresh) backup(secretToWords(secret), true);
       else home();
@@ -116,7 +140,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const go = async () => {
       msg.textContent = 'Unlocking...';
       try {
-        app.identity = identityOfSecret(await unwrapSecret(await app.kv.get('key'), pin.value));
+        app.identity = identityOfSecret(await tryPin(pin.value), Number(app.state.wrapEpoch || 0));
         home();
       } catch (e) {
         msg.textContent = e.message;
@@ -132,7 +156,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const pin = h('input', { id: 'pin1', type: 'password', autocomplete: 'new-password', placeholder: `New PIN, at least ${PIN_MIN_CHARS} characters` });
     const msg = h('p', { class: 'err', id: 'setup-error' });
     show(
-      title('Restore', 'Replaces the key stored on this phone. Enrollments and the short-code list of the old key are erased.'),
+      title('Restore', 'Replaces the key stored on this phone. Enrollments and the short-code list of the old key are erased, and the restored phone will not sign anything until it has taken its chain head from a terminal.'),
       words, pin, msg,
       btn('Replace and restore', async () => {
         try {
@@ -140,7 +164,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
           if (pin.value.length < PIN_MIN_CHARS) throw new Error(`The PIN needs at least ${PIN_MIN_CHARS} characters.`);
           await app.kv.set('key', await wrapSecret(secret, pin.value));
           app.identity = identityOfSecret(secret);
-          app.state = emptyState();
+          app.state = restoredState();
+          await app.kv.set(FAILS, { count: 0, until: 0 });
           await save();
           home();
         } catch (e) {
@@ -159,7 +184,10 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       pin, msg,
       btn('Show', async () => {
         try {
-          backupAgain(secretToWords(await unwrapSecret(await app.kv.get('key'), pin.value)));
+          const secret = await tryPin(pin.value);
+          const phrase = secretToWords(secret);
+          secret.fill(0);
+          backupAgain(phrase);
         } catch (e) {
           msg.textContent = e.message;
         }
@@ -177,6 +205,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const snaps = Object.entries(app.state.snapshots).filter(([k]) => liveSnapshot(app.state, k, app.now()));
     show(
       title('SSHub companion', null),
+      app.state.headPending ? headCard() : null,
       h('div', { class: 'card' },
         h('div', { class: 'mut' }, 'This phone is device'),
         h('div', { class: 'big', id: 'device-id' }, app.identity.deviceId),
@@ -186,11 +215,33 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       btn('Scan a share request', () => scanRelease(), 'primary', 'scan-release'),
       btn('Enroll with a terminal', () => enroll(), '', 'enroll'),
       btn('Short codes I issued', () => snapshotList(), '', 'snapshots'),
+      btn('Export my ops as text', exportOps, '', 'export-ops'),
+      btn('Reshare and wrap keys', reshareScreen, '', 'reshare'),
+      btn('Trust sessions', () => trustScreen(), '', 'trust'),
       btn('Recovery and a new phone', () => recovery(), '', 'recovery'),
       btn('Show backup words', showBackup, '', 'show-backup'),
       btn('About and fingerprint', about, '', 'about'),
       btn('Lock', lock, '', 'lock'),
     );
+  }
+
+  // A restored key has no chain here yet: it must not author until it knows where its chain ended.
+  function headCard() {
+    return h('div', { class: 'refusal', id: 'head-pending' },
+      h('div', {}, HEAD_PENDING_MESSAGE),
+      btn('Take my chain from a terminal', () => scan({
+        heading: 'Take my chain from a terminal', hint: 'A terminal shows this phone\'s own newest ops as a QR code or text (an ops list).', expect: [KIND.PHONE_OPS], onBack: home,
+        onDoc: async (bytes) => {
+          const r = adoptOwnChain(app.state, app.identity, decodePhoneOps(bytes));
+          await save();
+          show(title('Chain taken', `Continuing after seq ${r.head_seq} (${r.ops} op(s) read).`), btn('Done', home, 'primary', 'head-done'));
+        },
+      }), 'primary', 'head-scan'),
+      btn('This key never signed anything', async () => {
+        confirmNoChain(app.state);
+        await save();
+        home();
+      }, 'danger', 'head-new'));
   }
 
   function about() {
@@ -221,7 +272,14 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       if (finished) return;
       finished = true;
       cam && cam.stop();
-      onDoc(bytes);
+      // One guard for every screen: hostile bytes end on a refusal, never on a dead scan screen.
+      const fail = (e) => refusalScreen(`Could not read this document: ${e && e.message ? e.message : e}`, []);
+      try {
+        const r = onDoc(bytes);
+        if (r && typeof r.catch === 'function') r.catch(fail);
+      } catch (e) {
+        fail(e);
+      }
     };
     show(
       title(heading, hint), video, bar, status,
@@ -281,7 +339,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     scan({
       heading: 'Scan the share request',
       hint: 'Open the unlock screen on the terminal and point the camera at its QR code.',
-      expect: [KIND.CHALLENGE, KIND.RECOVERY_NOTICE],
+      expect: [KIND.CHALLENGE, KIND.RECOVERY_NOTICE, KIND.CERT_REQUEST, KIND.CERT_EXTEND_REQUEST],
       onDoc: (bytes) => {
         let kind;
         try {
@@ -290,6 +348,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
           return refusalScreen(`Not a SSHub document: ${e.message}`, []);
         }
         if (kind === KIND.RECOVERY_NOTICE) return recoveryNotice(bytes);
+        if (kind === KIND.CERT_REQUEST) return certRequestScreen(bytes);
+        if (kind === KIND.CERT_EXTEND_REQUEST) return certExtendScreen(bytes);
         const ev = evaluateChallenge(bytes, { now: app.now(), identity: app.identity, ring: app.state.ring, aliases: app.state.aliases });
         if (!ev.ok) return refusalScreen(ev.refusal, ev.checks);
         release(ev);
@@ -314,15 +374,19 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const timer = h('div', { class: 'mut', id: 'timer' });
     const msg = h('p', { class: 'err', id: 'release-error' });
     const approveBtn = btn('Approve and release', () => approve(), 'primary', 'approve');
+    // A requester this phone has never met cannot be authenticated here: approving needs the device id typed in.
+    const confirmIn = ev.unknownRequester ? h('input', { id: 'confirm-requester', placeholder: `type ${ev.requester} to approve`, autocomplete: 'off', spellcheck: 'false' }) : null;
+    const confirmed = () => !confirmIn || confirmIn.value.trim().toLowerCase() === ev.requester;
     const tick = () => {
       const left = Math.floor(ev.challenge.expiry - app.now());
       timer.textContent = left > 0 ? `Expires in ${left} s` : 'Expired: ask the terminal for a new request.';
-      approveBtn.disabled = left <= 0;
+      approveBtn.disabled = left <= 0 || !confirmed();
     };
+    if (confirmIn) confirmIn.addEventListener('input', tick);
     tick();
     const iv = setInterval(tick, 1000);
     async function approve() {
-      if (app.now() >= ev.challenge.expiry) return void tick();
+      if (app.now() >= ev.challenge.expiry || !confirmed()) return void tick();
       approveBtn.disabled = true;
       msg.textContent = optSnap.checked ? 'Sealing the short code (this takes a few seconds)...' : 'Approving...';
       try {
@@ -347,6 +411,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         h('div', { class: 'mut', id: 'binding-hash' }, ev.bindingHash)),
       h('div', { class: 'card', id: 'checks' }, ev.checks.map((c) => h('div', { class: `check ${c.warn ? 'warn' : 'ok'}` }, c.text))),
       timer,
+      confirmIn ? h('div', { class: 'refusal', id: 'unknown-requester' }, h('div', {}, `This phone has never met ${ev.requester}: nothing here proves who is asking. Approve only if you started this request yourself on a terminal and its id is ${ev.requester}.`), confirmIn) : null,
       h('div', { class: 'card' },
         h('label', { class: 'inline' }, optQr, 'Show a QR code'),
         h('label', { class: 'inline' }, optClip, 'Copy to the clipboard'),
@@ -364,7 +429,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     if (opts.qr) {
       const canvas = h('canvas', { class: 'qr', id: 'reverse-qr' });
       nodes.push(h('h2', {}, 'QR code'), h('p', { class: 'mut' }, 'Hold it in front of the laptop camera.'), canvas);
-      stops.push(loopQr(canvas, reverseQrFrames(out.full), Math.min(560, globalThis.innerWidth - 32)).stop);
+      stops.push(loopQr(canvas, reverseQrFrames(out.full)).stop);
     }
     if (opts.clip) {
       const text = toBase64(out.full);
@@ -464,8 +529,21 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
 
   function enrollShow(heading, hint, doc, next, extra = []) {
     const canvas = h('canvas', { class: 'qr', id: 'enroll-qr' });
-    show(title(heading, hint), canvas, ...extra, next ? btn('Next', next, 'primary', 'enroll-next') : null, btn('Cancel', home, '', 'back'));
-    app.cleanup.push(loopQr(canvas, reverseQrFrames(doc), Math.min(560, globalThis.innerWidth - 32)).stop);
+    // The same frame as text for a terminal without a camera (paste it there), like the ops text of opsOut.
+    const text = toBase64(doc);
+    const status = h('p', { class: 'mut', id: 'enroll-copy-status' }, 'No camera on the terminal? Copy this text and paste it there.');
+    const copyBox = h('details', {}, h('summary', {}, 'Show as text for a terminal without a camera'),
+      h('textarea', { id: 'enroll-b64', readonly: true, spellcheck: 'false' }, text), status,
+      btn('Copy the text', async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          status.textContent = 'Copied. Paste it into the terminal.';
+        } catch {
+          status.textContent = 'The browser refused the clipboard: select the text and copy it by hand.';
+        }
+      }, '', 'enroll-copy'));
+    show(title(heading, hint), canvas, copyBox, ...extra, next ? btn('Next', next, 'primary', 'enroll-next') : null, btn('Cancel', home, '', 'back'));
+    app.cleanup.push(loopQr(canvas, reverseQrFrames(doc)).stop);
   }
 
   function enrollStep3(me, theirCommit) {
@@ -548,6 +626,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     );
   }
 
+  // The notice screen takes any document of kind 3: a phone recovery (its own flow) or a Red
+  // operation that needs this phone's co-signature. Everything shown comes from the op bytes.
   function recoveryNotice(bytes) {
     let n;
     let op;
@@ -555,11 +635,253 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       n = decodeRecoveryNotice(bytes);
       op = parseOp(n.op_canonical);
     } catch (e) {
-      return refusalScreen(`Recovery notice is malformed: ${e.message}`, []);
+      return refusalScreen(`Notice is malformed: ${e.message}`, []);
     }
-    if (op.kind !== 'PhoneReenroll') return refusalScreen(`This notice carries a ${op.kind} operation, not a phone recovery.`, []);
-    const aliases = { ...app.state.aliases, ...Object.fromEntries(Object.entries(app.state.ring).map(([i, d]) => [i, d.name])) };
-    const desc = describeOp(op, aliases);
+    if (op.kind === 'PhoneReenroll') return reenrollNotice(n, op);
+    if (isRedOp(op)) return redNotice(n, op);
+    return refusalScreen(`This notice carries a ${op.kind} operation, which needs nothing from this phone.`, []);
+  }
+
+  const aliasesNow = () => ({ ...app.state.aliases, ...Object.fromEntries(Object.entries(app.state.ring).map(([i, d]) => [i, d.name])) });
+
+  // Shows ops the terminal must ingest: a QR code when it is small enough, always the paste text
+  // (base64 of a kind 5 frame) for terminals without a camera, and the clipboard.
+  function opsOut({ heading, hint, ops, textId = 'ops-b64' }) {
+    const frame = encodePhoneOps(ops);
+    const text = toBase64(frame);
+    const nodes = [title(heading, hint)];
+    const stops = [];
+    if (frame.length <= MAX_QR_DOC_BYTES) {
+      const canvas = h('canvas', { class: 'qr', id: 'reverse-qr' });
+      nodes.push(canvas);
+      stops.push(loopQr(canvas, reverseQrFrames(frame)).stop);
+    } else nodes.push(h('p', { class: 'mut', id: 'ops-too-big' }, `${frame.length} bytes: too long for a QR code, use the text.`));
+    const status = h('p', { class: 'mut', id: 'ops-status' }, `${ops.length} op(s), ${frame.length} bytes as text.`);
+    nodes.push(
+      h('textarea', { id: textId, readonly: true }, text), status,
+      btn('Copy the text', async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          status.textContent = 'Copied. Paste it into the terminal.';
+        } catch {
+          status.textContent = 'The browser refused the clipboard: select the text and copy it by hand.';
+        }
+      }, '', 'ops-copy'),
+      btn('Done', home, 'primary', 'send-done'),
+    );
+    show(...nodes);
+    app.cleanup.push(...stops);
+    navigator.clipboard && navigator.clipboard.writeText(text).catch(() => {});
+  }
+
+  function exportOps() {
+    const have = app.state.chain.length;
+    show(
+      title('Export my ops', 'The newest signed entries of this phone chain (a terminal takes at most 8 per delivery), as text for a terminal without a camera (paste it into the terminal) or as a QR code.'),
+      h('p', { class: 'mut', id: 'export-count' }, have ? `${have} op(s) in the chain.` : 'This phone has not written anything yet.'),
+      have ? btn(`The newest ${Math.min(have, COURIER_TAIL)}`, () => opsOut({ heading: 'Phone ops', hint: 'Newest entries of the chain.', ops: courierOps(app.state) }), 'primary', 'export-tail') : null,
+      back(),
+    );
+  }
+
+  // ---------------------------------------------------------------- reshare (C14)
+
+  function reshareScreen() {
+    const msg = h('p', { class: 'err', id: 'reshare-error' });
+    show(
+      title('Reshare and wrap keys', `Wrap key generation ${app.identity.wrapEpoch}. After a holder is revoked, every remaining holder rotates its wrap keys first; then the ring reshares and this phone adopts its new share here.`),
+      h('div', { class: 'card', id: 'reshare-limits' },
+        h('div', {}, 'This phone only receives a new share: it never contributes a sub-share and keeps none of the old ones.'),
+        h('div', { class: 'mut' }, 'So a reshare that revokes a terminal needs at least two OTHER terminal holders to contribute. A ring of two terminals plus this phone cannot revoke a terminal by resharing (the paper phrase is offline and cannot contribute either): add a third terminal first.')),
+      msg,
+      btn('Rotate wrap keys', async () => {
+        try {
+          const next = identityOfSecret(app.identity.secret, app.identity.wrapEpoch + 1);
+          appendWrapKeyRotate(app.state, app.identity, next, app.now(), null);
+          app.identity = next;
+          await save();
+          opsOut({ heading: 'Wrap keys rotated', hint: 'Deliver this to a terminal before the reshare is started: contributors wrap to the new keys. Older generations stay readable on this phone (they derive from the same 24 words).', ops: courierOps(app.state, 1) });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, '', 'rotate'),
+      btn('Adopt a reshare: load the epoch ops', () => scan({ heading: 'Load the reshare ops', hint: 'The terminal shows or copies the reshare ops addressed to this phone (QR code, or paste the text below).', expect: [KIND.PHONE_OPS], onBack: reshareScreen, onDoc: reshareLoad }), 'primary', 'reshare-load'),
+      back(),
+    );
+  }
+
+  function reshareLoad(bytes) {
+    let ops;
+    let epochs;
+    try {
+      ops = decodePhoneOps(bytes);
+      epochs = ops.map((o) => parseOp(o.canonical)).filter((o) => o.kind === 'ShareReshareBatch').map((o) => BigInt(o.fields.epoch));
+    } catch (e) {
+      return refusalScreen(`Not a list of reshare ops: ${e.message}`, []);
+    }
+    if (!epochs.length) return refusalScreen('These ops carry no reshare batch.', []);
+    const epoch = epochs.reduce((a, b) => (a > b ? a : b));
+    const existing = ownStorageKey(app.identity, app.state.chain, epoch);
+    const plan = planReshare(app.identity, ops, epoch, { ring: app.state.ring, existingStorage: existing });
+    if (!plan.ok) return refusalScreen(plan.error, []);
+    const msg = h('p', { class: 'err', id: 'reshare-error' });
+    show(
+      title('Adopt the reshare'),
+      h('div', { class: 'card', id: 'reshare-summary' },
+        h('div', {}, `Epoch ${epoch}, ${plan.holders.length} holders, this phone is holder number ${plan.myIndex}.`),
+        h('div', {}, `Credentials ready: ${plan.items.length}; waiting for a second contributor: ${plan.skipped.length}.`),
+        h('div', { class: 'mut', id: 'reshare-contributors' }, `Contributors (counted by authoring device): ${plan.contributors.map((c) => `${safeText(aliasesNow()[c.id] || '(no name known)')} [${c.id}] (${c.verified ? 'signature verified' : 'signature not checked'}${c.known ? '' : ', not known to this phone'}${c.session ? '' : ', no session key for this phone'})`).join('; ')}`),
+        h('div', { class: 'mut', id: 'reshare-holders' }, `Holders afterwards: ${plan.holders.map((id) => `${id === app.identity.deviceId ? 'this phone' : safeText(aliasesNow()[id] || '(no name known)')} [${id}]`).join('; ')}`),
+        h('div', { class: 'mut' }, existing ? 'A storage key of this epoch was already published.' : 'A new storage key is published with the new shares.')),
+      msg,
+      btn('Publish the new shares', async () => {
+        try {
+          const out = publishReshare(app.state, app.identity, plan, app.now());
+          await save();
+          opsOut({ heading: 'Shares adopted', hint: 'Deliver these ops to a terminal. The ring marks a credential adopted only after a real unlock with the new sharing.', ops: out });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, 'primary', 'reshare-publish'),
+      btn('Cancel', reshareScreen, '', 'back'),
+    );
+  }
+
+  // ---------------------------------------------------------------- trust sessions (4c-2)
+
+  function trustScreen() {
+    const now = app.now();
+    const certs = issuedCerts(app.state);
+    const live = (c) => !c.revoked && BigInt(Math.floor(now)) < c.expiry;
+    show(
+      title('Trust sessions', 'A trust session lets one terminal open listed hosts without asking this phone each time, for a limited term. This phone writes and signs every certificate and can revoke it here.'),
+      btn('Scan a trust-session request', () => scan({ heading: 'Scan the trust-session request', hint: 'The terminal shows it when you choose to trust a device.', expect: [KIND.CERT_REQUEST], onBack: trustScreen, onDoc: certRequestScreen }), 'primary', 'scan-cert'),
+      btn('Scan a budget extension request', () => scan({ heading: 'Scan the extension request', hint: 'The terminal shows it when a certificate used up its daily budget of new hosts.', expect: [KIND.CERT_EXTEND_REQUEST], onBack: trustScreen, onDoc: certExtendScreen }), '', 'scan-extend'),
+      h('h2', {}, 'Issued by this phone'),
+      certs.length
+        ? certs.map((c) => h('div', { class: 'card', id: `cert-${c.id.slice(0, 8)}` },
+          h('div', { class: 'cert-line' }, describeCert(c, aliasesNow())),
+          h('div', { class: 'mut' }, `${c.revoked ? 'Revoked' : live(c) ? 'Active' : 'Expired'}; certificate ${c.id}`),
+          live(c) ? btn('Revoke this trust session', async () => {
+            try {
+              revokeCert(app.state, app.identity, c.id, app.now());
+              await save();
+              opsOut({ heading: 'Trust session revoked', hint: 'Carry this to any terminal: peers stop honouring the certificate on their next sync.', ops: courierOps(app.state) });
+            } catch (e) {
+              refusalScreen(e.message, []);
+            }
+          }, 'danger', `revoke-${c.id.slice(0, 8)}`) : null))
+        : h('p', { class: 'mut', id: 'no-certs' }, 'None.'),
+      back(),
+    );
+  }
+
+  function certRequestScreen(bytes) {
+    let req;
+    try {
+      req = decodeCertRequest(bytes);
+    } catch (e) {
+      return refusalScreen(`Not a trust-session request: ${e.message}`, []);
+    }
+    const now = app.now();
+    const problems = certRequestProblems(req, now, app.identity.deviceId, app.state.epoch);
+    const d = describeCertRequest(req, now, aliasesNow());
+    const msg = h('p', { class: 'err', id: 'cert-error' });
+    show(
+      title('Trust session requested'),
+      h('div', { class: 'headline', id: 'headline' }, d.headline),
+      descriptionRows(d),
+      d.delegateKnown ? null : h('p', { class: 'mut', id: 'cert-unknown' }, 'This phone has not met that device: compare its id with the one on the terminal before you approve.'),
+      problems.length ? h('div', { class: 'refusal', id: 'cert-refusal' }, problems.join(' ')) : h('p', { class: 'mut', id: 'cert-note' }, 'The certificate takes effect only after a second terminal and a third factor approve it. This signature is the phone\'s part: it authors the certificate.'),
+      msg,
+      problems.length ? null : btn('Approve: sign the trust session with the phone', async () => {
+        try {
+          issueCert(app.state, app.identity, req, app.now());
+          await save();
+          opsOut({ heading: 'Trust session signed', hint: 'Carry this to the terminal: it holds the certificate this phone signed. The ring activates it after the second terminal and the third factor approve.', ops: courierOps(app.state) });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, 'danger', 'cert-approve'),
+      btn('Refuse', home, '', 'refuse'),
+    );
+  }
+
+  function certExtendScreen(bytes) {
+    let req;
+    try {
+      req = decodeCertExtendRequest(bytes);
+    } catch (e) {
+      return refusalScreen(`Not a budget extension request: ${e.message}`, []);
+    }
+    const now = app.now();
+    const r = extendProblems(app.state, req, now);
+    const msg = h('p', { class: 'err', id: 'cert-error' });
+    const c = r.cert;
+    const rows = [
+      { label: 'Certificate', value: req.cert_id, danger: true },
+      ...(c ? [
+        { label: 'Trusted device', value: describeCert(c, aliasesNow()), danger: false },
+        { label: 'Remaining term', value: c.expiry > BigInt(Math.floor(now)) ? describeTerm(c.expiry - BigInt(Math.floor(now))) : 'expired', danger: false },
+        { label: 'Daily budget now', value: String(c.max_new_hosts_per_day), danger: false },
+      ] : []),
+      { label: 'Extra new hosts for today', value: String(req.extra_hosts), danger: true },
+    ];
+    show(
+      title('Budget extension requested'),
+      h('div', { class: 'headline', id: 'headline' }, `Allow ${req.extra_hosts} more new host${req.extra_hosts === 1 ? '' : 's'} for the rolling day on a trust session`),
+      descriptionRows({ rows }),
+      r.ok ? h('p', { class: 'mut', id: 'cert-note' }, 'It adds to the daily budget for the next 24 hours only. It never changes the scope or the term.') : h('div', { class: 'refusal', id: 'cert-refusal' }, r.problems.join(' ')),
+      msg,
+      r.ok ? btn('Approve: sign the extension with the phone', async () => {
+        try {
+          extendCert(app.state, app.identity, req, app.now());
+          await save();
+          opsOut({ heading: 'Extension signed', hint: 'Carry this to the terminal that asked.', ops: courierOps(app.state) });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, 'danger', 'ext-approve') : null,
+      btn('Back', home, '', 'refuse'),
+    );
+  }
+
+  function redNotice(n, op) {
+    const desc = describeOp(op, aliasesNow());
+    const known = app.state.ring[op.device_id];
+    const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : null;
+    if (sigOk === false) return refusalScreen(`The signature of ${op.device_id} does not verify over this operation.`, []);
+    const age = app.now() - Number(op.timestamp);
+    if (age > RED_CEREMONY_TTL_SECS) return refusalScreen(`This operation is ${Math.floor(age / 86400)} days old; a Red ceremony lapses after 3 days. Ask the terminal to propose it again.`, []);
+    if (age < -TIMESTAMP_SKEW_GRACE_SECS) return refusalScreen('This operation is dated in the future.', []);
+    const own = op.device_id === app.identity.deviceId;
+    // A trust certificate is authored by the phone itself: the phone's own signature is the proof.
+    const blocked = op.kind === 'CertIssue' && !own ? 'A trust certificate must be issued by the phone itself. This one was written by another device: do not approve it.' : null;
+    const msg = h('p', { class: 'err', id: 'red-error' });
+    show(
+      title('Red operation: needs this phone'),
+      h('div', { class: 'refusal', id: 'red-banner' }, `${op.kind} proposed by ${safeText(aliasesNow()[op.device_id] || 'a device this phone has not met')} [${op.device_id}]. It takes effect only with three proofs: this phone, a second attended device and a third factor. Your signature here is the phone's proof.`),
+      h('div', { class: 'headline', id: 'headline' }, desc.headline),
+      descriptionRows(desc),
+      h('p', { class: 'mut' }, sigOk ? 'The signature of the proposer verifies.' : 'This phone does not know the proposer, so its signature is not checked here.'),
+      h('p', { class: 'mut', id: 'red-hash' }, `Operation hash ${opHashHex(n.op_canonical)}`),
+      blocked ? h('p', { class: 'err', id: 'red-blocked' }, blocked) : null,
+      msg,
+      blocked ? null : btn('Approve: sign this operation with the phone', async () => {
+        try {
+          appendRedPhoneSign(app.state, app.identity, opHashHex(n.op_canonical), app.now(), sigOk ? { lamport: op.lamport, epoch: op.epoch } : null);
+          await save();
+          opsOut({ heading: 'Signed', hint: 'Carry this to a terminal: it holds the phone proof for the operation above. Show the QR code or paste the text.', ops: courierOps(app.state) });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, 'danger', 'red-approve'),
+      btn('Refuse', home, '', 'refuse'),
+    );
+  }
+
+  function reenrollNotice(n, op) {
+    const desc = describeOp(op, aliasesNow());
     const known = app.state.ring[op.device_id];
     const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : null;
     if (sigOk === false) return refusalScreen(`The signature of ${op.device_id} does not verify over this notice.`, []);
@@ -569,23 +891,14 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       title('Phone recovery in progress'),
       h('div', { class: 'headline', id: 'headline' }, desc.headline),
       descriptionRows(desc),
-      h('p', { class: 'mut', id: 'timelock' }, `The ring accepts the new phone after ${new Date(ends * 1000).toISOString().slice(0, 16)}Z unless it is cancelled.`),
+      h('p', { class: 'mut', id: 'timelock' }, `The ring accepts the new phone after ${iso(ends).slice(0, 16)}Z unless it is cancelled.`),
       h('p', { class: 'mut' }, sigOk ? 'The signature verifies.' : 'This phone does not know the signing device, so the signature is not checked here.'),
       msg,
       btn('Cancel this recovery: I still have this phone', async () => {
         try {
-          const cancel = appendReenrollCancel(app.state, app.identity, opHashHex(n.op_canonical), app.now(), { lamport: op.lamport, epoch: op.epoch });
+          appendReenrollCancel(app.state, app.identity, opHashHex(n.op_canonical), app.now(), sigOk ? { lamport: op.lamport, epoch: op.epoch } : null);
           await save();
-          const frame = encodePhoneOps(courierOps(app.state));
-          const canvas = h('canvas', { class: 'qr', id: 'reverse-qr' });
-          show(
-            title('Cancellation signed', 'Show the QR code to any terminal, or paste the text into it. It carries the cancellation and the head of this phone chain.'),
-            canvas, h('textarea', { id: 'cancel-b64', readonly: true }, toBase64(frame)),
-            btn('Done', home, 'primary', 'send-done'),
-          );
-          app.cleanup.push(loopQr(canvas, reverseQrFrames(frame), Math.min(560, globalThis.innerWidth - 32)).stop);
-          navigator.clipboard && navigator.clipboard.writeText(toBase64(frame)).catch(() => {});
-          return cancel;
+          opsOut({ heading: 'Cancellation signed', hint: 'Show the QR code to any terminal, or paste the text into it. It carries the cancellation and the head of this phone chain.', ops: courierOps(app.state), textId: 'cancel-b64' });
         } catch (e) {
           msg.textContent = e.message;
         }

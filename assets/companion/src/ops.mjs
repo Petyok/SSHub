@@ -20,28 +20,48 @@ const DANGEROUS_GROUP = new Set([
   'default_proxy_jump', 'default_identity_uid', 'default_username', 'default_port',
   'default_transport', 'default_forward_agent', 'parent_uid',
 ]);
+// Every field the Rust bodies know (op.rs HostFields, GroupFields): a key outside the list is shown as dangerous.
+const KNOWN_FIELDS = {
+  HostUpsert: new Set([...DANGEROUS_HOST, 'name', 'label', 'os_icon', 'tags', 'notes', 'favorite']),
+  GroupUpsert: new Set([...DANGEROUS_GROUP, 'name']),
+};
 // kind -> which leaf rows are dangerous: '*' all, a Set of leaf names, or null for none.
 const DANGER = {
   HostUpsert: DANGEROUS_HOST, GroupUpsert: DANGEROUS_GROUP, HostDelete: '*', GroupDelete: '*',
   IdentityUpsert: '*', IdentityDelete: '*', CredUpdate: '*', DeviceAdd: '*', DeviceRevoke: '*',
   ShareRelease: new Set(['host_uid', 'requester']), ShareReshareSession: '*', ShareStorageKey: '*',
   ShareReshareBatch: '*', ShareReshareConfirmBatch: '*', WrapKeyRotate: '*', CertIssue: '*',
-  CertRevoke: '*', CertHostOpened: '*', PhoneReenroll: '*', PhoneReenrollCancel: '*',
+  CertRevoke: '*', CertHostOpened: '*', CertExtend: '*', PhoneReenroll: '*', PhoneReenrollCancel: '*',
   RecoveryAck: '*', ModeChange: '*', HeadAttest: null,
+  // Red ceremony (C17): the three proof ops are inert, the other three are Red themselves.
+  RedApprove: null, RedPhoneSign: null, RedFactor: null, FactorRegister: '*', DeviceRoleChange: '*', BulkExport: '*', ExemptionSet: '*',
+  // Added by the op-log package: a share handed to a requester, a recovery approval, checkpoints.
+  ShareGrant: '*', RecoveryApprove: '*', CheckpointPropose: null, CheckpointSign: null,
 };
 export const KNOWN_KINDS = Object.keys(DANGER);
 
 // Control and bidi characters never reach the screen raw: a name from another machine must not
 // be able to reorder or hide the text around it.
-// eslint-disable-next-line no-control-regex
-const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
+// Every control, format, line and paragraph separator character (\p{Cc} \p{Cf} \p{Zl} \p{Zp}: bidi controls, zero-width
+// and word-joiner characters, soft hyphen, tag characters) plus the invisible fillers and variation selectors.
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u034f\u115f\u1160\u180e\u3164\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/gu;
 export const safeText = (s) =>
-  String(s).replace(UNSAFE, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  String(s).replace(UNSAFE, (c) => {
+    const cp = c.codePointAt(0);
+    return cp > 0xffff ? `\\u{${cp.toString(16)}}` : `\\u${cp.toString(16).padStart(4, '0')}`;
+  });
 
 const asBig = (v) => (typeof v === 'bigint' ? v : BigInt(v));
 
 // Strict parse of canonical op bytes. Throws with a reason a person can read.
+export const MAX_OP_BYTES = 256 * 1024; // wire.rs MAX_COURIER_OP_BYTES
+const U64_MAX = (1n << 64n) - 1n;
+const I64_MIN = -(1n << 63n);
+const I64_MAX = (1n << 63n) - 1n;
+const inRange = (v, lo, hi) => (typeof v === 'number' || typeof v === 'bigint') && BigInt(v) >= lo && BigInt(v) <= hi;
+export const isU64 = (v) => inRange(v, 0n, U64_MAX);
 export function parseOp(bytes) {
+  if (bytes.length > MAX_OP_BYTES) throw new Error(`op is larger than ${MAX_OP_BYTES} bytes`);
   let text;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -62,6 +82,9 @@ export function parseOp(bytes) {
   for (const k of ['seq', 'lamport', 'timestamp', 'epoch']) {
     if (typeof v[k] !== 'number' && typeof v[k] !== 'bigint') throw new Error(`op ${k} is not an integer`);
   }
+  // The Rust field types: seq, lamport, epoch are u64, timestamp is i64 (canonical.rs get_u64 / get_i64).
+  for (const k of ['seq', 'lamport', 'epoch']) if (!isU64(v[k])) throw new Error(`op ${k} is outside u64`);
+  if (!inRange(v.timestamp, I64_MIN, I64_MAX)) throw new Error('op timestamp is outside i64');
   if (!Array.isArray(v.alg) || v.alg.length !== 2 || !v.alg.every((n) => Number.isInteger(n) && n >= 0 && n < 256)) {
     throw new Error('op alg tag is malformed');
   }
@@ -96,7 +119,7 @@ function flatten(value, path, out, top) {
   }
 }
 
-const iso = (t) => {
+export const iso = (t) => {
   try {
     return new Date(Number(t) * 1000).toISOString().replace('.000Z', 'Z');
   } catch {
@@ -106,7 +129,7 @@ const iso = (t) => {
 
 // description = { kind, headline, requester, rows: [{label, value, danger}], dangerCount }
 // aliases: deviceId -> name the user gave. The requesting device is always named by id and alias.
-export function describeOp(op, aliases = {}) {
+export function describeOp(op, aliases = {}, { now = null, staleAfter = 120 } = {}) {
   const who = (id) => `${aliases[id] ? `${safeText(aliases[id])} ` : '(no name known) '}[${safeText(id)}]`;
   const danger = DANGER[op.kind];
   const rows = [];
@@ -126,12 +149,17 @@ export function describeOp(op, aliases = {}) {
     rows.push({ label: 'Op signed by', value: who(op.device_id), danger: false });
     const leaves = [];
     flatten(op.fields, '', leaves, null);
+    const known = KNOWN_FIELDS[op.kind];
     for (const l of leaves) {
-      const hot = danger === '*' || (danger instanceof Set && (danger.has(l.leaf) || danger.has(l.top)));
-      rows.push({ label: l.path || op.kind, value: l.value, danger: !!hot });
+      const segs = l.path.split('.');
+      let hot = danger === '*' || (danger instanceof Set && segs.some((x) => danger.has(x)));
+      if (known && segs[0] === 'fields' && segs.length > 1 && !known.has(segs[1])) hot = true;
+      rows.push({ label: safeText(l.path || op.kind), value: l.value, danger: !!hot });
     }
   }
-  rows.push({ label: 'Op time', value: iso(op.timestamp), danger: false });
+  // A signed op much older than its request is highlighted (the caller passes the phone clock).
+  const stale = now !== null && Math.abs(now - Number(op.timestamp)) > staleAfter;
+  rows.push({ label: 'Op time', value: stale ? `${iso(op.timestamp)} (${Math.round(Math.abs(now - Number(op.timestamp)))} s from now)` : iso(op.timestamp), danger: stale });
   rows.push({ label: 'Op seq / epoch', value: `${op.seq} / ${op.epoch}`, danger: false });
   return { kind: op.kind, headline, requester, rows, dangerCount: rows.filter((r) => r.danger).length };
 }
@@ -158,3 +186,56 @@ export function encodePhoneReenrollCancel(h, reenrollHashHex) {
 
 export const opHashHex = (canonical) => hexOf(blake3(canonical));
 export const signOp = (edSeed, canonical) => edSign(edSeed, canonical);
+
+// OpBody::RedPhoneSign { op_hash }: the phone's proof that it saw the Red op with this hash.
+export function encodeRedPhoneSign(h, opHashHexStr) {
+  return utf8(`${header(h)}{"RedPhoneSign":{"op_hash":${str(opHashHexStr)}}}}`);
+}
+
+// OpBody::CertIssue { device_id, scope, expiry, max_new_hosts_per_day, epoch_lo, epoch_hi } with the fields of a
+// kind 9 request UNCHANGED (CertRequestWire::to_body). scope is { group } or { hosts: [hex] } as decoded.
+export function encodeCertIssue(h, r) {
+  const uid = (u) => str(u);
+  const scope = r.scope.group ? `{"Group":${uid(r.scope.group)}}` : `{"Hosts":[${r.scope.hosts.map(uid).join(',')}]}`;
+  return utf8(`${header(h)}{"CertIssue":{"device_id":${str(r.device_id)},"scope":${scope},"expiry":${asBig(r.expiry)},"max_new_hosts_per_day":${asBig(r.max_new_hosts_per_day)},"epoch_lo":${asBig(r.epoch_lo)},"epoch_hi":${asBig(r.epoch_hi)}}}}`);
+}
+
+// OpBody::CertRevoke { cert_id }
+export const encodeCertRevoke = (h, certIdHex) => utf8(`${header(h)}{"CertRevoke":{"cert_id":${str(certIdHex)}}}}`);
+
+// OpBody::CertExtend { cert_id, extra_hosts }
+export const encodeCertExtend = (h, certIdHex, extraHosts) => utf8(`${header(h)}{"CertExtend":{"cert_id":${str(certIdHex)},"extra_hosts":${asBig(extraHosts)}}}}`);
+
+// Red operations (design "The Red ceremony"): a Red op needs the phone's proof. A mirror
+// DeviceAdd and a DeviceRevoke of a mirror are Yellow in the ring; the phone cannot tell a
+// holder from a mirror in a revoke, so it signs any DeviceRevoke the user approves (the proof is inert).
+export function isRedOp(op) {
+  if (op.kind === 'DeviceAdd') return op.fields.role === 'Holder';
+  return ['DeviceRevoke', 'CertIssue', 'ModeChange', 'FactorRegister', 'DeviceRoleChange', 'BulkExport', 'ExemptionSet'].includes(op.kind);
+}
+
+export const b64enc = (bytes) => {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+  return btoa(s);
+};
+export const b64dec = (text) => {
+  if (typeof text !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(text) || text.length % 4) throw new Error('not base64');
+  return Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+};
+
+// OpBody::WrapKeyRotate { device_id, wrap_epoch, x25519_pub, mlkem_pub }
+export function encodeWrapKeyRotate(h, r) {
+  return utf8(`${header(h)}{"WrapKeyRotate":{"device_id":${str(r.device_id)},"wrap_epoch":${asBig(r.wrap_epoch)},"x25519_pub":${str(hexOf(r.x25519_pub))},"mlkem_pub":${str(b64enc(r.mlkem_pub))}}}}`);
+}
+
+// OpBody::ShareStorageKey { epoch, sealed }
+export function encodeShareStorageKey(h, r) {
+  return utf8(`${header(h)}{"ShareStorageKey":{"epoch":${asBig(r.epoch)},"sealed":${str(b64enc(r.sealed))}}}}`);
+}
+
+// OpBody::ShareReshareConfirmBatch { epoch, items: [{ host_uid, sealed_share }] }
+export function encodeShareReshareConfirmBatch(h, r) {
+  const items = r.items.map((i) => `{"host_uid":${str(i.host_uid)},"sealed_share":${str(b64enc(i.sealed_share))}}`).join(',');
+  return utf8(`${header(h)}{"ShareReshareConfirmBatch":{"epoch":${asBig(r.epoch)},"items":[${items}]}}}`);
+}

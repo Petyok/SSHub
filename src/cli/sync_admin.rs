@@ -465,7 +465,7 @@ fn report(opts: Opts, r: &Report) -> Result<i32> {
     Ok(0)
 }
 
-fn short(h: &[u8; 32]) -> String {
+pub(crate) fn short(h: &[u8; 32]) -> String {
     h[..8].iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -512,7 +512,12 @@ fn status_json(st: &RedStatus) -> Value {
 
 /// Report for an op we just appended (or looked up): its tier and, for Red
 /// ops, where the ceremony stands.
-fn op_report(store: &LauncherStore, op: &Op, headline: String, now: i64) -> Result<Report> {
+pub(crate) fn op_report(
+    store: &LauncherStore,
+    op: &Op,
+    headline: String,
+    now: i64,
+) -> Result<Report> {
     let mut lines = vec![headline];
     let mut json = json!({ "op": hex(&op.hash()), "tier": format!("{:?}", op.tier()) });
     if ceremony::is_gated(store, op)? {
@@ -534,7 +539,7 @@ fn hex(h: &[u8; 32]) -> String {
 // ------------------------------------------------------------------ lookups
 
 pub(crate) fn find_device(store: &LauncherStore, spec: &str) -> Result<DeviceRow> {
-    let all = store.sync_devices()?;
+    let all = crate::sync::ceremony::effective_devices(store, None)?;
     let hits: Vec<&DeviceRow> = all
         .iter()
         .filter(|d| d.id.to_string().starts_with(spec) || d.name == spec)
@@ -749,8 +754,13 @@ pub(crate) fn factor_register(
                 Some(s) => find_device(store, s)?.id,
                 None => id.public().device_id(),
             };
+            // The code lives, sealed, on the device that mails it: register from that device.
+            ensure!(
+                sender_id == id.public().device_id(),
+                "the emailed-code factor is registered ON its sender: run this on the device that will mail the code"
+            );
             let (body, code) = ceremony::factor_register_email(&sender_id)?;
-            ceremony::remember_email_code(store, &code)?;
+            ceremony::remember_email_code(store, id, &code)?;
             (body, Some(code))
         }
     };
@@ -892,10 +902,8 @@ pub(crate) fn mode(
     let cosigner = cosigner
         .map(|c| find_device(store, c).map(|d| d.id))
         .transpose()?;
-    ensure!(
-        store.sync_cred_mode()? == CredMode::Vault,
-        "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
-    );
+    let me = id.public();
+    // Second call, after the ceremony: re-encrypt. Nothing is re-encrypted before the ring agreed.
     let open = |host: &crate::sync::oplog::HostUid| -> Result<Zeroizing<Vec<u8>>> {
         let (ct, _) = store
             .sync_cred_ciphertext(host)?
@@ -903,19 +911,47 @@ pub(crate) fn mode(
         let dek = crate::sync::quorum::vault_open_dek(store, host, phrase, ring)?;
         Ok(Zeroizing::new(crate::sync::crypto::dek_open(&dek, &ct)?))
     };
-    let bodies = crate::sync::modes::mode_change_plan(store, &id.public(), to, cosigner, &open)?;
-    let n = bodies.len().saturating_sub(1);
-    let mut first = None;
-    for b in bodies {
-        let op = store.sync_append_local(id, b)?;
-        first.get_or_insert(op);
+    if let Some(mc) = crate::sync::modes::own_mode_change(store, &me.device_id())? {
+        if matches!(&mc.body, OpBody::ModeChange { to: t, .. } if *t == to) {
+            if !crate::sync::ceremony::in_force(store, &mc)? {
+                return op_report(
+                    store,
+                    &mc,
+                    format!(
+                        "the mode change to {to:?} is still waiting for its ceremony (op {}); run this again once it completed",
+                        short(&mc.hash())
+                    ),
+                    now,
+                );
+            }
+            ensure!(
+                to == CredMode::Quorum,
+                "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
+            );
+            let bodies = crate::sync::modes::mode_migration(store, &me, &open)?;
+            let n = bodies.len();
+            for b in bodies {
+                store.sync_append_local(id, b)?;
+            }
+            return op_report(
+                store,
+                &mc,
+                format!("{n} credentials re-wrapped for {to:?}"),
+                now,
+            );
+        }
     }
-    let op = first.context("empty mode plan")?;
+    ensure!(
+        crate::sync::ceremony::effective_cred_mode(store)? == CredMode::Vault,
+        "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
+    );
+    let body = crate::sync::modes::mode_change_body(store, &me, to, cosigner)?;
+    let op = store.sync_append_local(id, body)?;
     op_report(
         store,
         &op,
         format!(
-            "mode change to {to:?} proposed with {n} credentials re-wrapped (op {})",
+            "mode change to {to:?} proposed (op {}); once its ceremony completed, run this again to re-encrypt the credentials",
             short(&op.hash())
         ),
         now,
@@ -1116,16 +1152,19 @@ pub fn print_help(cmd: &str) {
         "sync-role" => ("sync-role <device> holder|mirror [--format plain|json]", "Promote a mirror to holder or demote a holder (Red)."),
         "sync-approve" => ("sync-approve <op-id> [--format plain|json]", "Approve a pending Red op as this attended device (the second-device vote)."),
         "sync-factor" => ("sync-factor <op-id> (--paper | --email-code) [--format plain|json]", "Add the third factor to a Red op. The 24 paper words or the emailed code are read without echo."),
-        "sync-factor-register" => ("sync-factor-register (paper | email) [--sender <device>] [--format plain|json]", "Register a third factor. Paper reads the 24 words without echo; email creates a code and shows it once."),
+        "sync-factor-register" => ("sync-factor-register (paper | email) [--sender <device>] [--format plain|json]", "Register a third factor. Paper reads the 24 words without echo; email creates a code and shows it once. The code is kept, sealed, only on its sender, so register it on the device that will mail it (--sender names only this device; another device is refused)."),
         "sync-recovery" => ("sync-recovery (start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status) [--format plain|json]", "Re-enroll the phone: start, approve or acknowledge as another attended device, cancel, or show the state of every recovery."),
-        "sync-mode" => ("sync-mode (vault | quorum) [--cosigner <device>] [--format plain|json]", "Change the credential mode (Red). From the command line only Vault to Quorum can open the credentials; the master phrase is read without echo."),
+        "sync-mode" => ("sync-mode (vault | quorum) [--cosigner <device>] [--format plain|json]", "Change the credential mode (Red), in two steps: the first call proposes it and shows the ceremony; run it again once the ring agreed to re-encrypt the credentials. From the command line only Vault to Quorum can open the credentials; the master phrase is read without echo."),
         "sync-exemption" => ("sync-exemption (on | off) <device> [--format plain|json]", "Switch the master-phrase exemption of a device off (Red). Switching it on needs the TUI."),
         "sync-export" => ("sync-export --window <seconds> --out <path> [--wait <seconds>] [--format plain|json]", "Bulk export (Red, window up to 3600 s): propose it, wait for the ceremony, then write every credential to a new 0600 file in the Termius CSV format (import it from a directory as L00t.csv)."),
         "sync-migrate" => ("sync-migrate [--remove-local] [--format plain|json]", "Write this profile's existing host and identity secrets as replicated credentials; --remove-local deletes the local copies afterwards."),
         "sync-import-kit" => ("sync-import-kit", "On a new machine: read the ring kit (sshub:ring:1:...) and the six master words without echo and set up the Vault here."),
         _ => return,
     };
-    println!("sshub {cmd} - {}", text.split('.').next().unwrap_or(""));
+    println!(
+        "sshub {cmd} - {}",
+        text.split(". ").next().unwrap_or("").trim_end_matches('.')
+    );
     println!();
     println!("USAGE:");
     println!("    sshub [--profile NAME] {synopsis}");

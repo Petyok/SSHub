@@ -186,6 +186,17 @@ fn attach_enrolling_worker_in(
     peer_kind: Peer,
     rings: Option<(&'static str, &'static str)>,
 ) -> (Arc<LauncherStore>, String) {
+    attach_enrolling_worker_with(app, peer_kind, rings, false)
+}
+
+/// [`attach_enrolling_worker_in`]; `hold` keeps the round open after the join
+/// until the test sends a command, so the last progress line stays visible.
+fn attach_enrolling_worker_with(
+    app: &mut App,
+    peer_kind: Peer,
+    rings: Option<(&'static str, &'static str)>,
+    hold: bool,
+) -> (Arc<LauncherStore>, String) {
     let store = app.store.clone();
     let id = Arc::new(DeviceIdentity::generate());
     let peer_store = Arc::new(LauncherStore::open_in_memory().unwrap());
@@ -230,6 +241,9 @@ fn attach_enrolling_worker_in(
         let joined = run_sync_join(&mut conn, &store, &id, "me", true, Some(&mut UiSas(ctx)));
         let _ = peer.join();
         let outcome = joined?;
+        if hold {
+            ctx.recv_cmd(Duration::from_secs(10));
+        }
         Ok(crate::sync::protocol::RoundSummary {
             peer: outcome.peer.device_id(),
             first_contact: true,
@@ -295,6 +309,22 @@ fn both_with_screens_compare_words_and_a_yes_joins_verified_by_sas() {
     assert_eq!(peer.role, crate::app::sync::DeviceRoleView::Holder);
     assert_eq!(peer.verified_by, Some(VerifiedBy::Sas));
     assert!(app.sync.last_error.is_none(), "{:?}", app.sync.last_error);
+}
+
+#[test]
+fn a_join_shows_the_ring_being_adopted_as_the_worker_progress_line() {
+    let mut app = test_app(vec![]);
+    attach_enrolling_worker_with(&mut app, Peer::Screen { agrees: true }, None, true);
+    start_enroll(&mut app);
+    pump(&mut app, |a| a.mode == AppMode::SyncSas);
+    app.handle_key(key_char('y')).unwrap();
+    pump(&mut app, |a| {
+        a.sync
+            .progress
+            .as_deref()
+            .is_some_and(|p| p.starts_with("adopted the ring ("))
+    });
+    assert!(app.sync.syncing, "the round is still open");
 }
 
 #[test]
@@ -390,7 +420,13 @@ fn a_share_release_names_the_requester_and_the_host_in_the_review() {
         .unwrap();
     let rows = app.store.sync_devices().unwrap();
     let view = crate::app::sync_view::pending_view(&app.store, &op, &rows, None);
-    assert_eq!(view.summary, "release a share of web to laptop");
+    // The approver sees who, the requester's full id and how old the request is.
+    let want = format!(
+        "release a share of web to laptop (device {}, asked ",
+        author.id.public().device_id()
+    );
+    assert!(view.summary.starts_with(&want), "{}", view.summary);
+    assert!(view.summary.ends_with(" s ago)"), "{}", view.summary);
 }
 
 #[test]
@@ -427,4 +463,35 @@ fn enter_on_a_compromised_device_shows_the_proof_and_the_next_steps() {
         fork.evidence
     );
     assert!(fork.evidence.iter().any(|l| l.contains("hash")));
+}
+
+#[test]
+fn a_save_that_could_not_be_recorded_for_sync_shows_in_the_status_line() {
+    struct Failing;
+    impl crate::store::LocalChangeSink for Failing {
+        fn changed(
+            &self,
+            _: &rusqlite::Connection,
+            _: crate::store::ChangeScope,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("the op log is busy")
+        }
+    }
+    let mut app = test_app(vec![]);
+    app.store.set_local_change_sink(Box::new(Failing));
+    // The row is saved; only the sync record failed.
+    app.store
+        .create_host(&crate::store::NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    app.poll_sync();
+    let notice = app.host_notice.clone().unwrap_or_default();
+    assert!(
+        notice.contains("saved, but not recorded for sync")
+            && notice.contains("the op log is busy"),
+        "{notice}"
+    );
+    // Shown once.
+    app.host_notice = None;
+    app.poll_sync();
+    assert!(app.host_notice.is_none());
 }

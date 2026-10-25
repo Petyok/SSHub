@@ -43,6 +43,18 @@ pub fn phrase_sheet(phrase: &str) -> String {
     )
 }
 
+/// The paper phrase sheet: the 24 words, numbered.
+pub fn paper_sheet(words: &str) -> String {
+    let words: String = words
+        .split_whitespace()
+        .map(|w| format!("<li>{w}</li>\n"))
+        .collect();
+    page(
+        "sshub: paper phrase",
+        &format!("<ol class=\"secret\">\n{words}</ol>\n<p>Twenty-four words, in this order.</p>\n"),
+    )
+}
+
 /// The QR of `payload` as an inline SVG: black modules on white with a
 /// 4-module quiet zone, one `path` of unit squares.
 pub fn qr_svg(payload: &str) -> String {
@@ -80,6 +92,49 @@ pub fn ring_sheet(ring_secret: &[u8; 16]) -> String {
     )
 }
 
+/// Where the sheets go by default: the runtime directory (memory-backed, owner-only,
+/// gone at logout) when there is one, else the home directory.
+pub fn default_dir() -> std::path::PathBuf {
+    default_dir_from(
+        std::env::var_os("XDG_RUNTIME_DIR"),
+        std::env::var_os("HOME"),
+    )
+}
+
+fn default_dir_from(
+    runtime: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+) -> std::path::PathBuf {
+    runtime
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_dir())
+        .or_else(|| home.map(std::path::PathBuf::from))
+        .unwrap_or_else(|| ".".into())
+}
+
+/// Sheets this process wrote (the kit, the paper phrase): the quit reminder lists them.
+static WRITTEN: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// The sheets written in this run that are still on disk.
+pub fn sheets_left() -> Vec<std::path::PathBuf> {
+    let written = WRITTEN.lock().unwrap_or_else(|e| e.into_inner());
+    written.iter().filter(|p| p.exists()).cloned().collect()
+}
+
+/// After the terminal is restored: say which sheets are still on disk. They are the
+/// credential store; move or print them, then delete them.
+pub fn print_reminder() {
+    let left = sheets_left();
+    if left.is_empty() {
+        return;
+    }
+    eprintln!("sshub: these sheets hold your secrets and are still on disk:");
+    for p in left {
+        eprintln!("  {}", p.display());
+    }
+    eprintln!("sshub: move or print them, then delete them.");
+}
+
 /// Write a sheet that does not exist yet, owner-only from the first byte.
 pub fn write_sheet(path: &Path, html: &str) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
@@ -89,12 +144,42 @@ pub fn write_sheet(path: &Path, html: &str) -> std::io::Result<()> {
         .mode(0o600)
         .open(path)?;
     file.write_all(html.as_bytes())?;
-    file.flush()
+    file.flush()?;
+    WRITTEN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(path.to_path_buf());
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sheets_default_into_the_runtime_directory_and_the_quit_reminder_lists_them() {
+        let run = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(
+            default_dir_from(Some(run.path().into()), Some(home.path().into())),
+            run.path()
+        );
+        // No runtime directory (unset, or not a directory): the home directory.
+        assert_eq!(
+            default_dir_from(None, Some(home.path().into())),
+            home.path()
+        );
+        assert_eq!(
+            default_dir_from(Some("/nonexistent/run".into()), Some(home.path().into())),
+            home.path()
+        );
+        // A written sheet is listed until it is deleted.
+        let sheet = run.path().join("sheet.html");
+        write_sheet(&sheet, "x").unwrap();
+        assert!(sheets_left().contains(&sheet));
+        std::fs::remove_file(&sheet).unwrap();
+        assert!(!sheets_left().contains(&sheet));
+    }
 
     /// The module matrix drawn by [`qr_svg`], read back from its path.
     fn svg_matrix(svg: &str) -> (usize, Vec<bool>) {

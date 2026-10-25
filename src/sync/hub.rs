@@ -75,7 +75,7 @@ fn name_of(store: &LauncherStore, id: &DeviceId) -> String {
         .and_then(|d| {
             d.into_iter()
                 .find(|r| r.id == *id)
-                .map(|r| format!("{} ({})", r.name, r.id))
+                .map(|r| format!("{} ({})", super::ceremony::plain_text(&r.name), r.id))
         })
         .unwrap_or_else(|| id.clone())
 }
@@ -201,6 +201,16 @@ pub fn run_sync_serve_notify<L: SyncLink>(
         if let Err(e) = sent {
             eprintln!("sshub: could not announce recovery operations: {e:#}");
         }
+        // This device may be the sender of the emailed third factor: mail the code once the other proofs are in.
+        let mailed = super::ceremony::send_owed_codes(
+            store,
+            id,
+            crate::store::now_ts(),
+            &mut |subject, body| super::notify::send_notification(cfg, subject, body),
+        );
+        if let Err(e) = mailed {
+            eprintln!("sshub: could not mail a factor code: {e:#}");
+        }
     }
     round
 }
@@ -242,6 +252,40 @@ pub fn recovery_notice(
             .try_into()
             .map_err(|_| anyhow::anyhow!("stored signature"))?,
     })
+}
+
+/// The one op of the log whose hash starts with `prefix` (lowercase hex, at least 4 characters).
+pub fn op_by_hash_prefix(store: &LauncherStore, prefix: &str) -> Result<Op> {
+    let p = prefix.to_lowercase();
+    if p.len() < 4 || !p.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("'{prefix}' is not an op id (at least 4 hex characters)");
+    }
+    let rows: Vec<(Vec<u8>, Vec<u8>)> = store.with_conn(|c| {
+        let mut stmt = c.prepare(
+            "SELECT canonical, signature FROM sync_ops WHERE lower(hex(op_hash)) LIKE ?1 || '%' LIMIT 3",
+        )?;
+        let it = stmt.query_map(params![p], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(it.collect::<rusqlite::Result<Vec<_>>>()?)
+    })?;
+    match rows.as_slice() {
+        [] => bail!("no op matches '{prefix}'"),
+        [(canonical, sig)] => Op::from_canonical(
+            canonical,
+            sig.as_slice()
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("stored signature"))?,
+        ),
+        _ => bail!("'{prefix}' matches several ops; use more characters"),
+    }
+}
+
+/// The notice (kind 3) of any op the phone is to judge: the op as signed. For a Red op the phone
+/// shows what it is asked to approve and signs the ceremony proof.
+pub fn op_notice(op: &Op) -> RecoveryNoticeWire {
+    RecoveryNoticeWire {
+        op_canonical: op.canonical_bytes(),
+        op_signature: op.signature,
+    }
 }
 
 #[cfg(test)]

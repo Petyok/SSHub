@@ -17,7 +17,7 @@ use super::oplog::{CredMode, HostUid, Op, OpBody, WrappedShare};
 use super::quorum::{share_recipients, vault_pub, vault_wrap, SHARE_K};
 use super::share_release::wrapped_share_plaintext;
 use crate::credentials::PasswordStore;
-use crate::store::{uid_hex, LauncherStore};
+use crate::store::LauncherStore;
 
 /// The plaintext of a credential before it is sealed under its DEK. Strict: unknown fields and
 /// versions are refused, so an old build never half-reads a newer record.
@@ -94,7 +94,13 @@ pub fn cred_update_body(
     host: &HostUid,
     payload: &CredPayload,
 ) -> Result<OpBody> {
-    cred_update_body_for(store, me, host, payload, store.sync_cred_mode()?)
+    cred_update_body_for(
+        store,
+        me,
+        host,
+        payload,
+        super::ceremony::effective_cred_mode(store)?,
+    )
 }
 
 /// [`cred_update_body`] for an explicit mode (a mode change writes the new shape before the mode
@@ -150,62 +156,6 @@ pub fn cred_put(
     payload: &CredPayload,
 ) -> Result<Op> {
     store.sync_append_local(id, cred_update_body(store, &id.public(), host, payload)?)
-}
-
-/// An identity key written to a file ssh can read; removed on drop.
-pub struct MaterialisedKey {
-    path: PathBuf,
-}
-
-impl MaterialisedKey {
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for MaterialisedKey {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-/// Write the key of an opened identity credential to `dir/<uid>` with mode 0600 (create-new, so an
-/// existing file is never followed or overwritten). `dir` should be tmpfs: the caller decides.
-pub fn materialise_key(
-    payload: &CredPayload,
-    dir: &Path,
-    identity_uid: &HostUid,
-) -> Result<Option<MaterialisedKey>> {
-    let Some(key) = &payload.private_key else {
-        return Ok(None);
-    };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
-        fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(dir)?;
-        let path = dir.join(uid_hex(identity_uid));
-        let _ = fs::remove_file(&path);
-        let mut f = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)?;
-        f.write_all(key.as_bytes())?;
-        if !key.ends_with('\n') {
-            f.write_all(b"\n")?;
-        }
-        f.flush()?;
-        let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-        Ok(Some(MaterialisedKey { path }))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (dir, identity_uid, key);
-        bail!("materialising keys needs a unix file mode")
-    }
 }
 
 /// What a migration read and would replicate.
@@ -321,6 +271,7 @@ pub struct AgentKey {
 /// stdin (`ssh-add -`) with a lifetime; `ssh` is told `-o IdentityAgent=<socket> -o IdentitiesOnly=yes
 /// -i <public key file>`. Dropping the agent kills it and removes the directory.
 pub struct PrivateAgent {
+    /// The watcher shell that runs the agent; its stdin is a pipe only this process holds.
     child: std::process::Child,
     dir: PathBuf,
     sock: PathBuf,
@@ -346,11 +297,18 @@ impl PrivateAgent {
         #[cfg(not(unix))]
         bail!("a private ssh-agent needs unix sockets");
         let sock = dir.join("s");
-        let child = std::process::Command::new("ssh-agent")
-            .arg("-D")
-            .arg("-a")
+        // The agent must not outlive sshub, however sshub ends (SIGTERM, SIGKILL, the OOM killer):
+        // a shell runs it and waits on a pipe this process holds the write end of. The kernel
+        // closes the pipe when the process dies for any reason, and the shell then kills the
+        // agent and removes the directory. Works the same on Linux and macOS (no parent-death
+        // signal, which fires when the spawning thread, not the process, exits).
+        let child = std::process::Command::new("/bin/sh")
+            .arg("-c")
+            .arg(WATCHER_SCRIPT)
+            .arg("sshub-agent")
             .arg(&sock)
-            .stdin(std::process::Stdio::null())
+            .arg(&dir)
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -468,10 +426,26 @@ impl PrivateAgent {
     }
 }
 
+/// Runs the agent in the foreground of a background job and holds until stdin reaches EOF
+/// (the owner is gone), then kills it and removes the directory (`$2`).
+const WATCHER_SCRIPT: &str = r#"ssh-agent -D -a "$1" & a=$!
+trap 'kill $a 2>/dev/null; wait $a 2>/dev/null; rm -rf "$2"' EXIT
+cat >/dev/null"#;
+
 impl Drop for PrivateAgent {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        // Closing the pipe is the watcher's cue; give it a moment, then insist.
+        drop(self.child.stdin.take());
+        for _ in 0..100 {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        if matches!(self.child.try_wait(), Ok(None)) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
         let _ = fs::remove_dir_all(&self.dir);
     }
 }

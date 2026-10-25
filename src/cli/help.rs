@@ -28,6 +28,7 @@ pub fn print_command_help(cmd: &str) {
         "sync-status" => print_sync_status(),
         "sync-review" => print_sync_review(),
         c if super::sync_admin::is_admin_command(c) => super::sync_admin::print_help(c),
+        c if super::sync_phone_cmd::is_phone_command(c) => super::sync_phone_cmd::print_help(c),
         "import" => print_import(),
         "export" => print_export(),
         "completions" => print_completions(),
@@ -354,9 +355,16 @@ USAGE:
 
 Without a flag, lists each change waiting for review: a 12-character id, the
 author device, a summary, and one line per field (`[!]` marks a dangerous
-field). --approve / --reject take a unique prefix (at least 4 hex characters)
-of an id and resolve the change in the store, the same way the TUI does.
-Read-only otherwise; never creates a device key.
+field). EVERY waiting change is listed with why it waits: the reason is in
+brackets after the summary (`tier`, `stale`, `resurrection`, `revoke-conflict`,
+`unknown-author`) and is the `reason` field of the JSON items. A Red change
+shows its ceremony (proofs present and missing). --approve / --reject take a
+unique prefix (at least 4 hex characters) of an id and resolve the change the
+way the TUI does: a Red change is approved only when its ceremony is complete. Approving
+a share release (a requester asking this holder for a share of a credential) is the explicit
+consent: the line names the requester, its full device id and the request age, and the grants
+are written as the TUI confirmation would; a request older than 120 s is refused.
+Read-only otherwise; never creates a device key (approving a share release loads the existing one).
 
 EXIT CODES:
     0  listed, approved or rejected (also when nothing is waiting)

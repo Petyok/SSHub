@@ -49,6 +49,12 @@ path = "src/main.rs"
 name = "seed-demo"
 path = "demo/seed_demo.rs"
 
+# Hardware check of the sync::media receivers (microphone, webcam); works with any subset of the
+# `audio` / `camera` features and says what is missing.
+[[example]]
+name = "media-probe"
+path = "examples/media-probe.rs"
+
 [lib]
 name = "sshub"
 path = "src/lib.rs"
@@ -63,6 +69,11 @@ path = "src/lib.rs"
 # except the Nix package (flake.nix), which links nixpkgs' OpenSSL on purpose.
 default = ["vendored"]
 vendored = ["ssh2/vendored-openssl"]
+# Receivers of the phone's share reply (sync::media): the microphone hears the audio burst
+# (cpal: ALSA on Linux, CoreAudio on macOS), the webcam reads the reverse QR (linuxvideo on
+# Linux, nokhwa/AVFoundation on macOS). Off by default; the decoders behind them always build.
+audio = ["dep:cpal"]
+camera = ["dep:linuxvideo", "dep:nokhwa"]
 
 [dependencies]
 anyhow = "1"
@@ -85,6 +96,11 @@ portable-pty = "0.9"
 # Pure-Rust QR encoder for the host sync unlock modal (half-block frames in the
 # terminal). No image or svg features: only the core encoder.
 qrcode = { version = "0.14", default-features = false }
+# Pure-Rust QR decoder (a quirc port) for the reverse-QR reply (sync::media::qrscan): raw
+# grayscale in, raw payload bytes out, no image-crate integration.
+quircs = "0.10"
+# Capture backends of the opt-in `audio` and `camera` features (see above).
+cpal = { version = "0.18", optional = true }
 # Exact Paragraph::line_count for the auth prompt scroll range (the plain
 # width estimate hides the final line on narrow terminals).
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
@@ -117,6 +133,7 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 hex = "0.4"
 ml-kem = { version = "=0.2.3", features = ["deterministic"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+sha2 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 zeroize = "1"
 
@@ -124,6 +141,11 @@ zeroize = "1"
 # attribute. Already in the tree through keyring's secret-service backend.
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus-secret-service = { version = "4.1", features = ["crypto-rust"] }
+# V4L2 in pure Rust: no libv4l at run time, no bindgen/libclang at build time.
+linuxvideo = { version = "0.3", optional = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+nokhwa = { version = "0.10", default-features = false, features = ["input-avfoundation"], optional = true }
 
 [dev-dependencies]
 assert_cmd = "2"

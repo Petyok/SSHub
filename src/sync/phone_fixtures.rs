@@ -30,7 +30,7 @@ use super::limits::QR_PARITY_PERCENT;
 use super::share_release::{
     combine_and_check, share_to_bytes, unwrap_share_reply, wrapped_share_plaintext,
 };
-use super::snapshot::{snapshot_open, SnapshotBlob};
+use super::snapshot::{snapshot_open_for, SnapshotBlob};
 use super::wire::{
     binding_preimage, ChallengeWire, EnrollFrame, PhoneMaterial, PhoneOpsWire, RecoveryNoticeWire,
     ShareKind, ShareResponseWire,
@@ -628,12 +628,13 @@ fn e2e_response_opens_with_the_ephemeral_secret() {
     if let Some((host, blob)) = ext.snapshot {
         assert_eq!(host, HOST);
         let code = std::fs::read_to_string(d.join("snapshot-code.txt")).unwrap();
-        let opened = snapshot_open(
-            &SnapshotBlob::from_bytes(&blob).unwrap(),
-            code.trim(),
-            NOW + 5,
-        )
-        .unwrap();
+        let parsed = SnapshotBlob::from_bytes(&blob).unwrap();
+        assert_eq!(
+            parsed.host_uid,
+            Some(host),
+            "the page issues version 2, bound to the credential"
+        );
+        let opened = snapshot_open_for(&parsed, &host, code.trim(), NOW + 5).unwrap();
         assert_eq!(&opened, want);
     }
     if let Ok(frame) = std::fs::read(d.join("cancel-frame.bin")) {
@@ -813,6 +814,10 @@ mod reshare_fixture {
         for o in &ops {
             rx.store.sync_ingest(op_of(o)).unwrap();
         }
+        // The credentials arrive as pending reviews; the receiver knows the old sharing once they applied.
+        for op in rx.store.sync_pending().unwrap() {
+            rx.store.sync_resolve_pending(&op.hash(), true).unwrap();
+        }
         for body in reissue_receive(&rx.store, &rx.id, epoch).unwrap().bodies {
             rx.store.sync_append_local(&rx.id, body).unwrap();
         }
@@ -851,6 +856,9 @@ mod reshare_fixture {
         let rx = phone_store(&contributors);
         for o in v["ops"].as_array().unwrap() {
             rx.store.sync_ingest(op_of(o)).unwrap();
+        }
+        for op in rx.store.sync_pending().unwrap() {
+            rx.store.sync_resolve_pending(&op.hash(), true).unwrap();
         }
         rx
     }
@@ -904,6 +912,141 @@ mod reshare_fixture {
             );
         }
     }
+
+    /// The trust-session chain the page wrote (`cert-out.json`: CertIssue, two CertExtend, CertRevoke, a second
+    /// CertIssue, all signed by the 0x42 phone) on a terminal that enforces certificates: the certificate
+    /// validates, the budget refuses a new host, the extension opens it for its own rolling day only, and the
+    /// revocation stops the certificate.
+    pub fn check_cert_output(out: &Value) {
+        use crate::sync::cert::{
+            cert_allows, cert_opened_body, extension_budget, validate_cert_issue, DelegationCert,
+        };
+        use crate::sync::oplog::{Attendance, CertScope, DeviceRole};
+        // The delegate is the device of seed 0x71, the same one the page's test derives from the same bytes.
+        let delegate = Dev::with(Arc::new(DeviceIdentity::from_seed(
+            &[0x71; 32],
+            PHONE_CONTEXT,
+        )));
+        let phone = Dev::with(phone_identity());
+        let (t2, t3) = (Dev::new(), Dev::new());
+        for d in [&t2, &delegate, &t3] {
+            t2.store
+                .sync_register_device(
+                    &d.id.public(),
+                    "terminal",
+                    DeviceRole::Holder,
+                    Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+        }
+        t2.store
+            .sync_register_device(
+                &phone.id.public(),
+                "my phone",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Phone,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        let ingest = |op: &Op| {
+            assert_eq!(op.device_id, phone.did, "the page signs as the phone");
+            assert!(
+                op.verify(&phone.id.public().ed25519_pub),
+                "the page's op signature verifies"
+            );
+            t2.store.sync_ingest(op.clone()).unwrap();
+            for p in t2.store.sync_pending().unwrap() {
+                if !crate::sync::ceremony::is_gated(&t2.store, &p).unwrap() {
+                    t2.store.sync_resolve_pending(&p.hash(), true).unwrap();
+                }
+            }
+        };
+        let ops: Vec<Op> = out["ops"].as_array().unwrap().iter().map(op_of).collect();
+        assert_eq!(ops.len(), 5, "issue, extend, extend, revoke, issue");
+        let mut rest = ops.iter();
+
+        let issue = rest.next().unwrap();
+        assert!(matches!(issue.body, OpBody::CertIssue { .. }));
+        ingest(issue);
+        validate_cert_issue(&t2.store, issue, &phone.did)
+            .expect("the certificate the page wrote validates");
+        let cert = DelegationCert::from_op(issue).unwrap();
+        assert_eq!(cert.device_id, delegate.did);
+        assert_eq!(cert.issuer, phone.did);
+        assert_eq!(cert.max_new_hosts_per_day, 2);
+        let CertScope::Hosts(hosts) = cert.scope.clone() else {
+            panic!("the first certificate lists hosts");
+        };
+        assert_eq!(hosts.len(), 3);
+        let pk = phone.id.public().ed25519_pub;
+        // The enforcing holder opens two new hosts: the budget of 2 is used.
+        for h in &hosts[..2] {
+            t2.store
+                .sync_append_local(&t2.id, cert_opened_body(&cert, h))
+                .unwrap();
+        }
+        let ext1 = rest.next().unwrap();
+        let OpBody::CertExtend {
+            cert_id,
+            extra_hosts: e1,
+        } = &ext1.body
+        else {
+            panic!("a CertExtend")
+        };
+        assert_eq!(*cert_id, cert.id, "the extension names the certificate");
+        let t = ext1.timestamp + 10;
+        let refused = cert_allows(&cert, &pk, &t2.store, &delegate.did, &hosts[2], t, t)
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("budget"), "{refused}");
+        ingest(ext1);
+        assert_eq!(extension_budget(&t2.store, &cert, t).unwrap(), *e1);
+        cert_allows(&cert, &pk, &t2.store, &delegate.did, &hosts[2], t, t)
+            .expect("the phone's extension opens the budget");
+
+        let ext2 = rest.next().unwrap();
+        let OpBody::CertExtend {
+            extra_hosts: e2, ..
+        } = &ext2.body
+        else {
+            panic!("a second CertExtend")
+        };
+        assert!(ext2.timestamp - ext1.timestamp >= 86_400, "a day apart");
+        ingest(ext2);
+        assert_eq!(
+            extension_budget(&t2.store, &cert, ext2.timestamp + 10).unwrap(),
+            *e2
+        );
+        assert_eq!(
+            extension_budget(&t2.store, &cert, t).unwrap(),
+            *e1,
+            "each extension covers its own day"
+        );
+
+        let revoke = rest.next().unwrap();
+        let OpBody::CertRevoke { cert_id } = &revoke.body else {
+            panic!("a CertRevoke")
+        };
+        assert_eq!(*cert_id, cert.id);
+        ingest(revoke);
+        let err = cert_allows(&cert, &pk, &t2.store, &delegate.did, &hosts[0], t, t)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("revoked"), "{err}");
+
+        // The second certificate (a group) validates too.
+        let second = rest.next().unwrap();
+        ingest(second);
+        validate_cert_issue(&t2.store, second, &phone.did)
+            .expect("the group certificate validates");
+        let OpBody::CertIssue { scope, .. } = &second.body else {
+            panic!("a CertIssue")
+        };
+        assert!(matches!(scope, CertScope::Group(g) if *g == [0x06; 16]));
+    }
 }
 
 #[test]
@@ -926,4 +1069,189 @@ fn e2e_the_pages_reshare_ops_open_on_the_terminal() {
     )
     .unwrap();
     reshare_fixture::check_page_output(&out);
+}
+
+#[test]
+fn e2e_the_pages_trust_session_ops_validate_on_the_terminal() {
+    let Some(d) = std::env::var_os("SSHUB_PHONE_E2E_DIR") else {
+        return;
+    };
+    let out = serde_json::from_str::<Value>(
+        &std::fs::read_to_string(PathBuf::from(d).join("cert-out.json")).unwrap(),
+    )
+    .unwrap();
+    reshare_fixture::check_cert_output(&out);
+}
+
+/// The terminal half of enrolling the REAL page (`phone_enroll::PhoneEnroll`), run as a peer next to the headless
+/// page flow of `assets/companion/scripts/e2e.mjs`. Both sides exchange the enrollment frames as files in
+/// `SSHUB_PHONE_ENROLL_PEER/<scenario>/` (written by rename, so a reader never sees half a file):
+/// `t-*` come from this terminal, `p-*` from the page. Scenarios, in this order: `ok` (same four words, the phone is
+/// Verified and admitted with the page's identity), `tampered` (the page's reveal altered on the way: Stopped),
+/// `differ` (the page declines: Stopped). Each scenario ends with `done.json`. Not run without the variable.
+mod enroll_peer {
+    use super::*;
+    use crate::sync::oplog::{DeviceKind, DeviceRole, OpBody};
+    use crate::sync::phone_enroll::{admit_phone, PhoneEnroll, Step};
+    use crate::sync::protocol::tests::Dev;
+    use std::time::{Duration, Instant};
+
+    const WAIT: Duration = Duration::from_secs(240);
+
+    fn put(dir: &Path, name: &str, bytes: &[u8]) {
+        let tmp = dir.join(format!(".{name}.tmp"));
+        std::fs::write(&tmp, bytes).unwrap();
+        std::fs::rename(&tmp, dir.join(name)).unwrap();
+    }
+
+    fn wait(dir: &Path, name: &str) -> Vec<u8> {
+        let t0 = Instant::now();
+        loop {
+            if let Ok(b) = std::fs::read(dir.join(name)) {
+                return b;
+            }
+            assert!(
+                t0.elapsed() < WAIT,
+                "timed out waiting for {name} from the page"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// The terminal shows its commitment; scans the page's commitment and shows its reveal; scans the page's reveal.
+    fn through_reveal(dir: &Path, t: &Dev, e: &mut PhoneEnroll) -> Step {
+        let p_commit = wait(dir, "p-commit.bin");
+        let Step::Show(reveal) = e
+            .scan(&t.id, &p_commit)
+            .expect("the page's commitment frame decodes and is accepted")
+        else {
+            panic!("after the phone's commitment the terminal shows its reveal")
+        };
+        put(dir, "t-reveal.bin", &reveal);
+        let p_reveal = wait(dir, "p-reveal.bin");
+        e.scan(&t.id, &p_reveal)
+            .expect("the page's reveal frame decodes")
+    }
+
+    fn start(dir: &Path) -> (Dev, PhoneEnroll) {
+        let t = Dev::new();
+        let (e, first) = PhoneEnroll::begin(&t.id, "work laptop");
+        put(dir, "t-id.txt", t.did.as_bytes());
+        put(dir, "t-commit.bin", &first);
+        (t, e)
+    }
+
+    fn compare(dir: &Path, t: &Dev, e: &mut PhoneEnroll) -> String {
+        let Step::Compare { words, phone_name } = through_reveal(dir, t, e) else {
+            panic!("the words follow the phone's reveal")
+        };
+        assert_eq!(phone_name, "my phone");
+        put(dir, "t-words.txt", words.as_bytes());
+        let page_words = String::from_utf8(wait(dir, "p-words.txt")).unwrap();
+        assert_eq!(page_words, words, "the page shows the same four words");
+        words
+    }
+
+    fn ok(dir: &Path) {
+        let (t, mut e) = start(dir);
+        compare(dir, &t, &mut e);
+        assert_eq!(e.answer(&t.id, true).unwrap(), Step::Wait);
+        let p_confirm = wait(dir, "p-confirm.bin");
+        let Step::Verified(v) = e
+            .scan(&t.id, &p_confirm)
+            .expect("the page's confirmation decodes")
+        else {
+            panic!("the page's confirmation verifies the phone")
+        };
+        put(dir, "t-confirm.bin", &v.frame);
+        let phone = DeviceIdentity::from_seed(&[0x42; 32], PHONE_CONTEXT);
+        assert_eq!(
+            v.phone,
+            phone.public(),
+            "the admitted DevicePublic is the page's identity"
+        );
+        assert_eq!(v.name, "my phone");
+        let op = admit_phone(&t.store, &t.id, &v).unwrap();
+        assert!(matches!(
+            op.body,
+            OpBody::DeviceAdd {
+                role: DeviceRole::Holder,
+                kind: DeviceKind::Phone,
+                ..
+            }
+        ));
+        assert_eq!(
+            crate::sync::quorum::phone_device(&t.store).unwrap(),
+            Some(phone.public().device_id()),
+            "the ring has the page's phone"
+        );
+    }
+
+    fn tampered(dir: &Path) {
+        let (t, mut e) = start(dir);
+        match through_reveal(dir, &t, &mut e) {
+            Step::Stopped { why, frame } => {
+                assert!(why.contains("do not open the commitment"), "{why}");
+                assert!(frame.is_none());
+            }
+            other => panic!("a tampered reveal must stop the terminal, got {other:?}"),
+        }
+        assert!(
+            e.answer(&t.id, true).is_err(),
+            "a stopped enrollment answers nothing"
+        );
+    }
+
+    fn differ(dir: &Path) {
+        let (t, mut e) = start(dir);
+        compare(dir, &t, &mut e);
+        let p_confirm = wait(dir, "p-confirm.bin");
+        assert_eq!(e.scan(&t.id, &p_confirm).unwrap(), Step::Wait);
+        let Step::Stopped { why, .. } = e.answer(&t.id, true).unwrap() else {
+            panic!("the page declined: the terminal stops")
+        };
+        // This message is only reached after the decline's signature verified under the page's key.
+        assert!(why.contains("the phone says the words differ"), "{why}");
+        assert!(crate::sync::quorum::phone_device(&t.store)
+            .unwrap()
+            .is_none());
+    }
+
+    pub fn run(root: &Path) {
+        let mut failed = Vec::new();
+        type Scenario = (&'static str, fn(&Path));
+        let scenarios: [Scenario; 3] = [("ok", ok), ("tampered", tampered), ("differ", differ)];
+        for (name, f) in scenarios {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            let r = std::panic::catch_unwind(|| f(&dir));
+            let why = match &r {
+                Ok(()) => String::new(),
+                Err(e) => e
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "panic".into()),
+            };
+            put(
+                &dir,
+                "done.json",
+                json!({ "pass": r.is_ok(), "why": why })
+                    .to_string()
+                    .as_bytes(),
+            );
+            if r.is_err() {
+                failed.push(format!("{name}: {why}"));
+            }
+        }
+        assert!(failed.is_empty(), "{failed:?}");
+    }
+}
+
+#[test]
+fn e2e_enrollment_peer_for_the_page() {
+    let Some(d) = std::env::var_os("SSHUB_PHONE_ENROLL_PEER") else {
+        return;
+    };
+    enroll_peer::run(Path::new(&d));
 }

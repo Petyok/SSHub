@@ -63,7 +63,7 @@ Rust paths are under `crate::sync` (`src/sync/`), declared in `src/lib.rs` as
   DEK, so old wrapped shares stay decryptable forever by a holder's long-lived
   wrap key. Order of a revocation: remaining holders `rotate_wrap_keys` and
   publish `WrapKeyRotate`; the reshare wraps to the new keys; after adoption
-  (every credential confirmed by a real unlock, or `WRAP_KEY_RETIRE_AFTER_SECS`)
+  (every credential confirmed by a real unlock; never on a timer)
   each holder calls `retire_previous_wrap_keys`. `Vec<u8>` fields of ops are
   base64 strings (standard alphabet, padded) in the canonical form. Residuals:
   a key file copied before retirement, holders that cannot rotate (paper,
@@ -1116,8 +1116,15 @@ most 3; Green, inert data) with `sealed` as above; the requester finds it on its
 (`quorum::peer_request`, `quorum::grant_bodies`, `quorum::peer_poll`; `ShareRelease` carries `eph_x25519_pub`). The grant is sealed to the EPHEMERAL key, never to the
 requester's wrap key: a grant wrapped to a long-lived key would let one stolen requester device open the
 credential forever. The ephemeral secret lives in the requester's memory only; if sshub exits the request
-is made again. No `sync-release` CLI verb: an attended holder approves in its TUI, an unattended holder
-releases only on the trust-session path.
+is made again. An unattended holder releases only on the trust-session path. There is no `sync-release`
+verb; the command line takes part through two existing commands instead. **Requester:** the CLI unlocker
+(`cli::unlock::PromptShares`, used by `host connect`, `host resolve` and the other blocking commands) calls
+`peer_request`, then loops `sync_with` each reachable attended holder and `peer_poll` until a grant arrives or
+`SSHUB_UNLOCK_WAIT` seconds (default 120, 0 = do not ask) pass. **Holder:** `sshub sync-review --approve <id>` on a
+`ShareRelease` runs `cli::sync_cmd::approve_release`: it refuses a request older than
+`limits::CHALLENGE_EXPIRY_SECS`, appends the `grant_bodies` and resolves the op. The explicit approval is that
+command (the listing names the requester, its full device id and the request age, the TUI modal shows the
+same). The phone and trust-session paths are not tried from the CLI.
 
 **Phone reply (QR, clipboard, audio).** The input is the bytes of a `ShareResponseWire`. The clipboard text
 is the base64 of exactly those bytes (standard alphabet, padded, whitespace ignored), what the page copies
@@ -1202,11 +1209,24 @@ share reply plaintext (inside the C11 sealed box of the kind 2 frame):
   lamport seen, `epoch` the highest seen. A recovery cancellation is a `PhoneReenrollCancel` with
   `by_phone: true`, `third_factor: null`, `reenroll_hash` = BLAKE3 of the `PhoneReenroll` op bytes,
   delivered in a kind 5 frame. The terminal that receives them ingests them like any other ops.
+- Snapshot blob header version 2 (written by the page since review round 1): `"SSHN" || 2 || mem u32 BE || iters u32 BE ||
+  issued_at i64 BE || salt(16) || host_uid(16) || nonce(24) || ct`; everything before the nonce, `host_uid` included, is the AEAD
+  associated data, so a blob names the credential it opens and a terminal can refuse a second live blob for one `host_uid`
+  (OWED on the Rust side: `snapshot.rs` still reads version 1 only; `phone_fixtures.rs` opens version 2 with a local shim).
+  Version 1 stays readable.
 - The snapshot blob is the contract `SnapshotBlob::to_bytes` and `host_uid` names the credential it
   opens; the phone issues one per credential only while none is live (TTL 7 days recorded in the
   blob), the user can declare a blob dead (never delivered, or DEK reissued).
 - Kind 5 list limits: at most 8 ops, each at most 256 KiB (a 200 item `ShareReshareBatch` for a few holders is
   about 100 KiB), at most 1 MiB in all.
+- Trust sessions on the page (4c-2, `assets/companion/src/cert.mjs`): kind 9 and kind 10 are scanned or pasted, shown from
+  their bytes, and signed on the phone's own chain. Before signing it refuses a term that is not 1 s to 90 days, a budget
+  outside 1..=50, a host list outside 1..=64, an inverted epoch range and a request that names the phone itself; a
+  `CertExtend` is refused for an unknown (not issued by this phone), revoked or expired certificate, for `extra_hosts`
+  outside 1..=50, and when this phone already extended that certificate less than 24 hours ago. The phone reads what it
+  issued back from its own chain (`CertIssue` hash = certificate id), so there is no second record. The page e2e writes
+  its chain to `cert-out.json` and `phone_fixtures::e2e_the_pages_trust_session_ops_validate_on_the_terminal` validates
+  it with `validate_cert_issue`, `cert_allows` and `extension_budget`.
 - Residual: the phone's wrap-key generations are derived from its secret and the generation number, so an old
   generation can always be re-derived: unlike a terminal it cannot really retire previous wrap keys, and the
   forward secrecy of C14 does not extend to the phone's own envelopes (it stays in the B6 residual list).
@@ -1262,6 +1282,7 @@ offline; no real credentials, no real user directories.
 | `QR_FRAME_PAYLOAD_BYTES` | `250` | frame size when the terminal area is unknown (QR byte capacity at level M, version 11); the unlock modal normally uses `fountain::frame_bytes_for_area` (84 bytes full 80x24, 331 bytes 120x40) |
 | `QR_FPS` | `8` | animated frame rate (PoC C measured the pipeline at 8; the real phone measurement tunes it) |
 | `QR_PARITY_PERCENT` | `25` | XOR parity frames in the loop |
+| phone page `QR_FRAME_BYTES`, `QR_FPS` | `106`, `4` | the companion page's reply QR (phone screen to the terminal's camera) uses QR version 6 level M frames (1.4 mm modules on a 68 mm screen), as wide as the screen with an integer number of device pixels per module, at 4 fps; the fountain format is the same (the decoder takes the block size from each frame), only the frame count grows (PoC H, "Reverse QR") |
 | `MAX_FRAME_BYTES` | `1 << 20` | transport frame cap |
 | `MAX_JSON_DEPTH` | `32` | frame JSON depth cap |
 | `MAX_OPS_PER_TAIL` | `2_000` | ops per `Tail` frame |
@@ -1275,7 +1296,6 @@ offline; no real credentials, no real user directories.
 | `CHECKPOINT_CHUNK_BYTES` | `256 KiB` | state blob chunk on the wire |
 | `TOMBSTONE_KEEP_SECS` | `90 * 86_400` | tombstones carried in checkpoint states |
 | `RING_FINGERPRINT_WORDS` | `8` | 88 bit ring fingerprint |
-| `WRAP_KEY_RETIRE_AFTER_SECS` | `7 * 86_400` | previous wrap keys are dropped when all credentials are confirmed or after this long |
 | `RESHARE_ITEMS_PER_OP` | `200` | credentials per `ShareReshareBatch` or `ShareReshareConfirmBatch` op |
 | `SAS_WORDS`, `MASTER_PHRASE_WORDS`, `PAPER_WORDS` | 4, 6, 24 | word counts |
 
@@ -1294,3 +1314,31 @@ the paper (`quorum::paper_rule`): refused for new credentials, a mode change to 
 leave two holders. A reshare also runs when the holders differ from those the credentials are shared among
 (a promoted holder, an enabled or disabled exemption): `revocation::next_actions` returns `Contribute` and
 `Receive` without a rotation step.
+
+### 4g. The ceremony-complete rule for Red consumers (audit)
+
+A proposer applies its own op at once (`sync_append_local` approves by definition); peers hold a Red op pending
+until `settle_red_ops` finds its ceremony complete. Anything that reaches OTHER devices' data (who is wrapped to,
+who is reshared to, which mode credentials are written in, which certificate or export window lets a share go)
+must therefore be read through the ceremony-complete view on EVERY device, the proposer included, never from the
+raw table or from "an op of that kind exists":
+
+* `ceremony::in_force(store, op)`: not gated, or all proofs present (time-independent; an op that completed stays
+  in force). `ceremony::effective_devices(store, upto)`: the device table with a promotion that is not in force
+  read as a mirror and a revocation that is not in force read as not revoked. `ceremony::effective_cred_mode`:
+  the mode before a `ModeChange` that is not in force. Proofs of an op count only from devices that were
+  holders in force before it (`upto = op.lamport`), so a sybil holder cannot approve; a factor signs only ops
+  proposed after its registration (which must itself be in force).
+* Consumers by Red op kind: `FactorRegister{Paper}`: `quorum::paper_pub`, hence `share_recipients`,
+  `reissue_plan`, `paper_rule`, the membership reshare; every factor verifier (`registered`). `ExemptionSet`:
+  `exemption::active_slots`. `ModeChange`: `cred_ops::cred_update_body` and the unlocker (effective mode), and the
+  re-encryption itself, which is a separate step (`modes::mode_migration`) that refuses until the change is in
+  force. `DeviceAdd{Holder}` and `DeviceRoleChange`: `share_recipients`, `holder_public`, `live_holders`,
+  `live_holder_count`, `phone_device`, recovery approvals, `validate_cert_issue`, the proof counting in
+  `red_status`. `DeviceRevoke`: `revocation::open_revocation`, `live_holders`, the membership reshare.
+  `CertIssue`: `cert::cert_allows` (the single choke point). `BulkExport`: `export::active_window`.
+  Not Red-gated by this ceremony and therefore unchanged: `PhoneReenroll`/`RecoveryApprove` (the recovery machine
+  counts its own approvals).
+* Test per kind: "proposed, not complete" changes nothing a peer would act on; "complete" does
+  (`ceremony::tests::*_in_force`). Known limit: the helpers read ops from the log, so ops pruned below a
+  checkpoint cannot be re-evaluated; the checkpoint state must carry the effective result (op-log worker).

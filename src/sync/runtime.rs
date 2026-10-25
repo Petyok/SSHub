@@ -22,7 +22,7 @@ use crate::sync::client::{
 };
 use crate::sync::cred_ops::{cred_put, CredPayload};
 use crate::sync::crypto::{Argon2Profile, DeviceIdentity, ARGON2_MASTER};
-use crate::sync::enroll::{run_sync_join, EnrollOutcome, SasConfirm, SasPrompt};
+use crate::sync::enroll::{run_sync_join, EnrollOutcome, EnrollProgress, SasConfirm, SasPrompt};
 use crate::sync::identity_store::load_or_init_identity;
 use crate::sync::oplog::{Attendance, DeviceId, DeviceKind, DeviceRole, VerifiedBy};
 use crate::sync::protocol::{run_round, run_share_request, RoundSummary, ShareAsk, ShareReply};
@@ -174,10 +174,37 @@ impl SyncRuntime {
             })?;
         let host = resolve_host(&self.store, &spec)
             .map_err(|e| TransportError::Offline(format!("{e:#}")))?;
-        self.transport(host, SERVE_COMMAND)
-            .run(cancel, Limits::default(), |conn| {
-                run_round(conn, &self.store, &self.identity, device)
-            })
+        // Local hosts, groups and identities the ring has not heard of go first.
+        crate::sync::entity_capture::publish_pending(&self.store, &self.identity)
+            .map_err(|e| TransportError::Failed(format!("{e:#}")))?;
+        let summary =
+            self.transport(host, SERVE_COMMAND)
+                .run(cancel, Limits::default(), |conn| {
+                    run_round(conn, &self.store, &self.identity, device)
+                })?;
+        self.mail_owed_codes();
+        Ok(summary)
+    }
+
+    /// After a completed round: when this device is the registered sender of an
+    /// emailed third-factor code that a Red change now waits for, mail it through
+    /// `[sync.notify]`. A missing or broken config, or a failing mail command,
+    /// sends nothing and marks nothing (the next round tries again); nothing is
+    /// printed because this also runs under the TUI.
+    fn mail_owed_codes(&self) {
+        let Ok(config) = crate::config::load_config_at(&self.paths.config_file) else {
+            return;
+        };
+        let notify = &config.sync.notify;
+        if notify.command.is_none() {
+            return;
+        }
+        let _ = crate::sync::ceremony::send_owed_codes(
+            &self.store,
+            &self.identity,
+            crate::store::now_ts(),
+            &mut |subject, body| crate::sync::notify::send_notification(notify, subject, body),
+        );
     }
 
     /// Ask `holder` for a share over its recorded host, inside an authenticated
@@ -248,6 +275,21 @@ impl SasConfirm for UiSas<'_, '_> {
                 None => return false,
             }
         }
+    }
+
+    fn progress(&mut self, p: EnrollProgress) {
+        self.0.emit(SyncEvent::Progress(progress_line(p)));
+    }
+}
+
+/// The worker's status line for a join anchor step.
+pub(crate) fn progress_line(p: EnrollProgress) -> String {
+    match p {
+        EnrollProgress::Receiving { chunk, total } => {
+            format!("receiving the ring ({chunk}/{total})")
+        }
+        EnrollProgress::Adopting { hosts } => format!("adopting the ring ({hosts} hosts)"),
+        EnrollProgress::Adopted { hosts } => format!("adopted the ring ({hosts} hosts)"),
     }
 }
 
@@ -357,6 +399,49 @@ impl crate::credentials::Replicator for StoreReplicator {
         Ok(true)
     }
 }
+
+/// What an admin job gets on the worker: the store, this device's identity and
+/// the profile's secrets.
+pub struct JobEnv {
+    pub store: Arc<LauncherStore>,
+    pub identity: Arc<DeviceIdentity>,
+    pub paths: ProfilePaths,
+    pub gate: Arc<SecretGate>,
+    pub argon: Argon2Profile,
+    pub open_secrets: fn(&ProfilePaths) -> Box<dyn PasswordStore>,
+}
+
+/// A job: runs once on the worker, returns the line to tell the user.
+pub type JobFn = Box<dyn FnOnce(&JobEnv) -> Result<String> + Send>;
+
+/// A [`JobFn`] that can ride in a command and an intent: cloneable, compared by
+/// identity, taken once.
+#[derive(Clone)]
+pub struct JobBox(Arc<Mutex<Option<JobFn>>>);
+
+impl JobBox {
+    pub fn new(job: impl FnOnce(&JobEnv) -> Result<String> + Send + 'static) -> Self {
+        Self(Arc::new(Mutex::new(Some(Box::new(job)))))
+    }
+
+    pub fn take(&self) -> Option<JobFn> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+}
+
+impl std::fmt::Debug for JobBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("JobBox(..)")
+    }
+}
+
+impl PartialEq for JobBox {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for JobBox {}
 
 /// Credential-store entry holding the ring secret of this profile's Vault.
 pub const RING_SECRET_KEY: &str = "sync-ring-secret";
@@ -503,7 +588,7 @@ fn release_round(deps: &RoundDeps, identity: &DeviceIdentity, spec: &str) -> Res
         .into_iter()
         .find(|o| o.hash() == hash)
         .context("that release request is no longer waiting")?;
-    deps.store.sync_resolve_pending(&hash, approve)?;
+    crate::sync::ceremony::resolve(&deps.store, &hash, approve, crate::store::now_ts())?;
     if approve {
         for body in crate::sync::quorum::grant_bodies(&deps.store, identity, &op)? {
             deps.store.sync_append_local(identity, body)?;
@@ -539,6 +624,26 @@ pub fn round_fn(deps: RoundDeps) -> RoundFn {
             }
             Round::Unlock => {
                 unlock_round(&deps, rt, device, ctx)?;
+                Ok(RoundSummary::default())
+            }
+            Round::Job => {
+                let job = ctx
+                    .take_job()
+                    .and_then(|j| j.take())
+                    .context("the job was already taken")?;
+                let env = JobEnv {
+                    store: deps.store.clone(),
+                    identity: rt.identity.clone(),
+                    paths: deps.paths.clone(),
+                    gate: deps.gate.clone(),
+                    argon: deps.argon,
+                    open_secrets: deps.open_secrets,
+                };
+                let outcome = job(&env);
+                // A job may have rotated the device keys: reload on the next round.
+                drop(env);
+                runtime = None;
+                ctx.emit(SyncEvent::Notice(outcome?));
                 Ok(RoundSummary::default())
             }
             Round::Identify => {
@@ -614,5 +719,184 @@ mod tests {
             Peers::file(&paths).starts_with(&paths.root),
             "under the profile root"
         );
+    }
+}
+
+#[cfg(test)]
+mod mail_tests {
+    use super::*;
+    use crate::sync::ceremony::{
+        factor_register_email, factor_register_paper, owed_code_mails, red_approve_body,
+        red_factor_paper, red_phone_sign_body, remember_email_code, settle_red_ops,
+    };
+    use crate::sync::crypto::{bip39_encode, paper_derive, PaperDomain};
+    use crate::sync::oplog::{CredMode, OpBody};
+    use crate::sync::protocol::tests::Dev;
+    use crate::sync::quorum::tests::append;
+
+    /// Everything of `from`'s log that `to` lacks, ingested without anyone approving.
+    fn sync(d: &[Dev]) {
+        for from in d {
+            for to in d {
+                if from.did == to.did {
+                    continue;
+                }
+                for (dev, _, _) in from.store.sync_chain_heads().unwrap() {
+                    let have = to
+                        .store
+                        .sync_chain_heads()
+                        .unwrap()
+                        .into_iter()
+                        .find(|(x, _, _)| *x == dev)
+                        .map_or(0, |(_, s, _)| s);
+                    for op in from.store.sync_chain_tail(&dev, have).unwrap() {
+                        to.store.sync_ingest(op).unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    /// A fake sendmail: appends what it is given to `capture`, then exits with `code`.
+    fn fake_sendmail(dir: &std::path::Path, capture: &std::path::Path, code: i32) -> String {
+        let script = dir.join(format!("sendmail{code}.sh"));
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ncat >> '{}'\nexit {code}\n", capture.display()),
+        )
+        .unwrap();
+        format!("/bin/sh {}", script.display())
+    }
+
+    #[test]
+    fn a_completed_round_mails_each_owed_code_once_and_marks_it_only_when_the_mail_went() {
+        // 0 proposer, 1 and 2 attended terminals, 3 unattended hub, 4 phone.
+        let d: Vec<Dev> = (0..5).map(|_| Dev::new()).collect();
+        for x in &d {
+            crate::sync::ceremony::test_force(&x.store, false);
+        }
+        for (i, x) in d.iter().enumerate() {
+            for (j, y) in d.iter().enumerate() {
+                if i == j || j == 0 {
+                    continue;
+                }
+                let (attendance, kind) = match j {
+                    3 => (Attendance::Unattended, DeviceKind::Terminal),
+                    4 => (Attendance::Attended, DeviceKind::Phone),
+                    _ => (Attendance::Attended, DeviceKind::Terminal),
+                };
+                x.trust_with(y, attendance, kind);
+            }
+            // The proposer is known to everybody as an attended terminal.
+        }
+        for x in d.iter().skip(1) {
+            x.trust_with(&d[0], Attendance::Attended, DeviceKind::Terminal);
+        }
+        d[3].store
+            .sync_register_device(
+                &d[3].id.public(),
+                "hub",
+                DeviceRole::Holder,
+                Attendance::Unattended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        let propose = |from: usize, body: OpBody| {
+            let op = append(&d[from], body);
+            sync(&d);
+            op
+        };
+        let phrase = bip39_encode(&[0x35; 32]);
+        let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
+        let reg = propose(0, factor_register_paper(&phrase).unwrap());
+        append(&d[4], red_phone_sign_body(&reg));
+        append(&d[1], red_approve_body(&reg));
+        sync(&d);
+        for x in &d {
+            settle_red_ops(&x.store, reg.timestamp + 5).unwrap();
+        }
+        // Device 2 is the registered sender of the emailed code.
+        let (body, code) = factor_register_email(&d[2].did).unwrap();
+        let ereg = propose(0, body);
+        append(&d[4], red_phone_sign_body(&ereg));
+        append(&d[1], red_approve_body(&ereg));
+        append(&d[0], red_factor_paper(&recover, &ereg));
+        sync(&d);
+        for x in &d {
+            settle_red_ops(&x.store, ereg.timestamp + 5).unwrap();
+        }
+        remember_email_code(&d[2].store, &d[2].id, &code).unwrap();
+        sync(&d);
+        let op = propose(
+            0,
+            OpBody::ModeChange {
+                to: CredMode::Quorum,
+                migrated_on: d[0].did.clone(),
+                cosigner: None,
+            },
+        );
+        append(&d[4], red_phone_sign_body(&op));
+        append(&d[1], red_approve_body(&op));
+        sync(&d);
+        let now = crate::store::now_ts();
+        assert_eq!(
+            owed_code_mails(&d[2].store, &d[2].id, now).unwrap().len(),
+            1,
+            "the sender owes the code once the other proofs are in"
+        );
+
+        // This device (2) runs a completed client round with [sync.notify] configured.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProfilePaths {
+            data_root: dir.path().to_path_buf(),
+            id: "t".into(),
+            name: "t".into(),
+            root: dir.path().to_path_buf(),
+            config_file: dir.path().join("config.toml"),
+            ssh_config: dir.path().join("ssh_config"),
+            compat: false,
+        };
+        let capture = dir.path().join("mail.txt");
+        let rt = SyncRuntime {
+            paths: paths.clone(),
+            store: d[2].store.clone(),
+            identity: d[2].id.clone(),
+            ssh_program: None,
+        };
+        let configure = |command: &str| {
+            std::fs::write(
+                &paths.config_file,
+                format!(
+                    "[sync.notify]\ncommand = \"{command}\"\nto = [\"me@example.com\"]\nfrom = \"sshub@example.com\"\n"
+                ),
+            )
+            .unwrap();
+        };
+        let owed = || owed_code_mails(&d[2].store, &d[2].id, now).unwrap().len();
+
+        // No config: nothing is sent, nothing is marked.
+        rt.mail_owed_codes();
+        assert_eq!(owed(), 1);
+
+        // A failing mail command marks nothing (the next round tries again).
+        configure(&fake_sendmail(dir.path(), &capture, 1));
+        rt.mail_owed_codes();
+        assert_eq!(owed(), 1, "a failed mail is still owed");
+
+        // A working one sends the code once and marks it.
+        capture
+            .exists()
+            .then(|| std::fs::remove_file(&capture).unwrap());
+        configure(&fake_sendmail(dir.path(), &capture, 0));
+        rt.mail_owed_codes();
+        assert_eq!(owed(), 0, "marked after the send");
+        let mail = std::fs::read_to_string(&capture).unwrap();
+        assert_eq!(mail.matches(&code).count(), 1, "{mail}");
+        assert!(mail.contains("To: me@example.com"), "{mail}");
+
+        // The next round sends nothing more.
+        rt.mail_owed_codes();
+        assert_eq!(std::fs::read_to_string(&capture).unwrap(), mail);
     }
 }

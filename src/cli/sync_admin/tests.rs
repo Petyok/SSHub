@@ -27,6 +27,7 @@ fn ring(n: usize) -> Vec<Dev> {
     ids.into_iter()
         .map(|id| {
             let store = LauncherStore::open_in_memory().unwrap();
+            crate::sync::ceremony::test_force(&store, true);
             for (i, p) in publics.iter().enumerate() {
                 store
                     .sync_register_device(
@@ -254,8 +255,20 @@ fn quorum_mode_needs_no_credentials_to_open_and_then_flips() {
         1_000,
     )
     .unwrap();
-    assert!(rep.lines[0].contains("0 credentials"), "{rep:?}");
+    assert!(rep.lines[0].contains("proposed"), "{rep:?}");
     assert_eq!(r[0].store.sync_cred_mode().unwrap(), CredMode::Quorum);
+    // After the ceremony (the fixture counts it as complete) the second call re-encrypts.
+    let rep = mode(
+        &r[0].store,
+        &r[0].id,
+        CredMode::Quorum,
+        None,
+        "w",
+        &[0; 16],
+        1_000,
+    )
+    .unwrap();
+    assert!(rep.lines[0].contains("0 credentials"), "{rep:?}");
     // From the command line the way back cannot open anything.
     assert!(mode(
         &r[0].store,
@@ -277,6 +290,34 @@ fn an_exemption_that_is_not_set_cannot_be_switched_off() {
         .unwrap_err()
         .to_string()
         .contains("no exemption"));
+}
+
+#[test]
+fn the_emailed_code_factor_is_registered_only_on_its_sender() {
+    let d = ring(2);
+    // dev1 is named as the sender but dev0 registers: refused, and dev0 keeps no code.
+    let err = factor_register(
+        &d[0].store,
+        &d[0].id,
+        FactorKind::Email,
+        None,
+        Some("dev1"),
+        1_000,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("ON its sender"), "{err}");
+    assert!(
+        crate::sync::quorum::meta_get(&d[0].store, "email_factor_code")
+            .unwrap()
+            .is_none()
+    );
+    // On the sender itself it works, and the code is not in clear in the database.
+    factor_register(&d[0].store, &d[0].id, FactorKind::Email, None, None, 1_000).unwrap();
+    assert!(
+        crate::sync::quorum::meta_get(&d[0].store, "email_factor_code")
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[test]
