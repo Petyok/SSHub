@@ -2,7 +2,7 @@
 # Runs INSIDE sshub-hostsync-androidbuild:local with the checkout at /work, cargo target at /target,
 # cargo home /cargo-home, gradle home /gradle-home, outputs in /out.
 #   build.sh build   core tests, cargo-ndk .so, uniffi Kotlin, debug APK and androidTest APK
-#   build.sh test    build + `./gradlew connectedDebugAndroidTest` against ADB_SERVER (host:port)
+#   build.sh connected   `./gradlew connectedDebugAndroidTest` against the emulator service ADB_HOST (after `build` in the same /work)
 set -eu
 mode=${1:-build}
 cd /work
@@ -21,6 +21,25 @@ if [ "$mode" = bootstrap ]; then
     [ -f debug.keystore ] || keytool -genkeypair -keystore debug.keystore -storepass android -alias androiddebugkey \
         -keypass android -keyalg RSA -keysize 2048 -validity 36500 -dname "CN=Android Debug,O=Android,C=US"
     exit 0
+fi
+
+if [ "$mode" = connected ]; then
+    # Instrumented tests against the emulator project: its adb SERVER (authorized for the guest) is relayed to localhost.
+    : "${ADB_HOST:?ADB_HOST=emulator service host (android)}"
+    echo "== adb via $ADB_HOST:5037"
+    socat TCP-LISTEN:5037,fork,reuseaddr "TCP:$ADB_HOST:5037" &
+    sleep 1
+    n=0; until adb devices | grep -q 'device$'; do n=$((n + 1)); [ "$n" -le 30 ] || { adb devices; echo "no device" >&2; exit 1; }; sleep 2; done
+    adb devices
+    for p in ro.build.version.release ro.build.version.sdk ro.product.cpu.abi ro.build.tags; do echo "$p=$(adb shell getprop $p | tr -d '\r')"; done
+    echo "chrome: $(adb shell dumpsys package com.android.chrome | grep -m1 versionName | tr -d '\r')"
+    echo "== connectedDebugAndroidTest"
+    cd android
+    rc=0
+    ./gradlew --no-daemon --console=plain connectedDebugAndroidTest || rc=$?
+    cp -r app/build/outputs/androidTest-results /out/ 2>/dev/null || true
+    cp -r app/build/reports/androidTests /out/ 2>/dev/null || true
+    exit "$rc"
 fi
 
 echo "== versions"; cat /opt/VERSIONS.txt
@@ -49,17 +68,3 @@ ls -l /out/*.apk
 sha256sum /out/*.apk
 unzip -l /out/app-debug.apk | grep -E '\.so$'
 
-if [ "$mode" = test ]; then
-    : "${ADB_SERVER:?ADB_SERVER=host:port of the emulator}"
-    echo "== adb connect $ADB_SERVER"
-    adb start-server
-    adb connect "$ADB_SERVER"
-    adb -s "$ADB_SERVER" wait-for-device
-    export ANDROID_SERIAL="$ADB_SERVER"
-    adb -s "$ADB_SERVER" shell getprop ro.build.version.sdk
-    echo "== connectedDebugAndroidTest"
-    ./gradlew --no-daemon --console=plain connectedDebugAndroidTest
-    cp -r app/build/outputs/androidTest-results /out/ 2>/dev/null || true
-    cp -r app/build/reports/androidTests /out/ 2>/dev/null || true
-    adb disconnect "$ADB_SERVER" || true
-fi

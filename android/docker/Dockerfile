@@ -66,6 +66,9 @@ RUN curl -fsSL -o /tmp/rustup-init \
     && cargo install --locked cargo-ndk --version =${CARGO_NDK_VERSION} \
     && rm -rf /opt/cargo/registry /opt/cargo/git
 
+# socat relays the emulator's adb server (android:5037) to localhost:5037 for Gradle's connected tests.
+RUN apt-get update && apt-get install -y --no-install-recommends socat && rm -rf /var/lib/apt/lists/*
+
 RUN { echo "jdk: $(java -version 2>&1 | head -n 1)"; \
       echo "gradle bootstrap: ${GRADLE_VERSION}"; \
       echo "cmdline-tools: ${CMDLINE_TOOLS_BUILD}"; \
