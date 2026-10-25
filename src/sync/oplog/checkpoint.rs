@@ -918,6 +918,11 @@ pub(crate) fn verify(conn: &Connection, proposal: &Op, state: &[u8]) -> Result<C
             detail: "the state blob does not match the proposal's hash or length".into(),
         });
     }
+    if proposal.timestamp > crate::store::now_ts() + TIMESTAMP_SKEW_GRACE_SECS {
+        return Ok(CheckpointVerdict::Blocked(
+            "the proposal is dated in the future of this device's clock".into(),
+        ));
+    }
     let expected_prev = latest_accepted(conn)?.unwrap_or(ZERO);
     if *prev != expected_prev {
         return Ok(CheckpointVerdict::Differs {
@@ -1075,6 +1080,12 @@ pub(crate) fn record(
         *prev != JOIN_ANCHOR_PREV,
         "a join anchor is not a checkpoint"
     );
+    // A proposer picks its own timestamp: one beyond the skew grace would make the liveness
+    // and staleness judgments the proposer's, not ours.
+    ensure!(
+        proposal.timestamp <= now + TIMESTAMP_SKEW_GRACE_SECS,
+        "the proposal is dated in the future"
+    );
     let proposer_pub = device_pub(conn, &proposal.device_id)?.context("unknown proposer")?;
     ensure!(proposal.verify(&proposer_pub), "bad proposal signature");
     let hash = proposal.hash();
@@ -1167,7 +1178,8 @@ pub(crate) fn record(
             "UPDATE sync_checkpoints SET accepted_at = ?2 WHERE proposal_hash = ?1",
             params![&hash[..], now],
         )?;
-        flag_stale_devices(conn, cut, proposal.timestamp)?;
+        // Staleness is judged on this device's clock, never beyond what the proposal claims.
+        flag_stale_devices(conn, cut, proposal.timestamp.min(now))?;
     }
     settle_competitors(conn, prev)?;
     drop_old_blobs(conn)?;
@@ -1715,11 +1727,13 @@ pub(crate) fn build_join_anchor(
     })
 }
 
-pub(crate) fn bootstrap(
+/// Everything a bundle must prove before it may replace a state. A fresh store trusts the keys
+/// of the bundle's own table (the fingerprint or the inviter is its anchor); a device that
+/// already has a ring (`Anchor`) trusts only the keys it holds itself.
+fn check_bundle(
     conn: &Connection,
     bundle: &CheckpointBundle,
     trust: &BootstrapTrust,
-    now: i64,
 ) -> Result<()> {
     let proposal = &bundle.proposal;
     let (cut, state_hash, state_len, prev, required) = propose_parts(proposal)?;
@@ -1738,7 +1752,25 @@ pub(crate) fn bootstrap(
     );
     let state: Value = serde_json::from_slice(&bundle.state).context("state is not JSON")?;
     let devices = state["devices"].as_array().cloned().unwrap_or_default();
-    let key_of_device = |id: &str| -> Option<[u8; 32]> {
+    let local = matches!(trust, BootstrapTrust::Anchor(_));
+    if local {
+        // A store with no log has no ring state to continue: it joins by enrollment (the
+        // inviter's anchor) or by the ring fingerprint, never by taking a peer's word.
+        let have: i64 = conn.query_row("SELECT COUNT(*) FROM sync_ops", [], |r| r.get(0))?;
+        ensure!(
+            have > 0,
+            "this device has no ring state yet: join through enrollment, a checkpoint from a peer is not enough"
+        );
+    }
+    // This device's own chains (it cannot have signed a checkpoint it is catching up to).
+    let mine: BTreeSet<DeviceId> = if local {
+        let mut st = conn.prepare("SELECT DISTINCT device_id FROM sync_ops WHERE local = 1")?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect::<std::result::Result<_, _>>()?
+    } else {
+        BTreeSet::new()
+    };
+    let bundle_key = |id: &str| -> Option<[u8; 32]> {
         let d = devices.iter().find(|d| d["id"] == id)?;
         let h = d["ed25519"].as_str()?;
         let mut out = [0u8; 32];
@@ -1747,10 +1779,30 @@ pub(crate) fn bootstrap(
         }
         Some(out)
     };
+    // Proposer and signers: the local table for an existing device, the bundle's otherwise.
+    let key_of_device = |id: &str| -> Option<[u8; 32]> {
+        if local {
+            device_pub(conn, id).ok().flatten()
+        } else {
+            bundle_key(id)
+        }
+    };
     ensure!(
         key_of_device(&proposal.device_id).is_some_and(|k| proposal.verify(&k)),
         "the proposal is not signed by a device of its own table"
     );
+    if local {
+        // A state may add devices (signed by every live holder we know) but never re-key one.
+        for d in &devices {
+            let id = d["id"].as_str().unwrap_or("");
+            if let Some(mine) = device_pub(conn, id)? {
+                ensure!(
+                    bundle_key(id) == Some(mine),
+                    "the state changes the key of device {id}"
+                );
+            }
+        }
+    }
     // The cut in the state is the cut in the proposal.
     let state_cut = cut_from_state(&state)?;
     ensure!(
@@ -1784,11 +1836,25 @@ pub(crate) fn bootstrap(
             "the inviter did not sign the anchor"
         );
     } else {
-        let want = required_of(&devices, proposal.timestamp);
-        ensure!(
-            want == *required,
-            "the proposal's required set does not match the state's device table"
-        );
+        let want = if local {
+            // The live attended holders of OUR table must all have signed.
+            required_for(conn, &local_heads(conn)?, proposal.timestamp)?
+        } else {
+            required_of(&devices, proposal.timestamp)
+        };
+        if local {
+            ensure!(
+                want.iter()
+                    .filter(|r| !mine.contains(*r))
+                    .all(|r| signers.contains(r)),
+                "a live attended device of this ring did not sign the checkpoint"
+            );
+        } else {
+            ensure!(
+                want == *required,
+                "the proposal's required set does not match the state's device table"
+            );
+        }
         ensure!(
             required.iter().all(|r| signers.contains(r)),
             "not every required device signed"
@@ -1811,9 +1877,28 @@ pub(crate) fn bootstrap(
             c.device_id
         );
         ensure!(
-            key_of_device(&head.device_id).is_some_and(|k| head.verify(&k)),
+            key_of_device(&head.device_id)
+                .or_else(|| bundle_key(&head.device_id))
+                .is_some_and(|k| head.verify(&k)),
             "head op of {} is not signed by its device",
             c.device_id
+        );
+    }
+    if local {
+        // The checkpoint must continue what this device accepted, or cover everything it holds
+        // (own unsent ops are replayed by the adoption itself).
+        let continues = *prev == latest_accepted(conn)?.unwrap_or(ZERO);
+        let covers = local_heads(conn)?
+            .iter()
+            .filter(|h| !mine.contains(&h.device_id))
+            .all(|h| {
+                cut.iter()
+                    .find(|c| c.device_id == h.device_id)
+                    .is_some_and(|c| c.seq > h.seq || (c.seq == h.seq && c.op_hash == h.op_hash))
+            });
+        ensure!(
+            continues || covers,
+            "the checkpoint neither continues this device's last checkpoint nor covers its chains"
         );
     }
     // The trust anchor, separate from the signatures.
@@ -1839,9 +1924,41 @@ pub(crate) fn bootstrap(
         // Checked with the signers above.
         BootstrapTrust::Enrollment { .. } => {}
     }
+    Ok(())
+}
+
+pub(crate) fn bootstrap(
+    conn: &Connection,
+    bundle: &CheckpointBundle,
+    trust: &BootstrapTrust,
+    now: i64,
+) -> Result<()> {
+    let join = matches!(trust, BootstrapTrust::Enrollment { .. });
+    if let BootstrapTrust::Anchor(_) = trust {
+        // Adoption by a device that already has a ring is `adopt`, which checks local keys.
+        ensure!(
+            bundle_prev(bundle)? != JOIN_ANCHOR_PREV,
+            "a join anchor is not a checkpoint: it is accepted only at enrollment"
+        );
+        bail!("a store with a ring adopts a checkpoint through adopt, never bootstrap");
+    }
+    check_bundle(conn, bundle, trust)?;
     let have_ops: i64 = conn.query_row("SELECT COUNT(*) FROM sync_ops", [], |r| r.get(0))?;
     ensure!(have_ops == 0, "bootstrap needs a store without op history");
 
+    install(conn, bundle, join, now)
+}
+
+fn bundle_prev(bundle: &CheckpointBundle) -> Result<[u8; 32]> {
+    Ok(*propose_parts(&bundle.proposal)?.3)
+}
+
+/// Write the state of a verified bundle.
+fn install(conn: &Connection, bundle: &CheckpointBundle, join: bool, now: i64) -> Result<()> {
+    let proposal = &bundle.proposal;
+    let (cut, state_hash, state_len, _prev, required) = propose_parts(proposal)?;
+    let state: Value = serde_json::from_slice(&bundle.state).context("state is not JSON")?;
+    let proposal_hash = proposal.hash();
     // Heads: anchors of the chains, never applied.
     for h in &bundle.heads {
         let hash = insert_op(conn, h, State::Void, None, false, now)?;
@@ -2157,15 +2274,13 @@ fn wire_op(op: &Op) -> Value {
     json!({ "c": b64_encode(&op.canonical_bytes()), "s": hex(&op.signature) })
 }
 
-fn op_of_wire(v: &Value) -> Result<Op> {
-    let sig = v["s"].as_str().context("op signature")?;
-    ensure!(sig.len() == 128, "bad op signature");
-    let mut s = [0u8; 64];
-    for (i, b) in s.iter_mut().enumerate() {
-        *b = u8::from_str_radix(&sig[2 * i..2 * i + 2], 16)?;
-    }
-    let canonical =
-        b64_decode(v["c"].as_str().context("op bytes")?).context("op bytes are not base64")?;
+fn op_of_wire(c: &str, sig: &str) -> Result<Op> {
+    // Decoded as bytes, never by slicing the str: remote text need not sit on char boundaries.
+    let s: [u8; 64] = hex::decode(sig)
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .context("bad op signature")?;
+    let canonical = b64_decode(c).context("op bytes are not base64")?;
     Op::from_canonical(&canonical, s)
 }
 
@@ -2182,19 +2297,29 @@ pub fn bundle_to_bytes(b: &CheckpointBundle) -> Vec<u8> {
 
 /// Strict parse of [`bundle_to_bytes`] output; every op must re-encode exactly.
 pub fn bundle_from_bytes(bytes: &[u8]) -> Result<CheckpointBundle> {
-    let v: Value = serde_json::from_slice(bytes).context("checkpoint bundle is not JSON")?;
-    let ops = |k: &str| -> Result<Vec<Op>> {
-        v[k].as_array()
-            .context("missing op list")?
-            .iter()
-            .map(op_of_wire)
-            .collect()
-    };
+    // The state JSON is parsed once more after the base64 decode: bound the whole.
+    let max = crate::sync::protocol::MAX_CHECKPOINT_BYTES as usize;
+    ensure!(bytes.len() <= max, "checkpoint bundle is over {max} bytes");
+    // Typed, so the parse costs about the size of the strings, not a tree of values.
+    #[derive(serde::Deserialize)]
+    struct WireOp {
+        c: String,
+        s: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Wire {
+        proposal: WireOp,
+        signs: Vec<WireOp>,
+        heads: Vec<WireOp>,
+        state: String,
+    }
+    let w: Wire = serde_json::from_slice(bytes).context("checkpoint bundle is not JSON")?;
+    let op = |o: &WireOp| op_of_wire(&o.c, &o.s);
     Ok(CheckpointBundle {
-        proposal: op_of_wire(&v["proposal"])?,
-        signs: ops("signs")?,
-        heads: ops("heads")?,
-        state: b64_decode(v["state"].as_str().context("state")?).context("state is not base64")?,
+        proposal: op(&w.proposal)?,
+        signs: w.signs.iter().map(op).collect::<Result<_>>()?,
+        heads: w.heads.iter().map(op).collect::<Result<_>>()?,
+        state: b64_decode(&w.state).context("state is not base64")?,
     })
 }
 
@@ -2266,6 +2391,16 @@ pub(crate) fn adopt(
     trust: &BootstrapTrust,
     now: i64,
 ) -> Result<()> {
+    ensure!(
+        matches!(trust, BootstrapTrust::Anchor(_)),
+        "an existing device adopts a checkpoint with an anchor only"
+    );
+    ensure!(
+        bundle_prev(bundle)? != JOIN_ANCHOR_PREV,
+        "a join anchor is not a checkpoint: it is accepted only at enrollment"
+    );
+    // Before anything is deleted: signers and keys come from THIS device's table.
+    check_bundle(conn, bundle, trust)?;
     let (cut, ..) = propose_parts(&bundle.proposal)?;
     let cut_map = cut_of(cut);
     let mut stmt =
@@ -2338,7 +2473,7 @@ pub(crate) fn adopt(
     ] {
         conn.execute(&format!("DELETE FROM {t}"), [])?;
     }
-    bootstrap(conn, bundle, trust, now)?;
+    install(conn, bundle, false, now)?;
     for op in replay {
         let hash = op.hash();
         let seq = op.seq;
@@ -2365,19 +2500,19 @@ pub(crate) fn adopt(
 
 /// Record a bundle we fetched (a proposal blob) or adopt one (we are behind
 /// past the floor); returns the proposal hash.
-pub(crate) fn accept_bytes(
+pub(crate) fn accept_bundle(
     conn: &Connection,
-    bytes: &[u8],
+    bundle: CheckpointBundle,
     peer: &DeviceId,
     adopt_it: bool,
     now: i64,
 ) -> Result<[u8; 32]> {
-    let bundle = bundle_from_bytes(bytes)?;
+    let bundle = &bundle;
     let hash = bundle.proposal.hash();
     if adopt_it {
-        adopt(conn, &bundle, &BootstrapTrust::Anchor(peer.clone()), now)?;
+        adopt(conn, bundle, &BootstrapTrust::Anchor(peer.clone()), now)?;
     } else {
-        record(conn, &bundle, now)?;
+        record(conn, bundle, now)?;
     }
     Ok(hash)
 }

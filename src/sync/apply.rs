@@ -30,6 +30,18 @@ use crate::sync::limits::RESHARE_ITEMS_PER_OP;
 
 const MAX_STR: usize = 4096;
 const MAX_LIST: usize = 1024;
+/// A hybrid-wrapped key or share is a few KB at most.
+const MAX_SEALED_BYTES: usize = 8 * 1024;
+/// A credential payload (a password or a private key) after encryption.
+const MAX_CRED_BYTES: usize = 128 * 1024;
+const MAX_BATCH_BYTES: usize = 512 * 1024;
+
+fn cap(what: &str, len: usize, max: usize) -> std::result::Result<(), String> {
+    if len > max {
+        return Err(format!("{what} is over {max} bytes"));
+    }
+    Ok(())
+}
 
 pub type Touched = BTreeSet<(EntityKind, Uid)>;
 
@@ -49,20 +61,71 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
         }
         OpBody::IdentityUpsert { fields, .. } => validate_identity(fields),
         OpBody::GroupDelete { group_uid } => reserved_check(EntityKind::Group, group_uid),
-        OpBody::DeviceAdd { name, .. } => text("device name", name),
+        // A device name is shown in mails and on terminals: one plain line.
+        OpBody::DeviceAdd { name, .. } => line("device name", name),
+        OpBody::HeadAttest { device_id, .. } => {
+            if device_id.len() != 16
+                || !device_id
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            {
+                return Err("a head attestation names a device by 16 lowercase hex digits".into());
+            }
+            Ok(())
+        }
+        OpBody::ShareReshareSession { sealed, .. } | OpBody::ShareStorageKey { sealed, .. } => {
+            cap("a sealed key", sealed.len(), MAX_SEALED_BYTES)
+        }
+        OpBody::WrapKeyRotate {
+            mlkem_pub,
+            wrap_epoch,
+            ..
+        } => {
+            if *wrap_epoch == 0 {
+                return Err("wrap_epoch starts at 1".into());
+            }
+            cap("an ML-KEM key", mlkem_pub.len(), 2048)
+        }
+        OpBody::CredUpdate {
+            ciphertext,
+            wrapped_shares,
+            ..
+        } => {
+            cap("a credential", ciphertext.len(), MAX_CRED_BYTES)?;
+            if wrapped_shares.len() > MAX_LIST {
+                return Err("a credential names too many recipients".into());
+            }
+            wrapped_shares
+                .iter()
+                .try_for_each(|w| cap("a wrapped share", w.sealed.len(), MAX_SEALED_BYTES))
+        }
         OpBody::ShareReshareBatch {
             new_holders, items, ..
         } => {
             if items.len() > RESHARE_ITEMS_PER_OP || new_holders.len() > MAX_LIST {
                 return Err("reshare batch is over the item limit".into());
             }
-            Ok(())
+            let bytes: usize = items
+                .iter()
+                .map(|i| {
+                    i.sub_shares
+                        .iter()
+                        .map(|(d, s)| d.len() + s.len())
+                        .sum::<usize>()
+                        + i.commitments.iter().map(Vec::len).sum::<usize>()
+                })
+                .sum();
+            cap("a reshare batch", bytes, MAX_BATCH_BYTES)
         }
         OpBody::ShareReshareConfirmBatch { items, .. } => {
             if items.len() > RESHARE_ITEMS_PER_OP {
                 return Err("confirm batch is over the item limit".into());
             }
-            Ok(())
+            cap(
+                "a confirm batch",
+                items.iter().map(|i| i.sealed_share.len()).sum(),
+                MAX_BATCH_BYTES,
+            )
         }
         OpBody::ExemptionSet { slot, .. } => {
             if let Some(p) = slot {
@@ -112,9 +175,6 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
             }
             Ok(())
         }
-        OpBody::WrapKeyRotate { wrap_epoch, .. } if *wrap_epoch == 0 => {
-            Err("wrap_epoch starts at 1".into())
-        }
         _ => Ok(()),
     }
 }
@@ -126,18 +186,29 @@ fn reserved_check(kind: EntityKind, uid: &Uid) -> std::result::Result<(), String
     Ok(())
 }
 
+/// Free text: line breaks and tabs are fine, every other control character (C0, DEL, C1,
+/// carriage return) is not: terminals and config files read them as commands.
 fn text(what: &str, s: &str) -> std::result::Result<(), String> {
     if s.len() > MAX_STR {
         return Err(format!("{what} is too long"));
     }
-    if s.chars().any(|c| c == '\0') {
-        return Err(format!("{what} contains NUL"));
+    if s.chars().any(|c| c.is_control() && c != '\n' && c != '\t') {
+        return Err(format!("{what} contains a control character"));
+    }
+    Ok(())
+}
+
+/// One plain line: no control character at all.
+fn line(what: &str, s: &str) -> std::result::Result<(), String> {
+    text(what, s)?;
+    if s.chars().any(char::is_control) {
+        return Err(format!("{what} must be a single line"));
     }
     Ok(())
 }
 
 fn name_ok(what: &str, s: &str) -> std::result::Result<(), String> {
-    text(what, s)?;
+    line(what, s)?;
     if s.trim().is_empty() || s != s.trim() {
         return Err(format!("{what} must be non-empty and trimmed"));
     }

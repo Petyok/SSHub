@@ -319,3 +319,27 @@ fn the_emailed_code_factor_is_registered_only_on_its_sender() {
             .is_none()
     );
 }
+
+#[test]
+fn a_repeated_export_continues_the_open_proposal() {
+    let r = ring(2);
+    let run = || {
+        export_flow(
+            &r[0].store,
+            &r[0].id,
+            60,
+            std::path::Path::new("/nonexistent/x.csv"),
+            0,
+            &|| 1_000,
+            &mut |_| Ok(None),
+        )
+        .unwrap_err()
+        .to_string()
+    };
+    run();
+    run();
+    let n = crate::sync::quorum::ops_of(&r[0].store, "BulkExport", None)
+        .unwrap()
+        .len();
+    assert_eq!(n, 1, "the second command must not start a second ceremony");
+}

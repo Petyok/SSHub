@@ -858,7 +858,15 @@ fn recovery(
             )
         }
         RecoveryCmd::Status => {
-            let ops = crate::sync::quorum::ops_of(store, "PhoneReenroll", None)?;
+            // Applied ones and those still waiting for review on this device.
+            let mut ops = crate::sync::quorum::ops_of(store, "PhoneReenroll", None)?;
+            for p in store.sync_pending()? {
+                if matches!(p.body, OpBody::PhoneReenroll { .. })
+                    && !ops.iter().any(|o| o.hash() == p.hash())
+                {
+                    ops.push(p);
+                }
+            }
             let mut lines = Vec::new();
             let mut js = Vec::new();
             for op in &ops {
@@ -989,13 +997,29 @@ pub(crate) fn export_flow(
     unlock: &mut dyn FnMut(&crate::sync::oplog::HostUid) -> Result<Option<String>>,
 ) -> Result<Report> {
     let me = id.public().device_id();
-    let op = store.sync_append_local(
-        id,
-        OpBody::BulkExport {
-            requester: me.clone(),
-            window_secs: window,
-        },
-    )?;
+    // A repeated command continues the open proposal instead of restarting the ceremony.
+    let mut open = None;
+    for o in crate::sync::quorum::ops_of(store, "BulkExport", Some(&me))?
+        .into_iter()
+        .rev()
+    {
+        let same =
+            matches!(&o.body, OpBody::BulkExport { window_secs, .. } if *window_secs == window);
+        if same && !ceremony::red_status(store, &o, clock())?.expired {
+            open = Some(o);
+            break;
+        }
+    }
+    let op = match open {
+        Some(o) => o,
+        None => store.sync_append_local(
+            id,
+            OpBody::BulkExport {
+                requester: me.clone(),
+                window_secs: window,
+            },
+        )?,
+    };
     let started = clock();
     // Our own proposal is applied locally at once; the ceremony is what lets the
     // OTHER holders release shares, so wait for it before opening anything.
