@@ -485,6 +485,7 @@ fn name_taken(conn: &Connection, kind: EntityKind, uid: &Uid, name: &str) -> Res
     Ok(cached || row)
 }
 
+#[cfg(test)]
 pub(crate) fn effective_tier(conn: &Connection, op: &Op) -> Result<OpTier> {
     tier_of(conn, op, false)
 }

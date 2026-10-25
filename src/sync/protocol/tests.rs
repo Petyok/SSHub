@@ -1958,6 +1958,6 @@ fn rv2_equivocation_proofs_share_a_byte_budget_in_the_heads_message() {
         total <= MAX_FORK_BYTES,
         "the proofs take {total} bytes of a Heads message"
     );
-    let frame = serde_json::to_value(&SyncMsg::Heads(heads)).unwrap();
+    let frame = serde_json::to_value(SyncMsg::Heads(heads)).unwrap();
     assert!(crate::sync::transport::write_frame(&mut Vec::new(), &frame).is_ok());
 }
