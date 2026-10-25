@@ -130,9 +130,18 @@ fn adapter_name() -> Option<String> {
     let rt = runtime().ok()?;
     rt.block_on(async {
         let session = bluer::Session::new().await.ok()?;
-        let adapter = session.default_adapter().await.ok()?;
+        let adapter = adapter_of(&session).await.ok()?;
         Some(adapter.name().to_string())
     })
+}
+
+/// The adapter to serve on: the one named by `SSHUB_BLE_ADAPTER` (for example `hci1` on a machine
+/// with several, or a virtual controller in a test), else BlueZ's default.
+async fn adapter_of(session: &bluer::Session) -> bluer::Result<bluer::Adapter> {
+    match std::env::var("SSHUB_BLE_ADAPTER") {
+        Ok(name) if !name.is_empty() => session.adapter(&name),
+        _ => session.default_adapter().await,
+    }
 }
 
 fn uuid(s: &str) -> Uuid {
@@ -161,8 +170,7 @@ async fn serve(
     let session = bluer::Session::new()
         .await
         .map_err(|e| format!("cannot reach bluetoothd (is it running?): {e}"))?;
-    let adapter = session
-        .default_adapter()
+    let adapter = adapter_of(&session)
         .await
         .map_err(|e| format!("no Bluetooth adapter: {e}"))?;
     adapter
@@ -315,3 +323,6 @@ async fn serve(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod vhci_tests;
