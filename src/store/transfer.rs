@@ -746,6 +746,26 @@ pub fn apply_transfer_plan_with_secrets(
     mode: TransferMode,
     secrets: Option<SecretStores<'_>>,
 ) -> anyhow::Result<TransferResult> {
+    // A transfer writes through the connection-level helpers: whatever it created, changed or
+    // removed in a profile whose ring is active is told to host sync afterwards.
+    let before_src = src_store.entity_uids()?;
+    let before_dest = dest_store.entity_uids()?;
+    let result = apply_transfer_plan_inner(src_store, dest_store, plan, mode, secrets);
+    let src_sync = src_store.reconcile_after(before_src);
+    let dest_sync = dest_store.reconcile_after(before_dest);
+    let result = result?;
+    src_sync?;
+    dest_sync?;
+    Ok(result)
+}
+
+fn apply_transfer_plan_inner(
+    src_store: &mut LauncherStore,
+    dest_store: &mut LauncherStore,
+    plan: &TransferPlan,
+    mode: TransferMode,
+    secrets: Option<SecretStores<'_>>,
+) -> anyhow::Result<TransferResult> {
     // Source rows captured up front (ids shift under us on move).
     let src_hosts: Vec<ManagedHost> = src_store.list_hosts()?;
     let src_groups: Vec<HostGroup> = src_store.list_groups()?;

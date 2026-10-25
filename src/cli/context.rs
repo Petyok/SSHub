@@ -39,6 +39,11 @@ impl CliContext {
 
         let metadata = Arc::new(MetadataDb::open(paths.metadata_db())?);
         let store = Arc::new(LauncherStore::open(paths.launcher_db())?);
+        crate::sync::entity_capture::install(
+            &store,
+            &paths,
+            crate::credentials::open_ungated_for_profile,
+        )?;
         let resolver = SshConfigResolver::with_config_path(paths.ssh_config.clone());
 
         let mut ctx = Self {

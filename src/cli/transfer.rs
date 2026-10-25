@@ -238,6 +238,16 @@ fn run_transfer(
     // locked at once — snapshot DTOs are built before any dest write.
     let src_store = LauncherStore::open(ctx.profile.launcher_db())?;
     let mut dest_store = LauncherStore::open(dest_paths.launcher_db())?;
+    crate::sync::entity_capture::install(
+        &src_store,
+        &ctx.profile,
+        crate::credentials::open_ungated_for_profile,
+    )?;
+    crate::sync::entity_capture::install(
+        &dest_store,
+        &dest_paths,
+        crate::credentials::open_ungated_for_profile,
+    )?;
 
     let snapshot = capture_snapshot(&src_store)?;
     let dest_existing = capture_dest_index(&dest_store, &targs.dest_profile)?;

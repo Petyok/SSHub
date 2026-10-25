@@ -17,6 +17,7 @@ pub(crate) use hosts::{
     create_group_on, create_host_on, delete_group_on, delete_host_on, reject_option_like,
     update_group_on, update_host_on,
 };
+pub(crate) use hosts::{load_group_by_id, load_host_by_id};
 pub(crate) use identities::{create_identity_on, delete_identity_on, update_identity_on};
 pub(crate) use migrate::now_ts;
 pub use transfer::{
@@ -30,7 +31,10 @@ pub use types::{
     NewIdentity, NewLogBookmark, NewSnippet, NewTunnel, Snippet, SnippetUpdate,
     SshConfigHostImport, Tunnel, TunnelType, UpsertSshConfigOutcome, Workspace,
 };
-pub(crate) use uid::{group_id_by_uid_on, host_id_by_uid_on, identity_id_by_uid_on};
+pub(crate) use uid::{
+    group_id_by_uid_on, group_uid_on, host_id_by_uid_on, host_uid_on, identity_id_by_uid_on,
+    identity_uid_on,
+};
 pub use uid::{
     uid_from_hex, uid_hex, GroupUid, HostUid, IdentityUid, Uid, DEFAULT_IDENTITY_UID,
     FAVORITES_GROUP_UID,
@@ -47,6 +51,26 @@ use std::sync::Mutex;
 /// `MetadataDb` until App wiring lands in later phases.
 pub struct LauncherStore {
     conn: Mutex<Connection>,
+    capture: std::sync::OnceLock<Box<dyn LocalChangeSink>>,
+}
+
+/// What a local write touched, for [`LocalChangeSink`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeScope {
+    Host(i64),
+    Group(i64),
+    Identity(i64),
+    /// The row is gone; its stable uid is all that is left.
+    Deleted(crate::sync::oplog::tier::EntityKind, Uid),
+    /// Something that can move many rows (a group delete, a bulk transfer).
+    Everything,
+}
+
+/// Told, after every local write to hosts, groups and identities, which rows
+/// changed (host sync turns that into ops). It is NOT told about writes that
+/// come from applying a synced op: those use the connection-level helpers.
+pub trait LocalChangeSink: Send + Sync {
+    fn changed(&self, conn: &Connection, scope: ChangeScope) -> Result<()>;
 }
 
 impl LauncherStore {
@@ -68,6 +92,7 @@ impl LauncherStore {
 
         let store = Self {
             conn: Mutex::new(conn),
+            capture: std::sync::OnceLock::new(),
         };
         store.seed_default_identity()?;
         Ok(store)
@@ -90,9 +115,72 @@ impl LauncherStore {
         migrate::run_migrations(&conn, &path)?;
         let store = Self {
             conn: Mutex::new(conn),
+            capture: std::sync::OnceLock::new(),
         };
         store.seed_default_identity()?;
         Ok(store)
+    }
+
+    /// Install the sink once; a second call is ignored.
+    pub fn set_local_change_sink(&self, sink: Box<dyn LocalChangeSink>) {
+        let _ = self.capture.set(sink);
+    }
+
+    pub(crate) fn notify_change(&self, scope: ChangeScope) -> Result<()> {
+        match self.capture.get() {
+            Some(sink) => self.with_conn(|conn| sink.changed(conn, scope)),
+            None => Ok(()),
+        }
+    }
+
+    /// The stable ids of every replicated row now (what a bulk operation may delete).
+    pub(crate) fn entity_uids(
+        &self,
+    ) -> Result<std::collections::BTreeSet<(crate::sync::oplog::tier::EntityKind, Uid)>> {
+        if self.capture.get().is_none() {
+            return Ok(Default::default());
+        }
+        use crate::sync::oplog::tier::EntityKind;
+        self.with_conn(|conn| {
+            let mut out = std::collections::BTreeSet::new();
+            for (kind, sql) in [
+                (
+                    EntityKind::Host,
+                    "SELECT uid FROM hosts WHERE source = 'launcher' AND uid IS NOT NULL",
+                ),
+                (
+                    EntityKind::Group,
+                    "SELECT uid FROM host_groups WHERE reserved = 0 AND uid IS NOT NULL",
+                ),
+                (
+                    EntityKind::Identity,
+                    "SELECT uid FROM identities WHERE uid IS NOT NULL",
+                ),
+            ] {
+                let mut st = conn.prepare(sql)?;
+                for raw in st.query_map([], |r| r.get::<_, Vec<u8>>(0))? {
+                    if let Ok(uid) = Uid::try_from(raw?) {
+                        out.insert((kind, uid));
+                    }
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// After a bulk operation: whatever vanished is a deletion, then everything is reconciled.
+    pub(crate) fn reconcile_after(
+        &self,
+        before: std::collections::BTreeSet<(crate::sync::oplog::tier::EntityKind, Uid)>,
+    ) -> Result<()> {
+        if self.capture.get().is_none() {
+            return Ok(());
+        }
+        let now = self.entity_uids()?;
+        for (kind, uid) in before.difference(&now) {
+            self.notify_change(ChangeScope::Deleted(*kind, *uid))?;
+        }
+        self.notify_change(ChangeScope::Everything)
     }
 
     pub(crate) fn with_conn<F, T>(&self, f: F) -> Result<T>

@@ -955,6 +955,11 @@ impl App {
 
         let metadata = Arc::new(MetadataDb::open(paths.metadata_db())?);
         let store = Arc::new(LauncherStore::open(launcher_path)?);
+        crate::sync::entity_capture::install(
+            &store,
+            &paths,
+            crate::credentials::open_ungated_for_profile,
+        )?;
         let resolver = Box::new(SshConfigResolver::with_config_path(
             paths.ssh_config.clone(),
         ));
