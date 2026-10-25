@@ -516,3 +516,346 @@ fn a_write_whose_recording_fails_still_succeeds_and_the_next_publish_repairs_it(
     publish_pending(&store, &id).unwrap();
     assert_eq!(ops(&store, "HostUpsert").len(), 1);
 }
+
+// ======================================================== review round 2 (capture): N4 N5 N7 N8 N9 S1 S2
+
+fn id_node() -> (Node, Arc<DeviceIdentity>) {
+    let id = Arc::new(DeviceIdentity::generate());
+    let store = LauncherStore::open_in_memory().unwrap();
+    store
+        .sync_register_device(
+            &id.public(),
+            "me",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    install_with_identity(&store, id.clone()).unwrap();
+    (Node { store }, id)
+}
+
+#[test]
+fn a_local_edit_does_not_clear_a_reference_the_projection_could_not_resolve() {
+    let ((a, aid), (b, bid)) = (id_node(), id_node());
+    for (x, y) in [(&a, &bid), (&b, &aid)] {
+        x.store
+            .sync_register_device(
+                &y.public(),
+                "peer",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let ident = a
+        .store
+        .create_identity(&NewIdentity {
+            name: "ci".into(),
+            username: Some("u".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    let host = a
+        .store
+        .create_host(&NewHost::launcher("h", "h.example"))
+        .unwrap();
+    a.store
+        .update_host(
+            host.id,
+            &HostUpdate {
+                identity_id: Some(Some(ident.id)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    pull(&b.store, &a.store);
+    // b approves the host (and its identity reference) but not the identity itself.
+    for op in b.store.sync_pending().unwrap() {
+        if matches!(op.body, OpBody::HostUpsert { .. }) {
+            b.store.sync_resolve_pending(&op.hash(), true).unwrap();
+        }
+    }
+    let bh = b
+        .store
+        .list_hosts()
+        .unwrap()
+        .into_iter()
+        .find(|h| h.name == "h")
+        .expect("the approved host exists on b");
+    b.store
+        .update_host(
+            bh.id,
+            &HostUpdate {
+                notes: Some(Some("only a note".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let bdid = bid.public().device_id();
+    let own: Vec<Op> = ops(&b.store, "HostUpsert")
+        .into_iter()
+        .filter(|o| o.device_id == bdid)
+        .collect();
+    let f = host_fields(own.last().expect("b recorded its edit"));
+    assert_eq!(
+        (f.notes.clone(), f.identity_uid),
+        (Some(Some("only a note".into())), None),
+        "the edit of a note also says something about the identity: {f:?}"
+    );
+}
+
+#[test]
+fn one_field_the_op_validator_refuses_does_not_block_later_captures_of_that_host() {
+    let (n, _) = id_node();
+    let host = n
+        .store
+        .create_host(&NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    let _ = n.store.update_host(
+        host.id,
+        &HostUpdate {
+            notes: Some(Some("n".repeat(5000))),
+            ..Default::default()
+        },
+    );
+    n.store
+        .update_host(
+            host.id,
+            &HostUpdate {
+                label: Some(Some("x".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let uid = n.store.host_uid(host.id).unwrap().unwrap();
+    let view = n
+        .store
+        .with_conn(|c| crate::sync::apply::effective_view(c, EntityKind::Host, &uid))
+        .unwrap();
+    assert_eq!(
+        view.fields.get("label"),
+        Some(&Value::String("x".into())),
+        "a later, valid edit never reached the ring"
+    );
+}
+
+#[test]
+fn publish_pending_publishes_an_edit_that_missed_the_ring() {
+    let (n, id) = id_node();
+    let host = n
+        .store
+        .create_host(&NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    // The recording of this edit failed (a locked key, a full disk): the row is saved, no op.
+    n.store
+        .with_conn(|c| {
+            crate::store::update_host_on(
+                c,
+                host.id,
+                &HostUpdate {
+                    notes: Some(Some("edited".into())),
+                    ..Default::default()
+                },
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    publish_pending(&n.store, &id).unwrap();
+    assert_eq!(
+        ops(&n.store, "HostUpsert").len(),
+        2,
+        "the unrecorded edit was not published by the next sync round"
+    );
+}
+
+#[test]
+fn one_unpublishable_host_does_not_stop_the_sync_round_or_the_hosts_after_it() {
+    let (n, id) = id_node();
+    n.store
+        .with_conn(|c| {
+            crate::store::create_host_on(c, &NewHost::launcher("bad\u{7}name", "10.0.0.9"))?;
+            crate::store::create_host_on(c, &NewHost::launcher("good", "10.0.0.8"))?;
+            Ok(())
+        })
+        .unwrap();
+    let r = publish_pending(&n.store, &id);
+    assert!(
+        r.is_ok() && !ops(&n.store, "HostUpsert").is_empty(),
+        "publish_pending: {:?}; ops recorded: {}",
+        r.as_ref().map_err(|e| format!("{e:#}")),
+        ops(&n.store, "HostUpsert").len()
+    );
+}
+
+#[test]
+fn a_note_edit_on_a_synced_in_host_does_not_pin_its_port() {
+    let ((a, aid), (b, bid)) = (id_node(), id_node());
+    for (x, y) in [(&a, &bid), (&b, &aid)] {
+        x.store
+            .sync_register_device(
+                &y.public(),
+                "peer",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    // The ring's host names no port: it inherits its group's or ssh's default.
+    a.store
+        .sync_append_local(
+            &aid,
+            OpBody::HostUpsert {
+                host_uid: [9; 16],
+                fields: crate::sync::oplog::op::HostFields {
+                    name: Some("h".into()),
+                    address: Some("h.example".into()),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    pull(&b.store, &a.store);
+    approve_all(&b.store);
+    let bh = b
+        .store
+        .list_hosts()
+        .unwrap()
+        .into_iter()
+        .find(|h| h.name == "h")
+        .expect("the host reached b");
+    b.store
+        .update_host(
+            bh.id,
+            &HostUpdate {
+                notes: Some(Some("a note".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let bdid = bid.public().device_id();
+    let own: Vec<Op> = ops(&b.store, "HostUpsert")
+        .into_iter()
+        .filter(|o| o.device_id == bdid)
+        .collect();
+    let f = host_fields(own.last().expect("b recorded its edit"));
+    assert_eq!(
+        (f.notes.clone(), f.port),
+        (Some(Some("a note".into())), None),
+        "a note edit also sets the port (a Yellow field for every other device): {f:?}"
+    );
+}
+
+#[test]
+fn a_refused_field_is_reported_and_the_rest_of_the_edit_still_reaches_the_ring() {
+    let (n, _) = id_node();
+    let host = n
+        .store
+        .create_host(&NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    n.store
+        .update_host(
+            host.id,
+            &HostUpdate {
+                notes: Some(Some("n".repeat(5000))),
+                label: Some(Some("fine".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let warning = n.store.take_sync_warning().expect("the user is told");
+    assert!(warning.contains("notes"), "{warning}");
+    let last = ops(&n.store, "HostUpsert").pop().unwrap();
+    let f = host_fields(&last);
+    assert_eq!(f.label, Some(Some("fine".into())));
+    assert_eq!(f.notes, None, "the refused note is not in the op");
+}
+
+#[test]
+fn the_device_key_is_loaded_before_the_store_connection_is_taken() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    struct Probe {
+        store: Arc<LauncherStore>,
+        ran: Arc<AtomicBool>,
+    }
+    impl LocalChangeSink for Probe {
+        fn prepare(&self) -> Result<()> {
+            // Taking the connection here would deadlock if the caller still held it.
+            self.store.with_conn(|_| Ok(()))?;
+            self.ran.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        fn changed(&self, _: &Connection, _: ChangeScope) -> Result<()> {
+            Ok(())
+        }
+    }
+    let store = Arc::new(LauncherStore::open_in_memory().unwrap());
+    store
+        .sync_register_device(
+            &DeviceIdentity::generate().public(),
+            "me",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    let ran = Arc::new(AtomicBool::new(false));
+    store.set_local_change_sink(Box::new(Probe {
+        store: store.clone(),
+        ran: ran.clone(),
+    }));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let s = store.clone();
+    std::thread::spawn(move || {
+        let _ = s.create_host(&NewHost::launcher("web", "10.0.0.1"));
+        let _ = tx.send(());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(20))
+        .expect("prepare ran under the connection lock: deadlock");
+    assert!(ran.load(Ordering::SeqCst));
+}
+
+#[test]
+fn a_profile_in_a_ring_without_its_device_key_never_gets_a_new_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let paths = ProfilePaths {
+        data_root: dir.path().to_path_buf(),
+        id: "t".into(),
+        name: "t".into(),
+        root: dir.path().to_path_buf(),
+        config_file: dir.path().join("config.toml"),
+        ssh_config: dir.path().join("ssh_config"),
+        compat: false,
+    };
+    let store = LauncherStore::open_in_memory().unwrap();
+    store
+        .sync_register_device(
+            &DeviceIdentity::generate().public(),
+            "someone",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    install(&store, &paths, |_| Box::new(MemoryPasswordStore::default())).unwrap();
+    let devices_before = store.sync_devices().unwrap().len();
+    store
+        .create_host(&NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    let warning = store.take_sync_warning().expect("refused with a warning");
+    assert!(warning.contains("device key"), "{warning}");
+    assert_eq!(
+        store.sync_devices().unwrap().len(),
+        devices_before,
+        "no new holder"
+    );
+    assert!(!crate::sync::identity_store::key_path(&paths).exists());
+    assert_eq!(ops(&store, "HostUpsert").len(), 0);
+}

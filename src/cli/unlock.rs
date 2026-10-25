@@ -18,6 +18,8 @@ use crate::sync::runtime::RING_SECRET_KEY;
 /// How long a command waits for an attended holder to approve a share release
 /// (`SSHUB_UNLOCK_WAIT`, seconds).
 const DEFAULT_UNLOCK_WAIT_SECS: u64 = 120;
+/// No command waits longer than an hour for a holder, whatever the variable says.
+const MAX_UNLOCK_WAIT_SECS: u64 = 3600;
 /// Pause between looks at the holders.
 const POLL_EVERY: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -25,7 +27,8 @@ fn unlock_wait() -> std::time::Duration {
     let secs = std::env::var("SSHUB_UNLOCK_WAIT")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(DEFAULT_UNLOCK_WAIT_SECS);
+        .unwrap_or(DEFAULT_UNLOCK_WAIT_SECS)
+        .min(MAX_UNLOCK_WAIT_SECS);
     std::time::Duration::from_secs(secs)
 }
 
@@ -35,7 +38,11 @@ fn wait_for_grant(
     every: std::time::Duration,
     mut poll: impl FnMut() -> Option<Share>,
 ) -> Option<Share> {
-    let deadline = std::time::Instant::now() + wait;
+    let deadline = std::time::Instant::now()
+        .checked_add(wait)
+        .unwrap_or_else(|| {
+            std::time::Instant::now() + std::time::Duration::from_secs(MAX_UNLOCK_WAIT_SECS)
+        });
     loop {
         if let Some(share) = poll() {
             return Some(share);

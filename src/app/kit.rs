@@ -115,6 +115,14 @@ fn default_dir_from(
 /// Sheets this process wrote (the kit, the paper phrase): the quit reminder lists them.
 static WRITTEN: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
 
+/// A file with secrets this run wrote by its own means (the export CSV): the quit reminder lists it.
+pub fn note_written(path: &Path) {
+    WRITTEN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(path.to_path_buf());
+}
+
 /// The sheets written in this run that are still on disk.
 pub fn sheets_left() -> Vec<std::path::PathBuf> {
     let written = WRITTEN.lock().unwrap_or_else(|e| e.into_inner());
@@ -145,10 +153,7 @@ pub fn write_sheet(path: &Path, html: &str) -> std::io::Result<()> {
         .open(path)?;
     file.write_all(html.as_bytes())?;
     file.flush()?;
-    WRITTEN
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push(path.to_path_buf());
+    note_written(path);
     Ok(())
 }
 

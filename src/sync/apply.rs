@@ -1022,8 +1022,14 @@ fn project_host(
 // ---------------------------------------------------------------- hop render
 
 /// Render a wire ProxyJump: `#uid` tokens become the local name of that host,
-/// plain tokens pass through. `None` when a token cannot be rendered (unknown
-/// or deleted host, name that is not a valid hop): the column is then cleared.
+/// plain tokens pass through. `None` when a token cannot be rendered because its host is
+/// unknown or deleted: the column is then cleared. A host whose name is not a valid hop
+/// (renamed to "bastion two") renders as [`UNUSABLE_HOP_PREFIX`] plus its uid: that is not a
+/// valid hop, so a connection through it is REFUSED (`jump_error`) instead of silently going
+/// direct past the bastion the user configured.
+/// What a hop shows as when its host's name cannot be a hop token (never a valid hop).
+pub const UNUSABLE_HOP_PREFIX: &str = "#renamed-unusable-";
+
 pub fn render_hops(conn: &Connection, wire: &str) -> Result<Option<String>> {
     if crate::map::is_jump_none(wire) {
         return Ok(Some(wire.trim().to_string()));
@@ -1044,7 +1050,8 @@ pub fn render_hops(conn: &Connection, wire: &str) -> Result<Option<String>> {
                     .optional()?;
                 match name {
                     Some(n) if crate::map::hops::token_issue(&n).is_none() => n,
-                    _ => return Ok(None),
+                    Some(_) => format!("{UNUSABLE_HOP_PREFIX}{}", uid_hex(&uid)),
+                    None => return Ok(None),
                 }
             }
             None => match crate::map::hops::validate_raw(token) {

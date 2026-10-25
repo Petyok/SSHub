@@ -175,6 +175,12 @@ fn sync_phone_enroll_verifies_a_phone_and_proposes_it_as_a_red_holder() {
     let mut s = EnrollSession::new(&t.store, &t.id, "terminal", false);
     let mut out = Vec::new();
     s.start(&mut out);
+    let first_lines = lines(&out);
+    assert!(
+        first_lines[0].starts_with("companion: ")
+            && first_lines[0].contains(crate::sync::companion::COMPANION_FINGERPRINT),
+        "the page fingerprint comes first: {first_lines:?}"
+    );
     let first = value_of(&lines(&out), "frame");
     assert!(matches!(
         EnrollFrame::decode(&B64.decode(first).unwrap()).unwrap(),
@@ -332,8 +338,29 @@ fn sync_share_request_challenge_decodes_and_the_phones_reply_opens_the_credentia
             &crate::sync::share_release::share_to_bytes(&share),
         ),
     };
-    let got = ch.open(&d[0].store, &B64.encode(reply.encode())).unwrap();
+    let (got, warning) = ch.open(&d[0].store, &B64.encode(reply.encode())).unwrap();
     assert_eq!(got, share);
+    assert!(warning.is_none());
+    // A reply whose courier ops cannot be taken in still yields its share, with a warning.
+    let ext = crate::sync::share_release::ReplyExt {
+        approval_sig: d[2].id.sign(&ch.challenge.binding_preimage()),
+        ops: vec![(vec![1, 2, 3], [0; 64])],
+        snapshot: None,
+    };
+    let mut plain_bytes = crate::sync::share_release::share_to_bytes(&share);
+    plain_bytes.extend_from_slice(&ext.encode());
+    let with_ext = ShareResponseWire {
+        request_id: wire.request_id,
+        ciphertext: crate::sync::crypto::DeviceIdentity::seal_to(
+            &wire.eph_x25519_pub,
+            &plain_bytes,
+        ),
+    };
+    let (kept, warning) = ch
+        .open(&d[0].store, &B64.encode(with_ext.encode()))
+        .unwrap();
+    assert_eq!(kept, share, "the valid share survives a failing extension");
+    assert!(warning.unwrap().contains("courier ops not kept"));
     // A reply for another request is refused.
     let other = ShareResponseWire {
         request_id: wire.request_id + 1,

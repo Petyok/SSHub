@@ -3352,3 +3352,69 @@ fn a_non_ascii_byte_in_a_state_hex_field_does_not_panic_the_cache_rebuild() {
         "the store is still usable (not poisoned)"
     );
 }
+
+// ---- review round 2, app F1: a rename must not silently drop a reviewed ProxyJump
+
+fn bastion_ring() -> (Vec<Peer>, impl Fn(&Peer) -> Option<String>) {
+    let r = ring(2);
+    let (a, b) = (&r[0], &r[1]);
+    a.append(upsert(1, hf("bastion", "10.0.0.1")));
+    let mut web = hf("web", "10.0.0.2");
+    web.proxy_jump = Some(Some(format!("#{}", uid_hex(&uid(1)))));
+    a.append(upsert(2, web));
+    pull(b, a);
+    b.approve_all();
+    let jump = |p: &Peer| p.host(&uid(2)).unwrap().proxy_jump;
+    assert_eq!(jump(b).as_deref(), Some("bastion"), "the reviewed jump");
+    (r, jump)
+}
+
+#[test]
+fn renaming_a_hop_target_to_an_unusable_name_waits_for_review_and_keeps_the_jump() {
+    let (r, jump) = bastion_ring();
+    let (a, b) = (&r[0], &r[1]);
+    a.append(upsert(
+        1,
+        HostFields {
+            name: Some("bastion two".into()),
+            ..Default::default()
+        },
+    ));
+    pull(b, a);
+    assert_eq!(
+        b.pending(),
+        1,
+        "a rename that breaks the hop of others is Yellow"
+    );
+    assert_eq!(
+        jump(b).as_deref(),
+        Some("bastion"),
+        "nothing changed before review"
+    );
+}
+
+#[test]
+fn an_approved_unusable_hop_name_refuses_connections_instead_of_going_direct() {
+    let (r, jump) = bastion_ring();
+    let (a, b) = (&r[0], &r[1]);
+    a.append(upsert(
+        1,
+        HostFields {
+            name: Some("bastion two".into()),
+            ..Default::default()
+        },
+    ));
+    pull(b, a);
+    b.approve_all();
+    let now = jump(b).expect("a jump is never cleared by a rename");
+    assert!(
+        now.starts_with(crate::sync::apply::UNUSABLE_HOP_PREFIX),
+        "{now}"
+    );
+    assert!(!crate::map::hops::jump_is_valid(&now));
+    let refused = b.store.resolve_connection(&b.host(&uid(2)).unwrap());
+    assert!(
+        refused.is_err(),
+        "the connection is refused, not made direct: {refused:?}"
+    );
+}
