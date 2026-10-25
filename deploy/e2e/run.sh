@@ -41,8 +41,15 @@ done
 echo "mailpit ready"
 
 fail=0
+# deploy/e2e/only.txt (optional, one scenario name prefix per word) limits the run to those scenarios.
+only=$(cat "$HERE/only.txt" 2>/dev/null || true)
 for s in "$HERE"/scenarios/*.sh; do
   name=$(basename "$s" .sh)
+  if [ -n "$only" ]; then
+    hit=0
+    for o in $only; do case "$name" in "$o"*) hit=1 ;; esac; done
+    [ "$hit" = 1 ] || continue
+  fi
   echo "$(date -u +%H:%M:%S) scenario $name"
   if ! sh "$s"; then
     fail=$((fail + 1))

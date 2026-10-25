@@ -12,10 +12,11 @@ check "peer-b records peer-a directly" "enroll_peer peer-b peer-a"
 check "peer-a adds host web40" "peer peer-a $SSHUB host add --name web40 --address web40.internal"
 
 # Overwrite the first byte of every locally authored canonical payload on peer-a.
-# zeroblob(1) keeps the SQL free of single quotes so it survives the shell.
+# zeroblob(1) keeps the SQL free of single quotes so it survives the shell. The CAST matters: || yields TEXT,
+# and a TEXT canonical makes the serving side fail to read its own log instead of sending a tampered op.
 tamper='db=$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)
 [ -n "$db" ] || { echo "no launcher.db"; exit 1; }
-sqlite3 "$db" "UPDATE sync_ops SET canonical = zeroblob(1) || substr(canonical, 2) WHERE local = 1;"
+sqlite3 "$db" "UPDATE sync_ops SET canonical = CAST(zeroblob(1) || substr(canonical, 2) AS BLOB) WHERE local = 1;"
 test "$(sqlite3 "$db" "SELECT count(*) FROM sync_ops WHERE local = 1;")" -gt 0'
 tout=$(psh peer-a "$tamper" 2>&1)
 rc=$?
