@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use super::*;
 use crate::app::tests::MemoryPasswordStore;
+use crate::store::transfer::apply_transfer_plan_with_secrets;
 use crate::store::{
-    apply_transfer_plan_with_secrets, build_transfer_plan, DestIndex, GroupTransferMode,
-    HostUpdate, NewHost, NewHostGroup, NewIdentity, TransferMode, TransferSelection,
-    TransferSnapshot,
+    build_transfer_plan, DestIndex, GroupTransferMode, HostUpdate, NewHost, NewHostGroup,
+    NewIdentity, TransferMode, TransferSelection, TransferSnapshot,
 };
 use crate::sync::oplog::{Attendance, DeviceKind, DeviceRole, Op, VerifiedBy};
 
@@ -241,6 +241,7 @@ fn ssh_config_hosts_are_the_machines_own_and_never_replicate() {
             proxy_jump: None,
             forward_agent: false,
             remote_command: None,
+            transport: Default::default(),
             ssh_config_hash: "h".into(),
             tags: vec![],
             notes: None,

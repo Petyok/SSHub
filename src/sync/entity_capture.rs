@@ -32,9 +32,12 @@ use crate::store::{
     HostSource, LauncherStore, LocalChangeSink, Uid, FAVORITES_GROUP_UID,
 };
 
+/// Where the device key lives and how to open the profile's credential store.
+type KeySource = (ProfilePaths, fn(&ProfilePaths) -> Box<dyn PasswordStore>);
+
 pub struct EntityCapture {
     /// Where the device key lives; `None` when the identity was handed in (tests).
-    source: Option<(ProfilePaths, fn(&ProfilePaths) -> Box<dyn PasswordStore>)>,
+    source: Option<KeySource>,
     identity: Mutex<Option<Arc<DeviceIdentity>>>,
 }
 
