@@ -891,6 +891,35 @@ fn a_fresh_store_bootstraps_over_the_wire_from_a_pruned_peer() {
             },
         )
         .unwrap();
+    eprintln!(
+        "DBG f devices {:?}",
+        f.store
+            .sync_devices()
+            .unwrap()
+            .iter()
+            .map(|d| (d.id.clone(), format!("{:?}{:?}", d.kind, d.attendance)))
+            .collect::<Vec<_>>()
+    );
+    eprintln!(
+        "DBG f heads {:?}",
+        f.store
+            .sync_chain_heads()
+            .unwrap()
+            .iter()
+            .map(|(d, s, _)| (d.clone(), *s))
+            .collect::<Vec<_>>()
+    );
+    eprintln!(
+        "DBG a heads {:?} b={} a={}",
+        a.store
+            .sync_chain_heads()
+            .unwrap()
+            .iter()
+            .map(|(d, s, _)| (d.clone(), *s))
+            .collect::<Vec<_>>(),
+        b.did,
+        a.did
+    );
     let (fs, _) = ok(round(&f, a));
     assert!(fs.adopted.is_none(), "{fs:?}");
     // Work after the adoption reaches the newcomer by tail.
