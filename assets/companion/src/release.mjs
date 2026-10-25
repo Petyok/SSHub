@@ -6,7 +6,7 @@ import {
   bytesOf, concat, edSign, edVerify, hexOf, sasWords, sealedBoxSeal, bip39Encode,
 } from './lib.mjs';
 import { decodeChallenge, decodePhoneMaterial, encodeShareResponse } from './quorum.mjs';
-import { describeOp, parseOp } from './ops.mjs';
+import { describeOp, isU64, parseOp } from './ops.mjs';
 import { buildReplyPlain } from './frames.mjs';
 import { appendHeadAttest, courierOps } from './state.mjs';
 import { randomBytes } from './keys.mjs';
@@ -80,16 +80,28 @@ export function evaluateChallenge(frame, ctx) {
   if (op.kind !== 'ShareRelease') return refuse(checks, 'kind', `this is a ${op.kind} operation, not a share release; this phone releases shares only`);
   pass('kind', 'operation is a share release');
 
+  // The signed op is written right before the challenge is issued: an old signed request replayed inside a fresh
+  // challenge (the signature covers the op alone) is refused, and a stale-looking one is flagged.
+  const opTs = Number(op.timestamp);
+  const maxAge = CHALLENGE_EXPIRY_SECS + TIMESTAMP_SKEW_GRACE_SECS;
+  const age = ctx.now - opTs;
+  if (age > maxAge) return refuse(checks, 'age', `the signed request is ${Math.floor(age / 60)} minutes old, but a request is signed right before its challenge: a terminal does not ask this way`);
+  if (age < -TIMESTAMP_SKEW_GRACE_SECS) return refuse(checks, 'age', 'the signed request is dated in the future');
+  const span = ch.expiry - opTs;
+  if (span < 0 || span > maxAge) return refuse(checks, 'age', `the challenge expiry is ${span} s from the signed request, outside what a terminal issues (0 to ${maxAge} s)`);
+  pass('age', `the request was signed ${Math.max(0, Math.round(age))} s ago`);
+
   const f = op.fields;
   const names = Object.keys(f).join(',');
   if (names !== 'host_uid,request_id,requester' || !/^[0-9a-f]{32}$/.test(f.host_uid) || !/^[0-9a-f]{16}$/.test(f.requester)) {
     return refuse(checks, 'body', 'share release fields are malformed');
   }
+  if (!isU64(f.request_id) || typeof f.request_id === 'string') return refuse(checks, 'body', 'share release fields are malformed: the request id is not an integer');
   if (BigInt(f.request_id) !== BigInt(ch.request_id)) return refuse(checks, 'request', 'the operation asks for a different request id than the challenge carries');
   if (f.requester !== op.device_id) return refuse(checks, 'requester', `the operation is signed by ${op.device_id} but names ${f.requester} as the requester`);
   pass('request', 'request id and requester agree between the operation and the challenge');
 
-  const known = ctx.ring[op.device_id];
+  const known = Object.prototype.hasOwnProperty.call(ctx.ring, op.device_id) ? ctx.ring[op.device_id] : null;
   const warnings = [];
   if (known) {
     if (!edVerify(bytesOf(known.ed25519_pub), ch.op_canonical, ch.op_signature)) return refuse(checks, 'signature', `the signature of ${op.device_id} does not verify over these operation bytes`);
@@ -121,7 +133,9 @@ export function evaluateChallenge(frame, ctx) {
     op,
     hostHex: f.host_uid,
     requester: f.requester,
-    description: describeOp(op, aliases),
+    description: describeOp(op, aliases, { now: ctx.now, staleAfter: CHALLENGE_EXPIRY_SECS }),
+    signatureVerified: !!known,
+    unknownRequester: !known,
     bindingHash: hexOf(ch.binding_hash),
     bindingWords: words,
     share,
@@ -135,7 +149,8 @@ export function evaluateChallenge(frame, ctx) {
 export function approveRelease(ev, { identity, state, now, snapshot = null }) {
   if (!ev.ok) throw new Error('refusing to approve a challenge that failed its checks');
   const ch = ev.challenge;
-  const op = appendHeadAttest(state, identity, now, { lamport: ev.op.lamport, epoch: ev.op.epoch });
+  // lamport and epoch are adopted only from an op whose signature this phone verified.
+  const op = appendHeadAttest(state, identity, now, ev.signatureVerified ? { lamport: ev.op.lamport, epoch: ev.op.epoch } : null);
   const approvalSig = edSign(identity.edSeed, ch.binding_preimage);
   const ext = { approvalSig, ops: courierOps(state), snapshot };
   const seal = (plain) => encodeShareResponse(ch.request_id, sealedBoxSeal(ch.eph_x25519_pub, plain, randomBytes(32), randomBytes(24)));

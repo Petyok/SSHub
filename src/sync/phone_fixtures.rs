@@ -628,12 +628,7 @@ fn e2e_response_opens_with_the_ephemeral_secret() {
     if let Some((host, blob)) = ext.snapshot {
         assert_eq!(host, HOST);
         let code = std::fs::read_to_string(d.join("snapshot-code.txt")).unwrap();
-        let opened = snapshot_open(
-            &SnapshotBlob::from_bytes(&blob).unwrap(),
-            code.trim(),
-            NOW + 5,
-        )
-        .unwrap();
+        let opened = snapshot_open_any(&blob, &host, code.trim(), NOW + 5);
         assert_eq!(&opened, want);
     }
     if let Ok(frame) = std::fs::read(d.join("cancel-frame.bin")) {
@@ -646,6 +641,43 @@ fn e2e_response_opens_with_the_ephemeral_secret() {
             text.contains("PhoneReenrollCancel")
                 && text.contains(notice["op_hash_hex"].as_str().unwrap())
         );
+    }
+}
+
+/// The page writes snapshot blobs of version 2 (version 1 plus `host_uid(16)` after the salt, inside the associated data,
+/// so the blob names the credential it opens and a terminal can refuse a second live blob for the same host). The Rust
+/// `SnapshotBlob` reads version 1 only until the terminal side takes the header over; this opens both the way
+/// `snapshot_open` would, and checks the host binding of version 2.
+fn snapshot_open_any(blob: &[u8], host: &[u8; 16], code: &str, now: i64) -> Share {
+    if blob[4] != 2 {
+        return snapshot_open(&SnapshotBlob::from_bytes(blob).unwrap(), code, now).unwrap();
+    }
+    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+    const HEADER: usize = 4 + 1 + 4 + 4 + 8 + 16 + 16;
+    assert_eq!(&blob[37..53], host, "the blob names the credential it opens");
+    let profile = super::crypto::Argon2Profile {
+        mem_kib: u32::from_be_bytes(blob[5..9].try_into().unwrap()),
+        iters: u32::from_be_bytes(blob[9..13].try_into().unwrap()),
+    };
+    let issued_at = i64::from_be_bytes(blob[13..21].try_into().unwrap());
+    assert!(issued_at <= now && now - issued_at < 7 * 86_400);
+    let salt: [u8; 16] = blob[21..37].try_into().unwrap();
+    let code = super::codes::normalize_code(code).unwrap();
+    let key = super::crypto::try_argon2_derive(&code, &salt, profile).unwrap();
+    let (nonce, ct) = blob[HEADER..].split_at(24);
+    let plain = chacha20poly1305::XChaCha20Poly1305::new((&key).into())
+        .decrypt(
+            nonce.into(),
+            Payload {
+                msg: ct,
+                aad: &blob[..HEADER],
+            },
+        )
+        .expect("the version 2 blob opens with the shown code");
+    assert_eq!(plain.len(), 33);
+    Share {
+        index: plain[0],
+        bytes: plain[1..].to_vec(),
     }
 }
 
@@ -1080,4 +1112,175 @@ fn e2e_the_pages_trust_session_ops_validate_on_the_terminal() {
     )
     .unwrap();
     reshare_fixture::check_cert_output(&out);
+}
+
+/// The terminal half of enrolling the REAL page (`phone_enroll::PhoneEnroll`), run as a peer next to the headless
+/// page flow of `assets/companion/scripts/e2e.mjs`. Both sides exchange the enrollment frames as files in
+/// `SSHUB_PHONE_ENROLL_PEER/<scenario>/` (written by rename, so a reader never sees half a file):
+/// `t-*` come from this terminal, `p-*` from the page. Scenarios, in this order: `ok` (same four words, the phone is
+/// Verified and admitted with the page's identity), `tampered` (the page's reveal altered on the way: Stopped),
+/// `differ` (the page declines: Stopped). Each scenario ends with `done.json`. Not run without the variable.
+mod enroll_peer {
+    use super::*;
+    use crate::sync::oplog::{DeviceKind, DeviceRole, OpBody};
+    use crate::sync::phone_enroll::{admit_phone, PhoneEnroll, Step};
+    use crate::sync::protocol::tests::Dev;
+    use std::time::{Duration, Instant};
+
+    const WAIT: Duration = Duration::from_secs(240);
+
+    fn put(dir: &Path, name: &str, bytes: &[u8]) {
+        let tmp = dir.join(format!(".{name}.tmp"));
+        std::fs::write(&tmp, bytes).unwrap();
+        std::fs::rename(&tmp, dir.join(name)).unwrap();
+    }
+
+    fn wait(dir: &Path, name: &str) -> Vec<u8> {
+        let t0 = Instant::now();
+        loop {
+            if let Ok(b) = std::fs::read(dir.join(name)) {
+                return b;
+            }
+            assert!(
+                t0.elapsed() < WAIT,
+                "timed out waiting for {name} from the page"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// The terminal shows its commitment; scans the page's commitment and shows its reveal; scans the page's reveal.
+    fn through_reveal(dir: &Path, t: &Dev, e: &mut PhoneEnroll) -> Step {
+        let p_commit = wait(dir, "p-commit.bin");
+        let Step::Show(reveal) = e
+            .scan(&t.id, &p_commit)
+            .expect("the page's commitment frame decodes and is accepted")
+        else {
+            panic!("after the phone's commitment the terminal shows its reveal")
+        };
+        put(dir, "t-reveal.bin", &reveal);
+        let p_reveal = wait(dir, "p-reveal.bin");
+        e.scan(&t.id, &p_reveal)
+            .expect("the page's reveal frame decodes")
+    }
+
+    fn start(dir: &Path) -> (Dev, PhoneEnroll) {
+        let t = Dev::new();
+        let (e, first) = PhoneEnroll::begin(&t.id, "work laptop");
+        put(dir, "t-id.txt", t.did.as_bytes());
+        put(dir, "t-commit.bin", &first);
+        (t, e)
+    }
+
+    fn compare(dir: &Path, t: &Dev, e: &mut PhoneEnroll) -> String {
+        let Step::Compare { words, phone_name } = through_reveal(dir, t, e) else {
+            panic!("the words follow the phone's reveal")
+        };
+        assert_eq!(phone_name, "my phone");
+        put(dir, "t-words.txt", words.as_bytes());
+        let page_words = String::from_utf8(wait(dir, "p-words.txt")).unwrap();
+        assert_eq!(page_words, words, "the page shows the same four words");
+        words
+    }
+
+    fn ok(dir: &Path) {
+        let (t, mut e) = start(dir);
+        compare(dir, &t, &mut e);
+        assert_eq!(e.answer(&t.id, true).unwrap(), Step::Wait);
+        let p_confirm = wait(dir, "p-confirm.bin");
+        let Step::Verified(v) = e
+            .scan(&t.id, &p_confirm)
+            .expect("the page's confirmation decodes")
+        else {
+            panic!("the page's confirmation verifies the phone")
+        };
+        put(dir, "t-confirm.bin", &v.frame);
+        let phone = DeviceIdentity::from_seed(&[0x42; 32], PHONE_CONTEXT);
+        assert_eq!(
+            v.phone,
+            phone.public(),
+            "the admitted DevicePublic is the page's identity"
+        );
+        assert_eq!(v.name, "my phone");
+        let op = admit_phone(&t.store, &t.id, &v).unwrap();
+        assert!(matches!(
+            op.body,
+            OpBody::DeviceAdd {
+                role: DeviceRole::Holder,
+                kind: DeviceKind::Phone,
+                ..
+            }
+        ));
+        assert_eq!(
+            crate::sync::quorum::phone_device(&t.store).unwrap(),
+            Some(phone.public().device_id()),
+            "the ring has the page's phone"
+        );
+    }
+
+    fn tampered(dir: &Path) {
+        let (t, mut e) = start(dir);
+        match through_reveal(dir, &t, &mut e) {
+            Step::Stopped { why, frame } => {
+                assert!(why.contains("do not open the commitment"), "{why}");
+                assert!(frame.is_none());
+            }
+            other => panic!("a tampered reveal must stop the terminal, got {other:?}"),
+        }
+        assert!(
+            e.answer(&t.id, true).is_err(),
+            "a stopped enrollment answers nothing"
+        );
+    }
+
+    fn differ(dir: &Path) {
+        let (t, mut e) = start(dir);
+        compare(dir, &t, &mut e);
+        let p_confirm = wait(dir, "p-confirm.bin");
+        assert_eq!(e.scan(&t.id, &p_confirm).unwrap(), Step::Wait);
+        let Step::Stopped { why, .. } = e.answer(&t.id, true).unwrap() else {
+            panic!("the page declined: the terminal stops")
+        };
+        // This message is only reached after the decline's signature verified under the page's key.
+        assert!(why.contains("the phone says the words differ"), "{why}");
+        assert!(crate::sync::quorum::phone_device(&t.store)
+            .unwrap()
+            .is_none());
+    }
+
+    pub fn run(root: &Path) {
+        let mut failed = Vec::new();
+        let scenarios: [(&str, fn(&Path)); 3] =
+            [("ok", ok), ("tampered", tampered), ("differ", differ)];
+        for (name, f) in scenarios {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            let r = std::panic::catch_unwind(|| f(&dir));
+            let why = match &r {
+                Ok(()) => String::new(),
+                Err(e) => e
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "panic".into()),
+            };
+            put(
+                &dir,
+                "done.json",
+                json!({ "pass": r.is_ok(), "why": why }).to_string().as_bytes(),
+            );
+            if r.is_err() {
+                failed.push(format!("{name}: {why}"));
+            }
+        }
+        assert!(failed.is_empty(), "{failed:?}");
+    }
+}
+
+#[test]
+fn e2e_enrollment_peer_for_the_page() {
+    let Some(d) = std::env::var_os("SSHUB_PHONE_ENROLL_PEER") else {
+        return;
+    };
+    enroll_peer::run(Path::new(&d));
 }

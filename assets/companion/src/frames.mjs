@@ -230,6 +230,8 @@ export function parseReveal(b) {
     throw new Error('reveal name is not UTF-8');
   }
   if (/[\u0000-\u001f\u007f]/.test(name)) throw new Error('device name has control characters');
+  // enroll.rs Reveal::bytes writes 0 or 1 only: another byte would give a second encoding of the same reveal.
+  if (b[at + nlen] > 1) throw new Error('reveal attended flag is not 0 or 1');
   return { ed25519_pub: b.slice(0, 32), x25519_pub: b.slice(32, 64), mlkem_pub, eph, nonce, name, attended: b[at + nlen] === 1 };
 }
 

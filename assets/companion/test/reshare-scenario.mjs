@@ -24,7 +24,9 @@ const seal = (key, aad, plain) => {
 
 // Two contributors (devices A and B, old shares 1 and 2 of a 3 way sharing) reshare one credential
 // to the new holders [A, B, phone, D]. Returns signed ops and what the test needs to check them.
-export function scenario({ phone, lie = false, secret = randomBytes(32) }) {
+// oneAuthor: contributor B's batch is written and signed by device A (a single device posing as two contributors,
+// with a different `from` byte, re-using A's session key).
+export function scenario({ phone, lie = false, oneAuthor = false, secret = randomBytes(32) }) {
   const old = splitAtIndicesSeeded(secret, 2, [1, 2, 3], chachaRngStream(randomBytes(32), 32));
   const dev = (n) => identityFromIkm(new Uint8Array(32).fill(n), `sshub/test/contrib/${n}`);
   const A = dev(1);
@@ -41,11 +43,15 @@ export function scenario({ phone, lie = false, secret = randomBytes(32) }) {
     const canonical = utf8(text);
     signed.push({ canonical, signature: edSign(author.edSeed, canonical) });
   };
-  for (const [name, who, oldShare] of [['A', A, old[0]], ['B', B, old[1]]]) {
-    const author = ids[name];
+  let sessionKeyA = null;
+  for (const [name, who0, oldShare] of [['A', A, old[0]], ['B', B, old[1]]]) {
+    const posing = oneAuthor && name === 'B';
+    const who = posing ? A : who0;
+    const author = posing ? ids.A : ids[name];
     const c = reshareContribute(oldShare, newIndices, 2, chachaRngStream(randomBytes(32), 32));
-    const sessionKey = randomBytes(32);
-    emit(who, 'ShareReshareSession', { epoch: EPOCH, to: phone.deviceId, sealed: b64enc(hybridWrap({ x25519_pub: phone.xPub, mlkem_pub: phone.mlkemPub }, sessionKey, randomBytes(32), randomBytes(24), randomBytes(32))) });
+    const sessionKey = posing ? sessionKeyA : randomBytes(32);
+    if (name === 'A') sessionKeyA = sessionKey;
+    if (!posing) emit(who, 'ShareReshareSession', { epoch: EPOCH, to: phone.deviceId, sealed: b64enc(hybridWrap({ x25519_pub: phone.xPub, mlkem_pub: phone.mlkemPub }, sessionKey, randomBytes(32), randomBytes(24), randomBytes(32))) });
     const sub_shares = holders.map((to, j) => {
       const [index, sub] = c.sub_shares[j];
       const plain = concat(u64(0), Uint8Array.of(c.from), sub);
