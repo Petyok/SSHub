@@ -17,6 +17,9 @@ use anyhow::{bail, ensure, Result};
 use super::limits::{RECOVERY_TIMELOCK_SECS, TIMESTAMP_SKEW_GRACE_SECS};
 use super::oplog::DeviceId;
 
+/// A recovery stays completable this long after its time lock ended; then it must be started again.
+pub const RECOVERY_READY_WINDOW_SECS: i64 = 3 * 86_400;
+
 /// Approvals from distinct attended devices that authorize a recovery without paper.
 pub const APPROVALS_NEEDED: usize = 2;
 
@@ -32,7 +35,12 @@ pub enum ReenrollVerdict {
     NeedsMoreTime {
         ready_at: i64,
     },
+    /// Everything else holds but the third factor was never proven (a `RedFactor` over this recovery's hash,
+    /// signed by the registered paper or email key). Naming a factor in the op proves nothing.
+    AwaitingFactor,
     Ready,
+    /// A `Ready` recovery nobody completed within [`RECOVERY_READY_WINDOW_SECS`]: it authorizes nothing any more.
+    Lapsed,
     /// The old phone is revoked and the new one enrolled: the recovery is spent.
     Completed,
 }
@@ -240,6 +248,8 @@ impl Recovery {
         let ready_at = first + RECOVERY_TIMELOCK_SECS;
         if now < ready_at {
             ReenrollVerdict::NeedsMoreTime { ready_at }
+        } else if now >= ready_at + RECOVERY_READY_WINDOW_SECS {
+            ReenrollVerdict::Lapsed
         } else {
             ReenrollVerdict::Ready
         }
@@ -590,9 +600,21 @@ fn validate_phone_reenroll_upto(
                         by_phone: phone.as_ref() == Some(&c.device_id),
                     }
                 } else {
+                    // The factor is PROVEN for this cancellation (a RedFactor over its hash), not just named.
+                    let proven = match third_factor {
+                        Some(f) => super::ceremony::factor_proven(
+                            store,
+                            &c.hash(),
+                            &c.device_id,
+                            f,
+                            op.lamport,
+                            c.lamport,
+                            &[],
+                        )?,
+                        None => false,
+                    };
                     Event::CancelByDevice {
-                        with_factor: third_factor.is_some()
-                            && row(&c.device_id).is_some_and(attended_live),
+                        with_factor: proven && row(&c.device_id).is_some_and(attended_live),
                     }
                 };
                 events.push((c.lamport, c.device_id.clone(), c.seq, ev));
@@ -603,7 +625,26 @@ fn validate_phone_reenroll_upto(
     for (_, _, _, ev) in events {
         let _ = m.apply(ev); // an event that does not qualify changes nothing
     }
-    Ok(m.verdict(now))
+    let v = m.verdict(now);
+    if v == ReenrollVerdict::Ready {
+        let voters: Vec<DeviceId> = signed_ops(store, "RecoveryApprove")?
+            .into_iter()
+            .filter(|a| matches!(&a.body, OpBody::RecoveryApprove { reenroll_hash } if *reenroll_hash == hash))
+            .map(|a| a.device_id)
+            .collect();
+        if !super::ceremony::factor_proven(
+            store,
+            &hash,
+            &op.device_id,
+            third_factor,
+            op.lamport,
+            op.lamport,
+            &voters,
+        )? {
+            return Ok(ReenrollVerdict::AwaitingFactor);
+        }
+    }
+    Ok(v)
 }
 
 // ------------------------------------------------------------------ builders for the UI

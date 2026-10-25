@@ -1395,3 +1395,44 @@ fn a_proof_for_its_own_admission_is_checked_against_the_key_in_the_device_add() 
     let st = red_status(&a.store, &add, add.timestamp + 60).unwrap();
     assert!(!st.have.contains(&RedProof::Phone), "{st:?}");
 }
+
+// round 3 (integration): the factor-free first phone is the SETUP of a ring, never a way back in.
+#[test]
+fn the_factor_free_first_phone_is_ring_setup_only() {
+    let (r, a, ph, add) = phone_admission_world();
+    pull(&r, &ph);
+    append(&ph, red_phone_sign_body(&add));
+    pull(&ph, &r);
+    pull(&r, &a);
+    pull(&a, &r);
+    append(&a, red_approve_body(&add));
+    let now = add.timestamp + 60;
+    let st = red_status(&a.store, &add, now).unwrap();
+    assert!(st.complete, "ring setup: no factor, no phone ever: {st:?}");
+    // The ring had a phone before (revoked since): a new one needs the third factor like any Red change.
+    let old = Dev::new();
+    a.store
+        .sync_register_device(
+            &old.id.public(),
+            "old phone",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Phone,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    a.store
+        .with_conn(|c| {
+            c.execute(
+                "UPDATE sync_devices SET status = 'revoked' WHERE device_id = ?1",
+                rusqlite::params![old.did],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let st = red_status(&a.store, &add, now).unwrap();
+    assert!(
+        st.missing.iter().any(|m| matches!(m, RedProof::Factor(_))),
+        "a revoked phone does not reopen the bootstrap: {st:?}"
+    );
+}
