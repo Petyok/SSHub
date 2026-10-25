@@ -428,8 +428,13 @@ impl PrivateAgent {
 
 /// Runs the agent in the foreground of a background job and holds until stdin reaches EOF
 /// (the owner is gone), then kills it and removes the directory (`$2`).
+/// A signal to the whole process group (Ctrl-C, the quit key, a group kill) ends the watcher's
+/// `cat` too, and the trap then kills the agent EXPLICITLY (a background job of a
+/// non-interactive shell ignores SIGINT and SIGQUIT) and removes the directory.
 const WATCHER_SCRIPT: &str = r#"ssh-agent -D -a "$1" & a=$!
-trap 'kill $a 2>/dev/null; wait $a 2>/dev/null; rm -rf "$2"' EXIT
+cleanup() { kill $a 2>/dev/null; wait $a 2>/dev/null; rm -rf "$2"; }
+trap cleanup EXIT
+trap 'cleanup; exit 0' HUP INT TERM QUIT
 cat >/dev/null"#;
 
 impl Drop for PrivateAgent {

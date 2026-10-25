@@ -421,11 +421,53 @@ fn name_taken(conn: &Connection, kind: EntityKind, uid: &Uid, name: &str) -> Res
     Ok(cached || row)
 }
 
+/// Does some host or group jump through the host `uid` (by its current local name)?
+fn is_hop_target(conn: &Connection, uid: &Uid) -> Result<bool> {
+    let name: Option<String> = conn
+        .query_row(
+            "SELECT name FROM hosts WHERE uid = ?1 AND source = 'launcher'",
+            params![&uid[..]],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(name) = name else {
+        return Ok(false);
+    };
+    for table in ["hosts", "host_groups"] {
+        let col = if table == "hosts" {
+            "proxy_jump"
+        } else {
+            "default_proxy_jump"
+        };
+        let jumps: Vec<String> = {
+            let mut st = conn.prepare(&format!(
+                "SELECT {col} FROM {table} WHERE {col} IS NOT NULL AND {col} != ''"
+            ))?;
+            let rows = st.query_map([], |r| r.get(0))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        if jumps.iter().any(|j| j.split(',').any(|t| t.trim() == name)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) fn effective_tier(conn: &Connection, op: &Op) -> Result<OpTier> {
     // A rename onto a name another live entity holds would silently re-point that name
     // (the older claim wins the name, the other gets a suffix): a human decides.
     if let Some((kind, uid, name)) = claimed_name(&op.body) {
         if op.tier() == OpTier::Green && name_taken(conn, kind, &uid, &name)? {
+            return Ok(OpTier::Yellow);
+        }
+    }
+    // A rename of a host that others jump through to a name that cannot be a hop would make
+    // every connection through it refuse: a human decides.
+    if let Some((EntityKind::Host, uid, name)) = claimed_name(&op.body) {
+        if op.tier() == OpTier::Green
+            && crate::map::hops::token_issue(&name).is_some()
+            && is_hop_target(conn, &uid)?
+        {
             return Ok(OpTier::Yellow);
         }
     }

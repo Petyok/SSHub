@@ -175,6 +175,12 @@ fn sync_phone_enroll_verifies_a_phone_and_proposes_it_as_a_red_holder() {
     let mut s = EnrollSession::new(&t.store, &t.id, "terminal", false);
     let mut out = Vec::new();
     s.start(&mut out);
+    let first_lines = lines(&out);
+    assert!(
+        first_lines[0].starts_with("companion: ")
+            && first_lines[0].contains(crate::sync::companion::COMPANION_FINGERPRINT),
+        "the page fingerprint comes first: {first_lines:?}"
+    );
     let first = value_of(&lines(&out), "frame");
     assert!(matches!(
         EnrollFrame::decode(&B64.decode(first).unwrap()).unwrap(),

@@ -44,6 +44,19 @@ fn emit(out: &mut impl Write, json_out: bool, event: &str, text: String, mut doc
     let _ = out.flush();
 }
 
+/// The fingerprint of the phone page this build ships, FIRST: comparing it with the phone's
+/// About screen is the control against a substituted page.
+fn companion_line(out: &mut impl Write, json_out: bool) {
+    let fp = crate::sync::companion::COMPANION_FINGERPRINT;
+    emit(
+        out,
+        json_out,
+        "companion",
+        format!("{fp} ({})", crate::sync::companion::COMPARE_HINT),
+        json!({"fingerprint": fp}),
+    );
+}
+
 fn b64(bytes: &[u8]) -> String {
     B64.encode(bytes)
 }
@@ -82,8 +95,9 @@ impl<'a> EnrollSession<'a> {
         }
     }
 
-    /// The first frame for the phone to read.
+    /// The page fingerprint, then the first frame for the phone to read.
     pub fn start(&self, out: &mut impl Write) {
+        companion_line(out, self.json);
         emit(
             out,
             self.json,
@@ -353,7 +367,7 @@ struct Args {
 fn parse(args: &[String]) -> std::result::Result<Args, String> {
     let mut a = Args {
         json: false,
-        wait: 300,
+        wait: crate::sync::limits::CHALLENGE_EXPIRY_SECS as u64,
         days: 30,
         budget: 10,
         group: None,
@@ -380,8 +394,9 @@ fn parse(args: &[String]) -> std::result::Result<Args, String> {
             }
             "--wait" => {
                 a.wait = value(i, f)?
-                    .parse()
-                    .map_err(|_| "--wait takes seconds".to_string())?;
+                    .parse::<u64>()
+                    .map_err(|_| "--wait takes seconds".to_string())?
+                    .min(crate::sync::limits::CHALLENGE_EXPIRY_SECS as u64);
                 i += 2;
             }
             "--days" => {
@@ -464,6 +479,14 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
     let secrets = crate::credentials::open_for_profile(paths);
     let id = load_or_init_identity(paths, secrets.as_ref())?;
     let mut out = std::io::stdout();
+    // Every verb that talks to the page prints its fingerprint first; the enrollment session
+    // does it itself so that its output starts with it.
+    if matches!(
+        cmd,
+        "sync-notice" | "sync-share-request" | "sync-cert-request"
+    ) {
+        companion_line(&mut out, a.json);
+    }
     match cmd {
         "sync-phone-enroll" => phone_enroll(&store, &id, std::io::stdin().lock(), &mut out, a.json),
         "sync-notice" => {
@@ -620,7 +643,7 @@ pub fn print_help(cmd: &str) {
         "sync-phone-enroll" => ("sync-phone-enroll [--format plain|json]", "Enroll a phone from this terminal, as text. Prints the terminal's first frame (`frame:`); read each of the phone's frames (kind 6, 7, 8, base64) from stdin, one per line, and print the next frame to show. After the phone's reveal it prints the four words (`words:`): answer `y` or `n` on stdin. On a verified phone it registers it and proposes its admission (a Red change) and prints the last frame for the phone. Needs a ring. Exit 0 verified, 1 stopped or input ended."),
         "sync-notice" => ("sync-notice <op-id> [--format plain|json]", "Print the kind 3 notice (base64) of a Red op, for the phone to read: the op as signed, so the phone can show what it is asked to approve. <op-id> is a unique prefix (4+ hex characters) of the op's hash."),
         "sync-phone-ops" => ("sync-phone-ops [--format plain|json]", "Take in the ops the phone copied (kind 5, base64) from stdin, chain them into the log and print what applied and the ceremony of every pending Red op. A malformed text changes nothing."),
-        "sync-share-request" => ("sync-share-request <host> [--wait <seconds>] [--format plain|json]", "Ask the phone for its share of <host>'s credential: prints the kind 1 challenge (base64), then reads the phone's kind 2 reply from stdin (up to --wait seconds, default 300), opens it, takes in its courier ops and opens the credential with this device's share. The credential is open in this process only: run it to prove the path and to take in the phone's ops; `host connect` does its own unlock."),
+        "sync-share-request" => ("sync-share-request <host> [--wait <seconds>] [--format plain|json]", "Ask the phone for its share of <host>'s credential: prints the kind 1 challenge (base64), then reads the phone's kind 2 reply from stdin (up to --wait seconds; default and maximum 120, the challenge's life), opens it, takes in its courier ops and opens the credential with this device's share. The credential is open in this process only: run it to prove the path and to take in the phone's ops; `host connect` does its own unlock."),
         "sync-cert-request" => ("sync-cert-request (--group NAME | --host NAME...) [--days N] [--budget N] [--format plain|json]", "Print the kind 9 trust-session request (base64) for the phone to approve: a group or listed hosts (at most 64, never everything), a term in days (default 30) and a budget of new hosts a day (default 10). The phone's answer goes in with sync-phone-ops. The kind 10 extension is TUI-only."),
         _ => return,
     };
