@@ -11,8 +11,8 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::fork;
 use super::merge::{
-    collision_holder, desired_state, forget_unverified, insert_op, insert_unverified, load_op,
-    op_at, OpRow, Settler, State,
+    collision_holder, desired_state, device_bytes, forget_unverified, insert_op, insert_unverified,
+    load_op, op_at, OpRow, Settler, State,
 };
 use super::op::*;
 use super::store_impl::IngestOutcome;
@@ -23,6 +23,9 @@ use crate::sync::limits::{LAMPORT_JUMP_CAP, PENDING_QUARANTINE_MAX_PER_DEVICE};
 fn reject(msg: impl Into<String>) -> Result<IngestOutcome> {
     Ok(IngestOutcome::Rejected(msg.into()))
 }
+
+/// Stored bytes of one device's ops, applied or waiting, at most (prune brings it down).
+const DEVICE_BYTES_QUOTA: i64 = 256 * 1024 * 1024;
 
 /// Unverified ops held for review at most, over all unknown authors and per claimed author.
 const UNKNOWN_AUTHOR_MAX: i64 = 256;
@@ -208,6 +211,9 @@ pub(crate) fn ingest_capped(
         }
     }
 
+    if device_bytes(conn, &op.device_id)? + op.canonical_bytes().len() as i64 > DEVICE_BYTES_QUOTA {
+        return reject("byte quota of this device is full");
+    }
     insert_op(conn, &op, State::Rejected, None, false, now)?;
     conn.execute(
         "UPDATE sync_devices SET last_seen = ?2 WHERE device_id = ?1",

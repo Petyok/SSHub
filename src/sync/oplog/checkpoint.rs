@@ -1463,6 +1463,8 @@ pub(crate) fn prune(conn: &Connection, now: i64) -> Result<PruneReport> {
         "UPDATE sync_checkpoints SET state = NULL WHERE proposal_hash != ?1",
         params![&newest.proposal_hash[..]],
     )?;
+    // The per-device byte counters are recomputed on next use.
+    conn.execute("DELETE FROM sync_meta WHERE key LIKE 'bytes:%'", [])?;
     report.bytes_freed = size_before.saturating_sub(db_bytes(conn)?);
     Ok(report)
 }
@@ -2483,6 +2485,7 @@ pub(crate) fn adopt(
     ] {
         conn.execute(&format!("DELETE FROM {t}"), [])?;
     }
+    conn.execute("DELETE FROM sync_meta WHERE key LIKE 'bytes:%'", [])?;
     install(conn, bundle, false, now)?;
     for op in replay {
         let hash = op.hash();

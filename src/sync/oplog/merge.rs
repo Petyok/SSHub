@@ -184,6 +184,32 @@ pub(crate) fn forget_unverified(conn: &Connection, device: &str, seq: Option<u64
 
 /// Store a verified op, its register writes and its tombstone. The state is
 /// decided by the caller.
+/// Stored bytes of the ops of `device`, kept in `sync_meta` (a sum over the blobs per op would
+/// cost the whole log every time); absent means "not counted yet" and is computed once.
+pub(crate) fn device_bytes(conn: &Connection, device: &str) -> Result<i64> {
+    let key = format!("bytes:{device}");
+    let cached: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT value FROM sync_meta WHERE key = ?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(n) = cached.and_then(|b| String::from_utf8(b).ok()?.parse().ok()) {
+        return Ok(n);
+    }
+    let n: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(length(canonical)), 0) FROM sync_ops WHERE device_id = ?1",
+        params![device],
+        |r| r.get(0),
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?1, ?2)",
+        params![key, n.to_string().into_bytes()],
+    )?;
+    Ok(n)
+}
+
 pub(crate) fn insert_op(
     conn: &Connection,
     op: &Op,
@@ -193,6 +219,7 @@ pub(crate) fn insert_op(
     now: i64,
 ) -> Result<[u8; 32]> {
     let canonical = op.canonical_bytes();
+    let before = device_bytes(conn, &op.device_id)?;
     let hash = crate::sync::crypto::chain_hash(&canonical);
     conn.execute(
         "INSERT INTO sync_ops (op_hash, device_id, seq, lamport, prev_hash, epoch, canonical,
@@ -214,6 +241,13 @@ pub(crate) fn insert_op(
             local,
             now,
             op.timestamp,
+        ],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?1, ?2)",
+        params![
+            format!("bytes:{}", op.device_id),
+            (before + canonical.len() as i64).to_string().into_bytes()
         ],
     )?;
     conn.execute(
