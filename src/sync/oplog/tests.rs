@@ -3450,3 +3450,115 @@ fn a_batch_ingest_gives_the_outcomes_and_state_of_one_op_at_a_time() {
     );
     assert_eq!(b.pending(), c.pending());
 }
+
+// ------------------------------------------------------- review round 3
+
+#[test]
+fn rv3_a_revoked_authors_pending_op_does_not_apply_when_the_author_is_rejudged() {
+    let ring = ring(3);
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    for n in 0..6u8 {
+        a.append(upsert(10 + n, hf(&format!("a{n}"), "10.0.0.1")));
+    }
+    let revoke = a.append(OpBody::DeviceRevoke { device_id: c.dev() });
+    pull(b, a);
+    b.store.sync_resolve_pending(&revoke.hash(), true).unwrap();
+    let late = c.append(upsert(
+        70,
+        HostFields {
+            name: Some("late".into()),
+            ..Default::default()
+        },
+    ));
+    assert!(matches!(
+        b.store.sync_ingest(late.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    // Any later event that re-judges the author (here: a second revoke the user approves).
+    let again = a.append(OpBody::DeviceRevoke { device_id: c.dev() });
+    pull(b, a);
+    b.store.sync_resolve_pending(&again.hash(), true).unwrap();
+    assert!(
+        b.host(&uid(70)).is_none(),
+        "a pending op of a revoked author applied without a human (state now {:?})",
+        b.store.sync_pending_reason(&late.hash()).unwrap()
+    );
+}
+
+#[test]
+fn rv3_a_collision_puts_back_the_effective_name_writer_not_a_rejected_write_of_the_same_name() {
+    let ring = ring(3);
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    let first = a.append(upsert(1, hf("e1", "e1.example")));
+    let second = b.append(upsert(2, hf("e2", "e2.example")));
+    for o in [&first, &second] {
+        c.store.sync_ingest((*o).clone()).unwrap();
+    }
+    c.approve_all();
+    // a renames e1 to "dup" (Green, applied); then a rejected, later write of the same name.
+    let rename = a.append(upsert(
+        1,
+        HostFields {
+            name: Some("dup".into()),
+            ..Default::default()
+        },
+    ));
+    c.store.sync_ingest(rename.clone()).unwrap();
+    let noisy = a.append(upsert(
+        1,
+        HostFields {
+            name: Some("dup".into()),
+            address: Some("noisy.example".into()),
+            ..Default::default()
+        },
+    ));
+    assert!(matches!(
+        c.store.sync_ingest(noisy.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    c.store.sync_resolve_pending(&noisy.hash(), false).unwrap();
+    // b claims "dup" for e2: both claims wait, the one that holds the name is the applied rename.
+    let claim = b.append(upsert(
+        2,
+        HostFields {
+            name: Some("dup".into()),
+            ..Default::default()
+        },
+    ));
+    assert!(matches!(
+        c.store.sync_ingest(claim.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    let held: Vec<[u8; 32]> = c
+        .store
+        .sync_pending()
+        .unwrap()
+        .iter()
+        .map(|o| o.hash())
+        .collect();
+    assert!(
+        held.contains(&claim.hash()) && held.contains(&rename.hash()),
+        "{held:?}"
+    );
+}
+
+#[test]
+fn a_batch_ingest_keeps_what_was_valid_before_a_failing_op_and_lets_go_of_the_lock_between_chunks()
+{
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let ops: Vec<Op> = (0..250u32)
+        .map(|i| a.append(upsert((i % 200) as u8, hf(&format!("h{i}"), "10.0.0.1"))))
+        .collect();
+    let outcomes = b.store.sync_ingest_batch(ops).unwrap();
+    assert_eq!(outcomes.len(), 250);
+    assert_eq!(
+        b.store
+            .sync_chain_heads()
+            .unwrap()
+            .iter()
+            .map(|(_, s, _)| *s)
+            .max(),
+        Some(250)
+    );
+}
