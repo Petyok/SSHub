@@ -3352,3 +3352,35 @@ fn a_non_ascii_byte_in_a_state_hex_field_does_not_panic_the_cache_rebuild() {
         "the store is still usable (not poisoned)"
     );
 }
+
+#[test]
+fn a_batch_ingest_gives_the_outcomes_and_state_of_one_op_at_a_time() {
+    let ring = ring(3);
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    let mut ops = Vec::new();
+    for i in 0..40u8 {
+        ops.push(a.append(upsert(i, hf(&format!("h{i}"), "10.0.0.1"))));
+    }
+    ops.push(a.append(upsert(
+        3,
+        HostFields {
+            notes: Some(Some("n".into())),
+            ..Default::default()
+        },
+    )));
+    // The same ops, one transaction versus one per op; a duplicate and a gap ride along.
+    let mut batch = ops.clone();
+    batch.push(ops[0].clone());
+    let outcomes = b.store.sync_ingest_batch(batch.clone()).unwrap();
+    let single: Vec<IngestOutcome> = batch
+        .into_iter()
+        .map(|o| c.store.sync_ingest(o).unwrap())
+        .collect();
+    assert_eq!(outcomes, single);
+    assert!(matches!(outcomes.last(), Some(IngestOutcome::Rejected(w)) if w.contains("duplicate")));
+    assert_eq!(
+        b.store.sync_state_hash().unwrap(),
+        c.store.sync_state_hash().unwrap()
+    );
+    assert_eq!(b.pending(), c.pending());
+}
