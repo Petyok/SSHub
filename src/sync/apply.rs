@@ -36,6 +36,8 @@ const MAX_SEALED_BYTES: usize = 8 * 1024;
 const MAX_CRED_BYTES: usize = 128 * 1024;
 const MAX_BATCH_BYTES: usize = 512 * 1024;
 const MAX_TAGS_BYTES: usize = 16 * 1024;
+/// Devices of one ring, at most (a cut or a required set names them).
+const MAX_RING_DEVICES: usize = 64;
 
 fn cap(what: &str, len: usize, max: usize) -> std::result::Result<(), String> {
     if len > max {
@@ -167,7 +169,8 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
             Ok(())
         }
         OpBody::CheckpointPropose { cut, required, .. } => {
-            if cut.len() > 4 * MAX_LIST || required.len() > 4 * MAX_LIST {
+            // A ring is a handful of devices: a proposal stays a few KB.
+            if cut.len() > MAX_RING_DEVICES || required.len() > MAX_RING_DEVICES {
                 return Err("checkpoint cut is too large".into());
             }
             if cut.windows(2).any(|w| w[0].device_id >= w[1].device_id)
@@ -238,7 +241,28 @@ fn validate_ids(body: &OpBody) -> std::result::Result<(), String> {
             signers.iter().try_for_each(one)?;
             liveness.iter().try_for_each(|h| device_id_ok(&h.device_id))
         }
-        _ => Ok(()),
+        OpBody::HeadAttest { device_id, .. } => one(device_id),
+        // No device id in these. Listed one by one on purpose: a new OpBody variant does not compile
+        // until someone decides here whether it carries a device id that needs a shape rule.
+        OpBody::HostUpsert { .. }
+        | OpBody::HostDelete { .. }
+        | OpBody::GroupUpsert { .. }
+        | OpBody::GroupDelete { .. }
+        | OpBody::IdentityUpsert { .. }
+        | OpBody::IdentityDelete { .. }
+        | OpBody::DeviceAdd { .. }
+        | OpBody::ShareStorageKey { .. }
+        | OpBody::ShareReshareConfirmBatch { .. }
+        | OpBody::CertRevoke { .. }
+        | OpBody::CertHostOpened { .. }
+        | OpBody::PhoneReenrollCancel { .. }
+        | OpBody::RecoveryApprove { .. }
+        | OpBody::RecoveryAck { .. }
+        | OpBody::RedApprove { .. }
+        | OpBody::RedPhoneSign { .. }
+        | OpBody::RedFactor { .. }
+        | OpBody::CertExtend { .. }
+        | OpBody::CheckpointSign { .. } => Ok(()),
     }
 }
 
@@ -269,9 +293,19 @@ fn line(what: &str, s: &str) -> std::result::Result<(), String> {
     }
     // Bidi controls and zero-width characters make one name look like another.
     if s.chars().any(|c| {
-        matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+        matches!(c, '\u{200B}'..='\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{FEFF}'
+                | '\u{061C}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{00AD}')
     }) {
-        return Err(format!("{what} contains an invisible or direction-changing character"));
+        return Err(format!(
+            "{what} contains an invisible or direction-changing character"
+        ));
     }
     Ok(())
 }

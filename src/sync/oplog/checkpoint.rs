@@ -1052,6 +1052,32 @@ fn signers_of(conn: &Connection, proposal: &[u8; 32]) -> Result<Vec<DeviceId>> {
     Ok(rows.collect::<std::result::Result<_, _>>()?)
 }
 
+/// Operational attended holder terminals of this device's table: the only ones whose vote counts
+/// for a checkpoint it adopts (a mirror, however attended, is not a voter).
+fn attended_holders(conn: &Connection) -> Result<BTreeSet<DeviceId>> {
+    let mut st = conn.prepare(
+        "SELECT device_id FROM sync_devices WHERE kind = 'terminal' AND attendance = 'attended'
+           AND role = 'holder' AND status NOT IN ('revoked','compromised')",
+    )?;
+    let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+/// Devices this one has seen take part in a checkpoint (signed or proposed one).
+fn checkpoint_participants(conn: &Connection) -> Result<BTreeSet<DeviceId>> {
+    let mut out = BTreeSet::new();
+    for sql in [
+        "SELECT DISTINCT device_id FROM sync_checkpoint_signs",
+        "SELECT DISTINCT device_id FROM sync_checkpoints",
+    ] {
+        let mut st = conn.prepare(sql)?;
+        for r in st.query_map([], |r| r.get::<_, String>(0))? {
+            out.insert(r?);
+        }
+    }
+    Ok(out)
+}
+
 pub(crate) fn attended_terminal(conn: &Connection, device: &str) -> Result<bool> {
     Ok(conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id = ?1 AND kind = 'terminal'
@@ -1829,9 +1855,24 @@ fn check_bundle(
         }
     }
     if local {
-        // Only attended, operational terminals of THIS device's table sign for a ring; a key it
-        // lists as a mirror, an unattended device, a revoked or a compromised one is not a vote.
-        signers.retain(|d| attended_terminal(conn, d).unwrap_or(false));
+        // Only attended, operational HOLDER terminals of THIS device's table vote for a ring: a key
+        // it lists as a mirror (however attended), an unattended device, a revoked or a compromised
+        // one is not a voter. And a strict majority of the holders it knows must have voted,
+        // whatever it believes about who is live: a device that was away has the oldest picture.
+        let holders = attended_holders(conn)?;
+        signers.retain(|d| holders.contains(d));
+        let mut voters: BTreeSet<DeviceId> = holders.difference(&mine).cloned().collect();
+        // Liveness may only shrink the electorate to holders seen taking part in a checkpoint.
+        let seen = checkpoint_participants(conn)?;
+        let narrowed: BTreeSet<DeviceId> = voters.intersection(&seen).cloned().collect();
+        if !narrowed.is_empty() {
+            voters = narrowed;
+        }
+        let got = voters.iter().filter(|d| signers.contains(*d)).count();
+        ensure!(
+            !voters.is_empty() && got * 2 > voters.len(),
+            "fewer than a majority of the holders this device knows signed the checkpoint"
+        );
     }
     if let BootstrapTrust::Enrollment { inviter } = trust {
         // Alone, by the inviter the user verified; its id is its key's id.
