@@ -1091,4 +1091,155 @@ mod over_the_log {
         let left = w.d[OBS].store.sync_pending().unwrap();
         assert_eq!((left.len(), left[0].hash()), (1, good.hash()));
     }
+
+    // R3 crypto fix wired into the CLI: the recovery and the cancellation prove the third factor.
+    fn hex_id(op: &Op) -> String {
+        op.hash().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn the_cli_recovery_reaches_ready_only_after_the_factor_and_lapses_after_three_days() {
+        use crate::cli::sync_admin::{factor, recovery_start, FactorKind};
+        use crate::sync::ceremony::{red_approve_body, red_phone_sign_body};
+        use crate::sync::recovery::{ack_body, approve_body};
+        let w = world();
+        for x in &w.d {
+            crate::sync::ceremony::test_force(&x.store, false);
+        }
+        let now = crate::store::now_ts();
+        let paper_reg = crate::sync::quorum::ops_of(&w.d[R].store, "FactorRegister", None)
+            .unwrap()
+            .remove(0);
+        append(&w.d[P], red_phone_sign_body(&paper_reg));
+        append(&w.d[A], red_approve_body(&paper_reg));
+        // Started from the CLI function WITHOUT the third factor: the report says what is missing.
+        let r = recovery_start(&w.d[R].store, &w.d[R].id, now, None, None).unwrap();
+        assert!(
+            r.lines.iter().any(|l| l.contains("AwaitingFactor")),
+            "{:?}",
+            r.lines
+        );
+        let op = crate::sync::quorum::ops_of(&w.d[R].store, "PhoneReenroll", None)
+            .unwrap()
+            .pop()
+            .unwrap();
+        append(&w.d[A], approve_body(&op).unwrap());
+        append(&w.d[B], approve_body(&op).unwrap());
+        append(&w.d[A], ack_body(&op, now).unwrap());
+        w.sync();
+        let later = now + 8 * 86_400;
+        assert_eq!(
+            w.verdict(&op, later).unwrap(),
+            ReenrollVerdict::AwaitingFactor,
+            "approvals, acknowledgement and the time lock are not enough"
+        );
+        // A wrong paper phrase proves nothing.
+        let wrong = bip39_encode(&[0x55; 32]);
+        factor(
+            &w.d[R].store,
+            &w.d[R].id,
+            &hex_id(&op),
+            FactorKind::Paper,
+            &wrong,
+            later,
+        )
+        .unwrap();
+        w.sync();
+        assert_eq!(
+            w.verdict(&op, later).unwrap(),
+            ReenrollVerdict::AwaitingFactor
+        );
+        // The right one, through `sync-factor <op-id>`, makes it Ready.
+        let out = factor(
+            &w.d[R].store,
+            &w.d[R].id,
+            &hex_id(&op),
+            FactorKind::Paper,
+            &w.phrase,
+            later,
+        )
+        .unwrap();
+        assert!(
+            out.lines.iter().any(|l| l.contains("recovery")),
+            "{:?}",
+            out.lines
+        );
+        w.sync();
+        assert_eq!(w.verdict(&op, later).unwrap(), ReenrollVerdict::Ready);
+        // Nobody completed it: three days after it became ready it lapses.
+        assert_eq!(
+            w.verdict(&op, now + 11 * 86_400).unwrap(),
+            ReenrollVerdict::Lapsed
+        );
+    }
+
+    #[test]
+    fn a_cancellation_from_a_device_needs_a_proven_factor() {
+        use crate::cli::sync_admin::{recovery_cancel, recovery_start, FactorKind};
+        let w = world();
+        let now = crate::store::now_ts();
+        recovery_start(&w.d[R].store, &w.d[R].id, now, None, Some(&w.phrase)).unwrap();
+        let op = crate::sync::quorum::ops_of(&w.d[R].store, "PhoneReenroll", None)
+            .unwrap()
+            .pop()
+            .unwrap();
+        w.sync();
+        // No secret: refused, nothing written.
+        let before = crate::sync::quorum::ops_of(&w.d[A].store, "PhoneReenrollCancel", None)
+            .unwrap()
+            .len();
+        let e = recovery_cancel(
+            &w.d[A].store,
+            &w.d[A].id,
+            &hex_id(&op),
+            FactorKind::Paper,
+            " ",
+            now,
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("third factor"), "{e}");
+        assert_eq!(
+            crate::sync::quorum::ops_of(&w.d[A].store, "PhoneReenrollCancel", None)
+                .unwrap()
+                .len(),
+            before
+        );
+        // A wrong phrase: the cancellation is written but does not take effect, and the report says so.
+        let wrong = bip39_encode(&[0x55; 32]);
+        let r = recovery_cancel(
+            &w.d[A].store,
+            &w.d[A].id,
+            &hex_id(&op),
+            FactorKind::Paper,
+            &wrong,
+            now,
+        )
+        .unwrap();
+        assert!(r.lines[0].contains("did not take effect"), "{:?}", r.lines);
+        w.sync();
+        assert_ne!(
+            validate_phone_reenroll(&w.d[OBS].store, &op, now).unwrap(),
+            ReenrollVerdict::CancelledByFactor
+        );
+        // The right phrase cancels it.
+        let r = recovery_cancel(
+            &w.d[A].store,
+            &w.d[A].id,
+            &hex_id(&op),
+            FactorKind::Paper,
+            &w.phrase,
+            now,
+        )
+        .unwrap();
+        assert!(
+            r.lines[0].starts_with("cancelled recovery"),
+            "{:?}",
+            r.lines
+        );
+        w.sync();
+        assert_eq!(
+            validate_phone_reenroll(&w.d[OBS].store, &op, now).unwrap(),
+            ReenrollVerdict::CancelledByFactor
+        );
+    }
 }

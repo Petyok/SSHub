@@ -628,7 +628,21 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
                 })
             })
             .collect();
+        let recoveries: Vec<_> = super::sync_admin::all_recoveries(&store)?
+            .iter()
+            .map(|op| {
+                let v = crate::sync::recovery::validate_phone_reenroll(
+                    &store,
+                    op,
+                    crate::store::now_ts(),
+                )
+                .map(|v| format!("{v:?}"))
+                .unwrap_or_else(|e| format!("invalid: {e:#}"));
+                json!({ "op": hex(&op.hash())[..12], "verdict": v })
+            })
+            .collect();
         let doc = json!({
+            "recoveries": recoveries,
             "devices": devices, "pending": pending, "credential_mode": mode,
             "companion_fingerprint": crate::sync::companion::COMPANION_FINGERPRINT,
         });
@@ -654,6 +668,11 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     }
     println!("Pending changes: {pending}");
     println!("Credential mode: {mode}");
+    for op in super::sync_admin::all_recoveries(&store)? {
+        for l in super::sync_admin::recovery_lines(&store, &op, crate::store::now_ts()) {
+            println!("{}", plain(&l));
+        }
+    }
     println!(
         "Phone page of this build: {} ({})",
         crate::sync::companion::COMPANION_FINGERPRINT,
