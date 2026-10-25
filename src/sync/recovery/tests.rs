@@ -1115,7 +1115,7 @@ mod over_the_log {
         // Started from the CLI function WITHOUT the third factor: the report says what is missing.
         let r = recovery_start(&w.d[R].store, &w.d[R].id, now, None, None).unwrap();
         assert!(
-            r.lines.iter().any(|l| l.contains("AwaitingFactor")),
+            r.lines.iter().any(|l| l.contains("not proven yet")),
             "{:?}",
             r.lines
         );
