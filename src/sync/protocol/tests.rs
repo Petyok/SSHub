@@ -876,9 +876,23 @@ fn a_fresh_store_bootstraps_over_the_wire_from_a_pruned_peer() {
     let f = Dev::new();
     f.trust(a);
     a.trust(&f);
+    // A store with no ring does not take a checkpoint from whoever it talks to ...
+    let (cl, _) = round(&f, a);
+    let e = format!("{:#}", cl.unwrap_err());
+    assert!(e.contains("enrollment"), "{e}");
+    assert!(f.store.sync_chain_heads().unwrap().is_empty());
+    // ... it joins by enrollment: the inviter's resolved state.
+    let anchor = a.store.sync_join_anchor_build(&a.id).unwrap();
+    f.store
+        .sync_join_adopt(
+            &anchor,
+            &crate::sync::oplog::BootstrapTrust::Enrollment {
+                inviter: a.did.clone(),
+            },
+        )
+        .unwrap();
     let (fs, _) = ok(round(&f, a));
-    assert!(fs.adopted.is_some(), "{fs:?}");
-    assert!(!fs.needs_checkpoint.is_empty());
+    assert!(fs.adopted.is_none(), "{fs:?}");
     // Work after the adoption reaches the newcomer by tail.
     b.append(200, "after");
     converge(&[&devs[0], &devs[1], &devs[2]]);
@@ -1055,7 +1069,9 @@ fn an_own_chain_that_diverges_from_the_checkpoint_is_refused_naming_the_seq() {
     let a = &devs[0];
     // Another copy of device 2's key with a different first op: a fork of its own chain.
     let twin = Dev::with(devs[2].id.clone());
-    twin.trust(a);
+    for d in &devs[..2] {
+        twin.trust(d);
+    }
     let head = a
         .store
         .sync_checkpoint_head()
@@ -1240,8 +1256,19 @@ fn rv_forged_checkpoint_from_any_peer_replaces_the_state() {
     many_ops(&refs, 150, 2);
     converge(&refs);
     m.store.sync_prune(now + 8 * 86_400 + 1_000).unwrap();
-    let (vs, _) = ok(round(&v, m));
-    assert!(vs.adopted.is_some(), "{vs:?}");
+    // V has no ring state of its own: a checkpoint from a peer is refused.
+    let (vc, _) = round(&v, m);
+    assert!(vc.is_err(), "a store with no ring took a peer's checkpoint");
+    // A V with a ring of its own refuses it too: m2 and m cannot sign for V's devices.
+    let v2 = Dev::new();
+    v2.trust(m);
+    v2.trust(&honest);
+    v2.append(5, "mine");
+    let (vc2, _) = round(&v2, m);
+    assert!(
+        vc2.is_err(),
+        "a device with a ring took a forged checkpoint"
+    );
     // v never reviewed anything, yet:
     let devs = v.store.sync_devices().unwrap();
     let injected = devs.iter().any(|d| d.id == m2.did);
@@ -1269,28 +1296,63 @@ fn rv_forged_checkpoint_from_any_peer_replaces_the_state() {
 
 #[test]
 fn rv_future_dated_checkpoint_makes_every_honest_op_wait_as_stale() {
+    use crate::sync::oplog::checkpoint::{latest_accepted_hash, required_for};
     let d = ring(3);
     let (a, b, c) = (&d[0], &d[1], &d[2]);
     let refs: Vec<&Dev> = d.iter().collect();
     let now = crate::store::now_ts();
     many_ops(&refs, 1, 2);
     converge(&refs);
-    let (op, _) = a
+    // The proposer picks its own timestamp: a month ahead (our own store would refuse to
+    // propose it, so the op is written by hand).
+    let ts = now + 31 * 86_400;
+    let (cut, state, hash) = a.store.sync_checkpoint_build(None, ts).unwrap();
+    let (required, prev) = a
         .store
-        .sync_checkpoint_propose(&a.id, None, now + 31 * 86_400)
+        .with_conn(|c| Ok((required_for(c, &cut, ts)?, latest_accepted_hash(c)?)))
+        .unwrap();
+    let op = a
+        .store
+        .sync_append_local_at(
+            &a.id,
+            OpBody::CheckpointPropose {
+                state_len: state.len() as u64,
+                cut,
+                state_hash: hash,
+                prev_checkpoint: prev,
+                required,
+            },
+            ts,
+        )
         .unwrap();
     for _ in 0..3 {
         converge(&refs);
     }
-    let accepted = b.store.sync_checkpoints().unwrap().into_iter().any(|c| {
-        c.proposal_hash == op.hash() && c.status == crate::sync::oplog::CheckpointStatus::Accepted
-    });
+    // No honest device signs or records it.
+    let verdict = b.store.sync_checkpoint_verify(&op, &state).unwrap();
+    assert!(
+        matches!(verdict, crate::sync::oplog::CheckpointVerdict::Blocked(_)),
+        "{verdict:?}"
+    );
+    let bundle = crate::sync::oplog::CheckpointBundle {
+        proposal: op.clone(),
+        signs: vec![],
+        heads: vec![],
+        state: state.clone(),
+    };
+    assert!(b.store.sync_checkpoint_record(&bundle).is_err());
+    let accepted = b
+        .store
+        .sync_checkpoints()
+        .unwrap()
+        .into_iter()
+        .any(|c| c.status == crate::sync::oplog::CheckpointStatus::Accepted);
     b.append(77, "after");
     ok(round(b, c));
     let reasons = c.store.sync_pending_with_reasons().unwrap();
     let stale = reasons.iter().filter(|(_, r)| r == "stale").count();
     assert!(
-        stale == 0,
+        !accepted && stale == 0,
         "accepted at b={accepted}; {stale} plain Green ops of an honest device wait as 'stale' on c"
     );
 }

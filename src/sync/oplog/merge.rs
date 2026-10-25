@@ -576,9 +576,12 @@ impl<'a> Settler<'a> {
             guard += 1;
             anyhow::ensure!(guard < 100_000, "op state settling did not converge");
             let rows = match &work {
+                // Never an unverified op: its signature was not checked, it is not this
+                // author's op until ingest has seen it again.
                 Work::Author(device) => row_of(
                     self.conn,
-                    "device_id = ?1 AND state IN ('applied','pending','approved')",
+                    "device_id = ?1 AND state IN ('applied','pending','approved')
+                     AND COALESCE(reason, '') <> 'unknown-author'",
                     params![device],
                 )?,
                 Work::Entity(kind, uid) => row_of(
