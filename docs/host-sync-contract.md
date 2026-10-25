@@ -63,7 +63,7 @@ Rust paths are under `crate::sync` (`src/sync/`), declared in `src/lib.rs` as
   DEK, so old wrapped shares stay decryptable forever by a holder's long-lived
   wrap key. Order of a revocation: remaining holders `rotate_wrap_keys` and
   publish `WrapKeyRotate`; the reshare wraps to the new keys; after adoption
-  (every credential confirmed by a real unlock, or `WRAP_KEY_RETIRE_AFTER_SECS`)
+  (every credential confirmed by a real unlock; never on a timer)
   each holder calls `retire_previous_wrap_keys`. `Vec<u8>` fields of ops are
   base64 strings (standard alphabet, padded) in the canonical form. Residuals:
   a key file copied before retirement, holders that cannot rotate (paper,
@@ -1291,7 +1291,6 @@ offline; no real credentials, no real user directories.
 | `CHECKPOINT_CHUNK_BYTES` | `256 KiB` | state blob chunk on the wire |
 | `TOMBSTONE_KEEP_SECS` | `90 * 86_400` | tombstones carried in checkpoint states |
 | `RING_FINGERPRINT_WORDS` | `8` | 88 bit ring fingerprint |
-| `WRAP_KEY_RETIRE_AFTER_SECS` | `7 * 86_400` | previous wrap keys are dropped when all credentials are confirmed or after this long |
 | `RESHARE_ITEMS_PER_OP` | `200` | credentials per `ShareReshareBatch` or `ShareReshareConfirmBatch` op |
 | `SAS_WORDS`, `MASTER_PHRASE_WORDS`, `PAPER_WORDS` | 4, 6, 24 | word counts |
 

@@ -813,6 +813,10 @@ mod reshare_fixture {
         for o in &ops {
             rx.store.sync_ingest(op_of(o)).unwrap();
         }
+        // The credentials arrive as pending reviews; the receiver knows the old sharing once they applied.
+        for op in rx.store.sync_pending().unwrap() {
+            rx.store.sync_resolve_pending(&op.hash(), true).unwrap();
+        }
         for body in reissue_receive(&rx.store, &rx.id, epoch).unwrap().bodies {
             rx.store.sync_append_local(&rx.id, body).unwrap();
         }
@@ -851,6 +855,9 @@ mod reshare_fixture {
         let rx = phone_store(&contributors);
         for o in v["ops"].as_array().unwrap() {
             rx.store.sync_ingest(op_of(o)).unwrap();
+        }
+        for op in rx.store.sync_pending().unwrap() {
+            rx.store.sync_resolve_pending(&op.hash(), true).unwrap();
         }
         rx
     }

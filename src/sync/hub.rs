@@ -75,7 +75,7 @@ fn name_of(store: &LauncherStore, id: &DeviceId) -> String {
         .and_then(|d| {
             d.into_iter()
                 .find(|r| r.id == *id)
-                .map(|r| format!("{} ({})", r.name, r.id))
+                .map(|r| format!("{} ({})", super::ceremony::plain_text(&r.name), r.id))
         })
         .unwrap_or_else(|| id.clone())
 }
@@ -204,7 +204,7 @@ pub fn run_sync_serve_notify<L: SyncLink>(
         // This device may be the sender of the emailed third factor: mail the code once the other proofs are in.
         let mailed = super::ceremony::send_owed_codes(
             store,
-            &id.public().device_id(),
+            id,
             crate::store::now_ts(),
             &mut |subject, body| super::notify::send_notification(cfg, subject, body),
         );

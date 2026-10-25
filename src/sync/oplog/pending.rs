@@ -60,7 +60,7 @@ pub(crate) fn resolve(conn: &Connection, hash: &[u8; 32], approve: bool, now: i6
             state: State::Approved,
             ..clone_row(&row)
         };
-        match desired_state(conn, &probe)?.0 {
+        match desired_state(conn, &probe, now)?.0 {
             State::Void => State::Void,
             _ => State::Approved,
         }

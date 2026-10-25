@@ -799,8 +799,9 @@ fn absorb_heads(store: &LauncherStore, h: &HeadsMsg, sum: &mut RoundSummary) -> 
     check_len("gossip", h.gossip.len(), MAX_GOSSIP_HEADS)?;
     check_len("fork proofs", h.forks.len(), MAX_FORK_PROOFS)?;
     for head in h.own.iter().chain(h.gossip.iter()) {
+        // A bad entry is skipped: one stored claim must not stop every round that carries it.
         if !valid_device_id(&head.device_id) {
-            bail!("protocol violation: malformed device id in a signed head");
+            continue;
         }
         let sh: SignedHead = head.clone().into();
         if matches!(store.sync_record_head(&sh)?, HeadVerdict::Fork) {
@@ -999,7 +1000,7 @@ fn pull<L: SyncLink>(
 }
 
 /// Largest checkpoint bundle we accept from a peer.
-pub(crate) const MAX_CHECKPOINT_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const MAX_CHECKPOINT_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Ask the peer for a checkpoint bundle chunk by chunk. `None`: it does not
 /// hold the blob. The bytes are untrusted; the store verifies them.

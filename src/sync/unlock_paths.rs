@@ -14,11 +14,12 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 
 use super::codes::normalize_code;
 use super::crypto::{bip39_decode, Share};
+use super::limits::{SNAPSHOT_TTL_SECS, TIMESTAMP_SKEW_GRACE_SECS};
 use super::oplog::{DeviceId, HostUid};
 use super::protocol::RoundSummary;
 use super::quorum::{holder_index, meta_get, meta_set, sharing_holders, Challenge};
 use super::share_release::{unwrap_share_reply, ReplyExt};
-use super::snapshot::{snapshot_open, SnapshotBlob};
+use super::snapshot::{snapshot_open_for, SnapshotBlob};
 use super::wire::ShareResponseWire;
 use crate::store::{uid_hex, LauncherStore};
 
@@ -70,10 +71,41 @@ fn snapshot_key(host: &HostUid) -> String {
     format!("snapshot:{}", uid_hex(host))
 }
 
-/// Keeps the snapshot blob of an earlier reply for the short-code path. Replaces an older one.
+/// Keeps the snapshot blob of an earlier reply for the short-code path. A version 2 blob must name this
+/// credential, and a second blob is refused while the first is live: the phone issues one at a time, so
+/// two live codes for one credential mean a restored or hostile phone (use [`forget_snapshot`] after a
+/// reissue of the credential, or let the first expire).
 pub fn remember_snapshot(store: &LauncherStore, host: &HostUid, blob: &[u8]) -> Result<()> {
-    SnapshotBlob::from_bytes(blob)?;
+    remember_snapshot_at(store, host, blob, crate::store::now_ts())
+}
+
+pub(crate) fn remember_snapshot_at(
+    store: &LauncherStore,
+    host: &HostUid,
+    blob: &[u8],
+    now: i64,
+) -> Result<()> {
+    let new = SnapshotBlob::from_bytes(blob)?;
+    ensure!(
+        new.host_uid.is_none_or(|h| h == *host),
+        "the snapshot is for another credential"
+    );
+    if let Some(old) = meta_get(store, &snapshot_key(host))? {
+        if old != blob {
+            if let Ok(old) = SnapshotBlob::from_bytes(&old) {
+                ensure!(
+                    now - old.issued_at > SNAPSHOT_TTL_SECS || old.issued_at > now + TIMESTAMP_SKEW_GRACE_SECS,
+                    "a live short-code snapshot already exists for this credential: the phone issues one at a time"
+                );
+            }
+        }
+    }
     meta_set(store, &snapshot_key(host), blob)
+}
+
+/// Drops the stored snapshot of `host` (its credential was reissued, or the code was used).
+pub fn forget_snapshot(store: &LauncherStore, host: &HostUid) -> Result<()> {
+    meta_set(store, &snapshot_key(host), b"")
 }
 
 /// What to do with a verified reply extension: chain the courier ops and keep the snapshot.
@@ -93,9 +125,11 @@ pub fn share_from_code(
     now: i64,
 ) -> Result<Share> {
     let blob = meta_get(store, &snapshot_key(host))?
+        .filter(|b| !b.is_empty())
         .context("no snapshot is stored for this credential: unlock with the phone once first")?;
-    snapshot_open(
+    snapshot_open_for(
         &SnapshotBlob::from_bytes(&blob)?,
+        host,
         &normalize_code(code)?,
         now,
     )

@@ -216,11 +216,10 @@ fn mail_owed_codes(
         return;
     };
     let now = crate::store::now_ts();
-    let owed =
-        match crate::sync::ceremony::owed_code_mails(store, &identity.public().device_id(), now) {
-            Ok(o) => o,
-            Err(e) => return eprintln!("sshub: could not look for owed code mails: {e:#}"),
-        };
+    let owed = match crate::sync::ceremony::owed_code_mails(store, identity, now) {
+        Ok(o) => o,
+        Err(e) => return eprintln!("sshub: could not look for owed code mails: {e:#}"),
+    };
     for (hash, subject, body) in owed {
         match crate::sync::notify::send_notification(cfg, &subject, &body) {
             Ok(()) => {

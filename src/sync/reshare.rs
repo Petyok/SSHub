@@ -22,7 +22,8 @@ use super::crypto::{
 use super::limits::RESHARE_ITEMS_PER_OP;
 use super::oplog::{ConfirmItem, DeviceId, DeviceRole, DeviceStatus, HostUid, OpBody, ReshareItem};
 use super::quorum::{
-    envelope_aad, holder_index, meta_get, meta_set, ops_of, own_shares, paper_pub, SHARE_K,
+    envelope_aad, holder_index, meta_get, meta_set, ops_of, own_shares, paper_pub, reshare_ops,
+    sharing_holders, SHARE_K,
 };
 use super::share_release::share_to_bytes;
 use crate::store::{uid_hex, LauncherStore};
@@ -36,7 +37,7 @@ pub struct ReissuePlan {
 
 /// The epoch a new reissue starts at: one above every epoch seen in the log.
 pub fn next_epoch(store: &LauncherStore) -> Result<u64> {
-    Ok(ops_of(store, "ShareReshareBatch", None)?
+    Ok(reshare_ops(store, "ShareReshareBatch")?
         .iter()
         .filter_map(|o| match &o.body {
             OpBody::ShareReshareBatch { epoch, .. } => Some(*epoch),
@@ -226,7 +227,7 @@ pub fn reissue_receive(
     epoch: u64,
 ) -> Result<ReissuePlan> {
     let me = id.public().device_id();
-    let batches: Vec<_> = ops_of(store, "ShareReshareBatch", None)?
+    let batches: Vec<_> = reshare_ops(store, "ShareReshareBatch")?
         .into_iter()
         .filter_map(|op| match op.body {
             OpBody::ShareReshareBatch {
@@ -252,7 +253,7 @@ pub fn reissue_receive(
         holder_index(&holders, &me).context("this device is not a holder at that epoch")?;
 
     let mut sessions: Vec<(DeviceId, Zeroizing<[u8; 32]>)> = Vec::new();
-    for op in ops_of(store, "ShareReshareSession", None)? {
+    for op in reshare_ops(store, "ShareReshareSession")? {
         if let OpBody::ShareReshareSession {
             epoch: e,
             to,
@@ -309,6 +310,14 @@ pub fn reissue_receive(
                 continue;
             }
             let old_epoch = u64::from_be_bytes(plain[..8].try_into().unwrap());
+            // A contribution is the author's own: the index it claims must be the author's position in the
+            // sharing it reshares, so nobody can speak for another holder or contribute twice.
+            let Ok(old_holders) = sharing_holders(store, &host, old_epoch) else {
+                continue;
+            };
+            if holder_index(&old_holders, author) != Some(plain[8]) {
+                continue;
+            }
             let c = ReshareContribution {
                 from: plain[8],
                 sub_shares: vec![(my_index, plain[9..].to_vec())],
@@ -369,7 +378,7 @@ pub fn paper_share_at(
     let me = paper.public().device_id();
     let mut holders: Option<Vec<DeviceId>> = None;
     let mut groups: Vec<(u64, Vec<ReshareContribution>)> = Vec::new();
-    for op in ops_of(store, "ShareReshareBatch", None)? {
+    for op in reshare_ops(store, "ShareReshareBatch")? {
         let OpBody::ShareReshareBatch {
             epoch: e,
             new_holders,
@@ -407,6 +416,12 @@ pub fn paper_share_at(
             continue;
         }
         let old_epoch = u64::from_be_bytes(plain[24..32].try_into().unwrap());
+        let Ok(old_holders) = sharing_holders(store, host, old_epoch) else {
+            continue;
+        };
+        if holder_index(&old_holders, &op.device_id) != Some(plain[32]) {
+            continue;
+        }
         let c = ReshareContribution {
             from: plain[32],
             sub_shares: vec![(my_index, plain[33..].to_vec())],
@@ -433,7 +448,7 @@ pub fn paper_share_at(
 
 /// Epochs at which any reshare batch exists, newest first.
 pub fn reshare_epochs(store: &LauncherStore) -> Result<Vec<u64>> {
-    let mut e: Vec<u64> = ops_of(store, "ShareReshareBatch", None)?
+    let mut e: Vec<u64> = reshare_ops(store, "ShareReshareBatch")?
         .into_iter()
         .filter_map(|o| match o.body {
             OpBody::ShareReshareBatch { epoch, .. } => Some(epoch),
@@ -466,7 +481,7 @@ pub fn adopted_epoch(store: &LauncherStore, host: &HostUid) -> Result<u64> {
 /// Credentials reshared at `epoch` that have not been confirmed by an unlock yet. Empty means the
 /// previous wrap keys may be retired (`retire_previous_wrap_keys`).
 pub fn unadopted(store: &LauncherStore, epoch: u64) -> Result<Vec<HostUid>> {
-    let mut hosts: Vec<HostUid> = ops_of(store, "ShareReshareBatch", None)?
+    let mut hosts: Vec<HostUid> = reshare_ops(store, "ShareReshareBatch")?
         .into_iter()
         .filter_map(|o| match o.body {
             OpBody::ShareReshareBatch {
