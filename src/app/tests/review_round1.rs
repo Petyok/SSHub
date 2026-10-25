@@ -96,7 +96,12 @@ fn f2_host_review_shows_group_and_identity_names_not_counts() {
             OpBody::HostUpsert {
                 host_uid: [4; 16],
                 fields: HostFields {
-                    group_uids: Some(vec![guid, [0xee; 16]]),
+                    // The op-log wants sorted unique uids; the order of the names follows.
+                    group_uids: Some({
+                        let mut u = vec![guid, [0xee; 16]];
+                        u.sort();
+                        u
+                    }),
                     ..Default::default()
                 },
             },
@@ -107,7 +112,7 @@ fn f2_host_review_shows_group_and_identity_names_not_counts() {
     let c = v.changes.iter().find(|c| c.field == "group_uids").unwrap();
     assert!(c.dangerous);
     assert!(
-        c.to.starts_with("prod, (unknown group eeeeeeee"),
+        c.to.contains("prod") && c.to.contains("(unknown group eeeeeeee"),
         "{:?}",
         c.to
     );
