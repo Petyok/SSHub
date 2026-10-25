@@ -2122,6 +2122,11 @@ fn cut_from_state(state: &Value) -> Result<Vec<CutEntry>> {
 
 /// Rebuild the cache tables stage 3 reads from the winning writes (after a
 /// bootstrap, where no op ever ran the effects).
+#[cfg(test)]
+pub(crate) fn rebuild_caches_for_test(conn: &Connection) -> Result<()> {
+    rebuild_caches(conn, 0)
+}
+
 fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
     let wins = fold_writes(conn, None)?;
     // ASCII-checked: a non-hex byte in the state is an empty value, never a slice through a char.

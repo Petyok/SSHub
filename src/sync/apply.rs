@@ -35,6 +35,7 @@ const MAX_SEALED_BYTES: usize = 8 * 1024;
 /// A credential payload (a password or a private key) after encryption.
 const MAX_CRED_BYTES: usize = 128 * 1024;
 const MAX_BATCH_BYTES: usize = 512 * 1024;
+const MAX_TAGS_BYTES: usize = 16 * 1024;
 
 fn cap(what: &str, len: usize, max: usize) -> std::result::Result<(), String> {
     if len > max {
@@ -333,6 +334,8 @@ fn validate_host(f: &HostFields) -> std::result::Result<(), String> {
     port_ok("port", &f.port)?;
     validate_jump("proxy_jump", &f.proxy_jump)?;
     for (what, v) in [
+        ("username", &f.username),
+        ("proxy_jump", &f.proxy_jump),
         ("label", &f.label),
         ("remote_command", &f.remote_command),
         ("environment", &f.environment),
@@ -351,8 +354,15 @@ fn validate_host(f: &HostFields) -> std::result::Result<(), String> {
         if tags.len() > MAX_LIST {
             return Err("too many tags".into());
         }
+        // A tag is a word, not a document: a Green op must stay small.
+        if tags.iter().map(String::len).sum::<usize>() > MAX_TAGS_BYTES {
+            return Err("the tags are over their byte budget".into());
+        }
         for t in tags {
-            text("tag", t)?;
+            line("tag", t)?;
+            if t.len() > 256 {
+                return Err("a tag is at most 256 bytes".into());
+            }
         }
     }
     if let Some(groups) = &f.group_uids {
