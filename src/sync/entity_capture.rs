@@ -148,9 +148,9 @@ impl EntityCapture {
     }
 
     fn append(&self, conn: &Connection, body: OpBody) -> Result<()> {
-        let id = self.identity()?;
-        append_local_on(conn, &id, body, crate::store::now_ts())
-            .context("the change is saved here but could not be recorded for sync")?;
+        let note = "the change is saved here but could not be recorded for sync";
+        let id = self.identity().context(note)?;
+        append_local_on(conn, &id, body, crate::store::now_ts()).context(note)?;
         Ok(())
     }
 }
