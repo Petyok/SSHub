@@ -226,6 +226,11 @@ fn present(app: &mut App, out: FlowOut) {
             vec![
                 "Show this code to the phone's camera. The terminal's webcam reads the phone's frames too when this build has the `camera` feature.".into(),
                 "Then paste the frame the phone shows next (copy it on the phone).".into(),
+                format!(
+                    "Companion page of this build: {} ({}).",
+                    crate::sync::companion::COMPANION_FINGERPRINT,
+                    crate::sync::companion::COMPARE_HINT
+                ),
             ],
             "Phone's next frame (base64)",
             feed_text,

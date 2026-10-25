@@ -4,13 +4,13 @@
 // only, never innerHTML.
 import { bytesOf, edSign, edVerify, hexOf, sasWords, x25519Pub, deviceIdOf } from './lib.mjs';
 import {
-  PIN_MIN_CHARS, generateSecret, identityOfSecret, randomBytes, secretFromWords, secretToWords, unwrapSecret, wrapSecret,
+  PIN_MIN_CHARS, generateSecret, pinDelaySecs, identityOfSecret, randomBytes, secretFromWords, secretToWords, unwrapSecret, wrapSecret,
 } from './keys.mjs';
 import {
-  COURIER_TAIL, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, courierOps, emptyState, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, saveState,
+  COURIER_TAIL, HEAD_PENDING_MESSAGE, adoptOwnChain, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, confirmNoChain, courierOps, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, restoredState, saveState,
 } from './state.mjs';
 import { TIMESTAMP_SKEW_GRACE_SECS, approveRelease, evaluateChallenge } from './release.mjs';
-import { describeOp, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
+import { describeOp, iso, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
 import {
   KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeCertExtendRequest, decodeCertRequest, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
   encodeEnrollConfirm, encodeEnrollReveal, encodePhoneOps, transcriptHash,
@@ -47,10 +47,28 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
   };
   const save = () => saveState(app.kv, app.state);
   const lock = () => {
-    if (app.identity) app.identity.secret.fill(0);
+    if (app.identity) app.identity.wipe();
     app.identity = null;
     home();
   };
+
+  // PIN attempts: a persisted failure counter with a growing delay (the third wrong try waits 5 s, then it doubles up to
+  // an hour). Someone who can edit the storage can reset it, so it only helps against the screen; the PIN length and the
+  // Argon2id profile are what price an offline guess.
+  const FAILS = 'unlock-fails';
+  async function tryPin(pin) {
+    const f = (await app.kv.get(FAILS)) || { count: 0, until: 0 };
+    const wait = Math.ceil(f.until - app.now());
+    if (wait > 0) throw new Error(`Too many wrong PINs. Wait ${wait} s before the next try.`);
+    try {
+      const secret = await unwrapSecret(await app.kv.get('key'), pin);
+      if (f.count) await app.kv.set(FAILS, { count: 0, until: 0 });
+      return secret;
+    } catch (e) {
+      if (e.message === 'wrong PIN') await app.kv.set(FAILS, { count: f.count + 1, until: app.now() + pinDelaySecs(f.count + 1) });
+      throw e;
+    }
+  }
   document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && app.identity && lock());
 
   const title = (t, sub) => [h('h1', {}, t), sub ? h('p', { class: 'mut' }, sub) : null];
@@ -80,7 +98,9 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       msg.textContent = 'Deriving the key...';
       await app.kv.set('key', await wrapSecret(secret, pin1.value));
       app.identity = identityOfSecret(secret);
-      app.state.enrolled = null;
+      if (fresh) app.state.enrolled = null;
+      else app.state = restoredState(); // same device id as before: no signing until the chain head is known
+      await app.kv.set(FAILS, { count: 0, until: 0 });
       await save();
       if (fresh) backup(secretToWords(secret), true);
       else home();
@@ -120,7 +140,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const go = async () => {
       msg.textContent = 'Unlocking...';
       try {
-        app.identity = identityOfSecret(await unwrapSecret(await app.kv.get('key'), pin.value), Number(app.state.wrapEpoch || 0));
+        app.identity = identityOfSecret(await tryPin(pin.value), Number(app.state.wrapEpoch || 0));
         home();
       } catch (e) {
         msg.textContent = e.message;
@@ -136,7 +156,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const pin = h('input', { id: 'pin1', type: 'password', autocomplete: 'new-password', placeholder: `New PIN, at least ${PIN_MIN_CHARS} characters` });
     const msg = h('p', { class: 'err', id: 'setup-error' });
     show(
-      title('Restore', 'Replaces the key stored on this phone. Enrollments and the short-code list of the old key are erased.'),
+      title('Restore', 'Replaces the key stored on this phone. Enrollments and the short-code list of the old key are erased, and the restored phone will not sign anything until it has taken its chain head from a terminal.'),
       words, pin, msg,
       btn('Replace and restore', async () => {
         try {
@@ -144,7 +164,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
           if (pin.value.length < PIN_MIN_CHARS) throw new Error(`The PIN needs at least ${PIN_MIN_CHARS} characters.`);
           await app.kv.set('key', await wrapSecret(secret, pin.value));
           app.identity = identityOfSecret(secret);
-          app.state = emptyState();
+          app.state = restoredState();
+          await app.kv.set(FAILS, { count: 0, until: 0 });
           await save();
           home();
         } catch (e) {
@@ -163,7 +184,10 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       pin, msg,
       btn('Show', async () => {
         try {
-          backupAgain(secretToWords(await unwrapSecret(await app.kv.get('key'), pin.value)));
+          const secret = await tryPin(pin.value);
+          const phrase = secretToWords(secret);
+          secret.fill(0);
+          backupAgain(phrase);
         } catch (e) {
           msg.textContent = e.message;
         }
@@ -181,6 +205,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const snaps = Object.entries(app.state.snapshots).filter(([k]) => liveSnapshot(app.state, k, app.now()));
     show(
       title('SSHub companion', null),
+      app.state.headPending ? headCard() : null,
       h('div', { class: 'card' },
         h('div', { class: 'mut' }, 'This phone is device'),
         h('div', { class: 'big', id: 'device-id' }, app.identity.deviceId),
@@ -198,6 +223,25 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       btn('About and fingerprint', about, '', 'about'),
       btn('Lock', lock, '', 'lock'),
     );
+  }
+
+  // A restored key has no chain here yet: it must not author until it knows where its chain ended.
+  function headCard() {
+    return h('div', { class: 'refusal', id: 'head-pending' },
+      h('div', {}, HEAD_PENDING_MESSAGE),
+      btn('Take my chain from a terminal', () => scan({
+        heading: 'Take my chain from a terminal', hint: 'A terminal shows this phone\'s own newest ops as a QR code or text (an ops list).', expect: [KIND.PHONE_OPS], onBack: home,
+        onDoc: async (bytes) => {
+          const r = adoptOwnChain(app.state, app.identity, decodePhoneOps(bytes));
+          await save();
+          show(title('Chain taken', `Continuing after seq ${r.head_seq} (${r.ops} op(s) read).`), btn('Done', home, 'primary', 'head-done'));
+        },
+      }), 'primary', 'head-scan'),
+      btn('This key never signed anything', async () => {
+        confirmNoChain(app.state);
+        await save();
+        home();
+      }, 'danger', 'head-new'));
   }
 
   function about() {
@@ -228,7 +272,14 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       if (finished) return;
       finished = true;
       cam && cam.stop();
-      onDoc(bytes);
+      // One guard for every screen: hostile bytes end on a refusal, never on a dead scan screen.
+      const fail = (e) => refusalScreen(`Could not read this document: ${e && e.message ? e.message : e}`, []);
+      try {
+        const r = onDoc(bytes);
+        if (r && typeof r.catch === 'function') r.catch(fail);
+      } catch (e) {
+        fail(e);
+      }
     };
     show(
       title(heading, hint), video, bar, status,
@@ -323,15 +374,19 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const timer = h('div', { class: 'mut', id: 'timer' });
     const msg = h('p', { class: 'err', id: 'release-error' });
     const approveBtn = btn('Approve and release', () => approve(), 'primary', 'approve');
+    // A requester this phone has never met cannot be authenticated here: approving needs the device id typed in.
+    const confirmIn = ev.unknownRequester ? h('input', { id: 'confirm-requester', placeholder: `type ${ev.requester} to approve`, autocomplete: 'off', spellcheck: 'false' }) : null;
+    const confirmed = () => !confirmIn || confirmIn.value.trim().toLowerCase() === ev.requester;
     const tick = () => {
       const left = Math.floor(ev.challenge.expiry - app.now());
       timer.textContent = left > 0 ? `Expires in ${left} s` : 'Expired: ask the terminal for a new request.';
-      approveBtn.disabled = left <= 0;
+      approveBtn.disabled = left <= 0 || !confirmed();
     };
+    if (confirmIn) confirmIn.addEventListener('input', tick);
     tick();
     const iv = setInterval(tick, 1000);
     async function approve() {
-      if (app.now() >= ev.challenge.expiry) return void tick();
+      if (app.now() >= ev.challenge.expiry || !confirmed()) return void tick();
       approveBtn.disabled = true;
       msg.textContent = optSnap.checked ? 'Sealing the short code (this takes a few seconds)...' : 'Approving...';
       try {
@@ -356,6 +411,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         h('div', { class: 'mut', id: 'binding-hash' }, ev.bindingHash)),
       h('div', { class: 'card', id: 'checks' }, ev.checks.map((c) => h('div', { class: `check ${c.warn ? 'warn' : 'ok'}` }, c.text))),
       timer,
+      confirmIn ? h('div', { class: 'refusal', id: 'unknown-requester' }, h('div', {}, `This phone has never met ${ev.requester}: nothing here proves who is asking. Approve only if you started this request yourself on a terminal and its id is ${ev.requester}.`), confirmIn) : null,
       h('div', { class: 'card' },
         h('label', { class: 'inline' }, optQr, 'Show a QR code'),
         h('label', { class: 'inline' }, optClip, 'Copy to the clipboard'),
@@ -473,7 +529,20 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
 
   function enrollShow(heading, hint, doc, next, extra = []) {
     const canvas = h('canvas', { class: 'qr', id: 'enroll-qr' });
-    show(title(heading, hint), canvas, ...extra, next ? btn('Next', next, 'primary', 'enroll-next') : null, btn('Cancel', home, '', 'back'));
+    // The same frame as text for a terminal without a camera (paste it there), like the ops text of opsOut.
+    const text = toBase64(doc);
+    const status = h('p', { class: 'mut', id: 'enroll-copy-status' }, 'No camera on the terminal? Copy this text and paste it there.');
+    const copyBox = h('details', {}, h('summary', {}, 'Show as text for a terminal without a camera'),
+      h('textarea', { id: 'enroll-b64', readonly: true, spellcheck: 'false' }, text), status,
+      btn('Copy the text', async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          status.textContent = 'Copied. Paste it into the terminal.';
+        } catch {
+          status.textContent = 'The browser refused the clipboard: select the text and copy it by hand.';
+        }
+      }, '', 'enroll-copy'));
+    show(title(heading, hint), canvas, copyBox, ...extra, next ? btn('Next', next, 'primary', 'enroll-next') : null, btn('Cancel', home, '', 'back'));
     app.cleanup.push(loopQr(canvas, reverseQrFrames(doc)).stop);
   }
 
@@ -661,7 +730,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       h('div', { class: 'card', id: 'reshare-summary' },
         h('div', {}, `Epoch ${epoch}, ${plan.holders.length} holders, this phone is holder number ${plan.myIndex}.`),
         h('div', {}, `Credentials ready: ${plan.items.length}; waiting for a second contributor: ${plan.skipped.length}.`),
-        h('div', { class: 'mut' }, `Contributors: ${plan.contributors.map((c) => `${safeText(aliasesNow()[c.id] || c.id)} [${c.id}] (${c.verified ? 'signature verified' : 'signature not checked'}${c.session ? '' : ', no session key for this phone'})`).join('; ')}`),
+        h('div', { class: 'mut', id: 'reshare-contributors' }, `Contributors (counted by authoring device): ${plan.contributors.map((c) => `${safeText(aliasesNow()[c.id] || '(no name known)')} [${c.id}] (${c.verified ? 'signature verified' : 'signature not checked'}${c.known ? '' : ', not known to this phone'}${c.session ? '' : ', no session key for this phone'})`).join('; ')}`),
+        h('div', { class: 'mut', id: 'reshare-holders' }, `Holders afterwards: ${plan.holders.map((id) => `${id === app.identity.deviceId ? 'this phone' : safeText(aliasesNow()[id] || '(no name known)')} [${id}]`).join('; ')}`),
         h('div', { class: 'mut' }, existing ? 'A storage key of this epoch was already published.' : 'A new storage key is published with the new shares.')),
       msg,
       btn('Publish the new shares', async () => {
@@ -714,7 +784,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       return refusalScreen(`Not a trust-session request: ${e.message}`, []);
     }
     const now = app.now();
-    const problems = certRequestProblems(req, now, app.identity.deviceId);
+    const problems = certRequestProblems(req, now, app.identity.deviceId, app.state.epoch);
     const d = describeCertRequest(req, now, aliasesNow());
     const msg = h('p', { class: 'err', id: 'cert-error' });
     show(
@@ -799,7 +869,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       msg,
       blocked ? null : btn('Approve: sign this operation with the phone', async () => {
         try {
-          appendRedPhoneSign(app.state, app.identity, opHashHex(n.op_canonical), app.now(), { lamport: op.lamport, epoch: op.epoch });
+          appendRedPhoneSign(app.state, app.identity, opHashHex(n.op_canonical), app.now(), sigOk ? { lamport: op.lamport, epoch: op.epoch } : null);
           await save();
           opsOut({ heading: 'Signed', hint: 'Carry this to a terminal: it holds the phone proof for the operation above. Show the QR code or paste the text.', ops: courierOps(app.state) });
         } catch (e) {
@@ -821,12 +891,12 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       title('Phone recovery in progress'),
       h('div', { class: 'headline', id: 'headline' }, desc.headline),
       descriptionRows(desc),
-      h('p', { class: 'mut', id: 'timelock' }, `The ring accepts the new phone after ${new Date(ends * 1000).toISOString().slice(0, 16)}Z unless it is cancelled.`),
+      h('p', { class: 'mut', id: 'timelock' }, `The ring accepts the new phone after ${iso(ends).slice(0, 16)}Z unless it is cancelled.`),
       h('p', { class: 'mut' }, sigOk ? 'The signature verifies.' : 'This phone does not know the signing device, so the signature is not checked here.'),
       msg,
       btn('Cancel this recovery: I still have this phone', async () => {
         try {
-          appendReenrollCancel(app.state, app.identity, opHashHex(n.op_canonical), app.now(), { lamport: op.lamport, epoch: op.epoch });
+          appendReenrollCancel(app.state, app.identity, opHashHex(n.op_canonical), app.now(), sigOk ? { lamport: op.lamport, epoch: op.epoch } : null);
           await save();
           opsOut({ heading: 'Cancellation signed', hint: 'Show the QR code to any terminal, or paste the text into it. It carries the cancellation and the head of this phone chain.', ops: courierOps(app.state), textId: 'cancel-b64' });
         } catch (e) {

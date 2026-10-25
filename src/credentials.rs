@@ -733,7 +733,8 @@ fn jump_token_host(token: &str) -> &str {
 
 /// A per-connection ssh config for jump hosts that need a synced key: the
 /// hop's `Host` block (private agent, its public key, IdentitiesOnly) first,
-/// then the user's own config, so `-F <this>` changes nothing else. ssh passes
+/// then `Match all` (an `Include` inside a `Host` block is skipped for every other
+/// host) and the user's own config, so `-F <this>` changes nothing else. ssh passes
 /// `-F` to the jump command, which `-o` options are not. Written 0600 into the
 /// agent's 0700 directory, removed with it. `None` when no hop needs it.
 pub fn hop_agent_config(jump: &str) -> Option<std::path::PathBuf> {
@@ -745,6 +746,15 @@ pub fn hop_agent_config(jump: &str) -> Option<std::path::PathBuf> {
     let mut dir = None;
     for token in jump.split(',') {
         let host = jump_token_host(token.trim());
+        // A synced name is foreign text: only a plain host name may become a `Host` line
+        // (the charset a raw hop is held to); anything else gets no block.
+        if host.is_empty()
+            || !host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            continue;
+        }
         let Some(agent) = noted.get(host).and_then(|id| synced_identity_agent(*id)) else {
             continue;
         };
@@ -757,7 +767,7 @@ pub fn hop_agent_config(jump: &str) -> Option<std::path::PathBuf> {
     }
     let dir = dir?;
     let text = format!(
-        "# sshub: synced keys for jump hosts, then your own configuration\n{blocks}Include ~/.ssh/config\nInclude /etc/ssh/ssh_config\n"
+        "# sshub: synced keys for jump hosts, then your own configuration\n{blocks}Match all\nInclude ~/.ssh/config\nInclude /etc/ssh/ssh_config\n"
     );
     let name = format!(
         "hops-{}.conf",

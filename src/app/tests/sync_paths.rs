@@ -467,7 +467,9 @@ fn a_release_request_opens_the_holders_modal_and_approving_grants_the_requester(
     let view = r.app.sync.release.clone().unwrap();
     assert_eq!(view.requester_id, r.d[2].did);
     assert_eq!(view.host, "web");
+    assert!(view.age_secs < 60, "the request age is shown: {view:?}");
 
+    r.app.sync.release_opened = Some(Instant::now() - Duration::from_secs(2));
     r.app.handle_key(key_char('y')).unwrap();
     pump(&mut r.app, "the grants", |a| {
         a.sync.pending == 0 && !a.sync.syncing
@@ -489,6 +491,7 @@ fn refusing_a_release_request_grants_nothing_and_does_not_ask_again() {
     let mut r = ring(None);
     let req = request_from_device_2(&mut r);
     assert_eq!(r.app.mode, AppMode::SyncReleaseConfirm);
+    r.app.sync.release_opened = Some(Instant::now() - Duration::from_secs(2));
     r.app.handle_key(key_char('n')).unwrap();
     pump(&mut r.app, "the refusal", |a| {
         a.sync.pending == 0 && !a.sync.syncing
@@ -503,6 +506,110 @@ fn refusing_a_release_request_grants_nothing_and_does_not_ask_again() {
         AppMode::Normal,
         "the answered request is not asked again"
     );
+}
+
+/// The command line's Quorum unlock against a real holder: `PromptShares` (what `host connect`
+/// uses) writes the `ShareRelease`, syncs over a fake ssh to an in-process `sync-serve` of the
+/// holder, a thread plays `sshub sync-review --approve` (`approve_release`), and the wait loop
+/// finds the grant and opens the credential.
+#[test]
+fn the_cli_unlock_writes_a_release_a_holder_approves_with_sync_review_and_the_credential_opens() {
+    use crate::cli::unlock::PromptShares;
+    use crate::credentials::ensure_unlocked;
+    use crate::sync::quorum::{QuorumUnlocker, ShareSource};
+    use crate::sync::runtime::SyncRuntime;
+
+    let r = ring(None);
+    let program = fake_ssh_to_holder(&r);
+    Peers::record(&r.paths, &r.d[2].did, "holder").unwrap();
+    let runtime = SyncRuntime {
+        paths: r.paths.clone(),
+        store: r.app.store.clone(),
+        identity: r.d[1].id.clone(),
+        ssh_program: Some(program),
+    };
+    let source = PromptShares {
+        runtime,
+        wait: Duration::from_secs(40),
+        every: Duration::from_millis(100),
+    };
+    // The holder side: what `sync-review --approve <id>` does once its user reads the listing.
+    let (hstore, hid) = (r.d[2].store.clone(), r.d[2].id.clone());
+    let stop = Arc::new(AtomicBool::new(false));
+    let approver = {
+        let stop = stop.clone();
+        std::thread::spawn(move || {
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                for op in hstore.sync_pending().unwrap() {
+                    if matches!(op.body, OpBody::ShareRelease { .. }) {
+                        crate::cli::sync_cmd::approve_release(
+                            &hstore,
+                            &hid,
+                            &op.hash(),
+                            crate::store::now_ts(),
+                        )
+                        .unwrap();
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        })
+    };
+    let mine = own_shares(&r.app.store, &r.d[1].id, &r.host)
+        .unwrap()
+        .remove(0)
+        .1;
+    let got = source.second_share(&r.host, 0, &mine).unwrap();
+    let theirs = own_shares(&r.d[2].store, &r.d[2].id, &r.host)
+        .unwrap()
+        .remove(0)
+        .1;
+    assert_eq!(got, theirs, "the requester got exactly the holder's share");
+    // The whole unlock: the CLI's source behind the real unlocker opens the credential.
+    assert!(!unlocked(&r));
+    let unlocker = QuorumUnlocker::new(
+        r.app.store.clone(),
+        r.d[1].id.clone(),
+        r.gate.clone(),
+        Box::new(source),
+        None,
+    );
+    ensure_unlocked(&[SecretRef::Key(r.key.clone())], &unlocker).unwrap();
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    approver.join().unwrap();
+    assert_eq!(
+        r.gate.get(&r.key).as_deref().map(String::as_str),
+        Some("trusted")
+    );
+}
+
+#[test]
+fn a_release_request_older_than_120_seconds_is_not_answered_by_sync_review() {
+    let r = ring(None);
+    let req = request_from_device_2_to_1(&r);
+    let hash = req.op.hash();
+    let late = req.op.timestamp + 3_600;
+    let e =
+        crate::cli::sync_cmd::approve_release(&r.d[1].store, &r.d[1].id, &hash, late).unwrap_err();
+    assert!(e.to_string().contains("too old"), "{e}");
+    // Nothing was granted and the request still waits.
+    assert!(r.d[1]
+        .store
+        .sync_pending()
+        .unwrap()
+        .iter()
+        .any(|o| o.hash() == hash));
+    all_to_all(&r.d);
+    assert!(crate::sync::quorum::peer_poll(&r.d[2].store, &req, 0)
+        .unwrap()
+        .is_none());
+}
+
+/// Device 2 asks, device 1 (the holder under test) has the request ingested and waiting.
+fn request_from_device_2_to_1(r: &Ring) -> crate::sync::quorum::PeerRequest {
+    let req = crate::sync::quorum::peer_request(&r.d[2].store, &r.d[2].id, &r.host).unwrap();
+    ingest_from(&r.d[2], &r.d[1]);
+    req
 }
 
 /// Ingest only (`all_to_all` approves what waits, which a Red change must not get).

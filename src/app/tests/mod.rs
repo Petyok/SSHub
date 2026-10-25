@@ -155,6 +155,7 @@ mod log_browser;
 mod misc;
 mod panes;
 mod profile_manager;
+mod review_round1;
 mod session;
 mod sftp;
 mod snippets;

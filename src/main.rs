@@ -61,6 +61,16 @@ fn main() -> Result<()> {
         std::process::exit(code);
     }
 
+    // The phone's terminal side (text frames in and out).
+    if let Some(cmd) = args
+        .first()
+        .filter(|c| sshub::cli::sync_phone_cmd::is_phone_command(c))
+    {
+        let code =
+            sshub::cli::sync_phone_cmd::run(cmd, &args[1..], || resolve_cli_profile(&startup))?;
+        std::process::exit(code);
+    }
+
     if let Some(cmd) = args.first() {
         if sshub::cli::is_subcommand(cmd) {
             let code = run_cli(&startup, &args)?;
@@ -250,6 +260,8 @@ HOST SYNC (headless; encrypted peer-to-peer over ssh):
     sshub sync-recovery start|approve|ack|cancel|status | sync-mode vault|quorum
     sshub sync-exemption on|off <device> | sync-export --window <s> --out <path>
     sshub sync-migrate [--remove-local] | sync-import-kit   (sshub <verb> --help for each)
+    sshub sync-phone-enroll | sync-notice <op-id> | sync-phone-ops | sync-share-request <host>
+    sshub sync-cert-request (--group G | --host H...)   The phone's terminal side, frames as base64 text
     sshub sync-serve | sync-enroll           Run by a peer over ssh (frames on stdin/stdout)
 
 INVENTORY / CONFIG:
@@ -273,6 +285,7 @@ ENVIRONMENT:
     SSHUB_DRY_RUN             Exit immediately (fallback: SSH_LAUNCHER_DRY_RUN)
     SSHUB_AUTO_QUIT           Headless smoke (fallback: SSH_LAUNCHER_AUTO_QUIT): 1 = quit after first draw, q = quit via q key
     SSHUB_VERSION_LABEL       Replace the tab-bar version label; set but empty hides it
+    SSHUB_UNLOCK_WAIT         Seconds a CLI command waits for a holder to approve a share release (default 120; 0 = do not ask)
     SSHUB_INSTALL_CHANNEL     How sshub was installed (npm, cargo, source, …); picks the update route
 
     Directory overrides disable profiles (compat mode): the override directory

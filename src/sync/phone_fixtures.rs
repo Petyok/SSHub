@@ -30,7 +30,7 @@ use super::limits::QR_PARITY_PERCENT;
 use super::share_release::{
     combine_and_check, share_to_bytes, unwrap_share_reply, wrapped_share_plaintext,
 };
-use super::snapshot::{snapshot_open, SnapshotBlob};
+use super::snapshot::{snapshot_open_for, SnapshotBlob};
 use super::wire::{
     binding_preimage, ChallengeWire, EnrollFrame, PhoneMaterial, PhoneOpsWire, RecoveryNoticeWire,
     ShareKind, ShareResponseWire,
@@ -628,12 +628,13 @@ fn e2e_response_opens_with_the_ephemeral_secret() {
     if let Some((host, blob)) = ext.snapshot {
         assert_eq!(host, HOST);
         let code = std::fs::read_to_string(d.join("snapshot-code.txt")).unwrap();
-        let opened = snapshot_open(
-            &SnapshotBlob::from_bytes(&blob).unwrap(),
-            code.trim(),
-            NOW + 5,
-        )
-        .unwrap();
+        let parsed = SnapshotBlob::from_bytes(&blob).unwrap();
+        assert_eq!(
+            parsed.host_uid,
+            Some(host),
+            "the page issues version 2, bound to the credential"
+        );
+        let opened = snapshot_open_for(&parsed, &host, code.trim(), NOW + 5).unwrap();
         assert_eq!(&opened, want);
     }
     if let Ok(frame) = std::fs::read(d.join("cancel-frame.bin")) {
@@ -1080,4 +1081,177 @@ fn e2e_the_pages_trust_session_ops_validate_on_the_terminal() {
     )
     .unwrap();
     reshare_fixture::check_cert_output(&out);
+}
+
+/// The terminal half of enrolling the REAL page (`phone_enroll::PhoneEnroll`), run as a peer next to the headless
+/// page flow of `assets/companion/scripts/e2e.mjs`. Both sides exchange the enrollment frames as files in
+/// `SSHUB_PHONE_ENROLL_PEER/<scenario>/` (written by rename, so a reader never sees half a file):
+/// `t-*` come from this terminal, `p-*` from the page. Scenarios, in this order: `ok` (same four words, the phone is
+/// Verified and admitted with the page's identity), `tampered` (the page's reveal altered on the way: Stopped),
+/// `differ` (the page declines: Stopped). Each scenario ends with `done.json`. Not run without the variable.
+mod enroll_peer {
+    use super::*;
+    use crate::sync::oplog::{DeviceKind, DeviceRole, OpBody};
+    use crate::sync::phone_enroll::{admit_phone, PhoneEnroll, Step};
+    use crate::sync::protocol::tests::Dev;
+    use std::time::{Duration, Instant};
+
+    const WAIT: Duration = Duration::from_secs(240);
+
+    fn put(dir: &Path, name: &str, bytes: &[u8]) {
+        let tmp = dir.join(format!(".{name}.tmp"));
+        std::fs::write(&tmp, bytes).unwrap();
+        std::fs::rename(&tmp, dir.join(name)).unwrap();
+    }
+
+    fn wait(dir: &Path, name: &str) -> Vec<u8> {
+        let t0 = Instant::now();
+        loop {
+            if let Ok(b) = std::fs::read(dir.join(name)) {
+                return b;
+            }
+            assert!(
+                t0.elapsed() < WAIT,
+                "timed out waiting for {name} from the page"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    /// The terminal shows its commitment; scans the page's commitment and shows its reveal; scans the page's reveal.
+    fn through_reveal(dir: &Path, t: &Dev, e: &mut PhoneEnroll) -> Step {
+        let p_commit = wait(dir, "p-commit.bin");
+        let Step::Show(reveal) = e
+            .scan(&t.id, &p_commit)
+            .expect("the page's commitment frame decodes and is accepted")
+        else {
+            panic!("after the phone's commitment the terminal shows its reveal")
+        };
+        put(dir, "t-reveal.bin", &reveal);
+        let p_reveal = wait(dir, "p-reveal.bin");
+        e.scan(&t.id, &p_reveal)
+            .expect("the page's reveal frame decodes")
+    }
+
+    fn start(dir: &Path) -> (Dev, PhoneEnroll) {
+        let t = Dev::new();
+        let (e, first) = PhoneEnroll::begin(&t.id, "work laptop");
+        put(dir, "t-id.txt", t.did.as_bytes());
+        put(dir, "t-commit.bin", &first);
+        (t, e)
+    }
+
+    fn compare(dir: &Path, t: &Dev, e: &mut PhoneEnroll) -> String {
+        let Step::Compare { words, phone_name } = through_reveal(dir, t, e) else {
+            panic!("the words follow the phone's reveal")
+        };
+        assert_eq!(phone_name, "my phone");
+        put(dir, "t-words.txt", words.as_bytes());
+        let page_words = String::from_utf8(wait(dir, "p-words.txt")).unwrap();
+        assert_eq!(page_words, words, "the page shows the same four words");
+        words
+    }
+
+    fn ok(dir: &Path) {
+        let (t, mut e) = start(dir);
+        compare(dir, &t, &mut e);
+        assert_eq!(e.answer(&t.id, true).unwrap(), Step::Wait);
+        let p_confirm = wait(dir, "p-confirm.bin");
+        let Step::Verified(v) = e
+            .scan(&t.id, &p_confirm)
+            .expect("the page's confirmation decodes")
+        else {
+            panic!("the page's confirmation verifies the phone")
+        };
+        put(dir, "t-confirm.bin", &v.frame);
+        let phone = DeviceIdentity::from_seed(&[0x42; 32], PHONE_CONTEXT);
+        assert_eq!(
+            v.phone,
+            phone.public(),
+            "the admitted DevicePublic is the page's identity"
+        );
+        assert_eq!(v.name, "my phone");
+        let op = admit_phone(&t.store, &t.id, &v).unwrap();
+        assert!(matches!(
+            op.body,
+            OpBody::DeviceAdd {
+                role: DeviceRole::Holder,
+                kind: DeviceKind::Phone,
+                ..
+            }
+        ));
+        assert_eq!(
+            crate::sync::quorum::phone_device(&t.store).unwrap(),
+            Some(phone.public().device_id()),
+            "the ring has the page's phone"
+        );
+    }
+
+    fn tampered(dir: &Path) {
+        let (t, mut e) = start(dir);
+        match through_reveal(dir, &t, &mut e) {
+            Step::Stopped { why, frame } => {
+                assert!(why.contains("do not open the commitment"), "{why}");
+                assert!(frame.is_none());
+            }
+            other => panic!("a tampered reveal must stop the terminal, got {other:?}"),
+        }
+        assert!(
+            e.answer(&t.id, true).is_err(),
+            "a stopped enrollment answers nothing"
+        );
+    }
+
+    fn differ(dir: &Path) {
+        let (t, mut e) = start(dir);
+        compare(dir, &t, &mut e);
+        let p_confirm = wait(dir, "p-confirm.bin");
+        assert_eq!(e.scan(&t.id, &p_confirm).unwrap(), Step::Wait);
+        let Step::Stopped { why, .. } = e.answer(&t.id, true).unwrap() else {
+            panic!("the page declined: the terminal stops")
+        };
+        // This message is only reached after the decline's signature verified under the page's key.
+        assert!(why.contains("the phone says the words differ"), "{why}");
+        assert!(crate::sync::quorum::phone_device(&t.store)
+            .unwrap()
+            .is_none());
+    }
+
+    pub fn run(root: &Path) {
+        let mut failed = Vec::new();
+        type Scenario = (&'static str, fn(&Path));
+        let scenarios: [Scenario; 3] = [("ok", ok), ("tampered", tampered), ("differ", differ)];
+        for (name, f) in scenarios {
+            let dir = root.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            let r = std::panic::catch_unwind(|| f(&dir));
+            let why = match &r {
+                Ok(()) => String::new(),
+                Err(e) => e
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| "panic".into()),
+            };
+            put(
+                &dir,
+                "done.json",
+                json!({ "pass": r.is_ok(), "why": why })
+                    .to_string()
+                    .as_bytes(),
+            );
+            if r.is_err() {
+                failed.push(format!("{name}: {why}"));
+            }
+        }
+        assert!(failed.is_empty(), "{failed:?}");
+    }
+}
+
+#[test]
+fn e2e_enrollment_peer_for_the_page() {
+    let Some(d) = std::env::var_os("SSHUB_PHONE_ENROLL_PEER") else {
+        return;
+    };
+    enroll_peer::run(Path::new(&d));
 }
