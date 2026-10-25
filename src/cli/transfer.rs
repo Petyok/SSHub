@@ -248,6 +248,8 @@ fn run_transfer(
         &dest_paths,
         crate::credentials::open_ungated_for_profile,
     )?;
+    src_store.warn_on_stderr();
+    dest_store.warn_on_stderr();
 
     let snapshot = capture_snapshot(&src_store)?;
     let dest_existing = capture_dest_index(&dest_store, &targs.dest_profile)?;

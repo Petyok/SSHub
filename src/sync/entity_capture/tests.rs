@@ -480,3 +480,39 @@ fn what_predates_the_ring_is_published_when_the_sink_is_installed() {
     publish_pending(&store, &id).unwrap();
     assert_eq!(ops(&store, "HostUpsert").len(), 1);
 }
+
+#[test]
+fn a_write_whose_recording_fails_still_succeeds_and_the_next_publish_repairs_it() {
+    let store = LauncherStore::open_in_memory().unwrap();
+    let id = Arc::new(DeviceIdentity::generate());
+    store
+        .sync_register_device(
+            &id.public(),
+            "me",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    install_locked(&store);
+    // The identity is locked: recording cannot sign, but the caller must see success.
+    let host = store.create_host(&NewHost::launcher("web", "10.0.0.1"));
+    assert!(host.is_ok(), "{host:?}");
+    assert_eq!(
+        store.list_hosts().unwrap().len(),
+        1,
+        "exactly one host, no retry duplicates it"
+    );
+    assert_eq!(ops(&store, "HostUpsert").len(), 0);
+    let warning = store
+        .take_sync_warning()
+        .expect("the failure is kept for the caller");
+    assert!(warning.contains("could not be recorded"), "{warning}");
+    assert!(store.take_sync_warning().is_none());
+    // The key is available again at the next round: exactly one op, once.
+    publish_pending(&store, &id).unwrap();
+    assert_eq!(ops(&store, "HostUpsert").len(), 1);
+    publish_pending(&store, &id).unwrap();
+    assert_eq!(ops(&store, "HostUpsert").len(), 1);
+}
