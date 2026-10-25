@@ -4,10 +4,10 @@
 // only, never innerHTML.
 import { bytesOf, edSign, edVerify, hexOf, sasWords, x25519Pub, deviceIdOf } from './lib.mjs';
 import {
-  PIN_MIN_CHARS, generateSecret, pinDelaySecs, identityOfSecret, randomBytes, secretFromWords, secretToWords, unwrapSecret, wrapSecret,
+  PIN_MIN_CHARS, generateSecret, pinDelaySecs, pinProblem, identityOfSecret, randomBytes, secretFromWords, secretToWords, unwrapSecret, wrapSecret,
 } from './keys.mjs';
 import {
-  COURIER_TAIL, HEAD_PENDING_MESSAGE, adoptOwnChain, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, confirmNoChain, courierOps, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, restoredState, saveState,
+  COURIER_TAIL, HEAD_PENDING_MESSAGE, acceptHead, adoptOwnChain, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, confirmNoChain, courierOps, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, restoredState, saveState,
 } from './state.mjs';
 import { TIMESTAMP_SKEW_GRACE_SECS, approveRelease, evaluateChallenge } from './release.mjs';
 import { describeOp, iso, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
@@ -37,6 +37,14 @@ function h(tag, attrs = {}, ...kids) {
 }
 const btn = (text, onclick, cls = '', id) => h('button', { class: cls, onclick, id, type: 'button' }, text);
 const wordsBox = (phrase, id) => h('div', { class: 'words', id }, phrase.split(' ').map((w) => h('span', {}, w)));
+// Approving for a device this phone has never met needs its id typed in: nothing on the screen authenticates it. The
+// button stays disabled until the input equals the id; returns the input to put on the screen.
+function unmetGate(button, id, inputId) {
+  const input = h('input', { id: inputId, placeholder: `type ${id} to approve`, autocomplete: 'off', spellcheck: 'false' });
+  button.disabled = true;
+  input.addEventListener('input', () => (button.disabled = input.value.trim().toLowerCase() !== id));
+  return input;
+}
 
 export async function startApp(root, { kv = indexedDbBackend(), now = () => Date.now() / 1000, fingerprint = '' } = {}) {
   const app = { kv, now, fingerprint, identity: null, state: await loadState(kv), cleanup: [] };
@@ -45,7 +53,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     root.replaceChildren(...nodes.flat().filter(Boolean));
     globalThis.scrollTo && globalThis.scrollTo(0, 0);
   };
-  const save = () => saveState(app.kv, app.state);
+  const save = (opts) => saveState(app.kv, app.state, opts);
   const lock = () => {
     if (app.identity) app.identity.wipe();
     app.identity = null;
@@ -54,18 +62,34 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
 
   // PIN attempts: a persisted failure counter with a growing delay (the third wrong try waits 5 s, then it doubles up to
   // an hour). Someone who can edit the storage can reset it, so it only helps against the screen; the PIN length and the
-  // Argon2id profile are what price an offline guess.
+  // Argon2id profile are what price an offline guess. Tries run one at a time (taps while one runs queue behind it, and a
+  // queued try meets the delay the earlier ones set), the count is re-read after the Argon2 run, and the delay also holds
+  // against the page's monotonic clock, so moving the phone clock forward does not end it while this page stays open.
+  // ponytail: after a reload only the stored wall-clock time remains.
   const FAILS = 'unlock-fails';
-  async function tryPin(pin) {
+  const mono = () => globalThis.performance.now() / 1000;
+  let monoUntil = 0;
+  let pinQueue = Promise.resolve();
+  const tryPin = (pin) => {
+    const run = pinQueue.then(() => tryPinNow(pin));
+    pinQueue = run.catch(() => {});
+    return run;
+  };
+  async function tryPinNow(pin) {
     const f = (await app.kv.get(FAILS)) || { count: 0, until: 0 };
-    const wait = Math.ceil(f.until - app.now());
+    const wait = Math.ceil(Math.max(f.until - app.now(), monoUntil - mono()));
     if (wait > 0) throw new Error(`Too many wrong PINs. Wait ${wait} s before the next try.`);
     try {
       const secret = await unwrapSecret(await app.kv.get('key'), pin);
       if (f.count) await app.kv.set(FAILS, { count: 0, until: 0 });
       return secret;
     } catch (e) {
-      if (e.message === 'wrong PIN') await app.kv.set(FAILS, { count: f.count + 1, until: app.now() + pinDelaySecs(f.count + 1) });
+      if (e.message === 'wrong PIN') {
+        const count = ((await app.kv.get(FAILS)) || { count: 0 }).count + 1;
+        const delay = pinDelaySecs(count);
+        monoUntil = mono() + delay;
+        await app.kv.set(FAILS, { count, until: app.now() + delay });
+      }
       throw e;
     }
   }
@@ -87,11 +111,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const pin2 = h('input', { id: 'pin2', type: 'password', autocomplete: 'new-password', placeholder: 'Repeat it' });
     const words = h('textarea', { id: 'words-input', placeholder: '24 backup words, separated by spaces', spellcheck: 'false', autocapitalize: 'none' });
     const msg = h('p', { class: 'err', id: 'setup-error' });
-    const check = () => {
-      if (pin1.value.length < PIN_MIN_CHARS) return `The PIN needs at least ${PIN_MIN_CHARS} characters.`;
-      if (pin1.value !== pin2.value) return 'The two PINs differ.';
-      return null;
-    };
+    const check = () => pinProblem(pin1.value) || (pin1.value !== pin2.value ? 'The two PINs differ.' : null);
     const finish = async (secret, fresh) => {
       const e = check();
       if (e) return void (msg.textContent = e);
@@ -101,7 +121,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       if (fresh) app.state.enrolled = null;
       else app.state = restoredState(); // same device id as before: no signing until the chain head is known
       await app.kv.set(FAILS, { count: 0, until: 0 });
-      await save();
+      await save({ replace: true });
       if (fresh) backup(secretToWords(secret), true);
       else home();
     };
@@ -161,12 +181,13 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       btn('Replace and restore', async () => {
         try {
           const secret = secretFromWords(words.value);
-          if (pin.value.length < PIN_MIN_CHARS) throw new Error(`The PIN needs at least ${PIN_MIN_CHARS} characters.`);
+          const weak = pinProblem(pin.value);
+          if (weak) throw new Error(weak);
           await app.kv.set('key', await wrapSecret(secret, pin.value));
           app.identity = identityOfSecret(secret);
           app.state = restoredState();
           await app.kv.set(FAILS, { count: 0, until: 0 });
-          await save();
+          await save({ replace: true });
           home();
         } catch (e) {
           msg.textContent = e.message;
@@ -227,21 +248,48 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
 
   // A restored key has no chain here yet: it must not author until it knows where its chain ended.
   function headCard() {
+    const typed = h('input', { id: 'head-confirm', placeholder: `type ${app.identity.deviceId} to confirm`, autocomplete: 'off', spellcheck: 'false' });
+    const msg = h('p', { class: 'err', id: 'head-error' });
     return h('div', { class: 'refusal', id: 'head-pending' },
       h('div', {}, HEAD_PENDING_MESSAGE),
-      btn('Take my chain from a terminal', () => scan({
-        heading: 'Take my chain from a terminal', hint: 'A terminal shows this phone\'s own newest ops as a QR code or text (an ops list).', expect: [KIND.PHONE_OPS], onBack: home,
-        onDoc: async (bytes) => {
-          const r = adoptOwnChain(app.state, app.identity, decodePhoneOps(bytes));
-          await save();
-          show(title('Chain taken', `Continuing after seq ${r.head_seq} (${r.ops} op(s) read).`), btn('Done', home, 'primary', 'head-done'));
-        },
-      }), 'primary', 'head-scan'),
+      h('div', { class: 'mut' }, 'A terminal can be behind, and a chain continued from an old list forks it. Take the list twice, from two terminals or from one terminal at two moments: the page adopts it only when both name the same newest op, and shows you which.'),
+      btn('Take my chain from a terminal', scanHead, 'primary', 'head-scan'),
+      h('div', { class: 'mut' }, 'Only if this key was never used to sign anything, type this phone\'s device id:'),
+      typed, msg,
       btn('This key never signed anything', async () => {
-        confirmNoChain(app.state);
-        await save();
-        home();
+        try {
+          confirmNoChain(app.state, app.identity, typed.value);
+          await save();
+          home();
+        } catch (e) {
+          msg.textContent = e.message;
+        }
       }, 'danger', 'head-new'));
+  }
+
+  function scanHead() {
+    scan({
+      heading: 'Take my chain from a terminal', hint: 'A terminal shows this phone\'s own newest ops as a QR code or text (an ops list).', expect: [KIND.PHONE_OPS], onBack: home,
+      onDoc: (bytes) => {
+        const r = adoptOwnChain(app.state, app.identity, decodePhoneOps(bytes));
+        const seen = `Newest op in this list: seq ${r.head_seq}, signed ${iso(Number(r.newest_at)).slice(0, 16)}Z (${r.ops} op(s) read).`;
+        if (!r.agreed) {
+          return show(
+            title('List read, one more needed', seen),
+            h('p', { class: 'mut', id: 'head-need' }, r.previous_seq ? `The earlier list ended at seq ${r.previous_seq}, so one of the two is behind. Take a list from another terminal, or again after it synced.` : 'Take a second list, from another terminal or from the same one later, before this chain head is trusted.'),
+            btn('Take the next list', scanHead, 'primary', 'head-next'), btn('Back', home, '', 'back'));
+        }
+        show(
+          title('Two lists agree', seen),
+          h('div', { class: 'refusal', id: 'head-agreed' }, `This phone will continue after seq ${r.head_seq}. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.`),
+          btn(`Adopt: continue after seq ${r.head_seq}`, async () => {
+            const a = acceptHead(app.state);
+            await save();
+            show(title('Chain taken', `Continuing after seq ${a.head_seq} (${a.ops} op(s) read).`), btn('Done', home, 'primary', 'head-done'));
+          }, 'danger', 'head-adopt'),
+          btn('Cancel', home, '', 'back'));
+      },
+    });
   }
 
   function about() {
@@ -696,7 +744,9 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       msg,
       btn('Rotate wrap keys', async () => {
         try {
-          const next = identityOfSecret(app.identity.secret, app.identity.wrapEpoch + 1);
+          // Never rotate below a generation the ring already uses: the adopted chain and any unwrap that needed a higher one say which.
+          app.state.wrapEpoch = Math.max(app.state.wrapEpoch || 0, app.identity.seenWrapEpoch || 0);
+          const next = identityOfSecret(app.identity.secret, app.state.wrapEpoch + 1);
           appendWrapKeyRotate(app.state, app.identity, next, app.now(), null);
           app.identity = next;
           await save();
@@ -787,22 +837,26 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const problems = certRequestProblems(req, now, app.identity.deviceId, app.state.epoch);
     const d = describeCertRequest(req, now, aliasesNow());
     const msg = h('p', { class: 'err', id: 'cert-error' });
+    const certApprove = btn('Approve: sign the trust session with the phone', async () => {
+      try {
+        issueCert(app.state, app.identity, req, app.now());
+        await save();
+        opsOut({ heading: 'Trust session signed', hint: 'Carry this to the terminal: it holds the certificate this phone signed. The ring activates it after the second terminal and the third factor approve it.', ops: courierOps(app.state) });
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+    }, 'danger', 'cert-approve');
+    // A delegate this phone has never met cannot be authenticated here: approving needs its device id typed in.
+    const delegateIn = !d.delegateKnown && !problems.length ? unmetGate(certApprove, String(req.device_id).toLowerCase(), 'confirm-delegate') : null;
     show(
       title('Trust session requested'),
       h('div', { class: 'headline', id: 'headline' }, d.headline),
       descriptionRows(d),
-      d.delegateKnown ? null : h('p', { class: 'mut', id: 'cert-unknown' }, 'This phone has not met that device: compare its id with the one on the terminal before you approve.'),
+      d.delegateKnown ? null : h('p', { class: 'mut', id: 'cert-unknown' }, 'This phone has not met that device: compare its id with the one on the terminal before you approve, then type it below.'),
+      delegateIn,
       problems.length ? h('div', { class: 'refusal', id: 'cert-refusal' }, problems.join(' ')) : h('p', { class: 'mut', id: 'cert-note' }, 'The certificate takes effect only after a second terminal and a third factor approve it. This signature is the phone\'s part: it authors the certificate.'),
       msg,
-      problems.length ? null : btn('Approve: sign the trust session with the phone', async () => {
-        try {
-          issueCert(app.state, app.identity, req, app.now());
-          await save();
-          opsOut({ heading: 'Trust session signed', hint: 'Carry this to the terminal: it holds the certificate this phone signed. The ring activates it after the second terminal and the third factor approve.', ops: courierOps(app.state) });
-        } catch (e) {
-          msg.textContent = e.message;
-        }
-      }, 'danger', 'cert-approve'),
+      problems.length ? null : certApprove,
       btn('Refuse', home, '', 'refuse'),
     );
   }
@@ -858,6 +912,16 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     // A trust certificate is authored by the phone itself: the phone's own signature is the proof.
     const blocked = op.kind === 'CertIssue' && !own ? 'A trust certificate must be issued by the phone itself. This one was written by another device: do not approve it.' : null;
     const msg = h('p', { class: 'err', id: 'red-error' });
+    const approveBtn = blocked ? null : btn('Approve: sign this operation with the phone', async () => {
+      try {
+        appendRedPhoneSign(app.state, app.identity, opHashHex(n.op_canonical), app.now(), sigOk ? { lamport: op.lamport, epoch: op.epoch } : null);
+        await save();
+        opsOut({ heading: 'Signed', hint: 'Carry this to a terminal: it holds the phone proof for the operation above. Show the QR code or paste the text.', ops: courierOps(app.state) });
+      } catch (e) {
+        msg.textContent = e.message;
+      }
+    }, 'danger', 'red-approve');
+    const proposerIn = approveBtn && !known && !own ? unmetGate(approveBtn, op.device_id, 'confirm-proposer') : null;
     show(
       title('Red operation: needs this phone'),
       h('div', { class: 'refusal', id: 'red-banner' }, `${op.kind} proposed by ${safeText(aliasesNow()[op.device_id] || 'a device this phone has not met')} [${op.device_id}]. It takes effect only with three proofs: this phone, a second attended device and a third factor. Your signature here is the phone's proof.`),
@@ -866,16 +930,9 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       h('p', { class: 'mut' }, sigOk ? 'The signature of the proposer verifies.' : 'This phone does not know the proposer, so its signature is not checked here.'),
       h('p', { class: 'mut', id: 'red-hash' }, `Operation hash ${opHashHex(n.op_canonical)}`),
       blocked ? h('p', { class: 'err', id: 'red-blocked' }, blocked) : null,
+      proposerIn ? h('div', { class: 'refusal', id: 'unknown-proposer' }, h('div', {}, `This phone has never met ${op.device_id}: nothing here proves who proposed this. Approve only if you started it yourself on a terminal and that terminal shows this id.`), proposerIn) : null,
       msg,
-      blocked ? null : btn('Approve: sign this operation with the phone', async () => {
-        try {
-          appendRedPhoneSign(app.state, app.identity, opHashHex(n.op_canonical), app.now(), sigOk ? { lamport: op.lamport, epoch: op.epoch } : null);
-          await save();
-          opsOut({ heading: 'Signed', hint: 'Carry this to a terminal: it holds the phone proof for the operation above. Show the QR code or paste the text.', ops: courierOps(app.state) });
-        } catch (e) {
-          msg.textContent = e.message;
-        }
-      }, 'danger', 'red-approve'),
+      approveBtn,
       btn('Refuse', home, '', 'refuse'),
     );
   }

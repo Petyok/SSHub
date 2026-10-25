@@ -140,7 +140,8 @@ export async function runPage({ chrome, ORIGIN, clearSiteData, coolDown, guard, 
   await fill('#pin2', PIN);
   await click('#restore');
   await wait('#device-id');
-  await click('#head-new'); // a restored key may not sign until its chain head is known
+  await fill('#head-confirm', fx.phone.pub.device_id);
+  await click('#head-new'); // a restored key may not sign until its chain head is known; "never signed" needs its id typed
   check('restore from 24 words gives the fixture phone identity', (await text('#device-id')) === fx.phone.pub.device_id, fx.phone.pub.device_id);
   const good = fx.challenges.find((c) => c.name === 'good');
   await coolDown(36);

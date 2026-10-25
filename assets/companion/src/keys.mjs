@@ -13,6 +13,17 @@ export const PHONE_CONTEXT = 'sshub/sync/phone/v1';
 // the profile only prices an offline guess against a stolen browser profile.
 export const PIN_PROFILE = { mem_kib: 65536, iters: 3 };
 export const PIN_MIN_CHARS = 10;
+// All one character, or an ascending or descending run (1234567890, 9876543210, abcdefghij): refused as a PIN. No list of
+// common PINs on purpose; the length floor and the Argon2id profile are the real price.
+export function pinProblem(pin) {
+  const cps = Array.from(pin, (c) => c.codePointAt(0));
+  if (cps.length < PIN_MIN_CHARS) return `The PIN needs at least ${PIN_MIN_CHARS} characters.`;
+  // All digits: the run wraps around (1234567890, 0987654321), so steps count modulo 10.
+  const mod = cps.every((c) => c >= 48 && c <= 57) ? 10 : 0;
+  const steps = new Set(cps.slice(1).map((c, i) => (mod ? (c - cps[i] + mod) % mod : c - cps[i])));
+  if (steps.size === 1 && (mod ? [0, 1, 9] : [0, 1, -1]).includes([...steps][0])) return 'That PIN is too easy to guess (one repeated character, or a run such as 1234567890). Choose another.';
+  return null;
+}
 // Seconds to wait after the n-th wrong PIN in a row: none for two, then 5 s doubling up to an hour.
 export const pinDelaySecs = (n) => (n < 3 ? 0 : Math.min(3600, 5 * 2 ** (n - 3)));
 const MAGIC = new Uint8Array([0x53, 0x53, 0x48, 0x50]); // "SSHP"
@@ -44,17 +55,23 @@ function wrapGeneration(secret32, epoch) {
 
 // The identity at wrap epoch `wrapEpoch`: signing key fixed, wrap keys of the newest generation,
 // `unwrap(blob)` tries every generation from the newest down.
+// A restored phone does not know its wrap generation unless the adopted chain says so, so unwrap also tries the
+// generations above the one it was built for, up to this bound (derived once, then kept).
+export const WRAP_GEN_MAX = 32;
 export function identityOfSecret(secret32, wrapEpoch = 0) {
   const base = identityFromIkm(secret32, PHONE_CONTEXT);
   const gens = [];
   for (let e = 0; e <= wrapEpoch; e++) gens.push(wrapGeneration(secret32, e));
   const cur = gens[gens.length - 1];
-  return {
+  const tryGen = (i, blob) => hybridUnwrap(gens[i].xSecret, gens[i].mlkemDk, blob);
+  const ident = {
     ...base,
     ...cur,
     secret: secret32,
     deviceId: deviceIdOf(base.edPub),
     wrapEpoch,
+    // Highest generation an unwrap actually needed above `wrapEpoch`: a generation the ring uses, so a rotation must start above it.
+    seenWrapEpoch: wrapEpoch,
     // Zeroes every secret this identity holds (the secret, the signing seed, every wrap generation).
     wipe() {
       secret32.fill(0);
@@ -68,7 +85,19 @@ export function identityOfSecret(secret32, wrapEpoch = 0) {
       let last = new Error('no wrap key generation');
       for (let i = gens.length - 1; i >= 0; i--) {
         try {
-          return hybridUnwrap(gens[i].xSecret, gens[i].mlkemDk, blob);
+          const k = tryGen(i, blob);
+          ident.seenWrapEpoch = Math.max(ident.seenWrapEpoch, i);
+          return k;
+        } catch (e) {
+          last = e;
+        }
+      }
+      for (let i = wrapEpoch + 1; i <= WRAP_GEN_MAX; i++) {
+        if (!gens[i]) gens[i] = wrapGeneration(secret32, i);
+        try {
+          const k = tryGen(i, blob);
+          ident.seenWrapEpoch = Math.max(ident.seenWrapEpoch, i);
+          return k;
         } catch (e) {
           last = e;
         }
@@ -76,6 +105,7 @@ export function identityOfSecret(secret32, wrapEpoch = 0) {
       throw last;
     },
   };
+  return ident;
 }
 
 export const generateSecret = () => randomBytes(32);

@@ -92,9 +92,11 @@ The PIN protects the key in the browser's storage with Argon2id (64 MiB, 3 passe
 of a stolen phone whatever the profile is, so the page asks for 10 characters; use a longer passphrase if the phone may
 be lost. The page locks when it is hidden (a tab switch or screen off), wipes every key from memory and asks for the
 PIN again. After two wrong PINs in a row each further wrong try makes the page wait (5 s, doubling, at most an hour),
-and the wait survives a reload. Someone who can edit the browser's storage can reset that counter: it protects
+and the wait survives a reload. Tries are counted one at a time, so tapping Unlock quickly does not count five wrong
+PINs as one. Someone who can edit the browser's storage can reset that counter: it protects
 against a person holding the unlocked-looking screen, not against a copy of the storage, where only the length of the
-PIN and the Argon2id cost count.
+PIN and the Argon2id cost count. A PIN of one repeated character or an ascending or descending run (1111111111,
+1234567890) is refused.
 
 ## Enrollment
 
@@ -244,7 +246,9 @@ keeps no old shares. Menu **Reshare and wrap keys**: **Rotate wrap keys** first 
 they derive from the same 24 words), then **Adopt a reshare** and scan or paste the reshare ops a terminal shows for
 the phone. The page shows the epoch, the holder number, how many credentials are ready and the contributors (with
 "signature not checked" for contributors it has never met), and **Publish the new shares** adds the phone's new
-shares, sealed, to its chain for a terminal to take. The screen states the consequence of this design: a revocation
+shares, sealed, to its chain for a terminal to take. At least two contributors must be terminals this phone enrolled
+with and whose signature verifies; a holder id that is not a 16 character device id, or an epoch outside the 64 bit
+range, ends on a refusal. The screen states the consequence of this design: a revocation
 needs at least two other terminal holders to contribute, so a ring of two terminals plus the phone cannot revoke a
 terminal by resharing (the paper phrase is offline and cannot contribute either); add a third terminal first.
 
@@ -263,11 +267,15 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
   does not sign anything yet**: it has lost the record of its own chain, and a new entry with a sequence number the ring
   already holds would look like a fork, which the ring treats as proof that the phone is compromised. The home screen
   shows a red card until the phone has taken its chain: ask a terminal for this phone's own newest ops (a list the
-  terminal can show as a QR code or as text), tap **Take my chain from a terminal** and scan or paste it. The page checks that every op is by this key,
-  verifies each signature and that they form one chain, and continues after the newest. Only when this key has never
-  signed anything (a brand new key restored from its words) tap **This key never signed anything**. On the lock
-  screen, "Restore from 24 words instead" replaces the stored key and erases the enrollments and short-code list of
-  the old key from this browser, with the same rule.
+  terminal can show as a QR code or as text), tap **Take my chain from a terminal** and scan or paste it. The page
+  checks that every op is by this key, verifies each signature and that they form one chain. **One list is not
+  enough**, because a terminal can be behind and signing on top of an old list forks the chain: take a second list
+  (from another terminal, or from the same one later) and the page continues only when both end at the same newest
+  op. It then shows the seq and the time of that op; if any terminal holds a higher seq for this phone, do not adopt
+  it. The wrap key generation is read from the adopted chain's wrap key rotations. Only when this key has never signed
+  anything (a brand new key restored from its words) use **This key never signed anything**, and type this phone's
+  device id to confirm it. On the lock screen, "Restore from 24 words instead" replaces the stored key and erases the
+  enrollments and short-code list of the old key from this browser, with the same rule.
 - Clearing site data, uninstalling the browser or switching origin deletes the stored key: you then need the words.
 
 ## If the phone is lost
@@ -293,7 +301,8 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
   phone yet.
 - The fast audio reply is 8 seconds for 128 bytes and has not been measured over the air; the QR code is the primary
   channel.
-- A requester the phone has not met is warned about and can be approved only after its device id is typed in.
+- A requester, a Red proposer or a trust-session delegate the phone has not met is warned about and can be approved
+  only after its device id is typed in.
 - A document of the wrong shape (a broken op, a list that is not JSON, a number outside the 64 bit fields) ends on a
   refusal screen; the parser has a nesting and size limit (256 KiB per op) and never loops on unterminated input.
 - **The page is inside a meta Content-Security-Policy, which cannot set `frame-ancestors`**: a page that frames this
@@ -304,9 +313,20 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
 - The fingerprint check needs the terminal to print the expected fingerprint; until the terminal does, compare with
   the repository file.
 - The phone can rotate its wrap keys (Reshare and wrap keys), but its older generations derive from the same 24 words
-  and can never be retired, so the forward secrecy of the reshare does not extend to the phone's own envelopes.
+  and can never be retired, so the forward secrecy of the reshare does not extend to the phone's own envelopes. The
+  page opens envelopes wrapped to any generation up to 32 and will not rotate below one it has seen the ring use.
 - The phone's chain carries the last 8 entries with each reply; a long gap needs the phone to touch another terminal.
   A list carries at most 8 ops, 256 KiB per op and 1 MiB in all.
+- **A restored phone cannot know that a list of its own ops is the newest.** The page asks for two lists that name the
+  same newest op and shows its seq and time before you adopt it, but two lists from terminals that are both behind
+  still look right. Compare with the newest seq of this phone on a terminal. The terminal does not yet vouch for the
+  head with its own signature; until it does, this is the limit. A wrongly adopted head makes the next op reuse a seq
+  the ring holds, which the ring reads as a fork.
+- Two copies of the page on one browser storage (the installed page and a tab): the one that is behind refuses to
+  save ("Another copy of this page changed this phone"). Close one and reload the other.
+- Names and values from other devices are shown with every control, format, line, paragraph, filler and space
+  separator character (all but the plain space) written as an escape, never raw. After a reload only the stored
+  time keeps a wrong-PIN delay; while the page stays open a forward clock change does not end it.
 - A trust session stops working when no terminal has seen this phone for 14 days.
 - A ring of two terminals plus the phone cannot revoke a terminal by resharing: the phone never contributes.
 - The fingerprint does not defend against a malicious page.
