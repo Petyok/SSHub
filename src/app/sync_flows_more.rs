@@ -17,15 +17,15 @@ use crate::sync::{ceremony, exemption, export};
 const EXPORT_DEFAULT_SECS: u32 = 600;
 const EXPORT_MAX_SECS: u32 = 3600;
 
-/// A path for a file that must not exist yet: empty means `~/default_name`,
-/// `~/` expands to the home directory, an existing file or a missing folder is
-/// refused.
+/// A path for a file that must not exist yet: empty means `default_name` in the
+/// runtime directory (memory-backed, owner-only, gone at logout; the home directory
+/// without one), `~/` expands to the home directory, an existing file or a missing
+/// folder is refused. These files hold the credentials in clear or the paper phrase.
 fn new_file_path(raw: &str, default_name: &str) -> std::result::Result<PathBuf, String> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let raw = raw.trim();
     let path = match (raw, raw.strip_prefix("~/"), &home) {
-        ("", _, Some(home)) => home.join(default_name),
-        ("", _, None) => PathBuf::from(default_name),
+        ("", _, _) => super::kit::default_dir().join(default_name),
         (_, Some(rest), Some(home)) => home.join(rest),
         _ => PathBuf::from(raw),
     };
@@ -196,7 +196,7 @@ pub(crate) fn export_continue(app: &mut App) {
 fn export_path(app: &mut App, next: impl FnOnce(&mut App, PathBuf) + 'static) {
     app.sync_prompt(
         "Export every credential",
-        "File for the export, empty for ~/sshub-export.csv (must not exist; written owner-only)",
+        "File for the export, empty for sshub-export.csv in the runtime directory (must not exist; written owner-only)",
         false,
         move |app, raw| match new_file_path(&raw, "sshub-export.csv") {
             Ok(out) => next(app, out),
@@ -261,6 +261,8 @@ fn export_step(
     };
     let me = env.identity.public().device_id();
     let r = export::export_all(&env.store, &me, &now, &mut unlock, out)?;
+    // The file holds every credential in clear: the quit reminder names it.
+    super::kit::note_written(out);
     let mut lines = vec![format!(
         "exported {} credentials ({} skipped) to {}",
         r.written,
@@ -288,7 +290,7 @@ pub(crate) fn paper_sheet(app: &mut App) {
     }
     app.sync_prompt(
         "Paper phrase: printable sheet",
-        "File for the sheet, empty for ~/sshub-paper-phrase.html (must not exist)",
+        "File for the sheet, empty for sshub-paper-phrase.html in the runtime directory (must not exist)",
         false,
         |app, raw| {
             let path = match new_file_path(&raw, "sshub-paper-phrase.html") {

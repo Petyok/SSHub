@@ -478,6 +478,17 @@ fn a_save_that_could_not_be_recorded_for_sync_shows_in_the_status_line() {
         }
     }
     let mut app = test_app(vec![]);
+    // Only a profile in a ring records anything for sync.
+    app.store
+        .sync_register_device(
+            &DeviceIdentity::generate().public(),
+            "me",
+            crate::sync::oplog::DeviceRole::Holder,
+            crate::sync::oplog::Attendance::Attended,
+            crate::sync::oplog::DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
     app.store.set_local_change_sink(Box::new(Failing));
     // The row is saved; only the sync record failed.
     app.store

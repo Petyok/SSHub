@@ -2887,6 +2887,10 @@ fn control_characters_never_enter_names_text_or_device_names() {
         "a\u{85}b",
         "a\u{9b}31m",
         "a\tb",
+        "pr\u{202E}dorp",
+        "a\u{200B}b",
+        "a\u{FEFF}b",
+        "a\u{2066}b\u{2069}",
     ] {
         assert!(validates(&host(bad, None)).is_err(), "{bad:?}");
     }
@@ -3065,7 +3069,8 @@ fn ops_dated_beyond_the_skew_grace_are_refused_when_red_and_wait_otherwise() {
     let ring = ring(3);
     let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
     let now = crate::store::now_ts();
-    // Red: a ceremony TTL measured on such a stamp would never end.
+    // Red: held for its ceremony with its reason, not rejected: a clock running behind must not
+    // lose an honest op for good.
     let red = a
         .store
         .sync_append_local_at(
@@ -3077,7 +3082,14 @@ fn ops_dated_beyond_the_skew_grace_are_refused_when_red_and_wait_otherwise() {
             now + 400 * 86_400,
         )
         .unwrap();
-    assert!(rejected(&b.store.sync_ingest(red).unwrap()).contains("dated"));
+    assert!(matches!(
+        b.store.sync_ingest(red.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert_eq!(
+        b.store.sync_pending_reason(&red.hash()).unwrap().as_deref(),
+        Some("future-dated")
+    );
     // Green: held with its reason, and applied once the clock is within the grace.
     let green = a
         .store
@@ -3231,4 +3243,178 @@ fn an_existing_device_does_not_bootstrap_an_anchor_and_a_fresh_one_does_not_adop
         .sync_bootstrap(&cp, &BootstrapTrust::Anchor(ring[0].dev()))
         .unwrap_err();
     assert!(e.to_string().contains("adopt"), "{e:#}");
+}
+
+#[test]
+fn a_revoked_device_cannot_keep_writing_with_a_low_lamport() {
+    let ring = ring(3);
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    for n in 0..6u8 {
+        a.append(upsert(10 + n, hf(&format!("a{n}"), "10.0.0.1")));
+    }
+    let revoke = a.append(OpBody::DeviceRevoke { device_id: c.dev() });
+    pull(b, a);
+    b.approve_all();
+    assert_eq!(
+        b.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == c.dev())
+            .unwrap()
+            .status,
+        DeviceStatus::Revoked
+    );
+    // c, offline, writes with a lamport far below the revocation's.
+    let late = c.append(upsert(
+        70,
+        HostFields {
+            name: Some("late".into()),
+            ..Default::default()
+        },
+    ));
+    assert!(late.lamport < revoke.lamport);
+    assert!(matches!(
+        b.store.sync_ingest(late.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert_eq!(
+        b.store
+            .sync_pending_reason(&late.hash())
+            .unwrap()
+            .as_deref(),
+        Some("revoked-author")
+    );
+    assert!(b.host(&uid(70)).is_none());
+}
+
+#[test]
+fn a_share_grant_from_a_non_holder_waits() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let m = Peer::new();
+    for p in [a, b] {
+        p.store
+            .sync_register_device(
+                &m.id.public(),
+                "m",
+                DeviceRole::Mirror,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let grant = |p: &Peer| {
+        p.append(OpBody::ShareGrant {
+            host_uid: uid(1),
+            request_id: 1,
+            requester: a.dev(),
+            epoch: 1,
+            sealed: vec![1; 40],
+        })
+    };
+    let from_mirror = grant(&m);
+    assert!(matches!(
+        a.store.sync_ingest(from_mirror.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert_eq!(
+        a.store
+            .sync_pending_reason(&from_mirror.hash())
+            .unwrap()
+            .as_deref(),
+        Some("not-holder")
+    );
+    let from_holder = grant(b);
+    assert!(matches!(
+        a.store.sync_ingest(from_holder).unwrap(),
+        IngestOutcome::Applied
+    ));
+}
+
+#[test]
+fn a_non_ascii_byte_in_a_state_hex_field_does_not_panic_the_cache_rebuild() {
+    let ring = ring(1);
+    let a = &ring[0];
+    a.store
+        .with_conn(|c| {
+            c.execute(
+                "INSERT INTO sync_writes (section, key, op_hash, ord, lamport, device_id, seq, value)
+                 VALUES ('device', 'k', zeroblob(32), 0, 1, 'dd', 1, ?1)",
+                rusqlite::params![r#"{"x25519":"é\u00e9é","mlkem":"zz","ed25519":"ééé"}"#],
+            )?;
+            crate::sync::oplog::checkpoint::rebuild_caches_for_test(c)
+        })
+        .unwrap();
+    assert!(
+        a.store.sync_chain_heads().is_ok(),
+        "the store is still usable (not poisoned)"
+    );
+}
+
+// ---- review round 2, app F1: a rename must not silently drop a reviewed ProxyJump
+
+fn bastion_ring() -> (Vec<Peer>, impl Fn(&Peer) -> Option<String>) {
+    let r = ring(2);
+    let (a, b) = (&r[0], &r[1]);
+    a.append(upsert(1, hf("bastion", "10.0.0.1")));
+    let mut web = hf("web", "10.0.0.2");
+    web.proxy_jump = Some(Some(format!("#{}", uid_hex(&uid(1)))));
+    a.append(upsert(2, web));
+    pull(b, a);
+    b.approve_all();
+    let jump = |p: &Peer| p.host(&uid(2)).unwrap().proxy_jump;
+    assert_eq!(jump(b).as_deref(), Some("bastion"), "the reviewed jump");
+    (r, jump)
+}
+
+#[test]
+fn renaming_a_hop_target_to_an_unusable_name_waits_for_review_and_keeps_the_jump() {
+    let (r, jump) = bastion_ring();
+    let (a, b) = (&r[0], &r[1]);
+    a.append(upsert(
+        1,
+        HostFields {
+            name: Some("bastion two".into()),
+            ..Default::default()
+        },
+    ));
+    pull(b, a);
+    assert_eq!(
+        b.pending(),
+        1,
+        "a rename that breaks the hop of others is Yellow"
+    );
+    assert_eq!(
+        jump(b).as_deref(),
+        Some("bastion"),
+        "nothing changed before review"
+    );
+}
+
+#[test]
+fn an_approved_unusable_hop_name_refuses_connections_instead_of_going_direct() {
+    let (r, jump) = bastion_ring();
+    let (a, b) = (&r[0], &r[1]);
+    a.append(upsert(
+        1,
+        HostFields {
+            name: Some("bastion two".into()),
+            ..Default::default()
+        },
+    ));
+    pull(b, a);
+    b.approve_all();
+    let now = jump(b).expect("a jump is never cleared by a rename");
+    assert!(
+        now.starts_with(crate::sync::apply::UNUSABLE_HOP_PREFIX),
+        "{now}"
+    );
+    assert!(!crate::map::hops::jump_is_valid(&now));
+    let refused = b.store.resolve_connection(&b.host(&uid(2)).unwrap());
+    assert!(
+        refused.is_err(),
+        "the connection is refused, not made direct: {refused:?}"
+    );
 }

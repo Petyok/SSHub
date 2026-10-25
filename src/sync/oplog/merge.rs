@@ -184,6 +184,32 @@ pub(crate) fn forget_unverified(conn: &Connection, device: &str, seq: Option<u64
 
 /// Store a verified op, its register writes and its tombstone. The state is
 /// decided by the caller.
+/// Stored bytes of the ops of `device`, kept in `sync_meta` (a sum over the blobs per op would
+/// cost the whole log every time); absent means "not counted yet" and is computed once.
+pub(crate) fn device_bytes(conn: &Connection, device: &str) -> Result<i64> {
+    let key = format!("bytes:{device}");
+    let cached: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT value FROM sync_meta WHERE key = ?1",
+            params![key],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(n) = cached.and_then(|b| String::from_utf8(b).ok()?.parse().ok()) {
+        return Ok(n);
+    }
+    let n: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(length(canonical)), 0) FROM sync_ops WHERE device_id = ?1",
+        params![device],
+        |r| r.get(0),
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?1, ?2)",
+        params![key, n.to_string().into_bytes()],
+    )?;
+    Ok(n)
+}
+
 pub(crate) fn insert_op(
     conn: &Connection,
     op: &Op,
@@ -193,6 +219,7 @@ pub(crate) fn insert_op(
     now: i64,
 ) -> Result<[u8; 32]> {
     let canonical = op.canonical_bytes();
+    let before = device_bytes(conn, &op.device_id)?;
     let hash = crate::sync::crypto::chain_hash(&canonical);
     conn.execute(
         "INSERT INTO sync_ops (op_hash, device_id, seq, lamport, prev_hash, epoch, canonical,
@@ -214,6 +241,13 @@ pub(crate) fn insert_op(
             local,
             now,
             op.timestamp,
+        ],
+    )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?1, ?2)",
+        params![
+            format!("bytes:{}", op.device_id),
+            (before + canonical.len() as i64).to_string().into_bytes()
         ],
     )?;
     conn.execute(
@@ -351,7 +385,37 @@ fn holder_only(body: &OpBody) -> bool {
             | OpBody::ShareReshareConfirmBatch { .. }
             | OpBody::WrapKeyRotate { .. }
             | OpBody::CertHostOpened { .. }
+            | OpBody::ShareGrant { .. }
     )
+}
+
+fn author_revoked(conn: &Connection, device: &str) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id = ?1 AND status = 'revoked')",
+        params![device],
+        |r| r.get(0),
+    )?)
+}
+
+/// The op that holds the name `op` claims for another live entity, when the claim collides.
+pub(crate) fn collision_holder(conn: &Connection, op: &Op) -> Result<Option<[u8; 32]>> {
+    let Some((kind, uid, name)) = claimed_name(&op.body) else {
+        return Ok(None);
+    };
+    if op.tier() != OpTier::Green || !name_taken(conn, kind, &uid, &name)? {
+        return Ok(None);
+    }
+    let hash: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT f.op_hash FROM sync_fields f JOIN sync_entities e
+               ON e.kind = f.kind AND e.uid = f.uid
+             WHERE f.kind = ?1 AND f.field = 'name' AND f.value = ?2 AND f.uid != ?3 AND e.alive = 1
+             ORDER BY f.lamport DESC LIMIT 1",
+            params![kind.as_str(), serde_json::to_string(&name)?, &uid[..]],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(hash.and_then(|h| <[u8; 32]>::try_from(h).ok()))
 }
 
 /// The author of a [`holder_only`] op is an effective holder (and for `CertHostOpened` not
@@ -421,11 +485,61 @@ fn name_taken(conn: &Connection, kind: EntityKind, uid: &Uid, name: &str) -> Res
     Ok(cached || row)
 }
 
+/// Does some host or group jump through the host `uid` (by its current local name)?
+fn is_hop_target(conn: &Connection, uid: &Uid) -> Result<bool> {
+    let name: Option<String> = conn
+        .query_row(
+            "SELECT name FROM hosts WHERE uid = ?1 AND source = 'launcher'",
+            params![&uid[..]],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(name) = name else {
+        return Ok(false);
+    };
+    for table in ["hosts", "host_groups"] {
+        let col = if table == "hosts" {
+            "proxy_jump"
+        } else {
+            "default_proxy_jump"
+        };
+        let jumps: Vec<String> = {
+            let mut st = conn.prepare(&format!(
+                "SELECT {col} FROM {table} WHERE {col} IS NOT NULL AND {col} != ''"
+            ))?;
+            let rows = st.query_map([], |r| r.get(0))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        if jumps.iter().any(|j| j.split(',').any(|t| t.trim() == name)) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(test)]
 pub(crate) fn effective_tier(conn: &Connection, op: &Op) -> Result<OpTier> {
+    tier_of(conn, op, false)
+}
+
+fn tier_of(conn: &Connection, op: &Op, first: bool) -> Result<OpTier> {
     // A rename onto a name another live entity holds would silently re-point that name
-    // (the older claim wins the name, the other gets a suffix): a human decides.
-    if let Some((kind, uid, name)) = claimed_name(&op.body) {
-        if op.tier() == OpTier::Green && name_taken(conn, kind, &uid, &name)? {
+    // (the older claim wins the name, the other gets a suffix): a human decides. Judged at the
+    // first sight of the op only.
+    if first {
+        if let Some((kind, uid, name)) = claimed_name(&op.body) {
+            if op.tier() == OpTier::Green && name_taken(conn, kind, &uid, &name)? {
+                return Ok(OpTier::Yellow);
+            }
+        }
+    }
+    // A rename of a host that others jump through to a name that cannot be a hop would make
+    // every connection through it refuse: a human decides.
+    if let Some((EntityKind::Host, uid, name)) = claimed_name(&op.body) {
+        if op.tier() == OpTier::Green
+            && crate::map::hops::token_issue(&name).is_some()
+            && is_hop_target(conn, &uid)?
+        {
             return Ok(OpTier::Yellow);
         }
     }
@@ -445,10 +559,14 @@ pub(crate) fn effective_tier(conn: &Connection, op: &Op) -> Result<OpTier> {
 }
 
 /// The state an op should be in given everything else in the log.
+/// `first`: the op is judged for the first time (ingest). Rules that depend on what else the
+/// store holds at that moment (a name another entity holds) apply only then: a later re-judgement
+/// of an op already applied must not turn it pending because of what arrived in between.
 pub(crate) fn desired_state(
     conn: &Connection,
     row: &OpRow,
     now: i64,
+    first: bool,
 ) -> Result<(State, Option<&'static str>)> {
     let op = &row.op;
     if row.state == State::Rejected {
@@ -460,16 +578,30 @@ pub(crate) fn desired_state(
     if row.state == State::Approved || row.local {
         return Ok((State::Approved, None));
     }
-    let tier = effective_tier(conn, op)?;
-    // A timestamp the author chose beyond the skew grace would stretch every window measured
-    // on it (the Red ceremony TTL, proof ages): a Red op like that is refused outright, anything
-    // else waits until the clock has caught up or a human approves it.
-    let future = op.timestamp > now.saturating_add(TIMESTAMP_SKEW_GRACE_SECS);
-    if future && tier == OpTier::Red {
-        return Ok((State::Rejected, Some("future-dated")));
-    }
-    if tier != OpTier::Green {
+    if !first && row.state == State::Pending && row.reason.as_deref() == Some("tier") {
+        // Held for a human (a name collision is not re-derived): only a human releases it.
         return Ok((State::Pending, Some("tier")));
+    }
+    let tier = tier_of(conn, op, first)?;
+    // A timestamp the author chose beyond the skew grace would stretch every window measured
+    // on it (the Red ceremony TTL, proof ages): such an op waits (a Red one for its ceremony
+    // too) until this device's clock has caught up. Never rejected: one clock running behind
+    // must not lose an honest op for good.
+    let future = op.timestamp > now.saturating_add(TIMESTAMP_SKEW_GRACE_SECS);
+    if tier != OpTier::Green {
+        return Ok((
+            State::Pending,
+            Some(if future && tier == OpTier::Red {
+                "future-dated"
+            } else {
+                "tier"
+            }),
+        ));
+    }
+    // A revoked device keeps its key: whatever it signs after this device learned of the
+    // revocation waits for a human, whatever lamport it chose.
+    if first && author_revoked(conn, &op.device_id)? {
+        return Ok((State::Pending, Some("revoked-author")));
     }
     if holder_only(&op.body) && !author_may_write(conn, op)? {
         return Ok((State::Pending, Some("not-holder")));
@@ -592,7 +724,7 @@ impl<'a> Settler<'a> {
                 )?,
             };
             for row in rows {
-                let (state, reason) = desired_state(self.conn, &row, self.now)?;
+                let (state, reason) = desired_state(self.conn, &row, self.now, false)?;
                 self.transition(&row, state, reason)?;
             }
             self.done.insert(work);

@@ -395,9 +395,26 @@ pub(crate) fn pending_view(
         OpBody::IdentityDelete { identity_uid } => {
             format!("delete identity {}", short(&uid_hex(identity_uid)))
         }
-        OpBody::DeviceAdd { name, .. } => format!("add device {name}"),
+        OpBody::DeviceAdd {
+            device,
+            name,
+            role,
+            kind,
+            ..
+        } => format!(
+            "add device {name} as {} ({}), key {}",
+            format!("{role:?}").to_lowercase(),
+            format!("{kind:?}").to_lowercase(),
+            short(&device.device_id())
+        ),
         OpBody::DeviceRevoke { device_id } => format!("revoke device {}", short(device_id)),
-        OpBody::ModeChange { to, .. } => format!("switch credential mode to {to:?}"),
+        OpBody::ModeChange { to, cosigner, .. } => match cosigner {
+            Some(c) => format!(
+                "switch credential mode to {to:?}, co-signed by {}",
+                device_name(devices, c)
+            ),
+            None => format!("switch credential mode to {to:?}"),
+        },
         OpBody::ShareRelease {
             host_uid,
             requester,
@@ -463,7 +480,7 @@ pub(crate) fn pending_view(
         }
         OpBody::ExemptionSet { device_id, slot } => match slot {
             Some(key) => format!(
-                "enable the master-phrase exemption for {} (slot key {})",
+                "enable the master-phrase exemption for {} (slot key {}, computed by that machine itself: only as trustworthy as it is)",
                 device_name(devices, device_id),
                 short(&key.device_id())
             ),

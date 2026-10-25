@@ -35,6 +35,7 @@ const MAX_SEALED_BYTES: usize = 8 * 1024;
 /// A credential payload (a password or a private key) after encryption.
 const MAX_CRED_BYTES: usize = 128 * 1024;
 const MAX_BATCH_BYTES: usize = 512 * 1024;
+const MAX_TAGS_BYTES: usize = 16 * 1024;
 
 fn cap(what: &str, len: usize, max: usize) -> std::result::Result<(), String> {
     if len > max {
@@ -50,6 +51,7 @@ pub type Touched = BTreeSet<(EntityKind, Uid)>;
 /// Static checks every op passes before it is chained: pure functions of the
 /// op, so every honest peer agrees on the verdict. An `Err` is the reason.
 pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
+    validate_ids(body)?;
     match body {
         OpBody::HostUpsert { host_uid, fields } => {
             reserved_check(EntityKind::Host, host_uid)?;
@@ -179,6 +181,67 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
     }
 }
 
+/// A device id is 16 lowercase hex digits and nothing else: every id a body carries is checked
+/// to its real shape, so no Green op can carry free text under a device id's name.
+fn device_id_ok(s: &str) -> std::result::Result<(), String> {
+    if s.len() == 16
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        Ok(())
+    } else {
+        Err("a device is named by 16 lowercase hex digits".into())
+    }
+}
+
+fn validate_ids(body: &OpBody) -> std::result::Result<(), String> {
+    let one = |s: &String| device_id_ok(s);
+    match body {
+        OpBody::ShareReshareSession { to, .. } => one(to),
+        OpBody::ShareReshareBatch {
+            new_holders, items, ..
+        } => {
+            new_holders.iter().try_for_each(one)?;
+            items
+                .iter()
+                .flat_map(|i| i.sub_shares.iter())
+                .try_for_each(|(d, _)| device_id_ok(d))
+        }
+        OpBody::CredUpdate { wrapped_shares, .. } => wrapped_shares
+            .iter()
+            .try_for_each(|w| device_id_ok(&w.recipient)),
+        OpBody::CheckpointPropose { cut, required, .. } => {
+            cut.iter().try_for_each(|c| device_id_ok(&c.device_id))?;
+            required.iter().try_for_each(one)
+        }
+        OpBody::ShareGrant { requester, .. } | OpBody::ShareRelease { requester, .. } => {
+            one(requester)
+        }
+        OpBody::DeviceRevoke { device_id }
+        | OpBody::DeviceRoleChange { device_id, .. }
+        | OpBody::ExemptionSet { device_id, .. }
+        | OpBody::CertIssue { device_id, .. }
+        | OpBody::WrapKeyRotate { device_id, .. } => one(device_id),
+        OpBody::BulkExport { requester, .. } => one(requester),
+        OpBody::ModeChange {
+            migrated_on,
+            cosigner,
+            ..
+        } => {
+            one(migrated_on)?;
+            cosigner.iter().try_for_each(one)
+        }
+        OpBody::FactorRegister { sender, .. } => sender.iter().try_for_each(one),
+        OpBody::PhoneReenroll {
+            signers, liveness, ..
+        } => {
+            signers.iter().try_for_each(one)?;
+            liveness.iter().try_for_each(|h| device_id_ok(&h.device_id))
+        }
+        _ => Ok(()),
+    }
+}
+
 fn reserved_check(kind: EntityKind, uid: &Uid) -> std::result::Result<(), String> {
     if kind == EntityKind::Group && *uid == FAVORITES_GROUP_UID {
         return Err("the Favorites group is local".into());
@@ -203,6 +266,12 @@ fn line(what: &str, s: &str) -> std::result::Result<(), String> {
     text(what, s)?;
     if s.chars().any(char::is_control) {
         return Err(format!("{what} must be a single line"));
+    }
+    // Bidi controls and zero-width characters make one name look like another.
+    if s.chars().any(|c| {
+        matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+    }) {
+        return Err(format!("{what} contains an invisible or direction-changing character"));
     }
     Ok(())
 }
@@ -271,6 +340,8 @@ fn validate_host(f: &HostFields) -> std::result::Result<(), String> {
     port_ok("port", &f.port)?;
     validate_jump("proxy_jump", &f.proxy_jump)?;
     for (what, v) in [
+        ("username", &f.username),
+        ("proxy_jump", &f.proxy_jump),
         ("label", &f.label),
         ("remote_command", &f.remote_command),
         ("environment", &f.environment),
@@ -289,8 +360,15 @@ fn validate_host(f: &HostFields) -> std::result::Result<(), String> {
         if tags.len() > MAX_LIST {
             return Err("too many tags".into());
         }
+        // A tag is a word, not a document: a Green op must stay small.
+        if tags.iter().map(String::len).sum::<usize>() > MAX_TAGS_BYTES {
+            return Err("the tags are over their byte budget".into());
+        }
         for t in tags {
-            text("tag", t)?;
+            line("tag", t)?;
+            if t.len() > 256 {
+                return Err("a tag is at most 256 bytes".into());
+            }
         }
     }
     if let Some(groups) = &f.group_uids {
@@ -944,8 +1022,14 @@ fn project_host(
 // ---------------------------------------------------------------- hop render
 
 /// Render a wire ProxyJump: `#uid` tokens become the local name of that host,
-/// plain tokens pass through. `None` when a token cannot be rendered (unknown
-/// or deleted host, name that is not a valid hop): the column is then cleared.
+/// plain tokens pass through. `None` when a token cannot be rendered because its host is
+/// unknown or deleted: the column is then cleared. A host whose name is not a valid hop
+/// (renamed to "bastion two") renders as [`UNUSABLE_HOP_PREFIX`] plus its uid: that is not a
+/// valid hop, so a connection through it is REFUSED (`jump_error`) instead of silently going
+/// direct past the bastion the user configured.
+/// What a hop shows as when its host's name cannot be a hop token (never a valid hop).
+pub const UNUSABLE_HOP_PREFIX: &str = "#renamed-unusable-";
+
 pub fn render_hops(conn: &Connection, wire: &str) -> Result<Option<String>> {
     if crate::map::is_jump_none(wire) {
         return Ok(Some(wire.trim().to_string()));
@@ -966,7 +1050,8 @@ pub fn render_hops(conn: &Connection, wire: &str) -> Result<Option<String>> {
                     .optional()?;
                 match name {
                     Some(n) if crate::map::hops::token_issue(&n).is_none() => n,
-                    _ => return Ok(None),
+                    Some(_) => format!("{UNUSABLE_HOP_PREFIX}{}", uid_hex(&uid)),
+                    None => return Ok(None),
                 }
             }
             None => match crate::map::hops::validate_raw(token) {

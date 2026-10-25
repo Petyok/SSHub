@@ -686,6 +686,15 @@ Constants in `limits.rs`: `CHECKPOINT_OPS`, `CHECKPOINT_BYTES`, `CHECKPOINT_MIN_
 `CHECKPOINT_AFTER_RESHARE_SECS`, `CHECKPOINT_PRUNE_DELAY_SECS`, `CHECKPOINT_RETAIN_SPANS`,
 `CHECKPOINT_SIGN_MIN`, `CHECKPOINT_CHUNK_BYTES`, `TOMBSTONE_KEEP_SECS`, `RING_FINGERPRINT_WORDS`.
 
+### 2a''. Rule: static validation changes need a version gate after release
+
+`apply::validate_body` (shapes of device ids, text limits, control and bidi characters, per-kind byte caps) is a pure
+function every device runs before it chains an op; an op it refuses is not stored and the author's later seqs then
+answer `gap`. While nothing is released this may tighten freely. From the first release on, a change that makes a
+previously accepted op invalid MUST be gated by a protocol or op-format version (old ops stay valid under the old rule,
+new rules apply to ops the author stamps with the new version), or an honest author on another build stalls its whole
+chain at the stricter receivers. Loosening needs no gate.
+
 ## 3. Stage 2: `src/sync/{protocol,ratchet,enroll,client}.rs` (WP2a, WP2b)
 
 ```rust
