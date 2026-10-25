@@ -355,14 +355,34 @@ pub fn render_unlock(frame: &mut Frame, app: &App) {
         theme.style(StyleRole::PickerQuery),
     ));
 
-    qr_modal(
-        frame,
-        app,
-        "Unlock",
-        body,
-        &u.frames,
-        "Enter submit  Esc cancel",
-    );
+    qr_modal(frame, app, "Unlock", body, &u.frames, &unlock_hint(app, u));
+}
+
+/// The footer of the unlock modal: the drop-phone key only while a Bluetooth channel runs.
+fn unlock_hint(app: &App, u: &crate::app::sync::UnlockView) -> String {
+    let mut hint = String::from("Enter submit  Esc cancel");
+    if u.paths
+        .iter()
+        .any(|p| p.kind == crate::app::sync::UnlockPathKind::Bluetooth)
+    {
+        hint.push_str(&format!(
+            "  {} drop phone",
+            key_of(app, KeyAction::SyncBleDrop)
+        ));
+    }
+    hint
+}
+
+/// The footer of a generic prompt; the phone enrollment's has the drop-phone key too.
+fn prompt_hint(app: &App) -> String {
+    let mut hint = String::from("Enter submit  Esc cancel");
+    if crate::app::sync_phone::ble_active(app) {
+        hint.push_str(&format!(
+            "  {} drop phone",
+            key_of(app, KeyAction::SyncBleDrop)
+        ));
+    }
+    hint
 }
 
 /// A modal with `body` and, when it fits, the looping QR of `frames` under it.
@@ -569,10 +589,11 @@ pub fn render_sync_ui(frame: &mut Frame, app: &App) {
                 format!("\u{203a} {shown}\u{2588}"),
                 theme.style(StyleRole::PickerQuery),
             ));
+            let hint = prompt_hint(app);
             if frames.is_empty() {
-                modal(frame, app, title, 76, body, "Enter submit  Esc cancel");
+                modal(frame, app, title, 76, body, &hint);
             } else {
-                qr_modal(frame, app, title, body, frames, "Enter submit  Esc cancel");
+                qr_modal(frame, app, title, body, frames, &hint);
             }
         }
         SyncUi::Menu {

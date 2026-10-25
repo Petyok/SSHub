@@ -107,6 +107,11 @@ impl App {
 
     pub(crate) fn handle_key_sync_ui(&mut self, key: KeyEvent) -> Result<()> {
         let cancel = key.code == KeyCode::Esc;
+        // The phone enrollment's prompt: the drop-phone key (Bluetooth) is not text.
+        if self.is_action(KeyAction::SyncBleDrop, &key) {
+            super::sync_phone::drop_central(self);
+            return Ok(());
+        }
         let Some(ui) = self.sync_ui.take() else {
             self.mode = AppMode::Normal;
             return Ok(());
