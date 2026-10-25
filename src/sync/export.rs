@@ -77,38 +77,11 @@ fn approved_exports(store: &LauncherStore) -> Result<Vec<ExportOp>> {
     Ok(out)
 }
 
-/// When this device last received the op or one of its proofs: the moment, on the local clock,
-/// the ceremony could first have been complete.
+/// When, on this device's clock, the ceremony first had every counted proof (`RedStatus::complete_at`).
+/// Proofs the ceremony does not count (a vote from a mirror, a second copy, a stray op naming the hash)
+/// cannot move it, so a finished window cannot be reopened by one.
 fn completed_at(store: &LauncherStore, op: &crate::sync::oplog::Op) -> Result<i64> {
-    let hash = op.hash();
-    store.with_conn(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT op_hash, received_at FROM sync_ops
-             WHERE (op_hash = ?1 OR kind IN ('RedApprove', 'RedPhoneSign', 'RedFactor'))
-               AND state IN ('applied', 'approved')",
-        )?;
-        let rows: Vec<(Vec<u8>, i64)> = stmt
-            .query_map(params![&hash[..]], |r| Ok((r.get(0)?, r.get(1)?)))?
-            .collect::<std::result::Result<_, _>>()?;
-        let mut at = 0;
-        for (h, received) in rows {
-            let h: [u8; 32] = h.try_into().map_err(|_| anyhow::anyhow!("stored hash"))?;
-            let Some(row) = load_op(conn, &h)? else {
-                continue;
-            };
-            let refers = h == hash
-                || matches!(
-                    &row.op.body,
-                    OpBody::RedApprove { op_hash }
-                        | OpBody::RedPhoneSign { op_hash }
-                        | OpBody::RedFactor { op_hash, .. } if *op_hash == hash
-                );
-            if refers {
-                at = at.max(received);
-            }
-        }
-        Ok(at)
-    })
+    Ok(crate::sync::ceremony::red_status(store, op, op.timestamp)?.complete_at)
 }
 
 /// The newest approved window of `requester` that contains `now`.
@@ -449,5 +422,53 @@ mod tests {
             .unwrap();
         assert!(active_window(&store, &did, 1_030).unwrap().is_some());
         assert!(active_window(&store, &did, 9_000_030).unwrap().is_none());
+    }
+
+    // review round 2 (app surface): the window start moves with ANY op that merely names the export op.
+    #[test]
+    fn a_junk_proof_does_not_reopen_a_finished_export_window() {
+        let (store, id, did) = setup();
+        let export = store
+            .sync_append_local_at(
+                &id,
+                OpBody::BulkExport {
+                    requester: did.clone(),
+                    window_secs: 60,
+                },
+                1_000,
+            )
+            .unwrap();
+        let set_received = |kind: &str, at: i64| {
+            store
+                .with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_ops SET received_at = ?1 WHERE kind = ?2",
+                        params![at, kind],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        };
+        set_received("BulkExport", 5_000);
+        assert!(active_window(&store, &did, 5_030).unwrap().is_some());
+        assert!(
+            active_window(&store, &did, 90_030).unwrap().is_none(),
+            "long over"
+        );
+        // A day later the requester (any ring device may author it) sends a vote nobody counts.
+        store
+            .sync_append_local_at(
+                &id,
+                OpBody::RedApprove {
+                    op_hash: export.hash(),
+                },
+                90_000,
+            )
+            .unwrap();
+        set_received("RedApprove", 90_000);
+        assert!(
+            active_window(&store, &did, 90_030).unwrap().is_none(),
+            "an uncounted RedApprove opened a new export window a day after the ceremony"
+        );
     }
 }

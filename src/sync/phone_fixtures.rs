@@ -899,6 +899,11 @@ mod reshare_fixture {
             );
             rx.store.sync_ingest(op).unwrap();
         }
+        // The page's clock is the fixtures' fixed time (2030), beyond the skew grace of this terminal's clock, so
+        // the ops wait as "future-dated" until a human approves them; the test plays that human.
+        for p in rx.store.sync_pending().unwrap() {
+            rx.store.sync_resolve_pending(&p.hash(), true).unwrap();
+        }
         for (host_hex, want) in v["expected_phone_shares"].as_object().unwrap() {
             let host: [u8; 16] = hex::decode(host_hex).unwrap().try_into().unwrap();
             let (e, s) = own_shares(&rx.store, &rx.id, &host)

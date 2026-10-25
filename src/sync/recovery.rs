@@ -332,13 +332,17 @@ pub fn liveness_set(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Ve
 }
 
 fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
-    Ok(super::ceremony::effective_devices(store, None)?
+    Ok(fresh_in(super::ceremony::effective_devices(store, None)?, now))
+}
+
+fn fresh_in(devices: Vec<DeviceRow>, now: i64) -> Vec<DeviceRow> {
+    devices
         .into_iter()
         .filter(|d| {
             !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
                 && now - d.last_seen <= LIVE_DEVICE_WINDOW_SECS
         })
-        .collect())
+        .collect()
 }
 
 fn attended_live(row: &DeviceRow) -> bool {
@@ -354,6 +358,43 @@ fn attended_live(row: &DeviceRow) -> bool {
 
 /// Ops of one kind in any state but rejected or void, in log order: a recovery vote is a signed
 /// statement whether or not this device's user has reviewed it yet.
+/// Does a phone-loss recovery of `requester` stand in for the ceremony of `op`, one of its two completion
+/// ops (revoke the lost phone, admit the new one)? Yes when that recovery is `Ready` at `now`, older than
+/// `op`, and no new phone was admitted through it yet: one recovery buys exactly one replacement. The
+/// recovery already was the ceremony (two attended votes or the paper, a distinct third factor, the time
+/// lock with its acknowledgement), and the lost phone cannot sign anything.
+pub(crate) fn ready_recovery_for(store: &LauncherStore, op: &Op, now: i64) -> Result<bool> {
+    for re in signed_ops(store, "PhoneReenroll")?.into_iter().rev() {
+        if re.device_id != op.device_id || re.lamport >= op.lamport {
+            continue;
+        }
+        if !matches!(
+            validate_phone_reenroll_upto(store, &re, now, Some(op.lamport)),
+            Ok(ReenrollVerdict::Ready)
+        ) {
+            continue;
+        }
+        let mut used = false;
+        for add in super::quorum::ops_of(store, "DeviceAdd", Some(&op.device_id))? {
+            used |= add.lamport > re.lamport
+                && add.lamport < op.lamport
+                && add.hash() != op.hash()
+                && matches!(
+                    add.body,
+                    OpBody::DeviceAdd {
+                        kind: DeviceKind::Phone,
+                        ..
+                    }
+                )
+                && super::ceremony::in_force(store, &add)?;
+        }
+        if !used {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn signed_ops(store: &LauncherStore, kind: &str) -> Result<Vec<Op>> {
     store.with_conn(|c| {
         let mut st = c.prepare(
@@ -387,6 +428,17 @@ pub fn validate_phone_reenroll(
     op: &Op,
     now: i64,
 ) -> Result<ReenrollVerdict> {
+    validate_phone_reenroll_upto(store, op, now, None)
+}
+
+/// [`validate_phone_reenroll`] judged against the devices in force up to lamport `upto`: what the completion
+/// ops of a recovery use, since they are themselves part of the device view and must not feed back into it.
+fn validate_phone_reenroll_upto(
+    store: &LauncherStore,
+    op: &Op,
+    now: i64,
+    upto: Option<u64>,
+) -> Result<ReenrollVerdict> {
     let OpBody::PhoneReenroll {
         initiated_at,
         via_paper,
@@ -399,7 +451,7 @@ pub fn validate_phone_reenroll(
         bail!("not a PhoneReenroll op");
     };
     let hash = op.hash();
-    let devices = super::ceremony::effective_devices(store, None)?;
+    let devices = super::ceremony::effective_devices(store, upto)?;
     let requester = devices
         .iter()
         .find(|d| d.id == op.device_id)
@@ -444,7 +496,12 @@ pub fn validate_phone_reenroll(
     // this store hold the same chain position they must agree on the head.
     let heads = store.sync_chain_heads()?;
     let mut liveness_ok = true;
-    for d in fresh_devices(store, *initiated_at)? {
+    for d in fresh_in(devices.clone(), *initiated_at) {
+        // A device that joined after the request cannot have been in its liveness set (and enrolling one
+        // during the lock must not stop a recovery).
+        if super::ceremony::joined_after(store, &d.id, op.lamport)? {
+            continue;
+        }
         match liveness.iter().find(|a| a.device_id == d.id) {
             None => liveness_ok = false,
             Some(a) => {
@@ -474,7 +531,7 @@ pub fn validate_phone_reenroll(
         liveness_ok,
     }))?;
 
-    let phone = phone_device(store)?;
+    let phone = super::quorum::phone_device_in(&devices)?;
     let row = |id: &DeviceId| devices.iter().find(|d| d.id == *id);
     let mut events: Vec<(u64, DeviceId, u64, Event)> = Vec::new();
     for a in signed_ops(store, "RecoveryApprove")? {
