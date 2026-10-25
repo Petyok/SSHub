@@ -51,9 +51,10 @@ fn wait_for_grant(
 /// mode this device writes a `ShareRelease`, syncs with the holders it can reach and
 /// waits (bounded) for one of them to approve it, on its screen or with
 /// `sshub sync-review --approve <id>`.
-struct PromptShares {
-    runtime: crate::sync::runtime::SyncRuntime,
-    wait: std::time::Duration,
+pub(crate) struct PromptShares {
+    pub(crate) runtime: crate::sync::runtime::SyncRuntime,
+    pub(crate) wait: std::time::Duration,
+    pub(crate) every: std::time::Duration,
 }
 
 impl PromptShares {
@@ -108,7 +109,7 @@ impl ShareSource for PromptShares {
             crate::cli::sync_cmd::op_id(&req.op.hash()),
         );
         let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let found = wait_for_grant(self.wait, POLL_EVERY, || {
+        let found = wait_for_grant(self.wait, self.every, || {
             for (id, _) in &holders {
                 let _ = rt.sync_with(id, &cancel);
             }
@@ -270,6 +271,7 @@ pub(crate) fn default_unlocker(ctx: &CliContext) -> Result<QuorumUnlocker> {
         Box::new(PromptShares {
             runtime,
             wait: unlock_wait(),
+            every: POLL_EVERY,
         }),
         ring,
     ))

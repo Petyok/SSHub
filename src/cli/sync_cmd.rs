@@ -663,6 +663,33 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     Ok(0)
 }
 
+/// Approve the pending `ShareRelease` `hash` as this holder: refused when stale (the requester's
+/// wait is over), otherwise the grants for the shares this device holds are written and the
+/// request is resolved. The one function behind `sync-review --approve` on a release.
+pub(crate) fn approve_release(
+    store: &LauncherStore,
+    identity: &DeviceIdentity,
+    hash: &[u8; 32],
+    now: i64,
+) -> Result<()> {
+    let op = store
+        .sync_pending()?
+        .into_iter()
+        .find(|o| o.hash() == *hash)
+        .context("that request is no longer waiting")?;
+    anyhow::ensure!(
+        matches!(op.body, crate::sync::oplog::OpBody::ShareRelease { .. }),
+        "that change is not a share release"
+    );
+    release_fresh(&op, now)?;
+    // The grants are built from an approved request: resolve first, as the TUI does.
+    crate::sync::ceremony::resolve(store, hash, true, now)?;
+    for body in crate::sync::quorum::grant_bodies(store, identity, &op)? {
+        store.sync_append_local(identity, body)?;
+    }
+    Ok(())
+}
+
 /// A share release is answered only while its requester can still be waiting.
 fn release_fresh(op: &crate::sync::oplog::Op, now: i64) -> Result<()> {
     let age = now - op.timestamp;
@@ -724,29 +751,23 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             .find(|v| v.hash == hash)
             .expect("resolved above");
         let id = hex(&hash)[..12].to_string();
-        let now = crate::store::now_ts();
         // A share release is answered with the grants the TUI's confirmation would write: the
         // explicit approval is this `--approve` (the listing names the requester, its full id and
-        // the request's age). A stale request is refused, as the TUI does not ask about it.
-        let release = store
-            .sync_pending()?
-            .into_iter()
-            .find(|o| o.hash() == hash && *approve)
-            .filter(|o| matches!(o.body, crate::sync::oplog::OpBody::ShareRelease { .. }));
-        let grants = match &release {
-            Some(op) => {
-                release_fresh(op, now)?;
-                let identity = open_identity(paths)?;
-                let bodies = crate::sync::quorum::grant_bodies(&store, &identity, op)?;
-                Some((identity, bodies))
-            }
-            None => None,
-        };
-        crate::sync::ceremony::resolve(&store, &hash, *approve, now)?;
-        if let Some((identity, bodies)) = grants {
-            for body in bodies {
-                store.sync_append_local(&identity, body)?;
-            }
+        // the request's age).
+        let is_release = *approve
+            && store.sync_pending()?.iter().any(|o| {
+                o.hash() == hash
+                    && matches!(o.body, crate::sync::oplog::OpBody::ShareRelease { .. })
+            });
+        if is_release {
+            approve_release(
+                &store,
+                &open_identity(paths)?,
+                &hash,
+                crate::store::now_ts(),
+            )?;
+        } else {
+            crate::sync::ceremony::resolve(&store, &hash, *approve, crate::store::now_ts())?;
         }
         let verb = if *approve { "Approved" } else { "Rejected" };
         if json_out {
