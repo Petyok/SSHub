@@ -1,6 +1,6 @@
 # Manual runs for PoC C and PoC H
 
-Automated offline checks live in `run-offline.mjs`. The runs below need a phone, a laptop with a speaker and microphone, and a person to hold the phone. Record results in `poc/results/C-qr-budget.md` and `poc/results/H-share-channels.md`.
+Automated offline checks live in `run-offline.mjs`. The runs below need a phone, a laptop with a speaker and microphone, and a person to hold the phone. Record results in `docs/host-sync-poc-results.md` (PoC C and H).
 
 ## Setup (Android over USB)
 

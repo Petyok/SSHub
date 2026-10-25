@@ -105,7 +105,7 @@ poll window drops to 16 ms. Each iteration:
 | `store` | `Arc<LauncherStore>` | `src/store/mod.rs` |
 | `password_store` | `Box<dyn PasswordStore>` | `NamespacedPasswordStore` over `OsKeyring` or `FilePasswordStore` ([secrets](../security/secrets.md)) |
 
-- **Modes**: `AppMode` (`src/app/types.rs`) has 40 variants: `Normal`,
+- **Modes**: `AppMode` (`src/app/types.rs`) has 52 variants: `Normal`,
   `Search`, `TagFilter`, `HostDetail`, the forms (`HostForm`, `IdentityForm`,
   `KeygenForm`, `GroupForm`, `TunnelForm`, `SnippetForm`), pickers
   (`GroupFieldPicker`, `TunnelHostPicker`, `SessionPicker`, `FieldPicker`,
@@ -115,7 +115,7 @@ poll window drops to 16 ms. Each iteration:
   `KnownHosts`, `LogBrowser`, `SnippetManage`, `Notice`, `AuthPrompt`), the
   broadcast wizard (`BroadcastPickTarget`, `BroadcastCommand`,
   `BroadcastPreview`), confirmations (`ConfirmQuit`, `ConfirmDelete`,
-  `ConfirmDiscard`) and the session pair `Connecting` / `Session`.
+  `ConfirmDiscard`), the sync dialogs (`SyncReview`, `SyncUnlock`, `SyncSas`, `SyncForkAlert`, `SyncReleaseConfirm`, `SyncOnboarding`, `SyncPrompt`, `SyncMenu`, `SyncInfo`, ...) and the session pair `Connecting` / `Session`.
 - **Key dispatch** (`src/app/keys.rs::handle_key`): `ForceQuit` first, then
   `Normal`-only globals (local shell, profile manager `Alt+P`, log browser
   `Shift+L`, snippet manager `Shift+S`, keybind editor, Settings `Ctrl+H`,
@@ -124,7 +124,7 @@ poll window drops to 16 ms. Each iteration:
 - **Tabs are not an enum**: `App.active_tab: usize`, 0 hosts
   (`handle_key_normal`), 1 SFTP (`handle_key_sftp`), 2 tunnels
   (`handle_key_tunnels`), 3 identities (`handle_key_keychain`), 4 audit
-  (`handle_key_audit`), 5 network map (`handle_key_map`), dispatched by
+  (`handle_key_audit`), 5 network map (`handle_key_map`), 6 sync (`handle_key_sync`), dispatched by
   `handle_key_dashboard_tab`. No type safety; grep `active_tab` when adding
   one. Tabs 2 and 3 take an inline fuzzy filter (`/`, `list_filter_editing`);
   the map tab and the host form's hop editor (`App.hop_editor`) are
@@ -225,6 +225,7 @@ debounced (`WATCHER_DEBOUNCE = 300 ms`) and trigger `app.reload_hosts()`.
 | `src/broadcast/` | Pure broadcast engine and bounded worker pool |
 | `src/sftp/` | libssh2 transport, worker thread, pure model |
 | `src/tunnel/` | `TunnelManager`, spawn, PID files (with process start time), reconnect audit |
+| `src/sync/` | Host sync between a user's own devices: crypto, op-log (`oplog/`), protocol over `ssh <peer> sshub sync-serve`, enrollment, Vault and Quorum credentials, Red ceremonies, recovery, certificates, phone media channels (`media/`). Design: `docs/host-sync-design.md` |
 | `src/known_hosts.rs` | Known hosts manager backend |
 | `src/credentials.rs` | `PasswordStore` implementations (file store under a lock), `StoreLocator` / `SecretRef`, Secret Service lookup |
 | `src/update.rs` | Release check and in-place update |
