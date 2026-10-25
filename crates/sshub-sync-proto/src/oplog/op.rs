@@ -1,8 +1,8 @@
 //! Op types of the replicated log (contract section 2). Wire and signature
 //! form: [`super::canonical`].
 
-use crate::store::{GroupUid, HostUid, IdentityUid};
-use crate::sync::crypto::{chain_hash, verify, AlgTag, DevicePublic};
+use crate::crypto::{chain_hash, verify, AlgTag, DevicePublic};
+use crate::uid::{GroupUid, HostUid, IdentityUid};
 
 use super::canonical;
 use super::tier;
@@ -88,7 +88,7 @@ pub struct ConfirmItem {
 
 /// Largest canonical op an honest store accepts or appends. A tail frame carries the canonical
 /// bytes base64-wrapped (4/3), plus a header: three quarters of the frame cap, minus slack.
-pub const MAX_OP_BYTES: usize = 3 * (crate::sync::limits::MAX_FRAME_BYTES / 4) - 8 * 1024;
+pub const MAX_OP_BYTES: usize = 3 * (crate::limits::MAX_FRAME_BYTES / 4) - 8 * 1024;
 
 /// An unsigned claim "device `device_id` had head `chain_hash` at `seq`".
 /// Self-signed attestations (fork proof material) are [`super::fork::SignedHead`].

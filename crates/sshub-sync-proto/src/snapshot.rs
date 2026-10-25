@@ -149,7 +149,8 @@ pub fn snapshot_seal_for(
     seal_with(share, code, now, profile, salt, nonce, Some(*host))
 }
 
-pub(crate) fn seal_with(
+#[doc(hidden)]
+pub fn seal_with(
     share: &Share,
     code: &str,
     now: i64,
@@ -233,7 +234,7 @@ pub fn snapshot_open(blob: &SnapshotBlob, code: &str, now: i64) -> Result<Share>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::codes::gen_snapshot_code;
+    use crate::codes::gen_snapshot_code;
 
     const CHEAP: Argon2Profile = Argon2Profile {
         mem_kib: 64,

@@ -15,7 +15,7 @@ use zeroize::Zeroizing;
 use super::argon::{try_argon2_derive, Argon2Profile};
 use super::hash::{derive_key, derive_xof};
 use super::mlkem;
-use crate::sync::limits::ARGON2_DEVICE_KEY_PROFILE;
+use crate::limits::ARGON2_DEVICE_KEY_PROFILE;
 
 /// The public half of an identity; what replicates into the `devices` table.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -53,7 +53,7 @@ pub fn device_id_of(ed25519_pub: &[u8; 32]) -> String {
 }
 
 /// One generation of wrapping keys: an X25519 secret and an ML-KEM-768 decapsulation key.
-pub(crate) struct WrapKeys {
+pub struct WrapKeys {
     x_secret: XSecret,
     mlkem_dk: Zeroizing<Vec<u8>>,
     mlkem_pub: Vec<u8>,
@@ -132,7 +132,8 @@ impl DeviceIdentity {
     /// Deterministic identity from 32 bytes of key material and a context string:
     /// `BLAKE3 derive_key(context, ikm)` as 128 bytes of output, split into the
     /// Ed25519 seed, the X25519 secret and the ML-KEM seeds `d` and `z`.
-    pub(crate) fn from_seed(ikm: &[u8; 32], context: &str) -> Self {
+    #[doc(hidden)]
+    pub fn from_seed(ikm: &[u8; 32], context: &str) -> Self {
         let mut xof = Zeroizing::new([0u8; 128]);
         derive_xof(context, ikm, &mut xof[..]);
         let (ek, dk) = mlkem::generate_deterministic(
@@ -181,7 +182,7 @@ impl DeviceIdentity {
     }
 
     /// Wrapping generations, newest first.
-    pub(crate) fn wrap_keys(&self) -> impl Iterator<Item = &WrapKeys> {
+    pub fn wrap_keys(&self) -> impl Iterator<Item = &WrapKeys> {
         std::iter::once(&self.current).chain(self.previous.iter())
     }
 
@@ -200,7 +201,8 @@ impl DeviceIdentity {
         Self::seal_to_with(recipient_x25519, plaintext, &eph, &nonce)
     }
 
-    pub(crate) fn seal_to_with(
+    #[doc(hidden)]
+    pub fn seal_to_with(
         recipient_x25519: &[u8; 32],
         plaintext: &[u8],
         eph_secret: &[u8; 32],
@@ -246,7 +248,8 @@ impl DeviceIdentity {
         self.to_encrypted_with(passphrase, ARGON2_DEVICE_KEY_PROFILE, &salt, &nonce)
     }
 
-    pub(crate) fn to_encrypted_with(
+    #[doc(hidden)]
+    pub fn to_encrypted_with(
         &self,
         passphrase: &str,
         profile: Argon2Profile,
@@ -494,7 +497,7 @@ mod tests {
     fn rotation_keeps_old_blobs_readable_until_retired() {
         let mut id = DeviceIdentity::generate();
         let before = id.public();
-        let old_blob = crate::sync::crypto::hybrid_wrap(&before, b"old epoch share");
+        let old_blob = crate::crypto::hybrid_wrap(&before, b"old epoch share");
         let old_sealed = DeviceIdentity::seal_to(&before.x25519_pub, b"old sealed");
         let after = id.rotate_wrap_keys();
         assert_eq!(
@@ -504,25 +507,25 @@ mod tests {
         assert_ne!(after.x25519_pub, before.x25519_pub);
         assert_ne!(after.mlkem_pub, before.mlkem_pub);
         assert_eq!(id.wrap_key_generations(), 2);
-        let new_blob = crate::sync::crypto::hybrid_wrap(&after, b"new epoch share");
+        let new_blob = crate::crypto::hybrid_wrap(&after, b"new epoch share");
         assert_eq!(
-            crate::sync::crypto::hybrid_unwrap(&id, &old_blob).unwrap(),
+            crate::crypto::hybrid_unwrap(&id, &old_blob).unwrap(),
             b"old epoch share"
         );
         assert_eq!(
-            crate::sync::crypto::hybrid_unwrap(&id, &new_blob).unwrap(),
+            crate::crypto::hybrid_unwrap(&id, &new_blob).unwrap(),
             b"new epoch share"
         );
         assert_eq!(id.open_sealed(&old_sealed).unwrap(), b"old sealed");
         assert_eq!(id.retire_previous_wrap_keys(), 1);
         assert_eq!(id.wrap_key_generations(), 1);
         assert!(
-            crate::sync::crypto::hybrid_unwrap(&id, &old_blob).is_err(),
+            crate::crypto::hybrid_unwrap(&id, &old_blob).is_err(),
             "retired generation must not open old blobs"
         );
         assert!(id.open_sealed(&old_sealed).is_err());
         assert_eq!(
-            crate::sync::crypto::hybrid_unwrap(&id, &new_blob).unwrap(),
+            crate::crypto::hybrid_unwrap(&id, &new_blob).unwrap(),
             b"new epoch share"
         );
     }
@@ -530,7 +533,7 @@ mod tests {
     #[test]
     fn the_key_file_keeps_previous_generations_across_a_restart() {
         let mut id = DeviceIdentity::generate();
-        let old_blob = crate::sync::crypto::hybrid_wrap(&id.public(), b"kept");
+        let old_blob = crate::crypto::hybrid_wrap(&id.public(), b"kept");
         id.rotate_wrap_keys();
         let p = Argon2Profile {
             mem_kib: 64,
@@ -544,7 +547,7 @@ mod tests {
         assert_eq!(back.wrap_key_generations(), 2);
         assert_eq!(back.public(), id.public());
         assert_eq!(
-            crate::sync::crypto::hybrid_unwrap(&back, &old_blob).unwrap(),
+            crate::crypto::hybrid_unwrap(&back, &old_blob).unwrap(),
             b"kept"
         );
     }

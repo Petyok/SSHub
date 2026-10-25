@@ -422,7 +422,7 @@ pub(super) fn build(include_slow: bool) -> Vec<Value> {
 }
 
 fn path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/crypto/vectors.json")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/vectors/crypto/vectors.json")
 }
 
 #[cfg(test)]

@@ -29,17 +29,17 @@
 mod ble;
 #[cfg(all(feature = "bluetooth", target_os = "linux"))]
 mod ble_bluez;
-pub mod ble_link;
 #[cfg(all(feature = "bluetooth", target_os = "macos"))]
 mod ble_mac;
 #[cfg(feature = "camera")]
 mod cam;
-pub mod fsk;
 #[cfg(feature = "audio")]
 mod mic;
-pub mod qrscan;
 #[cfg(test)]
 mod tests;
+
+// The decoders and the BLE link layer are pure and live in `sshub-sync-proto`.
+pub use sshub_sync_proto::media::{ble_link, fsk, qrscan};
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};

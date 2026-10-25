@@ -6,7 +6,7 @@
 //! `channels.mjs`): see `fountain.rs` for the frame format. A frame missed in one lap arrives in
 //! the next; duplicates and out-of-order frames are harmless.
 
-use crate::sync::fountain::{FountainDecoder, Push};
+use crate::fountain::{FountainDecoder, Push};
 
 /// A borrowed 8-bit grayscale image, row-major, `pixels.len() == width * height`.
 #[derive(Clone, Copy)]

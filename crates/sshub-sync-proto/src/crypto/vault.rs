@@ -26,7 +26,8 @@ pub fn vault_recipient(
 }
 
 /// Same derivation under a given Argon2 profile (the cheap TEST profile for vectors).
-pub(crate) fn vault_recipient_with(
+#[doc(hidden)]
+pub fn vault_recipient_with(
     master_phrase: &str,
     ring_secret: &[u8; 16],
     salt: &[u8; 16],
@@ -41,7 +42,8 @@ pub(crate) fn vault_recipient_with(
 
 /// The exemption slot's identity (contract 4e): the phrase stretched like the vault's, mixed with a
 /// per-device binding that only the device key can produce, so it opens for someone holding both.
-pub(crate) fn exempt_slot_with(
+#[doc(hidden)]
+pub fn exempt_slot_with(
     master_phrase: &str,
     device_bind: &[u8; 32],
     salt: &[u8; 16],
@@ -89,11 +91,8 @@ mod tests {
     #[test]
     fn the_derived_identity_unwraps_what_was_wrapped_to_its_public_key() {
         let (public, id) = vault_recipient_with("a b c d e f", &[1; 16], &[2; 16], TEST);
-        let blob = crate::sync::crypto::hybrid_wrap(&public, b"dek");
-        assert_eq!(
-            crate::sync::crypto::hybrid_unwrap(&id, &blob).unwrap(),
-            b"dek"
-        );
+        let blob = crate::crypto::hybrid_wrap(&public, b"dek");
+        assert_eq!(crate::crypto::hybrid_unwrap(&id, &blob).unwrap(), b"dek");
     }
 
     #[test]
