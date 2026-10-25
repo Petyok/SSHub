@@ -30,7 +30,7 @@ use super::limits::QR_PARITY_PERCENT;
 use super::share_release::{
     combine_and_check, share_to_bytes, unwrap_share_reply, wrapped_share_plaintext,
 };
-use super::snapshot::{snapshot_open, SnapshotBlob};
+use super::snapshot::{snapshot_open_for, SnapshotBlob};
 use super::wire::{
     binding_preimage, ChallengeWire, EnrollFrame, PhoneMaterial, PhoneOpsWire, RecoveryNoticeWire,
     ShareKind, ShareResponseWire,
@@ -628,7 +628,13 @@ fn e2e_response_opens_with_the_ephemeral_secret() {
     if let Some((host, blob)) = ext.snapshot {
         assert_eq!(host, HOST);
         let code = std::fs::read_to_string(d.join("snapshot-code.txt")).unwrap();
-        let opened = snapshot_open_any(&blob, &host, code.trim(), NOW + 5);
+        let parsed = SnapshotBlob::from_bytes(&blob).unwrap();
+        assert_eq!(
+            parsed.host_uid,
+            Some(host),
+            "the page issues version 2, bound to the credential"
+        );
+        let opened = snapshot_open_for(&parsed, &host, code.trim(), NOW + 5).unwrap();
         assert_eq!(&opened, want);
     }
     if let Ok(frame) = std::fs::read(d.join("cancel-frame.bin")) {
@@ -641,43 +647,6 @@ fn e2e_response_opens_with_the_ephemeral_secret() {
             text.contains("PhoneReenrollCancel")
                 && text.contains(notice["op_hash_hex"].as_str().unwrap())
         );
-    }
-}
-
-/// The page writes snapshot blobs of version 2 (version 1 plus `host_uid(16)` after the salt, inside the associated data,
-/// so the blob names the credential it opens and a terminal can refuse a second live blob for the same host). The Rust
-/// `SnapshotBlob` reads version 1 only until the terminal side takes the header over; this opens both the way
-/// `snapshot_open` would, and checks the host binding of version 2.
-fn snapshot_open_any(blob: &[u8], host: &[u8; 16], code: &str, now: i64) -> Share {
-    if blob[4] != 2 {
-        return snapshot_open(&SnapshotBlob::from_bytes(blob).unwrap(), code, now).unwrap();
-    }
-    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-    const HEADER: usize = 4 + 1 + 4 + 4 + 8 + 16 + 16;
-    assert_eq!(&blob[37..53], host, "the blob names the credential it opens");
-    let profile = super::crypto::Argon2Profile {
-        mem_kib: u32::from_be_bytes(blob[5..9].try_into().unwrap()),
-        iters: u32::from_be_bytes(blob[9..13].try_into().unwrap()),
-    };
-    let issued_at = i64::from_be_bytes(blob[13..21].try_into().unwrap());
-    assert!(issued_at <= now && now - issued_at < 7 * 86_400);
-    let salt: [u8; 16] = blob[21..37].try_into().unwrap();
-    let code = super::codes::normalize_code(code).unwrap();
-    let key = super::crypto::try_argon2_derive(&code, &salt, profile).unwrap();
-    let (nonce, ct) = blob[HEADER..].split_at(24);
-    let plain = chacha20poly1305::XChaCha20Poly1305::new((&key).into())
-        .decrypt(
-            nonce.into(),
-            Payload {
-                msg: ct,
-                aad: &blob[..HEADER],
-            },
-        )
-        .expect("the version 2 blob opens with the shown code");
-    assert_eq!(plain.len(), 33);
-    Share {
-        index: plain[0],
-        bytes: plain[1..].to_vec(),
     }
 }
 
@@ -1267,7 +1236,9 @@ mod enroll_peer {
             put(
                 &dir,
                 "done.json",
-                json!({ "pass": r.is_ok(), "why": why }).to_string().as_bytes(),
+                json!({ "pass": r.is_ok(), "why": why })
+                    .to_string()
+                    .as_bytes(),
             );
             if r.is_err() {
                 failed.push(format!("{name}: {why}"));
