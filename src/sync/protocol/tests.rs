@@ -1631,3 +1631,77 @@ fn p7_measure_a_round_over_a_large_log() {
         );
     }
 }
+
+#[test]
+#[ignore = "measurement: run by hand with --ignored --nocapture"]
+fn p7_scaling_of_append_and_ingest() {
+    use std::time::Instant;
+    let n: usize = std::env::var("P7_OPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1000);
+    let mem = std::env::var("P7_MEM").is_ok();
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = if mem {
+        (Dev::new(), Dev::new())
+    } else {
+        (file_dev(dir.path(), "a"), file_dev(dir.path(), "b"))
+    };
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        x.trust(y);
+        x.store
+            .sync_register_device(
+                &x.id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let mut ops = Vec::new();
+    let mut t = Instant::now();
+    for i in 0..n {
+        let mut uid = [0u8; 16];
+        uid[..8].copy_from_slice(&(i as u64).to_be_bytes());
+        ops.push(
+            a.store
+                .sync_append_local(
+                    &a.id,
+                    OpBody::CredUpdate {
+                        host_uid: uid,
+                        ciphertext: vec![9; 1000],
+                        wrapped_shares: vec![crate::sync::oplog::WrappedShare {
+                            recipient: b.did.clone(),
+                            alg: crate::sync::crypto::ALG_CURRENT,
+                            sealed: vec![1; 900],
+                        }],
+                    },
+                )
+                .unwrap(),
+        );
+        if (i + 1) % 100 == 0 {
+            eprintln!(
+                "P7S mem={mem} append ops {}..{}: {:?} per 100",
+                i - 99,
+                i + 1,
+                t.elapsed()
+            );
+            t = Instant::now();
+        }
+    }
+    t = Instant::now();
+    for (i, op) in ops.into_iter().enumerate() {
+        b.store.sync_ingest(op).unwrap();
+        if (i + 1) % 100 == 0 {
+            eprintln!(
+                "P7S mem={mem} ingest ops {}..{}: {:?} per 100",
+                i - 99,
+                i + 1,
+                t.elapsed()
+            );
+            t = Instant::now();
+        }
+    }
+}
