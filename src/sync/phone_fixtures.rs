@@ -1219,8 +1219,8 @@ mod enroll_peer {
 
     pub fn run(root: &Path) {
         let mut failed = Vec::new();
-        let scenarios: [(&str, fn(&Path)); 3] =
-            [("ok", ok), ("tampered", tampered), ("differ", differ)];
+        type Scenario = (&'static str, fn(&Path));
+        let scenarios: [Scenario; 3] = [("ok", ok), ("tampered", tampered), ("differ", differ)];
         for (name, f) in scenarios {
             let dir = root.join(name);
             std::fs::create_dir_all(&dir).unwrap();
