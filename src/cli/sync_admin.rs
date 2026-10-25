@@ -711,7 +711,15 @@ pub(crate) fn factor(
     now: i64,
 ) -> Result<Report> {
     let op = find_op(store, op_id)?;
-    ceremony::require_gated(store, &op)?;
+    // A recovery (and a device's cancellation of one) has its own path: its third factor is proven
+    // the same way, by a `RedFactor` over the op's hash, but the verdict is the recovery's.
+    let recovery_op = matches!(
+        op.body,
+        OpBody::PhoneReenroll { .. } | OpBody::PhoneReenrollCancel { .. }
+    );
+    if !recovery_op {
+        ceremony::require_gated(store, &op)?;
+    }
     let body = match kind {
         FactorKind::Paper => {
             let recover = paper_derive(secret, PaperDomain::Recover).context("the paper phrase")?;
@@ -720,6 +728,18 @@ pub(crate) fn factor(
         FactorKind::Email => ceremony::red_factor_email(store, secret.trim(), &op)?,
     };
     let sig = store.sync_append_local(id, body)?;
+    if recovery_op {
+        let mut lines = vec![format!(
+            "third factor added to op {} (record {})",
+            short(&op.hash()),
+            short(&sig.hash())
+        )];
+        lines.extend(recovery_lines(store, &recovery_target(store, &op)?, now));
+        return Ok(Report {
+            lines,
+            json: json!({ "op": hex(&op.hash()), "factor": hex(&sig.hash()) }),
+        });
+    }
     ceremony::settle_red_ops(store, now)?;
     op_report(
         store,
@@ -781,6 +801,165 @@ pub(crate) fn factor_register(
     Ok(r)
 }
 
+/// The `PhoneReenroll` op a recovery op belongs to (itself, or the one a cancellation names).
+fn recovery_target(store: &LauncherStore, op: &Op) -> Result<Op> {
+    match &op.body {
+        OpBody::PhoneReenrollCancel { reenroll_hash, .. } => {
+            let hex_id: String = reenroll_hash.iter().map(|b| format!("{b:02x}")).collect();
+            find_op(store, &hex_id)
+        }
+        _ => Ok(op.clone()),
+    }
+}
+
+/// What a recovery verdict means, in words the user can act on.
+fn verdict_hint(v: &crate::sync::recovery::ReenrollVerdict) -> &'static str {
+    use crate::sync::recovery::ReenrollVerdict as V;
+    match v {
+        V::AwaitingFactor => "the third factor was not proven yet: run `sshub sync-factor <op-id>` with the paper words or the emailed code",
+        V::Lapsed => "it was ready but nobody completed it within 3 days: it authorizes nothing any more, start a new one",
+        V::Ready => "ready: the lost phone can now be replaced",
+        V::AwaitingApproval { .. } => "waiting for approvals of other attended devices",
+        V::AwaitingAck => "waiting for another attended device to acknowledge it",
+        V::NeedsMoreTime { .. } => "the time lock is still running",
+        V::CancelledByPhone | V::CancelledByFactor => "cancelled",
+        V::Completed => "completed: the old phone is revoked and the new one enrolled",
+    }
+}
+
+/// One line per recovery state for `sync-recovery status`, `sync-status` and the TUI.
+pub(crate) fn recovery_lines(store: &LauncherStore, op: &Op, now: i64) -> Vec<String> {
+    let verdict = crate::sync::recovery::validate_phone_reenroll(store, op, now);
+    match verdict {
+        Ok(v) => vec![format!(
+            "recovery {}: {v:?} ({})",
+            short(&op.hash()),
+            verdict_hint(&v)
+        )],
+        Err(e) => vec![format!("recovery {}: invalid: {e:#}", short(&op.hash()))],
+    }
+}
+
+/// Every recovery in the log, plus those still waiting for review on this device.
+pub(crate) fn all_recoveries(store: &LauncherStore) -> Result<Vec<Op>> {
+    let mut ops = crate::sync::quorum::ops_of(store, "PhoneReenroll", None)?;
+    for p in store.sync_pending()? {
+        if matches!(p.body, OpBody::PhoneReenroll { .. })
+            && !ops.iter().any(|o| o.hash() == p.hash())
+        {
+            ops.push(p);
+        }
+    }
+    Ok(ops)
+}
+
+/// The factor proof body for `op` from what the user typed: the 24 paper words or the emailed code.
+fn factor_proof(store: &LauncherStore, kind: FactorKind, secret: &str, op: &Op) -> Result<OpBody> {
+    Ok(match kind {
+        FactorKind::Paper => {
+            let recover = paper_derive(secret, PaperDomain::Recover).context("the paper phrase")?;
+            ceremony::red_factor_paper(&recover, op)
+        }
+        FactorKind::Email => ceremony::red_factor_email(store, secret.trim(), op)?,
+    })
+}
+
+/// Start a recovery. `paper_phrase` authorizes it by the paper (then the third factor is the
+/// emailed code); without it two other attended devices authorize and the third factor is the
+/// paper. The third factor is PROVEN here, over the new op: `third_secret` is the words or the
+/// code. Without it the recovery stays `AwaitingFactor` (and says so) until `sync-factor`.
+pub(crate) fn recovery_start(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    now: i64,
+    paper_phrase: Option<&str>,
+    third_secret: Option<&str>,
+) -> Result<Report> {
+    use crate::sync::recovery as rec;
+    let recover = paper_phrase
+        .map(|p| paper_derive(p, PaperDomain::Recover))
+        .transpose()?;
+    let (third, kind) = if recover.is_some() {
+        (ThirdFactor::EmailCode, FactorKind::Email)
+    } else {
+        (ThirdFactor::Paper, FactorKind::Paper)
+    };
+    let body = rec::start_body(store, id, now, recover.as_ref(), third)?;
+    let op = store.sync_append_local(id, body)?;
+    let mut lines = vec![format!(
+        "recovery started (op {}); the timelock runs once a third party has seen it",
+        short(&op.hash())
+    )];
+    if let Some(secret) = third_secret.filter(|s| !s.trim().is_empty()) {
+        let proof = factor_proof(store, kind, secret, &op)?;
+        store.sync_append_local(id, proof)?;
+    } else {
+        lines.push(format!(
+            "the third factor ({kind:?}) is not proven yet: run `sshub sync-factor {} --{}`",
+            short(&op.hash()),
+            if kind == FactorKind::Paper {
+                "paper"
+            } else {
+                "email-code"
+            }
+        ));
+    }
+    lines.extend(recovery_lines(store, &op, now));
+    Ok(Report {
+        lines,
+        json: json!({ "op": hex(&op.hash()) }),
+    })
+}
+
+/// Cancel a recovery from a device: the cancellation carries the third factor and the proof of it
+/// over ITS OWN hash. A wrong paper phrase or code is refused before anything is written where it
+/// can be checked (the code), and the report says whether the recovery really is cancelled.
+pub(crate) fn recovery_cancel(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    op_prefix: &str,
+    kind: FactorKind,
+    secret: &str,
+    now: i64,
+) -> Result<Report> {
+    use crate::sync::recovery as rec;
+    ensure!(
+        !secret.trim().is_empty(),
+        "a cancellation from a device needs the third factor: the paper words or the emailed code"
+    );
+    let target = find_op(store, op_prefix)?;
+    let f = match kind {
+        FactorKind::Paper => ThirdFactor::Paper,
+        FactorKind::Email => ThirdFactor::EmailCode,
+    };
+    if kind == FactorKind::Email {
+        // The code can be checked now: a wrong one writes nothing.
+        ceremony::red_factor_email(store, secret.trim(), &target)?;
+    }
+    let cancel = store.sync_append_local(id, rec::cancel_body(&target, false, Some(f))?)?;
+    let proof = factor_proof(store, kind, secret, &cancel)?;
+    store.sync_append_local(id, proof)?;
+    let verdict = rec::validate_phone_reenroll(store, &target, now)?;
+    let cancelled = verdict == rec::ReenrollVerdict::CancelledByFactor;
+    let mut lines = vec![if cancelled {
+        format!(
+            "cancelled recovery {} (op {})",
+            short(&target.hash()),
+            short(&cancel.hash())
+        )
+    } else {
+        format!(
+            "the cancellation (op {}) did not take effect: the recovery is {verdict:?} (a wrong paper phrase, or this device is not an attended live holder)",
+            short(&cancel.hash())
+        )
+    }];
+    lines.extend(recovery_lines(store, &target, now));
+    Ok(Report {
+        lines,
+        json: json!({ "op": hex(&target.hash()), "cancel": hex(&cancel.hash()), "cancelled": cancelled }),
+    })
+}
+
 fn recovery(
     store: &LauncherStore,
     id: &DeviceIdentity,
@@ -791,22 +970,29 @@ fn recovery(
     use crate::sync::recovery as rec;
     match rc {
         RecoveryCmd::Start { paper } => {
-            let (recover, third) = if paper {
-                let phrase = super::unlock::prompt_secret("Paper phrase (24 words): ")
-                    .context("no phrase entered")?;
-                (
-                    Some(paper_derive(&phrase, PaperDomain::Recover)?),
-                    ThirdFactor::EmailCode,
+            let phrase = if paper {
+                Some(
+                    super::unlock::prompt_secret("Paper phrase (24 words): ")
+                        .context("no phrase entered")?,
                 )
             } else {
-                (None, ThirdFactor::Paper)
+                None
             };
-            let body = rec::start_body(store, id, now, recover.as_ref(), third)?;
-            let op = store.sync_append_local(id, body)?;
-            report(opts, &Report {
-                lines: vec![format!("recovery started (op {}); the timelock runs once a third party has seen it", short(&op.hash()))],
-                json: json!({ "op": hex(&op.hash()) }),
-            })
+            // The third factor is proven now: the paper when two devices authorize, the emailed
+            // code when the paper did. Empty input leaves the recovery awaiting it.
+            let third = super::unlock::prompt_secret(if paper {
+                "Emailed code (empty: prove it later with sync-factor): "
+            } else {
+                "Paper phrase as the third factor (empty: prove it later with sync-factor): "
+            });
+            let r = recovery_start(
+                store,
+                id,
+                now,
+                phrase.as_deref().map(String::as_str),
+                third.as_deref().map(String::as_str),
+            )?;
+            report(opts, &r)
         }
         RecoveryCmd::Approve(op_id) => {
             let op = find_op(store, &op_id)?;
@@ -839,41 +1025,23 @@ fn recovery(
             )
         }
         RecoveryCmd::Cancel { op, factor } => {
-            let target = find_op(store, &op)?;
-            let f = match factor {
-                FactorKind::Paper => ThirdFactor::Paper,
-                FactorKind::Email => ThirdFactor::EmailCode,
-            };
-            let c = store.sync_append_local(id, rec::cancel_body(&target, false, Some(f))?)?;
-            report(
-                opts,
-                &Report {
-                    lines: vec![format!(
-                        "cancelled recovery {} (op {})",
-                        short(&target.hash()),
-                        short(&c.hash())
-                    )],
-                    json: json!({ "op": hex(&target.hash()), "cancel": hex(&c.hash()) }),
-                },
-            )
+            let secret = super::unlock::prompt_secret(match factor {
+                FactorKind::Paper => "Paper phrase (24 words): ",
+                FactorKind::Email => "Emailed code: ",
+            })
+            .context("no secret entered")?;
+            let r = recovery_cancel(store, id, &op, factor, &secret, now)?;
+            report(opts, &r)
         }
         RecoveryCmd::Status => {
-            // Applied ones and those still waiting for review on this device.
-            let mut ops = crate::sync::quorum::ops_of(store, "PhoneReenroll", None)?;
-            for p in store.sync_pending()? {
-                if matches!(p.body, OpBody::PhoneReenroll { .. })
-                    && !ops.iter().any(|o| o.hash() == p.hash())
-                {
-                    ops.push(p);
-                }
-            }
+            let ops = all_recoveries(store)?;
             let mut lines = Vec::new();
             let mut js = Vec::new();
             for op in &ops {
                 let verdict = rec::validate_phone_reenroll(store, op, now)
                     .map(|v| format!("{v:?}"))
                     .unwrap_or_else(|e| format!("invalid: {e:#}"));
-                lines.push(format!("recovery {}: {verdict}", short(&op.hash())));
+                lines.extend(recovery_lines(store, op, now));
                 js.push(json!({ "op": hex(&op.hash()), "verdict": verdict }));
             }
             if lines.is_empty() {

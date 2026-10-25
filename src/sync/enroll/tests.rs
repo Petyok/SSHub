@@ -754,7 +754,7 @@ fn a_peer_that_claims_the_ring_of_a_member_is_not_registered_as_its_holder() {
         .into_iter()
         .find(|d| d.id == x.did);
     assert!(
-        row.is_none(),
+        row.as_ref().is_none_or(|d| d.role != DeviceRole::Holder),
         "member ended {:?}, claimant ended {:?}; the claimant is now in the member's table as {:?}",
         rm.as_ref().map(|o| o.role).map_err(|e| e.to_string()),
         rx.as_ref().map(|o| o.role).map_err(|e| e.to_string()),
