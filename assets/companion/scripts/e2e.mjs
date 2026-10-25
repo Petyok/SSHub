@@ -23,6 +23,7 @@ import { fountainEncode } from '../src/quorum.mjs';
 import {
   commitOf, confirmMessage, decodeEnroll, decodeFrame, decodePhoneOps, encodeCertExtendRequest, encodeCertRequest, encodeEnrollConfirm, encodeEnrollReveal, encodeFrame, encodePhoneOps, parseReplyPlain, transcriptHash, KIND,
 } from '../src/frames.mjs';
+import { crc32 } from '../src/ble.mjs';
 import { b64dec, parseOp } from '../src/ops.mjs';
 import { envelopeAad, ownStorageKey } from '../src/reshare.mjs';
 import { EPOCH as RESHARE_EPOCH, hostBytes, scenario } from '../test/reshare-scenario.mjs';
@@ -720,6 +721,52 @@ for (const [id, time, fragment, why] of [
   const qr = await captureDoc(page, '#reverse-qr');
   const ops = decodePhoneOps(pasted);
   check('the export text is a kind 5 frame of at most 8 signed phone ops, equal to the QR', Buffer.from(qr.doc).equals(pasted) && ops.length >= 1 && ops.length <= 8 && ops.every((o) => edVerify(phone.edPub, o.canonical, o.signature)), `${ops.length} ops, ${pasted.length} bytes`);
+  await context.close();
+}
+{
+  // Bluetooth (C20): a fake navigator.bluetooth plays the terminal; the page sends its ops frame over it, chunked.
+  const fake = `(() => {
+    window.__bleWrites = [];
+    let notify = null;
+    const emit = (a) => notify({ target: { value: new DataView(new Uint8Array(a).buffer) } });
+    const tx = { addEventListener: (n, f) => { notify = f; }, startNotifications: async () => { window.__bleWrites.push('notify-on'); } };
+    const rx = { properties: { writeWithoutResponse: true }, writeValueWithoutResponse: async (b) => {
+      const m = Array.from(new Uint8Array(b));
+      window.__bleWrites.push(m);
+      if (m[0] === 1) setTimeout(() => emit([2, 1, 0, 244, 8]), 0);
+      else if (m[0] === 0x10) {
+        const idx = (m[3] << 8) | m[4], cnt = (m[5] << 8) | m[6];
+        if (idx === cnt - 1 || (idx + 1) % 4 === 0) setTimeout(() => emit([0x11, m[1], m[2], (idx + 1) >> 8, (idx + 1) & 255]), 0);
+      }
+    } };
+    const info = { readValue: async () => new DataView(new Uint8Array([1, 0, 16, 0, 0, 55, 81, 75, 50]).buffer) };
+    const chars = { 'b62f7d3f-0002-42dd-8371-6ffd96411583': rx, 'b62f7d3f-0003-42dd-8371-6ffd96411583': tx, 'b62f7d3f-0004-42dd-8371-6ffd96411583': info };
+    const dev = { name: 'SSHub-7QK2', addEventListener() {}, gatt: { connected: false,
+      connect: async () => { dev.gatt.connected = true; return { getPrimaryService: async () => ({ getCharacteristic: async (u) => chars[u] }) }; },
+      disconnect: () => { dev.gatt.connected = false; window.__bleWrites.push('disconnect'); } } };
+    Object.defineProperty(navigator, 'bluetooth', { value: { requestDevice: async (o) => { window.__bleFilter = JSON.stringify(o); return dev; } }, configurable: true });
+  })()`;
+  const { context } = await launch({ profile: PROFILE });
+  await context.addInitScript(fake);
+  const page = await openPage(context);
+  await unlock(page);
+  await page.click('#export-ops');
+  await page.click('#export-tail');
+  await page.waitForSelector('#ops-b64');
+  const pasted = Buffer.from(await page.locator('#ops-b64').inputValue(), 'base64');
+  await page.click('#ble-go');
+  await page.waitForFunction(() => /Sent\./.test(document.querySelector('#ble-status').textContent), null, { timeout: 30000 });
+  const st = await text(page, '#ble-status');
+  const writes = await page.evaluate(() => window.__bleWrites);
+  const data = writes.filter((w) => Array.isArray(w) && w[0] === 0x10);
+  const body = Buffer.concat(data.map((m) => Buffer.from(m.slice(((m[3] << 8) | m[4]) === 0 ? 15 : 7))));
+  const head = Buffer.from(data[0]);
+  check('Bluetooth: the chooser filter is the service only; notifications start before the first write; HELLO proposes 244', (await page.evaluate(() => window.__bleFilter)) === '{"filters":[{"services":["b62f7d3f-0001-42dd-8371-6ffd96411583"]}]}' && writes[0] === 'notify-on' && JSON.stringify(writes[1]) === '[1,1,0,244]', JSON.stringify(writes[1]));
+  check('Bluetooth: the page names the tag it connected to', /SSHub-7QK2/.test(st) && /Compare the tag 7QK2/.test(st), st.slice(0, 70));
+  check('Bluetooth: the ops frame arrives chunked, whole, with the C20 length and crc32', body.equals(pasted) && head.readUInt32BE(7) === pasted.length && head.readUInt32BE(11) === crc32(pasted) && data.every((m) => m.length <= 244), `${data.length} chunks, ${pasted.length} bytes`);
+  await page.click('#send-done');
+  await page.waitForFunction(() => window.__bleWrites.includes('disconnect'));
+  check('Bluetooth: leaving the ceremony ends the session with BYE and a disconnect', JSON.stringify((await page.evaluate(() => window.__bleWrites)).filter((w) => Array.isArray(w) && w[0] === 0x20)) === '[[32,0]]', 'BYE(0)');
   await context.close();
 }
 {

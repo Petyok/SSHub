@@ -252,6 +252,20 @@ range, ends on a refusal. The screen states the consequence of this design: a re
 needs at least two other terminal holders to contribute, so a ring of two terminals plus the phone cannot revoke a
 terminal by resharing (the paper phrase is offline and cannot contribute either); add a third terminal first.
 
+## Bluetooth
+
+Where the browser has Web Bluetooth (Chrome and Chromium browsers on Android; not Safari, not any iOS browser, not
+Firefox) every screen that scans or shows a frame also offers **Receive over Bluetooth** or **Send over Bluetooth**
+next to the camera and the paste box; the buttons are absent otherwise. The terminal shows `SSHub-<TAG>` next to its QR
+code while Bluetooth is armed. Tap the button, pick that exact name in the browser's list, and compare the tag the page
+then prints ("Connected to SSHub-7QK2") with the terminal screen. The link adds no security: no pairing, and every frame
+is signed or sealed end to end exactly as on a camera or a speaker, so a wrong device in the list can only fail the same
+checks a forged QR code fails. The session lasts while you move through one ceremony and ends (BYE, disconnect) when you
+return to the home screen or the page locks. The page speaks contract C20 (service
+`b62f7d3f-0001-42dd-8371-6ffd96411583`, chunks of at most 244 bytes with a CRC, a window of 8, retries after 5 s) and
+keeps `connect-src 'none'`: Web Bluetooth is not a network API. A frame the terminal pushes before the receiving
+screen is up waits for it.
+
 ## Handing ops to a terminal without a camera
 
 Every screen that produces signed operations shows a QR code and the same bytes as text with a **Copy the text**

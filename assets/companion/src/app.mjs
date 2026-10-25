@@ -2,6 +2,7 @@
 // pure modules (release, ops, frames, state); this file renders their results and moves bytes
 // between the camera, the screen, the clipboard and the speaker. Text goes in with textContent
 // only, never innerHTML.
+import { BLE, BleSession, bleAvailable, connectBle } from './ble.mjs';
 import { bytesOf, edSign, edVerify, hexOf, sasWords, x25519Pub, deviceIdOf } from './lib.mjs';
 import {
   PIN_MIN_CHARS, generateSecret, pinDelaySecs, pinProblem, identityOfSecret, randomBytes, secretFromWords, secretToWords, unwrapSecret, wrapSecret,
@@ -220,7 +221,69 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
 
   // ---------------------------------------------------------------- home
 
+  // Bluetooth (contract C20): one session at a time, kept while a ceremony moves through its screens, ended (BYE 0) on the
+  // home screen. A frame the terminal pushed while no screen wanted it waits in bleLast for the next receiving screen.
+  const bleEnd = () => {
+    if (app.ble) app.ble.session.bye();
+    app.ble = null;
+    app.bleListener = null;
+    app.bleLast = null;
+  };
+  async function bleLink() {
+    if (app.ble && app.ble.session.state === 'open') return app.ble;
+    const c = await connectBle();
+    const session = new BleSession(c.transport, { maxFrame: Math.min(c.maxFrame, BLE.MAX_FRAME_BYTES) });
+    const link = { session, tag: c.tag, name: c.name };
+    session.onFrame = (f) => (app.bleListener ? app.bleListener(f) : void (app.bleLast = f));
+    session.onClose = () => {
+      if (app.ble === link) app.ble = null;
+    };
+    await session.start();
+    app.ble = link;
+    return link;
+  }
+  // Offered next to camera and paste on every screen that sends or receives a frame; absent where there is no Web Bluetooth.
+  // frame: bytes to send; onDoc: takes the frames the terminal sends. The tag shown must equal the one the terminal shows.
+  function bleControl({ frame = null, onDoc = null }) {
+    if (!bleAvailable()) return null;
+    const status = h('p', { class: 'mut', id: 'ble-status' }, 'Pick SSHub-<tag> in the browser list: the tag is the one the terminal shows next to its QR code.');
+    let busy = false;
+    const run = async () => {
+      if (busy) return;
+      busy = true;
+      status.className = 'mut';
+      try {
+        status.textContent = 'Connecting...';
+        const link = await bleLink();
+        const label = `SSHub-${link.tag}`;
+        const note = link.name && link.name !== label ? ` The device is called ${safeText(link.name)}, not ${label}: stop unless you picked it on purpose.` : '';
+        const who = `Connected to ${label}. Compare the tag ${link.tag} with the terminal screen.${note}`;
+        status.textContent = who;
+        if (onDoc) {
+          app.bleListener = onDoc;
+          if (app.bleLast) {
+            const f = app.bleLast;
+            app.bleLast = null;
+            onDoc(f);
+          } else status.textContent = `${who} Waiting for the terminal.`;
+        }
+        if (frame) {
+          status.textContent = `${who} Sending...`;
+          await link.session.sendFrame(frame);
+          status.textContent = `${who} Sent.`;
+        }
+      } catch (e) {
+        status.textContent = `Bluetooth: ${e && e.message ? e.message : e}`;
+        status.className = 'err';
+      } finally {
+        busy = false;
+      }
+    };
+    return h('div', { class: 'card', id: 'ble' }, btn(frame ? 'Send over Bluetooth' : 'Receive over Bluetooth', run, '', 'ble-go'), status);
+  }
+
   function home() {
+    bleEnd();
     if (!app.identity) return void boot();
     const ring = Object.entries(app.state.ring);
     const snaps = Object.entries(app.state.snapshots).filter(([k]) => liveSnapshot(app.state, k, app.now()));
@@ -338,30 +401,32 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
           status.textContent = 'That is not valid base64.';
         }
       }, '', 'paste-go')),
+      bleControl({ onDoc: (f) => accept(f) }),
       btn('Back', onBack, '', 'back'),
     );
     app.cleanup.push(() => {
       finished = true;
       cam && cam.stop();
     });
+    const accept = (doc) => {
+      let kind = -1;
+      try {
+        kind = decodeFrame(doc).kind;
+      } catch {
+        /* not one of ours */
+      }
+      if (!expect || expect.includes(kind)) done(doc);
+      else {
+        col.reset();
+        status.textContent = 'Ignored a document that is not what this step needs.';
+      }
+    };
     startCamera(video, (frame) => {
       const doc = col.push(frame);
       const p = col.progress();
       bar.value = p.total ? Math.round((100 * p.have) / p.total) : 0;
       status.textContent = p.total ? `Reading: ${p.have} of ${p.total} parts${col.errors ? `, ${col.errors} damaged` : ''}` : 'Point the camera at the terminal QR code.';
-      if (doc) {
-        let kind = -1;
-        try {
-          kind = decodeFrame(doc).kind;
-        } catch {
-          /* not one of ours */
-        }
-        if (!expect || expect.includes(kind)) done(doc);
-        else {
-          col.reset();
-          status.textContent = 'Ignored a QR code that is not what this step needs.';
-        }
-      }
+      if (doc) accept(doc);
     }).then((c) => {
       cam = c;
       if (finished) c.stop();
@@ -518,7 +583,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         h('div', { class: 'big', id: 'snapshot-code' }, snap.code),
         h('p', { class: 'mut' }, `Valid until ${new Date(snap.record.expires_at * 1000).toISOString().slice(0, 16)}Z, once per credential. Argon2id ${snap.record.profile.mem_kib / 1024} MiB x ${snap.record.profile.iters}${snap.record.weak ? ' (below the usual floor: this phone is slow)' : ''}. The sealed blob went with the reply above.`));
     }
-    nodes.push(btn('Done', home, 'primary', 'send-done'));
+    nodes.push(bleControl({ frame: out.full }), btn('Done', home, 'primary', 'send-done'));
     show(...nodes);
     app.cleanup.push(() => ev.share.fill(0), ...stops);
   }
@@ -590,7 +655,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
           status.textContent = 'The browser refused the clipboard: select the text and copy it by hand.';
         }
       }, '', 'enroll-copy'));
-    show(title(heading, hint), canvas, copyBox, ...extra, next ? btn('Next', next, 'primary', 'enroll-next') : null, btn('Cancel', home, '', 'back'));
+    show(title(heading, hint), canvas, copyBox, bleControl({ frame: doc }), ...extra, next ? btn('Next', next, 'primary', 'enroll-next') : null, btn('Cancel', home, '', 'back'));
     app.cleanup.push(loopQr(canvas, reverseQrFrames(doc)).stop);
   }
 
@@ -715,6 +780,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
           status.textContent = 'The browser refused the clipboard: select the text and copy it by hand.';
         }
       }, '', 'ops-copy'),
+      bleControl({ frame }),
       btn('Done', home, 'primary', 'send-done'),
     );
     show(...nodes);
