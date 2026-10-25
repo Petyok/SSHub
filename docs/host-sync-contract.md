@@ -1249,6 +1249,128 @@ share reply plaintext (inside the C11 sealed box of the kind 2 frame):
 - Enrollment over QR runs the commit, reveal, SAS and confirm steps of `enroll.rs` with the same
   byte layouts; the phone is the joining side (role 0), the terminal commits first.
 
+### C20: Bluetooth Low Energy frame channel (opt-in feature `bluetooth`)
+
+A fifth way to carry the frames the QR, audio and clipboard channels already carry. The terminal is the GATT
+peripheral (server); the phone page is the central, through Web Bluetooth (Chrome on Android;
+`navigator.bluetooth.requestDevice` needs a user gesture and shows the browser's device chooser, which keeps
+the "the person is physically there" property). The channel moves whole C16/section 4 frames (kinds 1 to 10,
+`"SWR1" || version u16 BE || kind u8 || body`) unchanged and in both directions. **The link adds no security
+and none is assumed**: no pairing, no bonding, no encrypted characteristics required, no BLE-level identity.
+Every frame is already signed or sealed end to end, exactly as when it crosses a camera or a speaker; a
+listener on the link learns what a person looking at the QR learns. The page keeps `connect-src 'none'` (Web
+Bluetooth is not a network API) and needs no other CSP change. Rust: `src/sync/media/` (`ble_link.rs` the
+pure chunking and session state machine, `ble.rs` the BlueZ and CoreBluetooth transports); JS: the page
+worker against this section.
+
+**GATT layout.** One primary service. All UUIDs are fixed (no per-session UUID: the chooser filter needs a
+constant).
+
+| Item | UUID | Properties | Direction |
+|---|---|---|---|
+| Service | `b62f7d3f-0001-42dd-8371-6ffd96411583` | primary | |
+| RX | `b62f7d3f-0002-42dd-8371-6ffd96411583` | write, write without response | phone to terminal |
+| TX | `b62f7d3f-0003-42dd-8371-6ffd96411583` | notify | terminal to phone |
+| INFO | `b62f7d3f-0004-42dd-8371-6ffd96411583` | read | `proto u8 (1) || max_frame u32 BE || tag(4 ASCII)` |
+
+Nothing else is exported by the application (BlueZ adds Generic Access and Generic Attribute, which the page
+does not list in `optionalServices` and therefore cannot read). The page calls
+`requestDevice({ filters: [{ services: [SERVICE] }] })`, never `acceptAllDevices`, connects,
+`getPrimaryService`, reads INFO, then `startNotifications()` on TX **before** its first write to RX.
+
+**Advertising: what the terminal says, and what it must not.** While the unlock or enrollment modal that
+armed the channel is open, and at most `BLE_ADVERTISE_SECS` (300) per arming, the terminal advertises the
+service UUID (128 bit) and the local name `SSHub-<TAG>`: `TAG` is 4 characters of the Crockford base32
+alphabet (no `I L O U`), drawn from the OS RNG when the channel is armed (20 bits), never derived from
+anything stable. The terminal shows the name and the tag on the screen next to the QR ("Bluetooth: pick
+SSHub-7QK2 in the phone's list") so the user picks the right entry in Chrome's chooser among whatever else
+is in the room. The name MUST NOT contain the host name, the user name, a device name, a credential or a
+counter; there is no manufacturer data, no TX power, no appearance, no service data. The advertised name
+replaces the adapter alias in the advertisement; BlueZ's Generic Access device name (the machine's alias)
+stays unreadable to the page and MUST NOT be requested. Not hideable: the controller's address is on the
+air while advertising (Linux and macOS may use a private address; the channel does not rely on it). The tag
+is a pointer for the person, not a secret and not authentication: a nearby device may advertise the same
+name and is, at worst, a denial of service (it can connect first and send nothing useful; every frame it
+sends fails the same checks a forged QR fails). One central at a time: advertising stops at the first
+connection; if that connection ends (BYE, disconnect, or `BLE_HELLO_SECS` without HELLO) the terminal
+advertises again with the SAME tag until the arming window ends. The TUI offers a key to drop the current
+central.
+
+**Messages.** Both directions use one message layout, one message per GATT write or notification. First
+byte = type, big-endian integers.
+
+```text
+0x01 HELLO      version u8 (1) || chunk u16 BE      phone proposes its message size
+0x02 HELLO_ACK  version u8 (1) || chunk u16 BE || window u8
+0x10 DATA       frame_id u16 BE || idx u16 BE || count u16 BE
+                    [idx = 0 only: len u32 BE || crc32 u32 BE] || payload
+0x11 ACK        frame_id u16 BE || next u16 BE      all chunks below `next` arrived; next = count = done
+0x12 ABORT      frame_id u16 BE || reason u8        1 crc, 2 too large, 3 busy, 4 order, 5 version, 6 timeout
+0x20 BYE        reason u8                           0 done, 1 timeout, 2 user, 3 error, 4 busy
+0x22 PING                                           no body, either side, no reply
+```
+
+- **Session start.** Until HELLO_ACK every message in either direction is at most 20 bytes (a link at the
+  minimum ATT MTU 23 carries 20). The phone sends HELLO with `chunk` = the message size it will use
+  (recommended 244, never above 512). The terminal answers HELLO_ACK with `chunk` = min(proposal, 244,
+  its notification MTU minus 3), and `window` = 8. Both sides then use messages of at most that `chunk`
+  bytes, DATA header included. `version` mismatch: the terminal answers ABORT(frame 0, reason 5) and BYE.
+  The page cannot read the ATT MTU; if a write fails it MAY send HELLO again with a smaller proposal, which
+  restarts the session state (frames in flight are dropped).
+- **Frames.** A frame (kinds 1 to 10, `len >= 7`) is cut into DATA chunks. `frame_id` starts at 1 for each
+  sender and each direction and wraps after 65535 to 1. One frame in flight per direction. Chunk 0 carries
+  `len` and `crc32` (IEEE 802.3, over the whole frame) after the 6 byte header, so its payload is `chunk - 15`
+  bytes; chunks 1 and up have `chunk - 7` payload bytes; `count = 1 + ceil(max(0, len - (chunk - 15)) / (chunk
+  - 7))`. The last chunk is as short as needed.
+- **Receiver rules** (the terminal enforces them on what the phone sends; the page SHOULD enforce them on what
+  the terminal sends): `len` greater than `BLE_MAX_FRAME_BYTES` (1 MiB, equal to `MAX_FRAME_BYTES`) or not
+  matching `count`: ABORT(2) before buffering anything; a chunk whose `frame_id` is not the one in progress while
+  one is in progress and not complete: ABORT(3); `idx` other than the next expected (gaps, duplicates): drop
+  it and re-send ACK(next); reassembled length different from `len` or CRC mismatch: ABORT(1) and the sender
+  may send the frame again under a new `frame_id`; memory held per direction is one frame, released on ABORT,
+  BYE or disconnect. The first four bytes of a completed frame MUST be `"SWR1"` and its kind in 1..=10, else
+  ABORT(3), before anything is handed to the application.
+- **Flow control.** The sender may have `window` chunks unacknowledged. The receiver sends ACK(next) after
+  every `window / 2` chunks and after the last chunk of a frame. The page awaits each GATT write promise before
+  the next (`writeValueWithoutResponse` preferred, `writeValueWithResponse` fallback). A sender that sees no
+  ACK for `BLE_ACK_SECS` (5) re-sends from the last acknowledged chunk, at most `BLE_RETRIES` (3) times, then
+  ABORT(6) and BYE(1).
+- **Timing.** HELLO must arrive within `BLE_HELLO_SECS` (10) of the connection or the terminal ends it. A
+  frame must complete within `BLE_FRAME_SECS` (120). PING every `BLE_PING_SECS` (30) while idle; nothing heard
+  for `BLE_IDLE_SECS` (90) ends the session with BYE(1). The channel lives exactly as long as the modal that
+  armed it: closing the modal sends BYE(2), disconnects and stops advertising; the phone page BYE(0) after
+  its last step.
+- **Who sends what.** The terminal pushes the frame of the step it is on as soon as HELLO_ACK is sent, and
+  again whenever the step changes (the same document the QR shows); the phone sends its frames when its
+  user has acted. The application above the channel never sees chunks, only whole frames, and treats a
+  frame from BLE exactly like the same bytes read from a QR or heard over audio.
+
+**Which ceremony steps use it** (each is the same frame as on the other channels, no new frame kind):
+
+| Step | Terminal to phone | Phone to terminal |
+|---|---|---|
+| Share release (unlock modal, CLI phone verbs with `--ble`) | challenge, kind 1 | `ShareResponseWire`, kind 2, the full reply with courier ops and snapshot (no audio size limit) |
+| Enrollment of the phone | commit/reveal/confirm of the existing side, kinds 6 to 8 | its reveal and confirm, kinds 6 to 8 |
+| Red notice and recovery | Red notice, kind 3 | phone ops, kind 5 (courier) |
+| Trust-session certificate | request, kind 9; budget extension, kind 10 | phone ops with the `CertIssue` or `CertExtend`, kind 5 |
+
+What stays outside the channel: the SAS words (the person compares the screens), the binding words, the paper
+phrase and the PIN. Nothing that needs a human decision is skipped because the link is convenient.
+
+**Limits and platforms.** Web Bluetooth exists in Chrome and Chromium based browsers on Android, ChromeOS,
+Linux, macOS and Windows; not in Safari or any iOS browser (those users keep QR, audio and paste), and not in
+Firefox. Range is a few metres and is the point: it is a short-range, line-of-room channel, not a network.
+Typical throughput through Chrome on Android is a few KB per second to a few tens of KB per second; the
+largest honest frame (a reply with 8 courier ops) takes seconds. Terminal side: Linux through BlueZ (D-Bus,
+needs `bluetoothd` running and an adapter that can advertise as a peripheral; no root, the user's session bus
+only), macOS through CoreBluetooth (peripheral manager; the first use asks the user for Bluetooth permission
+for the terminal app). Windows terminals: the feature builds, the channel reports that it is not implemented.
+
+**Constants** (in `src/sync/media/ble_link.rs`, same names as above): `BLE_ADVERTISE_SECS` 300,
+`BLE_HELLO_SECS` 10, `BLE_ACK_SECS` 5, `BLE_RETRIES` 3, `BLE_FRAME_SECS` 120, `BLE_PING_SECS` 30,
+`BLE_IDLE_SECS` 90, `BLE_MAX_FRAME_BYTES` 1 MiB, `BLE_CHUNK_DEFAULT` 244, `BLE_CHUNK_MIN` 20,
+`BLE_CHUNK_MAX` 512, `BLE_WINDOW` 8.
+
 ## 8. Global constraints
 
 Branch topology: child `poc/<name>` branches from `feature/host-sync`. No async
