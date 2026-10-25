@@ -37,6 +37,8 @@ exclude = [
     "assets/companion/build.mjs",
     "assets/companion/poc",
     "deploy",
+    # Native Android companion (docs/host-sync-android.md): Gradle project, not part of the crate.
+    "android",
 ]
 
 [[bin]]
