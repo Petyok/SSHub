@@ -525,7 +525,8 @@ impl EntityCapture {
         if diff.is_empty() {
             return Ok(());
         }
-        self.append_valid(conn, diff, |keep| {
+        let was_new = !view.alive;
+        let published = self.append_valid(conn, diff, |keep| {
             macro_rules! pick {
                 ($f:ident) => {
                     if keep.contains(stringify!($f)) {
@@ -558,7 +559,20 @@ impl EntityCapture {
                     identity_uid: pick!(identity_uid),
                 },
             }
-        })
+        });
+        if was_new {
+            // The form's defaults (22, ssh) were not a choice and were not published: the row
+            // now inherits them like a host the ring gave, so a later explicit choice shows.
+            conn.execute(
+                "UPDATE hosts SET port = NULL WHERE id = ?1 AND port = 22",
+                params![id],
+            )?;
+            conn.execute(
+                "UPDATE hosts SET transport = NULL WHERE id = ?1 AND transport = 'ssh'",
+                params![id],
+            )?;
+        }
+        published
     }
 }
 

@@ -322,6 +322,9 @@ fn host_changes(
 /// The completion of a ready phone-loss recovery (revoke the lost phone, admit the new one) is
 /// not a Red change that waits for the lost phone's signature: the recovery already was the
 /// ceremony. Say so in the review, or the reader looks for a phone proof that cannot come.
+pub(crate) const COMPLETES_RECOVERY: &str =
+    "completes the ready phone recovery: no signature of the lost phone is needed";
+
 fn recovery_suffix(store: &LauncherStore, op: &Op) -> String {
     let completes =
         matches!(
@@ -333,8 +336,7 @@ fn recovery_suffix(store: &LauncherStore, op: &Op) -> String {
         ) && crate::sync::recovery::ready_recovery_for(store, op, crate::store::now_ts())
             .unwrap_or(false);
     if completes {
-        " [completes the ready phone recovery: no signature of the lost phone is needed]"
-            .to_string()
+        format!(" [{COMPLETES_RECOVERY}]")
     } else {
         String::new()
     }
