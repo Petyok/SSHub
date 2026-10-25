@@ -431,8 +431,9 @@ impl PrivateAgent {
 /// A signal to the whole process group (Ctrl-C, the quit key, a group kill) ends the watcher's
 /// `cat` too, and the trap then kills the agent EXPLICITLY (a background job of a
 /// non-interactive shell ignores SIGINT and SIGQUIT) and removes the directory.
-const WATCHER_SCRIPT: &str = r#"ssh-agent -D -a "$1" & a=$!
-cleanup() { kill $a 2>/dev/null; wait $a 2>/dev/null; rm -rf "$2"; }
+const WATCHER_SCRIPT: &str = r#"d=$2
+ssh-agent -D -a "$1" & a=$!
+cleanup() { kill $a 2>/dev/null; wait $a 2>/dev/null; rm -rf "$d"; }
 trap cleanup EXIT
 trap 'cleanup; exit 0' HUP INT TERM QUIT
 cat >/dev/null"#;

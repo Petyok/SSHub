@@ -3292,12 +3292,9 @@ fn an_approved_unusable_hop_name_refuses_connections_instead_of_going_direct() {
         "{now}"
     );
     assert!(!crate::map::hops::jump_is_valid(&now));
-    let resolved = b
-        .store
-        .resolve_connection(&b.host(&uid(2)).unwrap())
-        .unwrap();
+    let refused = b.store.resolve_connection(&b.host(&uid(2)).unwrap());
     assert!(
-        resolved.jump_error.is_some(),
-        "the connection is refused: {resolved:?}"
+        refused.is_err(),
+        "the connection is refused, not made direct: {refused:?}"
     );
 }
