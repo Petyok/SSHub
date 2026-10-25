@@ -2887,6 +2887,10 @@ fn control_characters_never_enter_names_text_or_device_names() {
         "a\u{85}b",
         "a\u{9b}31m",
         "a\tb",
+        "pr\u{202E}dorp",
+        "a\u{200B}b",
+        "a\u{FEFF}b",
+        "a\u{2066}b\u{2069}",
     ] {
         assert!(validates(&host(bad, None)).is_err(), "{bad:?}");
     }

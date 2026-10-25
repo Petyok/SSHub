@@ -267,6 +267,12 @@ fn line(what: &str, s: &str) -> std::result::Result<(), String> {
     if s.chars().any(char::is_control) {
         return Err(format!("{what} must be a single line"));
     }
+    // Bidi controls and zero-width characters make one name look like another.
+    if s.chars().any(|c| {
+        matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+    }) {
+        return Err(format!("{what} contains an invisible or direction-changing character"));
+    }
     Ok(())
 }
 
