@@ -55,6 +55,15 @@ pub fn install(
     Ok(())
 }
 
+/// Install a sink whose device key cannot be loaded (a locked identity).
+#[cfg(test)]
+pub(crate) fn install_locked(store: &LauncherStore) {
+    store.set_local_change_sink(Box::new(EntityCapture {
+        source: None,
+        identity: Mutex::new(None),
+    }));
+}
+
 /// Install with an identity at hand.
 #[cfg(test)]
 pub(crate) fn install_with_identity(store: &LauncherStore, id: Arc<DeviceIdentity>) -> Result<()> {

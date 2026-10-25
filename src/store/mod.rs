@@ -52,6 +52,9 @@ use std::sync::Mutex;
 pub struct LauncherStore {
     conn: Mutex<Connection>,
     capture: std::sync::OnceLock<Box<dyn LocalChangeSink>>,
+    /// The last failure of recording a local write for sync, until a caller takes it.
+    sync_warning: Mutex<Option<String>>,
+    warn_on_stderr: std::sync::atomic::AtomicBool,
 }
 
 /// What a local write touched, for [`LocalChangeSink`].
@@ -93,6 +96,8 @@ impl LauncherStore {
         let store = Self {
             conn: Mutex::new(conn),
             capture: std::sync::OnceLock::new(),
+            sync_warning: Mutex::new(None),
+            warn_on_stderr: std::sync::atomic::AtomicBool::new(false),
         };
         store.seed_default_identity()?;
         Ok(store)
@@ -116,6 +121,8 @@ impl LauncherStore {
         let store = Self {
             conn: Mutex::new(conn),
             capture: std::sync::OnceLock::new(),
+            sync_warning: Mutex::new(None),
+            warn_on_stderr: std::sync::atomic::AtomicBool::new(false),
         };
         store.seed_default_identity()?;
         Ok(store)
@@ -126,11 +133,38 @@ impl LauncherStore {
         let _ = self.capture.set(sink);
     }
 
+    /// Tell the sink what a local write changed. NEVER fails the write: the row is saved, and a
+    /// callers' retry would only duplicate it. A failure is kept as a warning for the caller to
+    /// show ([`Self::take_sync_warning`]; the CLI also prints it) and the next sync round
+    /// publishes what was missed.
     pub(crate) fn notify_change(&self, scope: ChangeScope) -> Result<()> {
-        match self.capture.get() {
-            Some(sink) => self.with_conn(|conn| sink.changed(conn, scope)),
-            None => Ok(()),
+        if let Some(sink) = self.capture.get() {
+            if let Err(e) = self.with_conn(|conn| sink.changed(conn, scope)) {
+                let msg = format!("{e:#}");
+                if self
+                    .warn_on_stderr
+                    .load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    eprintln!("sshub: warning: {msg}");
+                }
+                *self.sync_warning.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+            }
         }
+        Ok(())
+    }
+
+    /// The failure of the last attempt to record a local write for sync, if any (cleared).
+    pub fn take_sync_warning(&self) -> Option<String> {
+        self.sync_warning
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    }
+
+    /// Print such failures on stderr as they happen (the CLI; the TUI shows them in its status line).
+    pub fn warn_on_stderr(&self) {
+        self.warn_on_stderr
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// The stable ids of every replicated row now (what a bulk operation may delete).
