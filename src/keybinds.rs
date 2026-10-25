@@ -130,7 +130,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 116] = [
+    pub const ALL: [KeyAction; 117] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
