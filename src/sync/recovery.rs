@@ -332,7 +332,10 @@ pub fn liveness_set(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Ve
 }
 
 fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
-    Ok(fresh_in(super::ceremony::effective_devices(store, None)?, now))
+    Ok(fresh_in(
+        super::ceremony::effective_devices(store, None)?,
+        now,
+    ))
 }
 
 fn fresh_in(devices: Vec<DeviceRow>, now: i64) -> Vec<DeviceRow> {

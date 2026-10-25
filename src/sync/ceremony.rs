@@ -552,9 +552,9 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     let completion = match &op.body {
         // The view at the op's own lamport already counts the op itself as in force, so the target is
         // recognised by what it is (a holder phone), not by being the live phone of that view.
-        OpBody::DeviceRevoke { device_id } => devices
-            .iter()
-            .any(|d| d.id == *device_id && d.kind == DeviceKind::Phone && d.role == DeviceRole::Holder),
+        OpBody::DeviceRevoke { device_id } => devices.iter().any(|d| {
+            d.id == *device_id && d.kind == DeviceKind::Phone && d.role == DeviceRole::Holder
+        }),
         // Likewise the new phone is already a row of its own view: admitted only while no OTHER phone lives.
         OpBody::DeviceAdd {
             device,
