@@ -280,7 +280,7 @@ pub(crate) fn received_at(store: &LauncherStore, op: &Op) -> Option<i64> {
 /// nobody else. Returns when this device received it.
 fn own_admission_proof(
     store: &LauncherStore,
-    phone: &super::oplog::DevicePublic,
+    phone: &super::crypto::DevicePublic,
     hash: &[u8; 32],
     valid_proof: &dyn Fn(&Op) -> bool,
 ) -> Result<Option<i64>> {
