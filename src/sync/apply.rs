@@ -584,7 +584,7 @@ fn referrers(conn: &Connection, uid: &Uid) -> Result<Vec<(EntityKind, Uid)>> {
 
 /// The name this entity should carry locally: its base name when it wins the
 /// name, `base (uid8)` when another entity (or a local-only row) holds it.
-fn rendered_name(
+pub(crate) fn rendered_name(
     conn: &Connection,
     kind: EntityKind,
     uid: &Uid,

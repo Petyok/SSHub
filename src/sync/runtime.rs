@@ -174,6 +174,9 @@ impl SyncRuntime {
             })?;
         let host = resolve_host(&self.store, &spec)
             .map_err(|e| TransportError::Offline(format!("{e:#}")))?;
+        // Local hosts, groups and identities the ring has not heard of go first.
+        crate::sync::entity_capture::publish_pending(&self.store, &self.identity)
+            .map_err(|e| TransportError::Failed(format!("{e:#}")))?;
         let summary =
             self.transport(host, SERVE_COMMAND)
                 .run(cancel, Limits::default(), |conn| {

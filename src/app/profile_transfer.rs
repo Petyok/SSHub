@@ -649,6 +649,14 @@ impl crate::app::App {
             LauncherStore::open(&src_db).context("cannot open source profile database")?;
         let mut dest_store =
             LauncherStore::open(&dst_db).context("cannot open destination profile database")?;
+        // Either side may be in a ring: what the transfer creates or removes is announced there.
+        for (store, db) in [(&src_store, &src_db), (&dest_store, &dst_db)] {
+            crate::sync::entity_capture::install_for_db(
+                store,
+                db,
+                crate::credentials::open_ungated_for_profile,
+            )?;
+        }
         let mode = if is_move {
             TransferMode::Move
         } else {

@@ -6,15 +6,18 @@ use super::types::{
     AuthEvent, DeleteHostOutcome, HostGroup, HostGroupUpdate, HostSource, HostUpdate, ManagedHost,
     NewHost, NewHostGroup, SshConfigHostImport, UpsertSshConfigOutcome,
 };
-use super::LauncherStore;
+use super::{ChangeScope, LauncherStore};
 use crate::session_log::SessionLoggingOverride;
 use crate::session_transport::SessionTransport;
+use crate::sync::oplog::tier::EntityKind;
 
 impl LauncherStore {
     // --- host groups ---
 
     pub fn create_group(&self, group: &NewHostGroup) -> Result<HostGroup> {
-        self.with_conn(|conn| create_group_on(conn, group))
+        let created = self.with_conn(|conn| create_group_on(conn, group))?;
+        self.notify_change(ChangeScope::Group(created.id))?;
+        Ok(created)
     }
 
     pub fn get_group(&self, id: i64) -> Result<Option<HostGroup>> {
@@ -40,7 +43,11 @@ impl LauncherStore {
     }
 
     pub fn update_group(&self, id: i64, update: &HostGroupUpdate) -> Result<Option<HostGroup>> {
-        self.with_conn(|conn| update_group_on(conn, id, update))
+        let updated = self.with_conn(|conn| update_group_on(conn, id, update))?;
+        if updated.is_some() {
+            self.notify_change(ChangeScope::Group(id))?;
+        }
+        Ok(updated)
     }
     pub fn delete_group(&self, id: i64) -> Result<bool> {
         // Reserved groups (Favorites) can't be deleted.
@@ -49,12 +56,18 @@ impl LauncherStore {
                 return Ok(false);
             }
         }
+        let uid = self.group_uid(id)?;
         let deleted = self.with_conn(|conn| {
             let tx = conn.unchecked_transaction()?;
             let deleted = delete_group_on(conn, id)?;
             tx.commit()?;
             Ok(deleted)
         })?;
+        if let (true, Some(uid)) = (deleted, uid) {
+            self.notify_change(ChangeScope::Deleted(EntityKind::Group, uid))?;
+            // Children lose their parent, member hosts their membership.
+            self.notify_change(ChangeScope::Everything)?;
+        }
         Ok(deleted)
     }
 
@@ -69,6 +82,11 @@ impl LauncherStore {
     /// left intact so saving the host form never drops its favourite status.
     /// Then materialize the inherited identity (see [`materialize_identity`]).
     pub fn set_host_groups(&self, host_id: i64, group_ids: &[i64]) -> Result<()> {
+        self.set_host_groups_raw(host_id, group_ids)?;
+        self.notify_change(ChangeScope::Host(host_id))
+    }
+
+    fn set_host_groups_raw(&self, host_id: i64, group_ids: &[i64]) -> Result<()> {
         self.with_conn(|conn| {
             let tx = conn.unchecked_transaction()?;
             // Only clear non-reserved memberships; keep Favorites untouched.
@@ -103,7 +121,8 @@ impl LauncherStore {
             add_host_to_group_on(conn, host_id, group_id)?;
             tx.commit()?;
             Ok(())
-        })
+        })?;
+        self.notify_change(ChangeScope::Host(host_id))
     }
 
     /// Remove `host_id` from `group_id` (idempotent).
@@ -114,13 +133,16 @@ impl LauncherStore {
                 params![host_id, group_id],
             )?;
             Ok(())
-        })
+        })?;
+        self.notify_change(ChangeScope::Host(host_id))
     }
 
     // --- hosts ---
 
     pub fn create_host(&self, host: &NewHost) -> Result<ManagedHost> {
-        self.with_conn(|conn| create_host_on(conn, host))
+        let created = self.with_conn(|conn| create_host_on(conn, host))?;
+        self.notify_change(ChangeScope::Host(created.id))?;
+        Ok(created)
     }
 
     pub fn get_host(&self, id: i64) -> Result<Option<ManagedHost>> {
@@ -181,6 +203,12 @@ impl LauncherStore {
             tx.commit()?;
             Ok(updated)
         })
+        .and_then(|updated| {
+            if updated.is_some() {
+                self.notify_change(ChangeScope::Host(id))?;
+            }
+            Ok(updated)
+        })
     }
 
     pub fn set_host_last_connected(&self, id: i64, ts: i64) -> Result<()> {
@@ -202,8 +230,12 @@ impl LauncherStore {
             return Ok(DeleteHostOutcome::NotLauncher);
         }
 
+        let uid = self.host_uid(id)?;
         let deleted = self.with_conn(|conn| delete_host_on(conn, id))?;
         if deleted {
+            if let Some(uid) = uid {
+                self.notify_change(ChangeScope::Deleted(EntityKind::Host, uid))?;
+            }
             Ok(DeleteHostOutcome::Deleted)
         } else {
             Ok(DeleteHostOutcome::NotFound)
@@ -854,7 +886,7 @@ pub(crate) fn update_group_on(
     load_group_by_id(conn, id)
 }
 
-fn load_group_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<HostGroup>> {
+pub(crate) fn load_group_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<HostGroup>> {
     conn.prepare(
         "SELECT id, name, sort_order, default_identity_id, default_username,
                 default_port, default_proxy_jump, default_transport,
@@ -1144,7 +1176,7 @@ fn via_condition(via: &str) -> String {
     }
 }
 
-fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<ManagedHost>> {
+pub(crate) fn load_host_by_id(conn: &rusqlite::Connection, id: i64) -> Result<Option<ManagedHost>> {
     conn.prepare(
         "SELECT h.id, h.name, h.label, h.address, h.port, h.group_id, h.identity_id,
                 h.os_icon, h.tags, h.notes, h.proxy_jump, h.forward_agent, h.remote_command,
