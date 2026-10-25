@@ -521,7 +521,9 @@ fn escape_controls(text: &str, c1: bool) -> String {
             && (('\u{0080}'..='\u{009f}').contains(&ch)
                 || ('\u{200b}'..='\u{200f}').contains(&ch)
                 || ('\u{202a}'..='\u{202e}').contains(&ch)
+                || ('\u{2060}'..='\u{2064}').contains(&ch)
                 || ('\u{2066}'..='\u{2069}').contains(&ch)
+                || matches!(ch, '\u{061c}' | '\u{2028}' | '\u{2029}' | '\u{00ad}')
                 || ch == '\u{feff}');
         if ch <= '\u{001f}' || ch == '\u{007f}' || foreign {
             let _ = write!(out, "\\u{{{:04x}}}", ch as u32);

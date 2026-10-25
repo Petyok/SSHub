@@ -809,6 +809,16 @@ mod over_the_log {
         );
         w.sync();
         assert!(!in_force(&w.d[OBS].store, &add2).unwrap());
+        // The review marks exactly the ops the recovery completes: the revocation of the lost phone and
+        // the one admission, not the premature revocation or a second admission.
+        let rows = w.d[OBS].store.sync_devices().unwrap();
+        let marked = |op: &Op| {
+            crate::app::sync_view::pending_view(&w.d[OBS].store, op, &rows, None)
+                .summary
+                .contains(crate::app::sync_view::COMPLETES_RECOVERY)
+        };
+        assert!(marked(&revoke) && marked(&add));
+        assert!(!marked(&premature) && !marked(&add2));
         // The new phone is the ring's phone: it signs the next Red ceremony.
         let reg = at(
             &w.d[R],

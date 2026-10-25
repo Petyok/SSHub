@@ -859,3 +859,108 @@ fn a_profile_in_a_ring_without_its_device_key_never_gets_a_new_identity() {
     assert!(!crate::sync::identity_store::key_path(&paths).exists());
     assert_eq!(ops(&store, "HostUpsert").len(), 0);
 }
+
+/// Two nodes of one ring; `a` authored host `h` (no port, no transport) and `b` has approved it.
+fn synced_in_host() -> (Node, Arc<DeviceIdentity>, i64) {
+    let ((a, aid), (b, bid)) = (id_node(), id_node());
+    for (x, y) in [(&a, &bid), (&b, &aid)] {
+        x.store
+            .sync_register_device(
+                &y.public(),
+                "peer",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    a.store
+        .sync_append_local(
+            &aid,
+            OpBody::HostUpsert {
+                host_uid: [9; 16],
+                fields: crate::sync::oplog::op::HostFields {
+                    name: Some("h".into()),
+                    address: Some("h.example".into()),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    pull(&b.store, &a.store);
+    approve_all(&b.store);
+    let id = b
+        .store
+        .list_hosts()
+        .unwrap()
+        .into_iter()
+        .find(|h| h.name == "h")
+        .expect("the host reached b")
+        .id;
+    (b, bid, id)
+}
+
+#[test]
+fn a_host_the_ring_gave_no_port_or_transport_stores_null_so_they_inherit() {
+    let (b, _, id) = synced_in_host();
+    let h = b.store.get_host(id).unwrap().unwrap();
+    assert_eq!((h.port, h.transport), (None, None));
+}
+
+#[test]
+fn an_explicit_port_22_or_ssh_on_a_synced_in_host_is_published_and_a_note_edit_alone_is_not() {
+    let (b, bid, id) = synced_in_host();
+    let mine = |b: &Node| -> Vec<Op> {
+        ops(&b.store, "HostUpsert")
+            .into_iter()
+            .filter(|o| o.device_id == bid.public().device_id())
+            .collect()
+    };
+    // The user pins port 22 and ssh on purpose (the group default on the other devices differs).
+    b.store
+        .update_host(
+            id,
+            &HostUpdate {
+                port: Some(Some(22)),
+                transport: Some(Some(crate::session_transport::SessionTransport::Ssh)),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let f = host_fields(
+        mine(&b)
+            .last()
+            .expect("the explicit choice reached the log"),
+    );
+    assert_eq!(f.port, Some(Some(22)));
+    assert_eq!(f.transport, Some(Some("ssh".into())));
+    // A later note edit says nothing about either: both now equal the view.
+    let before = mine(&b).len();
+    b.store
+        .update_host(
+            id,
+            &HostUpdate {
+                notes: Some(Some("a note".into())),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let all = mine(&b);
+    assert_eq!(all.len(), before + 1);
+    let f = host_fields(all.last().unwrap());
+    assert_eq!(
+        (f.notes.clone(), f.port, f.transport),
+        (Some(Some("a note".into())), None, None)
+    );
+}
+
+#[test]
+fn a_new_local_host_with_the_form_defaults_does_not_pin_port_or_transport() {
+    let (n, _) = id_node();
+    n.store
+        .create_host(&NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    let f = host_fields(ops(&n.store, "HostUpsert").last().unwrap());
+    assert_eq!((f.port, f.transport), (None, None));
+}

@@ -1229,6 +1229,15 @@ impl App {
             AppMode::SyncUnlock => {
                 if cancel {
                     self.sync_close_modal();
+                } else if self.is_action(KeyAction::SyncBleDrop, &key) {
+                    // Only where a Bluetooth channel is running (its row is in the modal).
+                    if self.sync.unlock.as_ref().is_some_and(|u| {
+                        u.paths.iter().any(|p| p.kind == UnlockPathKind::Bluetooth)
+                    }) {
+                        self.sync.intents.push(SyncIntent::UnlockCode(
+                            crate::sync::ui_shares::DROP_CENTRAL_ANSWER.to_string(),
+                        ));
+                    }
                 } else if let Some(unlock) = self.sync.unlock.as_mut() {
                     match key.code {
                         KeyCode::Enter if !unlock.code.is_empty() => {
@@ -1430,6 +1439,60 @@ mod tests {
         let mut app = test_app(vec![]);
         app.sync = sample_sync_view();
         app
+    }
+
+    fn unlock_with(paths: &[UnlockPathKind]) -> App {
+        let mut app = configured_app();
+        app.open_sync_unlock(UnlockView {
+            host: "web-1".into(),
+            have: 1,
+            need: 2,
+            paths: paths
+                .iter()
+                .map(|k| UnlockPathView {
+                    kind: *k,
+                    status: "x".into(),
+                })
+                .collect(),
+            frames: vec![],
+            code: String::new(),
+        });
+        app
+    }
+
+    fn ctrl_b() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)
+    }
+
+    #[test]
+    fn the_drop_phone_key_reaches_the_worker_only_while_a_bluetooth_channel_runs() {
+        let mut app = unlock_with(&[UnlockPathKind::PhoneQr, UnlockPathKind::Bluetooth]);
+        app.handle_key(ctrl_b()).unwrap();
+        assert_eq!(
+            app.sync.intents,
+            vec![SyncIntent::UnlockCode(
+                crate::sync::ui_shares::DROP_CENTRAL_ANSWER.to_string()
+            )]
+        );
+        assert_eq!(app.mode, AppMode::SyncUnlock, "the modal stays open");
+        assert!(
+            app.sync.unlock.as_ref().unwrap().code.is_empty(),
+            "nothing typed"
+        );
+        // No Bluetooth row (not built in, or not armed): the key does nothing.
+        let mut app = unlock_with(&[UnlockPathKind::PhoneQr]);
+        app.handle_key(ctrl_b()).unwrap();
+        assert!(app.sync.intents.is_empty());
+    }
+
+    #[test]
+    fn the_drop_phone_key_is_not_a_text_key_in_the_phone_enrollment_prompt() {
+        let mut app = configured_app();
+        app.sync_prompt("Add my phone", "frame", false, |_, _| {});
+        app.handle_key(ctrl_b()).unwrap();
+        // The prompt is still there, nothing was typed, and with no Bluetooth channel nothing is dropped.
+        assert_eq!(app.mode, AppMode::SyncPrompt);
+        assert!(app.host_notice.is_none());
     }
 
     #[test]

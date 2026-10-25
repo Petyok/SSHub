@@ -236,6 +236,14 @@ fn f7_control_characters_of_foreign_text_are_escaped_for_the_terminal() {
         assert!(!shown.contains(c), "{shown:?}");
     }
     assert!(shown.contains("\\u{202e}"), "{shown}");
+    let more = crate::cli::theme::sanitize_foreign(
+        "a\u{2060}b\u{2064} \u{061c}c\u{2028}d\u{2029}e\u{00ad}f",
+    );
+    for c in [
+        '\u{2060}', '\u{2064}', '\u{061c}', '\u{2028}', '\u{2029}', '\u{00ad}',
+    ] {
+        assert!(!more.contains(c), "{more:?}");
+    }
     // Plain text, including non-ASCII letters above the C1 range, is untouched.
     assert_eq!(
         crate::cli::theme::sanitize_foreign("héllo wörld"),

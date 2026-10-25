@@ -34,6 +34,11 @@ use crate::sync::unlock_paths::{
     share_from_code,
 };
 
+/// The one "answer" the unlock modal's drop-phone key sends through the answers channel: a NUL
+/// cannot be typed, so it never collides with a code or words. The wait then calls
+/// `ListenHandle::drop_central()` (the handle lives on this worker thread).
+pub const DROP_CENTRAL_ANSWER: &str = "\u{0}drop-central";
+
 /// How long a phone challenge stays valid.
 const CHALLENGE_TTL_SECS: i64 = crate::sync::limits::CHALLENGE_EXPIRY_SECS;
 /// The terminal area the challenge QR is sized for (columns, rows).
@@ -322,7 +327,7 @@ impl UiShares {
         let (media_tx, media_rx) = std::sync::mpsc::channel();
         #[cfg(test)]
         test_hooks::register(&rt.paths.root, media_tx.clone());
-        let _listening = phone.as_ref().map(|ask| {
+        let listening = phone.as_ref().map(|ask| {
             let mut kinds = vec![MediaKind::Audio, MediaKind::Camera];
             if cfg!(feature = "bluetooth") {
                 kinds.push(MediaKind::Ble);
@@ -353,6 +358,15 @@ impl UiShares {
                 .map_err(|_| failed(anyhow!("lock")))?
                 .recv_timeout(MEDIA_POLL)
             {
+                Ok(text) if text == DROP_CENTRAL_ANSWER => {
+                    if let Some(h) = &listening {
+                        h.drop_central();
+                        self.say(
+                            UnlockPathKind::Bluetooth,
+                            "phone dropped, advertising again",
+                        );
+                    }
+                }
                 Ok(text) => {
                     let Some(ask) = &phone else {
                         self.say(
