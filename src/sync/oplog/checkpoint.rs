@@ -2147,6 +2147,15 @@ fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
                     ),
                 };
                 let revoked = wins.contains_key(&("revoke".to_string(), key.clone()));
+                // An anchor device's label is a local note kept out of the state (it must not make states
+                // differ), so the state has no name for it: keep the label this device already holds.
+                let kept: Option<String> = conn
+                    .query_row(
+                        "SELECT name FROM sync_devices WHERE device_id = ?1",
+                        params![key],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
                 conn.execute(
                     "INSERT OR REPLACE INTO sync_devices
                        (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, status, wrap_epoch, verified_by, last_seen)
@@ -2156,7 +2165,10 @@ fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
                         unhex(v["ed25519"].as_str().unwrap_or("")),
                         x,
                         ml,
-                        Some(v["name"].as_str().unwrap_or("")).filter(|n| !n.is_empty()).unwrap_or(key.as_str()),
+                        Some(v["name"].as_str().unwrap_or(""))
+                            .filter(|n| !n.is_empty())
+                            .or(kept.as_deref().filter(|n| !n.is_empty()))
+                            .unwrap_or(key.as_str()),
                         wins.get(&("role".to_string(), key.clone()))
                             .and_then(|r| r.value["role"].as_str())
                             .or(v["role"].as_str())

@@ -169,11 +169,16 @@ impl UiShares {
         let path = |k: MediaKind| match k {
             MediaKind::Audio => UnlockPathKind::Audio,
             MediaKind::Camera => UnlockPathKind::Camera,
+            MediaKind::Ble => UnlockPathKind::Bluetooth,
         };
         match event {
             MediaEvent::Status(k, line) => self.say(path(k), line),
             MediaEvent::Progress(k, held, needed) => {
                 self.say(path(k), format!("reading the code: {held} of {needed}"));
+            }
+            // the challenge reached the phone; its answer is what this wait is for
+            MediaEvent::Sent(k) => {
+                self.say(path(k), "the challenge is on the phone: approve there")
             }
             MediaEvent::Reply(k, bytes) => {
                 let ask = ask?;
@@ -312,13 +317,21 @@ impl UiShares {
                 "no holder released a share, none can be asked from here, and the ring has no phone: unlock on a device that can, or use a Vault ring".into(),
             ));
         }
-        // The microphone and the camera listen only while this wait lasts.
+        // The microphone, the camera and (feature `bluetooth`) the phone's Bluetooth link listen
+        // only while this wait lasts.
         let (media_tx, media_rx) = std::sync::mpsc::channel();
         #[cfg(test)]
         test_hooks::register(&rt.paths.root, media_tx.clone());
-        let _listening = phone
-            .as_ref()
-            .map(|_| crate::sync::media::listen(&[MediaKind::Audio, MediaKind::Camera], media_tx));
+        let _listening = phone.as_ref().map(|ask| {
+            let mut kinds = vec![MediaKind::Audio, MediaKind::Camera];
+            if cfg!(feature = "bluetooth") {
+                kinds.push(MediaKind::Ble);
+            }
+            let handle = crate::sync::media::listen(&kinds, media_tx);
+            // the same frame the QR carries, for a phone that connects over Bluetooth
+            handle.send_frame(ask.challenge.to_wire().encode());
+            handle
+        });
         let mut last_poll: Option<std::time::Instant> = None;
         let result = (|| loop {
             if let Some(req) = &request {

@@ -16,7 +16,7 @@ All notable changes to SSHub are documented in this file.
   one of two modes: **Vault** (encrypted under a master phrase and a ring secret from a printed kit) or **Quorum**
   (every secret needs two shares, so a copy of one device opens nothing; shares live on your machines, on paper
   and on the **phone companion**, a single offline page you open on Android that shows what is being asked and who asks
-  and releases a share by QR code, clipboard or, with the opt-in `audio` cargo feature, sound). Docs:
+  and releases a share by QR code, clipboard or, with the opt-in `audio` and `bluetooth` cargo features, sound or Bluetooth). Docs:
   `docs/host-sync-design.md`, `docs/host-sync-companion.md`, measurements in `docs/host-sync-poc-results.md`.
   Limits, stated plainly: metadata (addresses, notes, groups) is readable by every ring device; revocation protects
   the future, not what a device already downloaded; the ML-KEM crate is not independently audited; a phone page

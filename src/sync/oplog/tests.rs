@@ -3509,3 +3509,26 @@ fn a_rename_that_touches_no_hop_stays_safe() {
     pull(b, a);
     assert_eq!(b.pending(), 0);
 }
+
+// e2e: after a repeat ceremony and a state rebuild, sync-now showed a peer's device id where its name was.
+#[test]
+fn a_rebuild_of_the_caches_keeps_the_local_label_of_an_anchor_device() {
+    let r = ring(2);
+    let (a, b) = (&r[0], &r[1]);
+    let named = |p: &Peer, id: &str| -> String {
+        p.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == id)
+            .map(|d| d.name)
+            .unwrap()
+    };
+    let bid = b.id.public().device_id();
+    let before = named(a, &bid);
+    assert_ne!(before, bid, "the fixture registers a label");
+    a.store
+        .with_conn(crate::sync::oplog::checkpoint::rebuild_caches_for_test)
+        .unwrap();
+    assert_eq!(named(a, &bid), before, "the label survives the rebuild");
+}
