@@ -1,7 +1,7 @@
 ---
 type: Workflow
 title: TUI Dashboard - Tabs, Overlays, and Keybindings
-description: The keyboard-driven SSHub dashboard with six tabs (hosts, SFTP, tunnels, identities, audit, map), the dashboard panel grid, every overlay (palette, session switcher, settings, theme picker, profiles, snippets, log browser, broadcast, keybind editor, help), default keybindings from src/keybinds.rs, and how screens map to AppMode.
+description: The keyboard-driven SSHub dashboard with seven tabs (hosts, SFTP, tunnels, identities, audit, map, sync), the dashboard panel grid, every overlay (palette, session switcher, settings, theme picker, profiles, snippets, log browser, broadcast, keybind editor, help), default keybindings from src/keybinds.rs, and how screens map to AppMode.
 resource: src/app/keys.rs
 tags: [tui, keybindings, dashboard, workflow, ux]
 ---
@@ -10,7 +10,7 @@ tags: [tui, keybindings, dashboard, workflow, ux]
 
 The TUI is a bento-grid dashboard rendered by `src/tui/` on top of the [App state machine](../architecture/overview.md). Tabs are tracked as `App.active_tab: usize` (0-based); every overlay (forms, pickers, confirms) is an `AppMode` variant in `src/app/types.rs`, dispatched in `App::handle_key` (`src/app/keys.rs`) and drawn from `src/tui/mod.rs` with its screen under `src/tui/screens/`.
 
-All bindings below are defaults from `KeybindsConfig::default()` in `src/keybinds.rs`; every `KeyAction` (109 of them, listed in `KeyAction::ALL`, 15 of them `Map*`) can be rebound, so the code always reads the configured chord. A few overlay-internal keys are hard-coded and noted as such.
+All bindings below are defaults from `KeybindsConfig::default()` in `src/keybinds.rs`; every `KeyAction` (117 of them, listed in `KeyAction::ALL`, 15 of them `Map*`) can be rebound, so the code always reads the configured chord. A few overlay-internal keys are hard-coded and noted as such.
 
 ## Tabs
 
@@ -24,6 +24,7 @@ Order and digits come from `src/tui/widgets/tab_bar.rs` and `App::try_tab_switch
 | `4` / `i` | 3 | identities | `screens/keys.rs` | [identities & ssh-agent](../domain/hosts-identities.md#identities) |
 | `5` | 4 | audit | `screens/audit.rs` | `auth_events` ([data model](../architecture/data-model.md)) |
 | `6` | 5 | map | `screens/map.rs` (state in `src/app/network_map.rs`, model in `src/map/`) | [network map](network-map.md) |
+| `7` | 6 | sync | `screens/sync.rs` (state in `src/app/sync*.rs`) | host sync, `src/sync/` and `docs/host-sync-design.md` |
 
 Configs written before the SFTP tab existed are re-digited once by `KeybindsConfig::migrate_pre_sftp_tabs`.
 
