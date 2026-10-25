@@ -12,6 +12,7 @@ use anyhow::{bail, ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde_json::{json, Value};
 
+use super::sync_phone_ble::BleLink;
 use super::theme::sanitize_foreign as plain;
 use crate::profile::ProfilePaths;
 use crate::store::LauncherStore;
@@ -34,7 +35,13 @@ pub fn is_phone_command(cmd: &str) -> bool {
 const EMPTY_RING: &str = "No sync ring on this profile yet.";
 
 /// A line the verbs print: its plain form and its JSON form.
-fn emit(out: &mut impl Write, json_out: bool, event: &str, text: String, mut doc: Value) {
+pub(super) fn emit(
+    out: &mut impl Write,
+    json_out: bool,
+    event: &str,
+    text: String,
+    mut doc: Value,
+) {
     let _ = if json_out {
         doc["event"] = json!(event);
         writeln!(out, "{doc}")
@@ -57,7 +64,7 @@ fn companion_line(out: &mut impl Write, json_out: bool) {
     );
 }
 
-fn b64(bytes: &[u8]) -> String {
+pub(super) fn b64(bytes: &[u8]) -> String {
     B64.encode(bytes)
 }
 
@@ -79,6 +86,7 @@ pub struct EnrollSession<'a> {
     comparing: bool,
     pub done: Option<bool>,
     json: bool,
+    ble: Option<&'a BleLink>,
 }
 
 impl<'a> EnrollSession<'a> {
@@ -92,19 +100,32 @@ impl<'a> EnrollSession<'a> {
             comparing: false,
             done: None,
             json,
+            ble: None,
         }
+    }
+
+    /// Also carry the frames over Bluetooth (`--ble`).
+    pub fn with_ble(mut self, ble: &'a BleLink) -> Self {
+        self.ble = Some(ble);
+        self
     }
 
     /// The page fingerprint, then the first frame for the phone to read.
     pub fn start(&self, out: &mut impl Write) {
         companion_line(out, self.json);
-        emit(
-            out,
-            self.json,
-            "frame",
-            b64(&self.first),
-            json!({"frame": b64(&self.first)}),
-        );
+        self.frame(out, &self.first, false);
+    }
+
+    /// Print a frame for the phone; with `--ble` it also goes to the connected phone page.
+    fn frame(&self, out: &mut impl Write, frame: &[u8], last: bool) {
+        let mut doc = json!({"frame": b64(frame)});
+        if last {
+            doc["final"] = json!(true);
+        }
+        emit(out, self.json, "frame", b64(frame), doc);
+        if let Some(ble) = self.ble {
+            ble.send(frame);
+        }
     }
 
     pub fn feed(&mut self, line: &str, out: &mut impl Write) {
@@ -135,7 +156,7 @@ impl<'a> EnrollSession<'a> {
     fn show(&mut self, step: Step, out: &mut impl Write) {
         let j = self.json;
         match step {
-            Step::Show(frame) => emit(out, j, "frame", b64(&frame), json!({"frame": b64(&frame)})),
+            Step::Show(frame) => self.frame(out, &frame, false),
             Step::Compare { words, phone_name } => {
                 self.comparing = true;
                 let name = plain(&phone_name);
@@ -165,13 +186,7 @@ impl<'a> EnrollSession<'a> {
                 });
                 match admitted {
                     Ok(r) => {
-                        emit(
-                            out,
-                            j,
-                            "frame",
-                            b64(&v.frame),
-                            json!({"frame": b64(&v.frame), "final": true}),
-                        );
+                        self.frame(out, &v.frame, true);
                         for l in &r.lines {
                             emit(out, j, "admitted", l.clone(), json!({"line": l}));
                         }
@@ -191,13 +206,7 @@ impl<'a> EnrollSession<'a> {
             }
             Step::Stopped { why, frame } => {
                 if let Some(f) = frame {
-                    emit(
-                        out,
-                        j,
-                        "frame",
-                        b64(&f),
-                        json!({"frame": b64(&f), "final": true}),
-                    );
+                    self.frame(out, &f, true);
                 }
                 emit(out, j, "stopped", plain(&why), json!({"why": why}));
                 self.done = Some(false);
@@ -265,6 +274,8 @@ pub fn phone_ops(
 /// The challenge for `host` as text, plus what is needed to open the phone's reply.
 pub struct ShareChallenge {
     pub text: String,
+    /// The same challenge as raw bytes (what Bluetooth carries).
+    pub frame: Vec<u8>,
     challenge: crate::sync::quorum::Challenge,
     eph: zeroize::Zeroizing<[u8; 32]>,
     phone_ed25519: [u8; 32],
@@ -292,6 +303,7 @@ impl ShareChallenge {
             crate::sync::limits::CHALLENGE_EXPIRY_SECS,
         )?;
         Ok(Self {
+            frame: challenge.to_wire().encode(),
             text: b64(&challenge.to_wire().encode()),
             challenge,
             eph,
@@ -362,6 +374,8 @@ struct Args {
     group: Option<String>,
     hosts: Vec<String>,
     pos: Vec<String>,
+    /// Carry the frames over Bluetooth too (feature `bluetooth`).
+    ble: bool,
 }
 
 fn parse(args: &[String]) -> std::result::Result<Args, String> {
@@ -373,6 +387,7 @@ fn parse(args: &[String]) -> std::result::Result<Args, String> {
         group: None,
         hosts: Vec::new(),
         pos: Vec::new(),
+        ble: false,
     };
     let mut i = 0;
     let value = |i: usize, flag: &str| {
@@ -414,6 +429,10 @@ fn parse(args: &[String]) -> std::result::Result<Args, String> {
             "--group" => {
                 a.group = Some(value(i, f)?);
                 i += 2;
+            }
+            "--ble" => {
+                a.ble = true;
+                i += 1;
             }
             "--host" => {
                 a.hosts.push(value(i, f)?);
@@ -488,6 +507,9 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
         companion_line(&mut out, a.json);
     }
     match cmd {
+        "sync-phone-enroll" if a.ble => {
+            super::sync_phone_ble::enroll(&store, &id, &mut out, a.json)
+        }
         "sync-phone-enroll" => phone_enroll(&store, &id, std::io::stdin().lock(), &mut out, a.json),
         "sync-notice" => {
             let (op, text) = notice_text(&store, &a.pos[0])?;
@@ -498,11 +520,19 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
                 text.clone(),
                 json!({"op": op, "notice": text}),
             );
+            if a.ble {
+                return super::sync_phone_ble::push(&unb64(&text)?, a.json, a.wait, &mut out);
+            }
             Ok(0)
         }
         "sync-phone-ops" => {
-            let mut text = String::new();
-            std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+            let text = if a.ble {
+                super::sync_phone_ble::ops_text(a.json, a.wait, &mut out)?
+            } else {
+                let mut text = String::new();
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+                text
+            };
             let (s, ceremony) = phone_ops(&store, &text)?;
             emit(
                 &mut out,
@@ -543,6 +573,9 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
                 text.clone(),
                 json!({"request": text}),
             );
+            if a.ble {
+                return super::sync_phone_ble::push(&wire.encode(), a.json, a.wait, &mut out);
+            }
             Ok(0)
         }
         _ => unreachable!("dispatched by is_phone_command"),
@@ -610,10 +643,17 @@ fn share_request(
         ch.text.clone(),
         json!({"challenge": ch.text}),
     );
-    let line = line_within(
-        std::io::BufReader::new(std::io::stdin()),
-        Duration::from_secs(a.wait),
-    )
+    let line = if a.ble {
+        let ble = BleLink::new(a.json, crate::sync::media::ListenOpts::SHARE_RESPONSE)?;
+        ble.announce(out);
+        ble.send(&ch.frame);
+        super::sync_phone_ble::wait_reply(&ble, Duration::from_secs(a.wait), out)
+    } else {
+        line_within(
+            std::io::BufReader::new(std::io::stdin()),
+            Duration::from_secs(a.wait),
+        )
+    }
     .with_context(|| format!("no reply from the phone within {} s", a.wait))?;
     let (share, warning) = ch.open(store, &line)?;
     if let Some(w) = warning {
@@ -640,11 +680,11 @@ fn share_request(
 
 pub fn print_help(cmd: &str) {
     let (synopsis, text) = match cmd {
-        "sync-phone-enroll" => ("sync-phone-enroll [--format plain|json]", "Enroll a phone from this terminal, as text. Prints the terminal's first frame (`frame:`); read each of the phone's frames (kind 6, 7, 8, base64) from stdin, one per line, and print the next frame to show. After the phone's reveal it prints the four words (`words:`): answer `y` or `n` on stdin. On a verified phone it registers it and proposes its admission (a Red change) and prints the last frame for the phone. Needs a ring. Exit 0 verified, 1 stopped or input ended."),
-        "sync-notice" => ("sync-notice <op-id> [--format plain|json]", "Print the kind 3 notice (base64) of a Red op, for the phone to read: the op as signed, so the phone can show what it is asked to approve. <op-id> is a unique prefix (4+ hex characters) of the op's hash."),
-        "sync-phone-ops" => ("sync-phone-ops [--format plain|json]", "Take in the ops the phone copied (kind 5, base64) from stdin, chain them into the log and print what applied and the ceremony of every pending Red op. A malformed text changes nothing."),
-        "sync-share-request" => ("sync-share-request <host> [--wait <seconds>] [--format plain|json]", "Ask the phone for its share of <host>'s credential: prints the kind 1 challenge (base64), then reads the phone's kind 2 reply from stdin (up to --wait seconds; default and maximum 120, the challenge's life), opens it, takes in its courier ops and opens the credential with this device's share. The credential is open in this process only: run it to prove the path and to take in the phone's ops; `host connect` does its own unlock."),
-        "sync-cert-request" => ("sync-cert-request (--group NAME | --host NAME...) [--days N] [--budget N] [--format plain|json]", "Print the kind 9 trust-session request (base64) for the phone to approve: a group or listed hosts (at most 64, never everything), a term in days (default 30) and a budget of new hosts a day (default 10). The phone's answer goes in with sync-phone-ops. The kind 10 extension is TUI-only."),
+        "sync-phone-enroll" => ("sync-phone-enroll [--ble] [--format plain|json]", "Enroll a phone from this terminal, as text. Prints the terminal's first frame (`frame:`); read each of the phone's frames (kind 6, 7, 8, base64) from stdin, one per line, and print the next frame to show. After the phone's reveal it prints the four words (`words:`): answer `y` or `n` on stdin. On a verified phone it registers it and proposes its admission (a Red change) and prints the last frame for the phone. Needs a ring. Exit 0 verified, 1 stopped or input ended. With --ble (a build with the `bluetooth` feature) the frames also travel over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone page's device list`, sends each frame it prints to the phone page and takes the phone's frames from Bluetooth or stdin; the four words are still answered on stdin."),
+        "sync-notice" => ("sync-notice <op-id> [--wait <seconds>] [--ble] [--format plain|json]", "Print the kind 3 notice (base64) of a Red op, for the phone to read: the op as signed, so the phone can show what it is asked to approve. <op-id> is a unique prefix (4+ hex characters) of the op's hash. With --ble (a build with the `bluetooth` feature) the notice is also handed to the phone page over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone page's device list` and waits up to --wait seconds until the phone has the frame (`sent:`)."),
+        "sync-phone-ops" => ("sync-phone-ops [--wait <seconds>] [--ble] [--format plain|json]", "Take in the ops the phone copied (kind 5, base64) from stdin, chain them into the log and print what applied and the ceremony of every pending Red op. A malformed text changes nothing. With --ble (a build with the `bluetooth` feature) the ops frame is received from the phone page over Bluetooth instead of stdin (`bluetooth: pick SSHub-XXXX in the phone page's device list`, up to --wait seconds)."),
+        "sync-share-request" => ("sync-share-request <host> [--wait <seconds>] [--ble] [--format plain|json]", "Ask the phone for its share of <host>'s credential: prints the kind 1 challenge (base64), then reads the phone's kind 2 reply from stdin (up to --wait seconds; default and maximum 120, the challenge's life), opens it, takes in its courier ops and opens the credential with this device's share. The credential is open in this process only: run it to prove the path and to take in the phone's ops; `host connect` does its own unlock. With --ble (a build with the `bluetooth` feature) the challenge is also sent to the phone page over Bluetooth (`bluetooth: pick SSHub-XXXX in the phone page's device list`) and the reply is taken from Bluetooth or stdin, whichever comes first."),
+        "sync-cert-request" => ("sync-cert-request (--group NAME | --host NAME...) [--days N] [--budget N] [--ble] [--format plain|json]", "Print the kind 9 trust-session request (base64) for the phone to approve: a group or listed hosts (at most 64, never everything), a term in days (default 30) and a budget of new hosts a day (default 10). The phone's answer goes in with sync-phone-ops. The kind 10 extension is TUI-only. With --ble (a build with the `bluetooth` feature) the request is also handed to the phone page over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone page's device list` and waits up to --wait seconds until the phone has the frame (`sent:`)."),
         _ => return,
     };
     println!(

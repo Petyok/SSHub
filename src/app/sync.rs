@@ -174,6 +174,8 @@ pub enum UnlockPathKind {
     Audio,
     /// The camera reading the phone's code.
     Camera,
+    /// The phone page connected over Bluetooth.
+    Bluetooth,
 }
 
 impl UnlockPathKind {
@@ -187,6 +189,7 @@ impl UnlockPathKind {
             Self::Phrase => "master phrase",
             Self::Audio => "microphone",
             Self::Camera => "camera",
+            Self::Bluetooth => "bluetooth",
         }
     }
 }
