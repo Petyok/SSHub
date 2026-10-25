@@ -296,6 +296,49 @@ fn a_cert_issue_is_proposed_by_the_phone_and_needs_a_second_device_that_is_not_t
     assert!(red_status(&d[OBS].store, &cert, now).unwrap().complete);
 }
 
+// app round 2, F5: a dead email factor says why.
+#[test]
+fn the_ceremony_says_when_the_mailbox_sender_made_the_emailed_code_unusable() {
+    let d = world(&[R, A, B]);
+    let phrase = bip39_encode(&[0x34; 32]);
+    let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
+    append(&d[P], red_phone_sign_body(&reg));
+    append(&d[A], red_approve_body(&reg));
+    sync(&d);
+    for x in &d {
+        settle_red_ops(&x.store, reg.timestamp + 5).unwrap();
+    }
+    let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
+    let (body, _code) = factor_register_email(&d[B].did).unwrap();
+    let ereg = propose(&d, R, body);
+    append(&d[P], red_phone_sign_body(&ereg));
+    append(&d[A], red_approve_body(&ereg));
+    append(&d[R], red_factor_paper(&recover, &ereg));
+    sync(&d);
+    for x in &d {
+        settle_red_ops(&x.store, ereg.timestamp + 5).unwrap();
+    }
+    let op = propose(
+        &d,
+        R,
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            migrated_on: d[R].did.clone(),
+            cosigner: None,
+        },
+    );
+    append(&d[P], red_phone_sign_body(&op));
+    // The sender is the one who gave the second-device vote: its own code cannot be a separate factor.
+    append(&d[B], red_approve_body(&op));
+    sync(&d);
+    let st = status(&d, &op, op.timestamp + 30);
+    assert!(
+        st.note.as_deref().is_some_and(|n| n.contains("sender")),
+        "{st:?}"
+    );
+    assert!(!st.complete);
+}
+
 #[test]
 fn the_emailed_code_is_a_factor_and_its_sender_mails_only_when_the_other_proofs_are_in() {
     let d = world(&[R, A, B]);
@@ -1029,6 +1072,41 @@ mod review {
         );
     }
 
+    // The note red_status sets reaches the review's view (TUI and sync-review read RedView).
+    #[test]
+    fn the_note_of_red_status_travels_to_the_review_view() {
+        let d = ring_phone(3);
+        let phrase = bip39_encode(&[0x35; 32]);
+        let reg = append(
+            &d[0],
+            crate::sync::quorum::paper_registration(&phrase).unwrap(),
+        );
+        complete(&d, &reg, 2, None);
+        let (body, code) = factor_register_email(&d[1].did).unwrap();
+        let ereg = append(&d[0], body);
+        complete(&d, &ereg, 2, Some(&phrase));
+        remember_email_code(&d[1].store, &d[1].id, &code).unwrap();
+        let op = append(
+            &d[0],
+            OpBody::BulkExport {
+                requester: d[0].did.clone(),
+                window_secs: 60,
+            },
+        );
+        sync_pull(&d);
+        append(&d[3], red_phone_sign_body(&op));
+        append(&d[1], red_approve_body(&op)); // the sender gives the second vote
+        sync_pull(&d);
+        let st = red_status(&d[2].store, &op, op.timestamp + 30).unwrap();
+        let note = st
+            .note
+            .clone()
+            .expect("red_status explains the dead email factor");
+        let rows = d[2].store.sync_devices().unwrap();
+        let view = crate::app::sync_view::pending_view(&d[2].store, &op, &rows, None);
+        assert_eq!(view.red.expect("a Red view").note, Some(note));
+    }
+
     // crypto F8: the phone looks as fresh as what it signed, not as the day a courier delivered it.
     #[test]
     fn phone_freshness_follows_what_the_phone_signed() {
@@ -1052,9 +1130,309 @@ mod review {
         assert!(seen <= op.timestamp + 5, "{seen} vs {}", op.timestamp);
     }
 
+    // crypto round 2, F1: a proof is as old as its receipt, whatever stamp its author chose.
+    #[test]
+    fn a_backdated_late_factor_does_not_complete_a_stale_ceremony() {
+        let d = ring_phone(3);
+        let phrase = bip39_encode(&[0x31; 32]);
+        let reg = append(
+            &d[0],
+            crate::sync::quorum::paper_registration(&phrase).unwrap(),
+        );
+        complete(&d, &reg, 1, None);
+        let now = crate::store::now_ts();
+        let t0 = now - 10 * 86_400;
+        let op = d[0]
+            .store
+            .sync_append_local_at(
+                &d[0].id,
+                OpBody::BulkExport {
+                    requester: d[0].did.clone(),
+                    window_secs: 60,
+                },
+                t0,
+            )
+            .unwrap();
+        sync_pull(&d);
+        d[3].store
+            .sync_append_local_at(&d[3].id, red_phone_sign_body(&op), t0 + 3_600)
+            .unwrap();
+        d[1].store
+            .sync_append_local_at(&d[1].id, red_approve_body(&op), t0 + 3_600)
+            .unwrap();
+        sync_pull(&d);
+        assert!(!in_force(&d[0].store, &op).unwrap(), "no factor yet");
+        let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
+        d[2].store
+            .sync_append_local_at(&d[2].id, red_factor_paper(&recover, &op), now)
+            .unwrap();
+        sync_pull(&d);
+        assert!(
+            !in_force(&d[0].store, &op).unwrap(),
+            "control: a late proof is refused"
+        );
+        d[1].store
+            .sync_append_local_at(&d[1].id, red_factor_paper(&recover, &op), t0 + 7_200)
+            .unwrap();
+        sync_pull(&d);
+        assert!(
+            !in_force(&d[0].store, &op).unwrap(),
+            "a factor proof received ten days late completed the ceremony because its stamp is backdated"
+        );
+    }
+
+    // crypto round 2, F3: only a holder's grant answers a share request.
+    #[test]
+    fn a_grant_from_a_non_holder_does_not_pre_empt_the_real_one() {
+        let d = ring(3);
+        quorum_mode(&d[0]);
+        all_to_all(&d);
+        let host = [77u8; 16];
+        cred_put(&d[0].store, &d[0].id, &host, &payload("p")).unwrap();
+        all_to_all(&d);
+        let m = mirror_in(&d);
+        for x in &d {
+            deliver(&m, x);
+            deliver(x, &m);
+        }
+        let req = crate::sync::quorum::peer_request(&d[0].store, &d[0].id, &host).unwrap();
+        let OpBody::ShareRelease { eph_x25519_pub, .. } = &req.op.body else {
+            unreachable!()
+        };
+        deliver(&d[0], &m);
+        append(
+            &m,
+            OpBody::ShareGrant {
+                host_uid: host,
+                request_id: req.request_id,
+                requester: d[0].did.clone(),
+                epoch: 0,
+                sealed: crate::sync::share_release::seal_share_response(
+                    eph_x25519_pub,
+                    &crate::sync::crypto::Share {
+                        index: 2,
+                        bytes: vec![1; 32],
+                    },
+                ),
+            },
+        );
+        deliver(&m, &d[0]);
+        assert!(
+            crate::sync::quorum::peer_poll(&d[0].store, &req, 0)
+                .unwrap()
+                .is_none(),
+            "a grant written by a mirror was handed to the unlocker as the holder's share"
+        );
+    }
+
     // protocol S5/app F11: foreign names are plain text in mails and screens.
     #[test]
     fn names_in_mails_carry_no_control_characters() {
         assert_eq!(plain_text("evil\nBcc: x\u{1b}[2K\r."), "evilBcc: x[2K.");
     }
+}
+
+// ------------------------------------------------ phone admission through a CLI peer
+
+/// A ring of two terminals (proposer `r`, second holder `a`) and a phone that only the proposer
+/// (and the phone itself) knows: the state right after `sync-phone-enroll` on the proposer.
+fn phone_admission_world() -> (Dev, Dev, Dev, Op) {
+    let (r, a, ph) = (Dev::new(), Dev::new(), Dev::new());
+    for x in [&r, &a, &ph] {
+        crate::sync::ceremony::test_force(&x.store, false);
+    }
+    for x in [&r, &a] {
+        for y in [&r, &a] {
+            x.store
+                .sync_register_device(
+                    &y.id.public(),
+                    "terminal",
+                    DeviceRole::Holder,
+                    Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+        }
+    }
+    // What `admit_phone` does on the proposer: register the phone locally, propose its admission.
+    r.store
+        .sync_register_device(
+            &ph.id.public(),
+            "phone",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Phone,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    ph.store
+        .sync_register_device(
+            &r.id.public(),
+            "terminal",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    let add = append(
+        &r,
+        OpBody::DeviceAdd {
+            device: ph.id.public(),
+            name: "phone".into(),
+            role: DeviceRole::Holder,
+            attendance: Attendance::Attended,
+            kind: DeviceKind::Phone,
+            verified_by: VerifiedBy::Sas,
+        },
+    );
+    (r, a, ph, add)
+}
+
+#[test]
+fn a_phone_is_admitted_on_a_peer_that_never_heard_of_it() {
+    let (r, a, ph, add) = phone_admission_world();
+    let known = |x: &Dev| {
+        x.store
+            .sync_devices()
+            .unwrap()
+            .iter()
+            .any(|d| d.id == ph.did)
+    };
+    assert!(!known(&a), "the second holder starts without the phone");
+    // The phone sees the notice and signs for its own admission; the proposer carries both.
+    pull(&r, &ph);
+    append(&ph, red_phone_sign_body(&add));
+    pull(&ph, &r);
+    pull(&r, &a);
+    pull(&a, &r);
+    // The second holder holds the DeviceAdd (pending) and the phone's proof (an unknown author).
+    assert!(a
+        .store
+        .sync_pending()
+        .unwrap()
+        .iter()
+        .any(|o| o.hash() == add.hash()));
+    let proof_row_unknown = a
+        .store
+        .sync_pending_with_reasons()
+        .unwrap()
+        .iter()
+        .any(|(o, why)| o.device_id == ph.did && why == "unknown-author");
+    assert!(
+        proof_row_unknown,
+        "the phone's proof waits as an unknown author"
+    );
+    // The ceremony counts the phone's proof for its own admission, from the key in the DeviceAdd.
+    append(&a, red_approve_body(&add));
+    let now = add.timestamp + 60;
+    let st = red_status(&a.store, &add, now).unwrap();
+    assert!(st.have.contains(&RedProof::Phone), "{st:?}");
+    assert!(st.have.contains(&RedProof::SecondDevice), "{st:?}");
+    assert!(st.complete, "{st:?}");
+    assert_eq!(
+        settle_red_ops(&a.store, now).unwrap().applied,
+        vec![add.hash()]
+    );
+    assert!(known(&a), "the phone is a device of the second holder now");
+    // Its later ops are known-author everywhere: seq 1 (the proof) is released, seq 2 is plain.
+    let later = append(&ph, red_phone_sign_body(&add));
+    pull(&ph, &r);
+    pull(&r, &a);
+    let ops = a.store.sync_chain_tail(&ph.did, 0).unwrap();
+    assert!(
+        ops.iter().any(|o| o.hash() == later.hash()),
+        "the phone's later op is part of its chain at the second holder"
+    );
+    assert!(a
+        .store
+        .sync_pending_with_reasons()
+        .unwrap()
+        .iter()
+        .all(|(o, _)| o.device_id != ph.did));
+}
+
+#[test]
+fn a_proof_for_its_own_admission_is_checked_against_the_key_in_the_device_add() {
+    let (r, a, ph, add) = phone_admission_world();
+    // A stranger claims the phone's id: its signature is not by the key the DeviceAdd carries.
+    let stranger = Dev::new();
+    stranger
+        .store
+        .sync_register_device(
+            &r.id.public(),
+            "t",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    pull(&r, &stranger);
+    let mut forged = append(&stranger, red_phone_sign_body(&add));
+    forged.device_id = ph.did.clone();
+    forged.seq = 1;
+    forged.signature = stranger.id.sign(&forged.canonical_bytes());
+    pull(&r, &a);
+    a.store.sync_ingest(forged).unwrap();
+    append(&a, red_approve_body(&add));
+    let st = red_status(&a.store, &add, add.timestamp + 60).unwrap();
+    assert!(!st.have.contains(&RedProof::Phone), "{st:?}");
+    // And a genuine proof for ANOTHER op does not count for this one.
+    let other = append(
+        &r,
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            migrated_on: r.did.clone(),
+            cosigner: None,
+        },
+    );
+    pull(&r, &ph);
+    append(&ph, red_phone_sign_body(&other));
+    pull(&ph, &r);
+    pull(&r, &a);
+    let st = red_status(&a.store, &add, add.timestamp + 60).unwrap();
+    assert!(!st.have.contains(&RedProof::Phone), "{st:?}");
+}
+
+// round 3 (integration): the factor-free first phone is the SETUP of a ring, never a way back in.
+#[test]
+fn the_factor_free_first_phone_is_ring_setup_only() {
+    let (r, a, ph, add) = phone_admission_world();
+    pull(&r, &ph);
+    append(&ph, red_phone_sign_body(&add));
+    pull(&ph, &r);
+    pull(&r, &a);
+    pull(&a, &r);
+    append(&a, red_approve_body(&add));
+    let now = add.timestamp + 60;
+    let st = red_status(&a.store, &add, now).unwrap();
+    assert!(st.complete, "ring setup: no factor, no phone ever: {st:?}");
+    // The ring had a phone before (revoked since): a new one needs the third factor like any Red change.
+    let old = Dev::new();
+    a.store
+        .sync_register_device(
+            &old.id.public(),
+            "old phone",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Phone,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    a.store
+        .with_conn(|c| {
+            c.execute(
+                "UPDATE sync_devices SET status = 'revoked' WHERE device_id = ?1",
+                rusqlite::params![old.did],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let st = red_status(&a.store, &add, now).unwrap();
+    assert!(
+        st.missing.iter().any(|m| matches!(m, RedProof::Factor(_))),
+        "a revoked phone does not reopen the bootstrap: {st:?}"
+    );
 }

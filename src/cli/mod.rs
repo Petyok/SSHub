@@ -14,6 +14,7 @@ pub mod parse;
 pub mod sftp;
 pub mod sync_admin;
 pub mod sync_cmd;
+pub mod sync_phone_ble;
 pub mod sync_phone_cmd;
 pub mod theme;
 pub mod transfer;

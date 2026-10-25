@@ -297,3 +297,38 @@ fn a_snapshot_must_name_its_credential_and_only_one_stays_live() {
     assert!(share_from_code(store, &f.host, code, 1_002).is_err());
     remember_snapshot_at(store, &f.host, &mine, 1_004).unwrap();
 }
+
+#[test]
+fn a_reissued_credential_makes_its_snapshot_stale_and_lets_a_new_one_in() {
+    use crate::sync::crypto::Argon2Profile;
+    use crate::sync::snapshot::snapshot_seal_for;
+    let f = fixture();
+    let store = &f.d[0].store;
+    let cheap = Argon2Profile {
+        mem_kib: 64,
+        iters: 1,
+    };
+    let share = Share {
+        index: 2,
+        bytes: vec![9; 32],
+    };
+    let code = "K7Q2-9FMX-C41T-8PWD";
+    let now = crate::store::now_ts();
+    let first = snapshot_seal_for(&f.host, &share, code, now, cheap)
+        .unwrap()
+        .to_bytes();
+    remember_snapshot_at(store, &f.host, &first, now).unwrap();
+    assert!(share_from_code(store, &f.host, code, now + 1).is_ok());
+    // The credential is written again (a new DEK): the old snapshot holds a share of the old sharing.
+    cred_put(&f.d[2].store, &f.d[2].id, &f.host, &payload("changed")).unwrap();
+    crate::sync::quorum::tests::all_to_all(&f.d);
+    assert!(share_from_code(store, &f.host, code, now + 2)
+        .unwrap_err()
+        .to_string()
+        .contains("reissued"));
+    let second = snapshot_seal_for(&f.host, &share, "M7Q2-9FMX-C41T-8PWE", now + 3, cheap)
+        .unwrap()
+        .to_bytes();
+    remember_snapshot_at(store, &f.host, &second, now + 3).unwrap();
+    assert!(share_from_code(store, &f.host, "M7Q2-9FMX-C41T-8PWE", now + 4).is_ok());
+}

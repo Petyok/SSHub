@@ -1032,7 +1032,7 @@ fn cut_from_json(s: &str) -> Result<Vec<CutEntry>> {
             let h = a[2].as_str().context("hash")?;
             let mut op_hash = [0u8; 32];
             for (i, b) in op_hash.iter_mut().enumerate() {
-                *b = u8::from_str_radix(&h[2 * i..2 * i + 2], 16)?;
+                *b = u8::from_str_radix(h.get(2 * i..2 * i + 2).context("hash length")?, 16)?;
             }
             Ok(CutEntry {
                 device_id: a[0].as_str().context("device")?.to_string(),
@@ -1050,6 +1050,32 @@ fn signers_of(conn: &Connection, proposal: &[u8; 32]) -> Result<Vec<DeviceId>> {
     )?;
     let rows = stmt.query_map(params![&proposal[..]], |r| r.get(0))?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+/// Operational attended holder terminals of this device's table: the only ones whose vote counts
+/// for a checkpoint it adopts (a mirror, however attended, is not a voter).
+fn attended_holders(conn: &Connection) -> Result<BTreeSet<DeviceId>> {
+    let mut st = conn.prepare(
+        "SELECT device_id FROM sync_devices WHERE kind = 'terminal' AND attendance = 'attended'
+           AND role = 'holder' AND status NOT IN ('revoked','compromised')",
+    )?;
+    let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+    Ok(rows.collect::<std::result::Result<_, _>>()?)
+}
+
+/// Devices this one has seen take part in a checkpoint (signed or proposed one).
+fn checkpoint_participants(conn: &Connection) -> Result<BTreeSet<DeviceId>> {
+    let mut out = BTreeSet::new();
+    for sql in [
+        "SELECT DISTINCT device_id FROM sync_checkpoint_signs",
+        "SELECT DISTINCT device_id FROM sync_checkpoints",
+    ] {
+        let mut st = conn.prepare(sql)?;
+        for r in st.query_map([], |r| r.get::<_, String>(0))? {
+            out.insert(r?);
+        }
+    }
+    Ok(out)
 }
 
 pub(crate) fn attended_terminal(conn: &Connection, device: &str) -> Result<bool> {
@@ -1463,6 +1489,8 @@ pub(crate) fn prune(conn: &Connection, now: i64) -> Result<PruneReport> {
         "UPDATE sync_checkpoints SET state = NULL WHERE proposal_hash != ?1",
         params![&newest.proposal_hash[..]],
     )?;
+    // The per-device byte counters are recomputed on next use.
+    conn.execute("DELETE FROM sync_meta WHERE key LIKE 'bytes:%'", [])?;
     report.bytes_freed = size_before.saturating_sub(db_bytes(conn)?);
     Ok(report)
 }
@@ -1750,8 +1778,6 @@ fn check_bundle(
         chain_hash(&bundle.state) == *state_hash && bundle.state.len() as u64 == state_len,
         "the state blob does not match the proposal"
     );
-    let state: Value = serde_json::from_slice(&bundle.state).context("state is not JSON")?;
-    let devices = state["devices"].as_array().cloned().unwrap_or_default();
     let local = matches!(trust, BootstrapTrust::Anchor(_));
     if local {
         // A store with no log has no ring state to continue: it joins by enrollment (the
@@ -1761,7 +1787,15 @@ fn check_bundle(
             have > 0,
             "this device has no ring state yet: join through enrollment, a checkpoint from a peer is not enough"
         );
+        // Before the state is parsed (it can be megabytes): the proposal must at least be signed
+        // by a device this one knows.
+        ensure!(
+            device_pub(conn, &proposal.device_id)?.is_some_and(|k| proposal.verify(&k)),
+            "the proposal is not signed by a device of its own table"
+        );
     }
+    let state: Value = serde_json::from_slice(&bundle.state).context("state is not JSON")?;
+    let devices = state["devices"].as_array().cloned().unwrap_or_default();
     // This device's own chains (it cannot have signed a checkpoint it is catching up to).
     let mine: BTreeSet<DeviceId> = if local {
         let mut st = conn.prepare("SELECT DISTINCT device_id FROM sync_ops WHERE local = 1")?;
@@ -1819,6 +1853,26 @@ fn check_bundle(
         if *ph == proposal_hash && key_of_device(&s.device_id).is_some_and(|k| s.verify(&k)) {
             signers.insert(s.device_id.clone());
         }
+    }
+    if local {
+        // Only attended, operational HOLDER terminals of THIS device's table vote for a ring: a key
+        // it lists as a mirror (however attended), an unattended device, a revoked or a compromised
+        // one is not a voter. And a strict majority of the holders it knows must have voted,
+        // whatever it believes about who is live: a device that was away has the oldest picture.
+        let holders = attended_holders(conn)?;
+        signers.retain(|d| holders.contains(d));
+        let mut voters: BTreeSet<DeviceId> = holders.difference(&mine).cloned().collect();
+        // Liveness may only shrink the electorate to holders seen taking part in a checkpoint.
+        let seen = checkpoint_participants(conn)?;
+        let narrowed: BTreeSet<DeviceId> = voters.intersection(&seen).cloned().collect();
+        if !narrowed.is_empty() {
+            voters = narrowed;
+        }
+        let got = voters.iter().filter(|d| signers.contains(*d)).count();
+        ensure!(
+            !voters.is_empty() && got * 2 > voters.len(),
+            "fewer than a majority of the holders this device knows signed the checkpoint"
+        );
     }
     if let BootstrapTrust::Enrollment { inviter } = trust {
         // Alone, by the inviter the user verified; its id is its key's id.
@@ -2107,13 +2161,15 @@ fn cut_from_state(state: &Value) -> Result<Vec<CutEntry>> {
 
 /// Rebuild the cache tables stage 3 reads from the winning writes (after a
 /// bootstrap, where no op ever ran the effects).
+#[cfg(test)]
+pub(crate) fn rebuild_caches_for_test(conn: &Connection) -> Result<()> {
+    rebuild_caches(conn, 0)
+}
+
 fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
     let wins = fold_writes(conn, None)?;
-    let unhex = |s: &str| -> Vec<u8> {
-        (0..s.len() / 2)
-            .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap_or(0))
-            .collect()
-    };
+    // ASCII-checked: a non-hex byte in the state is an empty value, never a slice through a char.
+    let unhex = |s: &str| -> Vec<u8> { hex::decode(s).unwrap_or_default() };
     for ((section, key), w) in &wins {
         let v = &w.value;
         match section.as_str() {
@@ -2132,6 +2188,15 @@ fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
                     ),
                 };
                 let revoked = wins.contains_key(&("revoke".to_string(), key.clone()));
+                // An anchor device's label is a local note kept out of the state (it must not make states
+                // differ), so the state has no name for it: keep the label this device already holds.
+                let kept: Option<String> = conn
+                    .query_row(
+                        "SELECT name FROM sync_devices WHERE device_id = ?1",
+                        params![key],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
                 conn.execute(
                     "INSERT OR REPLACE INTO sync_devices
                        (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, status, wrap_epoch, verified_by, last_seen)
@@ -2141,7 +2206,10 @@ fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
                         unhex(v["ed25519"].as_str().unwrap_or("")),
                         x,
                         ml,
-                        Some(v["name"].as_str().unwrap_or("")).filter(|n| !n.is_empty()).unwrap_or(key.as_str()),
+                        Some(v["name"].as_str().unwrap_or(""))
+                            .filter(|n| !n.is_empty())
+                            .or(kept.as_deref().filter(|n| !n.is_empty()))
+                            .unwrap_or(key.as_str()),
                         wins.get(&("role".to_string(), key.clone()))
                             .and_then(|r| r.value["role"].as_str())
                             .or(v["role"].as_str())
@@ -2473,6 +2541,7 @@ pub(crate) fn adopt(
     ] {
         conn.execute(&format!("DELETE FROM {t}"), [])?;
     }
+    conn.execute("DELETE FROM sync_meta WHERE key LIKE 'bytes:%'", [])?;
     install(conn, bundle, false, now)?;
     for op in replay {
         let hash = op.hash();

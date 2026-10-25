@@ -1497,3 +1497,329 @@ fn rv_the_largest_accepted_op_fits_a_tail_frame() {
         r.err()
     );
 }
+
+// ============================================================ P7: a large log (measurement)
+
+/// A device on a file-backed database (fsync per commit, like a real profile).
+fn file_dev(dir: &std::path::Path, name: &str) -> Dev {
+    let id = Arc::new(DeviceIdentity::generate());
+    let did = id.public().device_id();
+    let store = Arc::new(LauncherStore::open(dir.join(format!("{name}.db"))).unwrap());
+    crate::sync::ceremony::test_force(&store, true);
+    Dev { store, id, did }
+}
+
+#[test]
+#[ignore = "measurement: run by hand with --ignored --nocapture"]
+fn p7_measure_a_round_over_a_large_log() {
+    use std::time::Instant;
+    let n: usize = std::env::var("P7_OPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4500);
+    let dir = tempfile::tempdir().unwrap();
+    let a = file_dev(dir.path(), "a");
+    let b = file_dev(dir.path(), "b");
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        x.trust(y);
+        x.store
+            .sync_register_device(
+                &x.id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let t = Instant::now();
+    for i in 0..n {
+        let mut uid = [0u8; 16];
+        uid[..8].copy_from_slice(&(i as u64).to_be_bytes());
+        a.store
+            .sync_append_local(
+                &a.id,
+                OpBody::CredUpdate {
+                    host_uid: uid,
+                    ciphertext: vec![9; 1000],
+                    wrapped_shares: vec![crate::sync::oplog::WrappedShare {
+                        recipient: b.did.clone(),
+                        alg: crate::sync::crypto::ALG_CURRENT,
+                        sealed: vec![1; 900],
+                    }],
+                },
+            )
+            .unwrap();
+    }
+    eprintln!("P7 append {n} ops on a: {:?}", t.elapsed());
+    let (bytes, _) = (a.store.sync_log_growth(0).unwrap().1, 0);
+    eprintln!("P7 log bytes: {bytes}");
+
+    let t = Instant::now();
+    let (cl, sv) = round(&b, &a);
+    eprintln!(
+        "P7 first round b<-a: {:?} client {:?} server {:?}",
+        t.elapsed(),
+        cl.as_ref()
+            .map(|s| (s.applied, s.pending_arrived, s.received, s.rejected))
+            .map_err(|e| e.to_string()),
+        sv.map(|s| s.sent).map_err(|e| e.to_string())
+    );
+    eprintln!("P7 b pending {}", b.store.sync_pending().unwrap().len());
+
+    let t = Instant::now();
+    let anchor = a.store.sync_join_anchor_build(&a.id);
+    eprintln!(
+        "P7 join anchor build: {:?} -> {:?}",
+        t.elapsed(),
+        anchor
+            .as_ref()
+            .map(|x| x.state.len())
+            .map_err(|e| e.to_string())
+    );
+
+    let now = crate::store::now_ts();
+    let t = Instant::now();
+    let proposed = a.store.sync_checkpoint_propose(&a.id, None, now);
+    eprintln!(
+        "P7 a proposes: {:?} {:?}",
+        t.elapsed(),
+        proposed.as_ref().map(|_| ()).map_err(|e| e.to_string())
+    );
+    let t = Instant::now();
+    let r = round(&b, &a);
+    eprintln!(
+        "P7 round with the proposal: {:?} client ok={}",
+        t.elapsed(),
+        r.0.is_ok()
+    );
+    let rows = |x: &Dev| -> Vec<String> {
+        x.store
+            .sync_checkpoints()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                format!(
+                    "{:?} signers={}/{}",
+                    c.status,
+                    c.signers.len(),
+                    c.required.len()
+                )
+            })
+            .collect()
+    };
+    eprintln!("P7 checkpoints a {:?} b {:?}", rows(&a), rows(&b));
+    let verdict = proposed.as_ref().ok().map(|(op, st)| {
+        b.store
+            .sync_checkpoint_verify(op, st)
+            .map_err(|e| e.to_string())
+    });
+    eprintln!("P7 b verifies the proposal while its pending ops wait: {verdict:?}");
+    let t = Instant::now();
+    approve_all(&b);
+    eprintln!("P7 b approves all {n}: {:?}", t.elapsed());
+    for k in 0..3 {
+        let t = Instant::now();
+        let _ = round(&b, &a);
+        let _ = round(&a, &b);
+        eprintln!(
+            "P7 settle round {k}: {:?}; a {:?} b {:?}",
+            t.elapsed(),
+            rows(&a),
+            rows(&b)
+        );
+    }
+}
+
+#[test]
+#[ignore = "measurement: run by hand with --ignored --nocapture"]
+fn p7_scaling_mem() {
+    p7_scaling(true, 600, false);
+}
+
+#[test]
+#[ignore = "measurement: run by hand with --ignored --nocapture"]
+fn p7_scaling_file_one_commit_per_op() {
+    p7_scaling(false, 300, false);
+}
+
+#[test]
+#[ignore = "measurement: run by hand with --ignored --nocapture"]
+fn p7_scaling_file_batched() {
+    p7_scaling(false, 300, true);
+}
+
+fn p7_scaling(mem: bool, n: usize, batched: bool) {
+    use std::time::Instant;
+    let dir = tempfile::tempdir().unwrap();
+    let (a, b) = if mem {
+        (Dev::new(), Dev::new())
+    } else {
+        (file_dev(dir.path(), "a"), file_dev(dir.path(), "b"))
+    };
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        x.trust(y);
+        x.store
+            .sync_register_device(
+                &x.id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let mut ops = Vec::new();
+    let mut t = Instant::now();
+    for i in 0..n {
+        let mut uid = [0u8; 16];
+        uid[..8].copy_from_slice(&(i as u64).to_be_bytes());
+        ops.push(
+            a.store
+                .sync_append_local(
+                    &a.id,
+                    OpBody::CredUpdate {
+                        host_uid: uid,
+                        ciphertext: vec![9; 1000],
+                        wrapped_shares: vec![crate::sync::oplog::WrappedShare {
+                            recipient: b.did.clone(),
+                            alg: crate::sync::crypto::ALG_CURRENT,
+                            sealed: vec![1; 900],
+                        }],
+                    },
+                )
+                .unwrap(),
+        );
+        if (i + 1) % 100 == 0 {
+            eprintln!(
+                "P7S mem={mem} append ops {}..{}: {:?} per 100",
+                i - 99,
+                i + 1,
+                t.elapsed()
+            );
+            t = Instant::now();
+        }
+    }
+    t = Instant::now();
+    if batched {
+        for (k, chunk) in ops.chunks(100).enumerate() {
+            b.store.sync_ingest_batch(chunk.to_vec()).unwrap();
+            eprintln!(
+                "P7S mem={mem} batched ingest chunk {k}: {:?} per 100",
+                t.elapsed()
+            );
+            t = Instant::now();
+        }
+        return;
+    }
+    for (i, op) in ops.into_iter().enumerate() {
+        b.store.sync_ingest(op).unwrap();
+        if (i + 1) % 100 == 0 {
+            eprintln!(
+                "P7S mem={mem} ingest ops {}..{}: {:?} per 100",
+                i - 99,
+                i + 1,
+                t.elapsed()
+            );
+            t = Instant::now();
+        }
+    }
+}
+
+// ======================================================== review round 3 (protocol)
+
+#[test]
+fn rv3_two_unpromoted_mirrors_sign_for_a_device_that_was_away() {
+    let now = crate::store::now_ts();
+    let atk = ring(2);
+    let (m, m2) = (&atk[0], &atk[1]);
+    let honest = Dev::new();
+    let v = Dev::new();
+    v.store
+        .sync_register_device(
+            &v.id.public(),
+            "self",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    // The honest holder was last heard of long ago, so V does not count it as live.
+    v.trust(&honest);
+    // The compromised peer m is a holder; the sybil m2 is only an attended MIRROR in V's table.
+    v.trust(m);
+    v.store
+        .sync_register_device(
+            &m2.id.public(),
+            "sybil",
+            DeviceRole::Mirror,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    m.trust(&v);
+    m2.trust(&v);
+    v.store
+        .sync_append_local_at(
+            &v.id,
+            OpBody::HostUpsert {
+                host_uid: [0x77; 16],
+                fields: HostFields {
+                    name: Some("mine".into()),
+                    ..Default::default()
+                },
+            },
+            now - 40 * 86_400,
+        )
+        .unwrap();
+    m.append(0x10, "m-early");
+    ok(round(&v, m));
+    m.store
+        .sync_append_local(
+            &m.id,
+            OpBody::HostUpsert {
+                host_uid: [0xEE; 16],
+                fields: HostFields {
+                    name: Some("evil".into()),
+                    address: Some("evil.example".into()),
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+    let refs = [m, m2];
+    many_ops(&refs, 1, 4);
+    checkpoint(&refs, 0, now);
+    many_ops(&refs, 100, 4);
+    checkpoint(&refs, 1, now + 100);
+    many_ops(&refs, 150, 2);
+    converge(&refs);
+    assert!(
+        m.store
+            .sync_prune(now + 8 * 86_400 + 1_000)
+            .unwrap()
+            .ops_deleted
+            > 0
+    );
+    let (c, _) = round(&v, m);
+    let adopted = c.as_ref().map(|s| s.adopted.is_some()).unwrap_or(false);
+    let evil: Option<String> = v
+        .store
+        .with_conn(|c| {
+            Ok(
+                c.query_row("SELECT address FROM hosts WHERE name='evil'", [], |r| {
+                    r.get(0)
+                })
+                .ok(),
+            )
+        })
+        .unwrap();
+    assert!(
+        !adopted && evil.is_none(),
+        "adopted={adopted}; evil host applied without review={evil:?}"
+    );
+}

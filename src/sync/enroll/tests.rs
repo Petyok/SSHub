@@ -735,3 +735,29 @@ fn a_ring_built_with_sync_join_agrees_on_every_devices_role() {
         "devices disagree about roles\n{report}"
     );
 }
+
+// protocol review round 2, N1: the ring id in a hello is a claim, not an identity.
+#[test]
+fn a_peer_that_claims_the_ring_of_a_member_is_not_registered_as_its_holder() {
+    let (m, x) = (Dev::new(), Dev::new());
+    m.append_host();
+    set_ring_id(&m.store, &m.did).unwrap();
+    // The ring id is the founder's device id: every member knows it.
+    set_ring_id(&x.store, &m.did).unwrap();
+    let mut ux = |_: &SasPrompt<'_>| true;
+    // The member is the remote end of an ssh session: no tty, so no human and no prompt.
+    let (rm, rx) = enroll_raw(&m, &x, None, Some(&mut ux));
+    let row = m
+        .store
+        .sync_devices()
+        .unwrap()
+        .into_iter()
+        .find(|d| d.id == x.did);
+    assert!(
+        row.is_none(),
+        "member ended {:?}, claimant ended {:?}; the claimant is now in the member's table as {:?}",
+        rm.as_ref().map(|o| o.role).map_err(|e| e.to_string()),
+        rx.as_ref().map(|o| o.role).map_err(|e| e.to_string()),
+        row.map(|d| (d.role, d.attendance))
+    );
+}

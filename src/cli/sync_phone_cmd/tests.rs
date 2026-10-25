@@ -175,6 +175,12 @@ fn sync_phone_enroll_verifies_a_phone_and_proposes_it_as_a_red_holder() {
     let mut s = EnrollSession::new(&t.store, &t.id, "terminal", false);
     let mut out = Vec::new();
     s.start(&mut out);
+    let first_lines = lines(&out);
+    assert!(
+        first_lines[0].starts_with("companion: ")
+            && first_lines[0].contains(crate::sync::companion::COMPANION_FINGERPRINT),
+        "the page fingerprint comes first: {first_lines:?}"
+    );
     let first = value_of(&lines(&out), "frame");
     assert!(matches!(
         EnrollFrame::decode(&B64.decode(first).unwrap()).unwrap(),
@@ -320,6 +326,9 @@ fn sync_share_request_challenge_decodes_and_the_phones_reply_opens_the_credentia
     let ch = ShareChallenge::new(&d[0].store, &d[0].id, &host).unwrap();
     // The kind 1 text decodes and names a challenge for this host.
     let wire = ChallengeWire::decode(&B64.decode(&ch.text).unwrap()).unwrap();
+    // Bluetooth carries the same bytes, as a frame its channel accepts.
+    assert_eq!(ch.frame, B64.decode(&ch.text).unwrap());
+    assert!(crate::sync::media::ble_link::valid_frame(&ch.frame));
     // The phone answers with its share, sealed to the challenge's ephemeral key.
     let share = own_shares(&d[2].store, &d[2].id, &host)
         .unwrap()
@@ -332,8 +341,29 @@ fn sync_share_request_challenge_decodes_and_the_phones_reply_opens_the_credentia
             &crate::sync::share_release::share_to_bytes(&share),
         ),
     };
-    let got = ch.open(&d[0].store, &B64.encode(reply.encode())).unwrap();
+    let (got, warning) = ch.open(&d[0].store, &B64.encode(reply.encode())).unwrap();
     assert_eq!(got, share);
+    assert!(warning.is_none());
+    // A reply whose courier ops cannot be taken in still yields its share, with a warning.
+    let ext = crate::sync::share_release::ReplyExt {
+        approval_sig: d[2].id.sign(&ch.challenge.binding_preimage()),
+        ops: vec![(vec![1, 2, 3], [0; 64])],
+        snapshot: None,
+    };
+    let mut plain_bytes = crate::sync::share_release::share_to_bytes(&share);
+    plain_bytes.extend_from_slice(&ext.encode());
+    let with_ext = ShareResponseWire {
+        request_id: wire.request_id,
+        ciphertext: crate::sync::crypto::DeviceIdentity::seal_to(
+            &wire.eph_x25519_pub,
+            &plain_bytes,
+        ),
+    };
+    let (kept, warning) = ch
+        .open(&d[0].store, &B64.encode(with_ext.encode()))
+        .unwrap();
+    assert_eq!(kept, share, "the valid share survives a failing extension");
+    assert!(warning.unwrap().contains("courier ops not kept"));
     // A reply for another request is refused.
     let other = ShareResponseWire {
         request_id: wire.request_id + 1,
@@ -416,4 +446,20 @@ fn sync_cert_request_names_the_chosen_scope_and_never_everything() {
         &parse(&["--host".into(), "nope".into()]).unwrap()
     )
     .is_err());
+}
+
+#[test]
+fn the_ble_flag_is_parsed_and_a_build_without_bluetooth_says_so() {
+    assert!(parse(&["--ble".into()]).unwrap().ble);
+    assert!(!parse(&[]).unwrap().ble);
+    #[cfg(not(feature = "bluetooth"))]
+    {
+        let err = BleLink::new(false, crate::sync::media::ListenOpts::SHARE_RESPONSE)
+            .err()
+            .expect("no Bluetooth channel in this build");
+        assert!(
+            format!("{err:#}").contains("--features bluetooth"),
+            "{err:#}"
+        );
+    }
 }

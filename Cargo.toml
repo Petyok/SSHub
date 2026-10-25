@@ -74,6 +74,12 @@ vendored = ["ssh2/vendored-openssl"]
 # Linux, nokhwa/AVFoundation on macOS). Off by default; the decoders behind them always build.
 audio = ["dep:cpal"]
 camera = ["dep:linuxvideo", "dep:nokhwa"]
+# Bluetooth Low Energy channel to the phone page (contract C20): the terminal advertises as a GATT
+# peripheral (BlueZ on Linux, CoreBluetooth on macOS), the page connects with Web Bluetooth.
+bluetooth = [
+    "dep:bluer", "dep:tokio", "dep:futures",
+    "dep:objc2", "dep:objc2-foundation", "dep:objc2-core-bluetooth", "dep:dispatch2",
+]
 
 [dependencies]
 anyhow = "1"
@@ -143,9 +149,19 @@ zeroize = "1"
 dbus-secret-service = { version = "4.1", features = ["crypto-rust"] }
 # V4L2 in pure Rust: no libv4l at run time, no bindgen/libclang at build time.
 linuxvideo = { version = "0.3", optional = true }
+# BlueZ over D-Bus for the `bluetooth` feature. bluer is async on tokio: the runtime lives on one
+# thread owned by sync::media::ble_bluez (current_thread), nothing async leaks out of it.
+bluer = { version = "=0.17.4", features = ["bluetoothd"], optional = true }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros", "time"], optional = true }
+futures = { version = "0.3", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nokhwa = { version = "0.10", default-features = false, features = ["input-avfoundation"], optional = true }
+# CoreBluetooth peripheral manager for the `bluetooth` feature (objc2 family; cpal already pulls it in).
+objc2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", optional = true }
+objc2-core-bluetooth = { version = "0.3", optional = true }
+dispatch2 = { version = "0.3", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2"

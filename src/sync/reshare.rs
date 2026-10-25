@@ -282,7 +282,23 @@ pub fn reissue_receive(
         .collect();
     hosts.sort();
     hosts.dedup();
+    // The holders of every earlier sharing, read from the log once (not once per host and contributor).
+    let mut epoch_holders: std::collections::BTreeMap<u64, Vec<DeviceId>> = Default::default();
+    for op in reshare_ops(store, "ShareReshareBatch")? {
+        if let OpBody::ShareReshareBatch {
+            epoch: e,
+            new_holders,
+            ..
+        } = op.body
+        {
+            let mut h = new_holders;
+            h.sort();
+            h.dedup();
+            epoch_holders.entry(e).or_insert(h);
+        }
+    }
     for host in hosts {
+        let mut epoch0: Option<Vec<DeviceId>> = None;
         // old_epoch -> contributions of distinct contributors
         let mut groups: Vec<(u64, Vec<ReshareContribution>)> = Vec::new();
         for (author, _, items) in &batches {
@@ -312,10 +328,17 @@ pub fn reissue_receive(
             let old_epoch = u64::from_be_bytes(plain[..8].try_into().unwrap());
             // A contribution is the author's own: the index it claims must be the author's position in the
             // sharing it reshares, so nobody can speak for another holder or contribute twice.
-            let Ok(old_holders) = sharing_holders(store, &host, old_epoch) else {
+            if old_epoch == 0 && epoch0.is_none() {
+                epoch0 = sharing_holders(store, &host, 0).ok();
+            }
+            let Some(old_holders) = (if old_epoch == 0 {
+                epoch0.as_ref()
+            } else {
+                epoch_holders.get(&old_epoch)
+            }) else {
                 continue;
             };
-            if holder_index(&old_holders, author) != Some(plain[8]) {
+            if holder_index(old_holders, author) != Some(plain[8]) {
                 continue;
             }
             let c = ReshareContribution {

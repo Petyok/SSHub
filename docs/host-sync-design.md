@@ -546,6 +546,34 @@ at once; the TUI listens to all of them and the first success wins.
 A **USB cable** is the better channel and arrives with the native app: a browser
 page cannot act as a USB device. The protocol does not change.
 
+### Bluetooth Low Energy (opt-in, `bluetooth` feature): a sixth, short-range channel
+
+Not a replacement for the five above: an additional carrier for the same frames, for the cases where a camera
+or a speaker is awkward (no webcam, noisy room) and a cable is not at hand. The terminal is a GATT peripheral
+advertising one service with a throwaway name (`SSHub-<4 chars>` shown on the terminal screen so the user picks
+the right entry in Chrome's chooser); the phone page connects to it with Web Bluetooth, which needs a tap and
+the browser's own device chooser, so a page cannot connect by itself and the person must be there. The link
+carries the existing frames (challenge, reply, enrollment steps, courier ops, certificate requests) cut into
+chunks; it is not relied on for any security property: those frames are already signed or sealed end to end,
+so what crosses the air is what crosses a QR code. No pairing, no bonding, nothing stored.
+
+Why BLE and not Wi-Fi (the obvious alternative is "terminal serves a page or a socket on the LAN"): a LAN
+listener means a listening TCP port on the user's laptop (firewall prompts, a port to attack, a port scanner
+sees it), a certificate the phone will accept (a self-signed one means a browser warning or a CA to install;
+a real one means a name the phone can resolve to the laptop), and mixed-content rules (the companion page is
+opened from a file or an `https` origin and may not talk to `http://192.168.x.y`); it does not work at all on
+guest or isolating Wi-Fi (client isolation, the very networks where the laptop and the phone cannot see each
+other), and it widens the page's CSP (`connect-src` could no longer be `'none'`). Web Bluetooth is not a
+network API: the page's `connect-src 'none'` stays, the terminal listens on no port, and the range of a few
+metres is the property we want (a person within reach of the screen).
+
+Limits, stated plainly: Chrome and Chromium based browsers only (Android, ChromeOS, desktop); no Safari and no
+iOS browser; Firefox has no Web Bluetooth. Throughput is modest (the largest honest frame takes seconds, not
+milliseconds). The controller's address is on the air while the terminal advertises; the name carries no
+host, user or device name. A nearby device can imitate the name and block a session (denial of service at
+worst), because it can not forge a frame. Linux needs BlueZ and an adapter that can be a peripheral; macOS uses
+CoreBluetooth; Windows terminals do not get the channel. The exact bytes are in the contract, section C20.
+
 ### Attended release from the command line
 
 The terminal's attended path has a command-line form with no new verb. A blocking CLI command in Quorum mode

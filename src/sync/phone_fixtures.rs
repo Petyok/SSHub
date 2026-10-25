@@ -64,11 +64,13 @@ fn share_release_op(
     host: &[u8; 16],
     request_id: u64,
     requester: &str,
+    eph: &[u8; 32],
 ) -> Vec<u8> {
     format!(
-        r#"{{"device_id":"{device_id}","seq":{seq},"lamport":{lamport},"prev_hash":"{}","timestamp":{ts},"epoch":0,"alg":[1,1],"body":{{"ShareRelease":{{"host_uid":"{}","request_id":{request_id},"requester":"{requester}"}}}}}}"#,
+        r#"{{"device_id":"{device_id}","seq":{seq},"lamport":{lamport},"prev_hash":"{}","timestamp":{ts},"epoch":0,"alg":[1,1],"body":{{"ShareRelease":{{"host_uid":"{}","request_id":{request_id},"requester":"{requester}","eph_x25519_pub":"{}"}}}}}}"#,
         hx(prev),
-        hx(host)
+        hx(host),
+        hx(eph)
     )
     .into_bytes()
 }
@@ -169,7 +171,19 @@ fn cases(c: &Cast) -> Vec<Case> {
             phone_material: material,
         }
     };
-    let good_op = |rid_: u64| share_release_op(&rid, 5, 9, &[1; 32], NOW - 20, &HOST, rid_, &rid);
+    let good_op = |rid_: u64| {
+        share_release_op(
+            &rid,
+            5,
+            9,
+            &[1; 32],
+            NOW - 20,
+            &HOST,
+            rid_,
+            &rid,
+            &c.eph_pub,
+        )
+    };
     let mut v = vec![
         Case {
             name: "good",
@@ -252,7 +266,17 @@ fn cases(c: &Cast) -> Vec<Case> {
             name: "requester-mismatch",
             expect: "names",
             wire: wire(
-                share_release_op(&rid, 5, 9, &[1; 32], NOW - 20, &HOST, 4242, &oid),
+                share_release_op(
+                    &rid,
+                    5,
+                    9,
+                    &[1; 32],
+                    NOW - 20,
+                    &HOST,
+                    4242,
+                    &oid,
+                    &c.eph_pub,
+                ),
                 &c.requester,
                 4242,
                 NOW + 120,
@@ -285,7 +309,17 @@ fn cases(c: &Cast) -> Vec<Case> {
             name: "unknown-requester",
             expect: "ok",
             wire: wire(
-                share_release_op(&sid, 2, 3, &[2; 32], NOW - 20, &HOST, 4242, &sid),
+                share_release_op(
+                    &sid,
+                    2,
+                    3,
+                    &[2; 32],
+                    NOW - 20,
+                    &HOST,
+                    4242,
+                    &sid,
+                    &c.eph_pub,
+                ),
                 &c.stranger,
                 4242,
                 NOW + 120,
@@ -898,6 +932,11 @@ mod reshare_fixture {
                 "the page's op signature verifies"
             );
             rx.store.sync_ingest(op).unwrap();
+        }
+        // The page's clock is the fixtures' fixed time (2030), beyond the skew grace of this terminal's clock, so
+        // the ops wait as "future-dated" until a human approves them; the test plays that human.
+        for p in rx.store.sync_pending().unwrap() {
+            rx.store.sync_resolve_pending(&p.hash(), true).unwrap();
         }
         for (host_hex, want) in v["expected_phone_shares"].as_object().unwrap() {
             let host: [u8; 16] = hex::decode(host_hex).unwrap().try_into().unwrap();

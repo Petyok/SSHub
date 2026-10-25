@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
-use super::apply::{effective_view, hops_to_wire, render_hops, rendered_name, View};
+use super::apply::{effective_view, hops_to_wire, render_hops, rendered_name, validate_body, View};
 use super::crypto::DeviceIdentity;
 use super::identity_store::load_or_init_identity;
 use super::oplog::canonical::{group_field_values, host_field_values, identity_field_values};
@@ -34,6 +34,8 @@ use crate::store::{
 
 /// Where the device key lives and how to open the profile's credential store.
 type KeySource = (ProfilePaths, fn(&ProfilePaths) -> Box<dyn PasswordStore>);
+
+const NOT_RECORDED: &str = "the change is saved here but could not be recorded for sync";
 
 pub struct EntityCapture {
     /// Where the device key lives; `None` when the identity was handed in (tests).
@@ -75,26 +77,20 @@ pub(crate) fn install_with_identity(store: &LauncherStore, id: Arc<DeviceIdentit
 }
 
 /// Publish what the ring does not have yet: hosts that predate the ring, a change that could
-/// not be recorded when it was made. Cheap when there is nothing (one query); a sync round
-/// calls it first.
+/// not be recorded when it was made (a locked key, a full disk, a field the op validator
+/// refused). State based, so an entity that already matches its view costs queries and no op;
+/// a sync round calls it first. BEST EFFORT: an entity that cannot be published is skipped
+/// with a warning ([`LauncherStore::take_sync_warning`]) and the round never depends on it.
 pub fn publish_pending(store: &LauncherStore, id: &Arc<DeviceIdentity>) -> Result<()> {
-    let unpublished = store.with_conn(|conn| {
-        if !in_ring(conn)? {
-            return Ok(false);
-        }
-        Ok(conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM hosts h WHERE h.source = 'launcher' AND NOT EXISTS (
-                 SELECT 1 FROM sync_entities e WHERE e.kind = 'host' AND e.uid = h.uid AND e.alive = 1))",
-            [],
-            |r| r.get(0),
-        )?)
-    })?;
-    if unpublished {
-        let sink = EntityCapture {
-            source: None,
-            identity: Mutex::new(Some(id.clone())),
-        };
-        store.with_conn(|conn| sink.changed(conn, ChangeScope::Everything))?;
+    if !store.with_conn(in_ring)? {
+        return Ok(());
+    }
+    let sink = EntityCapture {
+        source: None,
+        identity: Mutex::new(Some(id.clone())),
+    };
+    if let Err(e) = store.with_conn(|conn| sink.changed(conn, ChangeScope::Everything)) {
+        store.record_sync_warning(format!("{e:#}"));
     }
     Ok(())
 }
@@ -141,6 +137,14 @@ impl EntityCapture {
         let mut slot = self.identity.lock().unwrap_or_else(|e| e.into_inner());
         if slot.is_none() {
             let (paths, open_secrets) = self.source.as_ref().context("no device identity")?;
+            // A profile in a ring always has its device key. A missing file means the profile was
+            // moved without its `sync/` directory: a NEW identity here would sign as an unknown
+            // author and register itself as a holder, so refuse instead.
+            anyhow::ensure!(
+                super::identity_store::key_path(paths).exists(),
+                "this profile is in a ring but its device key ({}) is missing: restore it or join the ring again",
+                super::identity_store::key_path(paths).display()
+            );
             let secrets = open_secrets(paths);
             *slot = Some(Arc::new(load_or_init_identity(paths, secrets.as_ref())?));
         }
@@ -148,14 +152,58 @@ impl EntityCapture {
     }
 
     fn append(&self, conn: &Connection, body: OpBody) -> Result<()> {
-        let note = "the change is saved here but could not be recorded for sync";
-        let id = self.identity().context(note)?;
-        append_local_on(conn, &id, body, crate::store::now_ts()).context(note)?;
+        let id = self.identity().context(NOT_RECORDED)?;
+        append_local_on(conn, &id, body, crate::store::now_ts()).context(NOT_RECORDED)?;
         Ok(())
     }
 }
 
+impl EntityCapture {
+    /// Append `make(fields)`, leaving out any field the op validator refuses on its own (a note
+    /// over the limit, a control character in a label): the rest goes through, and the refused
+    /// ones come back as ONE error AFTER it, so the user is told which field is not in the ring
+    /// instead of every later edit of the entity failing with it.
+    fn append_valid(
+        &self,
+        conn: &Connection,
+        diff: BTreeSet<&'static str>,
+        make: impl Fn(&BTreeSet<&'static str>) -> OpBody,
+    ) -> Result<()> {
+        let mut keep = diff.clone();
+        let mut refused: Vec<String> = Vec::new();
+        if let Err(whole) = validate_body(&make(&keep)) {
+            for f in &diff {
+                let one = BTreeSet::from([*f]);
+                if let Err(why) = validate_body(&make(&one)) {
+                    refused.push(format!("{f}: {why}"));
+                    keep.remove(f);
+                }
+            }
+            if refused.is_empty() {
+                // Not attributable to one field: say why and send nothing.
+                refused.push(whole);
+                keep.clear();
+            }
+        }
+        if !keep.is_empty() {
+            self.append(conn, make(&keep))?;
+        }
+        if refused.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "saved here, but not synced because the ring would refuse it ({})",
+                refused.join("; ")
+            ))
+        }
+    }
+}
+
 impl LocalChangeSink for EntityCapture {
+    fn prepare(&self) -> Result<()> {
+        self.identity().map(|_| ()).context(NOT_RECORDED)
+    }
+
     fn changed(&self, conn: &Connection, scope: ChangeScope) -> Result<()> {
         if !in_ring(conn)? {
             return Ok(());
@@ -166,22 +214,30 @@ impl LocalChangeSink for EntityCapture {
             ChangeScope::Identity(id) => self.identity_row(conn, id),
             ChangeScope::Deleted(kind, uid) => self.deleted(conn, kind, &uid),
             ChangeScope::Everything => {
+                // One entity that cannot be recorded never stops the others: keep the first
+                // problem as the warning and go on.
+                let mut first: Option<anyhow::Error> = None;
+                let mut note = |r: Result<()>| {
+                    if let Err(e) = r {
+                        first.get_or_insert(e);
+                    }
+                };
                 for id in column(conn, "SELECT id FROM identities ORDER BY id")? {
-                    self.identity_row(conn, id)?;
+                    note(self.identity_row(conn, id));
                 }
                 for id in column(
                     conn,
                     "SELECT id FROM host_groups WHERE reserved = 0 ORDER BY id",
                 )? {
-                    self.group(conn, id)?;
+                    note(self.group(conn, id));
                 }
                 for id in column(
                     conn,
                     "SELECT id FROM hosts WHERE source = 'launcher' ORDER BY id",
                 )? {
-                    self.host(conn, id)?;
+                    note(self.host(conn, id));
                 }
-                Ok(())
+                first.map_or(Ok(()), Err)
             }
         }
     }
@@ -202,20 +258,78 @@ fn is_default(v: &Value) -> bool {
     }
 }
 
-/// Names of the fields whose local value is not what the view says.
+/// What the projection renders for a view value: a reference to an entity this device has no
+/// row for is dropped (the row cannot hold it), so the row's "none" IS the view's value.
+fn rendered(conn: &Connection, field: &str, cur: &Value) -> Result<Value> {
+    let known = |kind: EntityKind, v: &Value| -> Result<bool> {
+        let Some(uid) = v.as_str().and_then(crate::store::uid_from_hex) else {
+            return Ok(false);
+        };
+        Ok(match kind {
+            EntityKind::Identity => crate::store::identity_id_by_uid_on(conn, &uid)?,
+            EntityKind::Group => crate::store::group_id_by_uid_on(conn, &uid)?,
+            EntityKind::Host => crate::store::host_id_by_uid_on(conn, &uid)?,
+        }
+        .is_some())
+    };
+    Ok(match (field, cur) {
+        ("identity_uid" | "default_identity_uid", v @ Value::String(_)) => {
+            if known(EntityKind::Identity, v)? {
+                v.clone()
+            } else {
+                Value::Null
+            }
+        }
+        ("parent_uid", v @ Value::String(_)) => {
+            if known(EntityKind::Group, v)? {
+                v.clone()
+            } else {
+                Value::Null
+            }
+        }
+        ("group_uids", Value::Array(list)) => {
+            let mut kept = Vec::new();
+            for v in list {
+                if known(EntityKind::Group, v)? {
+                    kept.push(v.clone());
+                }
+            }
+            Value::Array(kept)
+        }
+        _ => cur.clone(),
+    })
+}
+
+/// A field the view does not name is "inherit" for the row too. The projection stores NULL for
+/// a port or transport the ring did not give, so on an entity the ring knows a value that is
+/// there (even 22 or ssh) is the user's explicit choice and is published. A host the ring has
+/// not seen yet is created by the form with the row defaults (22, ssh): those are not a choice.
+fn is_inherit(field: &str, v: &Value, alive: bool) -> bool {
+    match field {
+        "port" if !alive => v == &Value::from(22),
+        "transport" if !alive => v == &Value::from("ssh"),
+        _ => is_default(v),
+    }
+}
+
+/// Names of the fields whose local value is not what the view renders to.
 fn differing(
+    conn: &Connection,
     view: &View,
     fields: Vec<(&'static str, Value)>,
     required: &[&str],
-) -> BTreeSet<&'static str> {
-    fields
-        .into_iter()
-        .filter(|(k, v)| match view.fields.get(*k) {
-            Some(cur) => cur != v,
-            None => (!view.alive && required.contains(k)) || !is_default(v),
-        })
-        .map(|(k, _)| k)
-        .collect()
+) -> Result<BTreeSet<&'static str>> {
+    let mut out = BTreeSet::new();
+    for (k, v) in fields {
+        let differs = match view.fields.get(k) {
+            Some(cur) => rendered(conn, k, cur)? != v,
+            None => (!view.alive && required.contains(&k)) || !is_inherit(k, &v, view.alive),
+        };
+        if differs {
+            out.insert(k);
+        }
+    }
+    Ok(out)
 }
 
 fn s(v: &Option<String>) -> Option<Option<String>> {
@@ -257,32 +371,34 @@ impl EntityCapture {
             username: s(&username),
             has_password: Some(has_password),
         };
-        let mut diff = differing(&view, identity_field_values(&full), &["name"]);
+        let mut diff = differing(conn, &view, identity_field_values(&full), &["name"])?;
         keep_name(conn, EntityKind::Identity, &uid, &view, &name, &mut diff)?;
         if diff.is_empty() {
             return Ok(());
         }
-        let keep = |k: &str| diff.contains(k);
-        let fields = IdentityFields {
-            name: if keep("name") { full.name } else { None },
-            username: if keep("username") {
-                full.username
-            } else {
-                None
-            },
-            has_password: if keep("has_password") {
-                full.has_password
-            } else {
-                None
-            },
-        };
-        self.append(
-            conn,
+        self.append_valid(conn, diff, |keep| {
+            let pick = |k: &str| keep.contains(k);
             OpBody::IdentityUpsert {
                 identity_uid: uid,
-                fields,
-            },
-        )
+                fields: IdentityFields {
+                    name: if pick("name") {
+                        full.name.clone()
+                    } else {
+                        None
+                    },
+                    username: if pick("username") {
+                        full.username.clone()
+                    } else {
+                        None
+                    },
+                    has_password: if pick("has_password") {
+                        full.has_password
+                    } else {
+                        None
+                    },
+                },
+            }
+        })
     }
 
     fn group(&self, conn: &Connection, id: i64) -> Result<()> {
@@ -315,7 +431,7 @@ impl EntityCapture {
                 None => None,
             }),
         };
-        let mut diff = differing(&view, group_field_values(&full), &["name"]);
+        let mut diff = differing(conn, &view, group_field_values(&full), &["name"])?;
         jump_equal(
             conn,
             &view,
@@ -327,33 +443,30 @@ impl EntityCapture {
         if diff.is_empty() {
             return Ok(());
         }
-        let keep = |k: &str| diff.contains(k);
-        macro_rules! pick {
-            ($f:ident) => {
-                if keep(stringify!($f)) {
-                    full.$f
-                } else {
-                    Default::default()
-                }
-            };
-        }
-        let fields = GroupFields {
-            name: pick!(name),
-            default_identity_uid: pick!(default_identity_uid),
-            default_username: pick!(default_username),
-            default_port: pick!(default_port),
-            default_proxy_jump: pick!(default_proxy_jump),
-            default_transport: pick!(default_transport),
-            default_forward_agent: pick!(default_forward_agent),
-            parent_uid: pick!(parent_uid),
-        };
-        self.append(
-            conn,
+        self.append_valid(conn, diff, |keep| {
+            macro_rules! pick {
+                ($f:ident) => {
+                    if keep.contains(stringify!($f)) {
+                        full.$f.clone()
+                    } else {
+                        Default::default()
+                    }
+                };
+            }
             OpBody::GroupUpsert {
                 group_uid: uid,
-                fields,
-            },
-        )
+                fields: GroupFields {
+                    name: pick!(name),
+                    default_identity_uid: pick!(default_identity_uid),
+                    default_username: pick!(default_username),
+                    default_port: pick!(default_port),
+                    default_proxy_jump: pick!(default_proxy_jump),
+                    default_transport: pick!(default_transport),
+                    default_forward_agent: pick!(default_forward_agent),
+                    parent_uid: pick!(parent_uid),
+                },
+            }
+        })
     }
 
     fn host(&self, conn: &Connection, id: i64) -> Result<()> {
@@ -400,7 +513,7 @@ impl EntityCapture {
                 None => None,
             }),
         };
-        let mut diff = differing(&view, host_field_values(&full), &["name", "address"]);
+        let mut diff = differing(conn, &view, host_field_values(&full), &["name", "address"])?;
         jump_equal(
             conn,
             &view,
@@ -412,43 +525,54 @@ impl EntityCapture {
         if diff.is_empty() {
             return Ok(());
         }
-        let keep = |k: &str| diff.contains(k);
-        macro_rules! pick {
-            ($f:ident) => {
-                if keep(stringify!($f)) {
-                    full.$f
-                } else {
-                    Default::default()
-                }
-            };
-        }
-        let fields = HostFields {
-            name: pick!(name),
-            label: pick!(label),
-            address: pick!(address),
-            port: pick!(port),
-            username: pick!(username),
-            proxy_jump: pick!(proxy_jump),
-            forward_agent: pick!(forward_agent),
-            remote_command: pick!(remote_command),
-            transport: pick!(transport),
-            environment: pick!(environment),
-            os_icon: pick!(os_icon),
-            tags: pick!(tags),
-            notes: pick!(notes),
-            favorite: pick!(favorite),
-            secret_lookup: pick!(secret_lookup),
-            has_password: pick!(has_password),
-            group_uids: pick!(group_uids),
-            identity_uid: pick!(identity_uid),
-        };
-        self.append(
-            conn,
+        let was_new = !view.alive;
+        let published = self.append_valid(conn, diff, |keep| {
+            macro_rules! pick {
+                ($f:ident) => {
+                    if keep.contains(stringify!($f)) {
+                        full.$f.clone()
+                    } else {
+                        Default::default()
+                    }
+                };
+            }
             OpBody::HostUpsert {
                 host_uid: uid,
-                fields,
-            },
-        )
+                fields: HostFields {
+                    name: pick!(name),
+                    label: pick!(label),
+                    address: pick!(address),
+                    port: pick!(port),
+                    username: pick!(username),
+                    proxy_jump: pick!(proxy_jump),
+                    forward_agent: pick!(forward_agent),
+                    remote_command: pick!(remote_command),
+                    transport: pick!(transport),
+                    environment: pick!(environment),
+                    os_icon: pick!(os_icon),
+                    tags: pick!(tags),
+                    notes: pick!(notes),
+                    favorite: pick!(favorite),
+                    secret_lookup: pick!(secret_lookup),
+                    has_password: pick!(has_password),
+                    group_uids: pick!(group_uids),
+                    identity_uid: pick!(identity_uid),
+                },
+            }
+        });
+        if was_new {
+            // The form's defaults (22, ssh) were not a choice and were not published: the row
+            // now inherits them like a host the ring gave, so a later explicit choice shows.
+            conn.execute(
+                "UPDATE hosts SET port = NULL WHERE id = ?1 AND port = 22",
+                params![id],
+            )?;
+            conn.execute(
+                "UPDATE hosts SET transport = NULL WHERE id = ?1 AND transport = 'ssh'",
+                params![id],
+            )?;
+        }
+        published
     }
 }
 

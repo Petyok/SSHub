@@ -75,7 +75,11 @@ pub(crate) fn start(app: &mut App) {
     let out = Arc::new(Mutex::new(Vec::new()));
     let running = Arc::new(AtomicUsize::new(1));
     let (tx, rx) = std::sync::mpsc::channel();
-    let handle = listen_with(&[MediaKind::Camera], tx, ListenOpts::ENROLL_FRAMES);
+    let mut kinds = vec![MediaKind::Camera];
+    if cfg!(feature = "bluetooth") {
+        kinds.push(MediaKind::Ble);
+    }
+    let handle = listen_with(&kinds, tx, ListenOpts::ENROLL_FRAMES);
     app.phone_flow = Some(PhoneFlow {
         enroll: enroll.clone(),
         out: out.clone(),
@@ -219,11 +223,26 @@ fn present(app: &mut App, out: FlowOut) {
             f.last = Some(out.clone());
         }
     }
+    // Bluetooth (feature `bluetooth`): the frame on screen also goes to a connected phone, and the
+    // session tag tells the person which entry of the phone's device list is this terminal.
+    let ble_line = app
+        .phone_flow
+        .as_ref()
+        .and_then(|f| f.camera.as_ref())
+        .and_then(|(h, _)| {
+            if let FlowOut::Show(f)
+            | FlowOut::Admitted { frame: f, .. }
+            | FlowOut::Stopped { frame: Some(f), .. } = &out
+            {
+                h.send_frame(f.clone());
+            }
+            h.ble_tag().map(|t| {
+                format!("Bluetooth: choose SSHub-{t} in the phone page's device list to use it instead.")
+            })
+        });
     match out {
-        FlowOut::Show(frame) => qr_prompt(
-            app,
-            &frame,
-            vec![
+        FlowOut::Show(frame) => {
+            let mut lines = vec![
                 "Show this code to the phone's camera. The terminal's webcam reads the phone's frames too when this build has the `camera` feature.".into(),
                 "Then paste the frame the phone shows next (copy it on the phone).".into(),
                 format!(
@@ -231,10 +250,10 @@ fn present(app: &mut App, out: FlowOut) {
                     crate::sync::companion::COMPANION_FINGERPRINT,
                     crate::sync::companion::COMPARE_HINT
                 ),
-            ],
-            "Phone's next frame (base64)",
-            feed_text,
-        ),
+            ];
+            lines.extend(ble_line);
+            qr_prompt(app, &frame, lines, "Phone's next frame (base64)", feed_text);
+        }
         FlowOut::Paste => qr_prompt(
             app,
             &[],
@@ -260,6 +279,7 @@ fn present(app: &mut App, out: FlowOut) {
         ),
         FlowOut::Admitted { frame, mut lines } => {
             lines.push("Show this code to the phone so it can finish.".into());
+            lines.extend(ble_line);
             qr_prompt(
                 app,
                 &frame,
@@ -307,6 +327,25 @@ fn qr_prompt(
         }
     };
     app.sync_prompt_qr(TITLE, lines, frames, label, on_submit);
+}
+
+/// Is a Bluetooth channel running for this enrollment (its tag is on the screen)?
+pub(crate) fn ble_active(app: &App) -> bool {
+    app.phone_flow
+        .as_ref()
+        .and_then(|f| f.camera.as_ref())
+        .is_some_and(|(h, _)| h.ble_tag().is_some())
+}
+
+/// The drop-phone key: disconnect the connected phone; the terminal advertises again with the
+/// same tag. Nothing happens without a Bluetooth channel.
+pub(crate) fn drop_central(app: &mut App) {
+    if let Some((h, _)) = app.phone_flow.as_ref().and_then(|f| f.camera.as_ref()) {
+        if h.ble_tag().is_some() {
+            h.drop_central();
+            app.host_notice = Some("phone dropped, advertising again".into());
+        }
+    }
 }
 
 /// Menu entry: the ops list the phone copied (kind 5), through the courier ingest.
