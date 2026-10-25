@@ -222,25 +222,52 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
   // ---------------------------------------------------------------- home
 
   // Bluetooth (contract C20): one session at a time, kept while a ceremony moves through its screens, ended (BYE 0) on the
-  // home screen. A frame the terminal pushed while no screen wanted it waits in bleLast for the next receiving screen.
+  // home screen. A frame the terminal pushes while no screen takes it waits in bleFrames (the newest per kind) for the next
+  // receiving screen, so a multi step flow (enrollment, the two list head adoption) does not lose a frame between screens.
   const bleEnd = () => {
+    app.bleGen = (app.bleGen || 0) + 1;
     if (app.ble) app.ble.session.bye();
     app.ble = null;
     app.bleListener = null;
-    app.bleLast = null;
+    app.bleFrames = new Map();
   };
+  app.bleFrames = new Map();
   async function bleLink() {
     if (app.ble && app.ble.session.state === 'open') return app.ble;
+    const gen = app.bleGen || 0;
     const c = await connectBle();
     const session = new BleSession(c.transport, { maxFrame: Math.min(c.maxFrame, BLE.MAX_FRAME_BYTES) });
     const link = { session, tag: c.tag, name: c.name };
-    session.onFrame = (f) => (app.bleListener ? app.bleListener(f) : void (app.bleLast = f));
+    session.onFrame = (f) => {
+      if (app.bleListener && app.bleListener(f) === true) return;
+      app.bleFrames.set(f[6], f); // kind byte of "SWR1" || version u16 || kind
+    };
     session.onClose = () => {
       if (app.ble === link) app.ble = null;
     };
     await session.start();
+    // The page went home or locked while the chooser or the handshake was open: no session outlives its screen.
+    if ((app.bleGen || 0) !== gen || !app.identity) {
+      session.bye();
+      throw new Error('the page left this step while Bluetooth was connecting');
+    }
     app.ble = link;
     return link;
+  }
+  // This screen takes the frames the terminal sends (onDoc returns true when it used one). Frames that waited for a screen
+  // are offered first. The registration ends with the screen, so a finished screen never swallows the next frame.
+  function bleListen(onDoc) {
+    app.bleListener = onDoc;
+    app.cleanup.push(() => {
+      if (app.bleListener === onDoc) app.bleListener = null;
+    });
+    for (const [kind, f] of [...app.bleFrames]) {
+      if (onDoc(f) === true) {
+        app.bleFrames.delete(kind);
+        return true;
+      }
+    }
+    return false;
   }
   // Offered next to camera and paste on every screen that sends or receives a frame; absent where there is no Web Bluetooth.
   // frame: bytes to send; onDoc: takes the frames the terminal sends. The tag shown must equal the one the terminal shows.
@@ -257,16 +284,9 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         const link = await bleLink();
         const label = `SSHub-${link.tag}`;
         const note = link.name && link.name !== label ? ` The device is called ${safeText(link.name)}, not ${label}: stop unless you picked it on purpose.` : '';
-        const who = `Connected to ${label}. Compare the tag ${link.tag} with the terminal screen.${note}`;
+        const who = `Connected to ${label}. Compare the tag ${link.tag} with the terminal screen.${note} Two identical entries in the browser list mean: stop.`;
         status.textContent = who;
-        if (onDoc) {
-          app.bleListener = onDoc;
-          if (app.bleLast) {
-            const f = app.bleLast;
-            app.bleLast = null;
-            onDoc(f);
-          } else status.textContent = `${who} Waiting for the terminal.`;
-        }
+        if (onDoc && !bleListen(onDoc)) status.textContent = `${who} Waiting for the terminal.`;
         if (frame) {
           status.textContent = `${who} Sending...`;
           await link.session.sendFrame(frame);
@@ -415,11 +435,13 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       } catch {
         /* not one of ours */
       }
-      if (!expect || expect.includes(kind)) done(doc);
-      else {
-        col.reset();
-        status.textContent = 'Ignored a document that is not what this step needs.';
+      if (!expect || expect.includes(kind)) {
+        done(doc);
+        return true;
       }
+      col.reset();
+      status.textContent = 'Ignored a document that is not what this step needs.';
+      return false;
     };
     startCamera(video, (frame) => {
       const doc = col.push(frame);
@@ -968,13 +990,14 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
 
   function redNotice(n, op) {
     const desc = describeOp(op, aliasesNow());
+    const own = op.device_id === app.identity.deviceId;
     const known = app.state.ring[op.device_id];
-    const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : null;
+    // The phone knows its own key too: a notice that claims this phone as the author must carry this phone's signature.
+    const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : own ? edVerify(app.identity.edPub, n.op_canonical, n.op_signature) : null;
     if (sigOk === false) return refusalScreen(`The signature of ${op.device_id} does not verify over this operation.`, []);
     const age = app.now() - Number(op.timestamp);
     if (age > RED_CEREMONY_TTL_SECS) return refusalScreen(`This operation is ${Math.floor(age / 86400)} days old; a Red ceremony lapses after 3 days. Ask the terminal to propose it again.`, []);
     if (age < -TIMESTAMP_SKEW_GRACE_SECS) return refusalScreen('This operation is dated in the future.', []);
-    const own = op.device_id === app.identity.deviceId;
     // A trust certificate is authored by the phone itself: the phone's own signature is the proof.
     const blocked = op.kind === 'CertIssue' && !own ? 'A trust certificate must be issued by the phone itself. This one was written by another device: do not approve it.' : null;
     const msg = h('p', { class: 'err', id: 'red-error' });
@@ -1006,7 +1029,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
   function reenrollNotice(n, op) {
     const desc = describeOp(op, aliasesNow());
     const known = app.state.ring[op.device_id];
-    const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : null;
+    // The phone knows its own key too: a notice that claims this phone as the author must carry this phone's signature.
+    const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : op.device_id === app.identity.deviceId ? edVerify(app.identity.edPub, n.op_canonical, n.op_signature) : null;
     if (sigOk === false) return refusalScreen(`The signature of ${op.device_id} does not verify over this notice.`, []);
     const ends = Number(op.fields.initiated_at) + RECOVERY_TIMELOCK_SECS;
     const msg = h('p', { class: 'err', id: 'cancel-error' });

@@ -93,7 +93,8 @@ function planReshareChecked(identity, ops, epoch, { ring = {}, existingStorage =
     for (const b of batches) {
       const key = keys.get(b.op.device_id);
       const item = b.op.fields.items.find((i) => i.host_uid === host);
-      if (!key || !item) continue;
+      // Only a contribution of an author this phone verified is combined: the k check below counts these very entries.
+      if (!key || !item || sig(b) !== true) continue;
       const pos = item.sub_shares.findIndex(([to]) => to === me);
       if (pos < 0 || !item.commitments[pos]) continue;
       let plain;
