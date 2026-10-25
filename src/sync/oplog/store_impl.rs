@@ -189,6 +189,10 @@ impl LauncherStore {
                 signature: [0u8; 64],
             };
             op.signature = id.sign(&op.canonical_bytes());
+            ensure!(
+                op.canonical_bytes().len() <= MAX_OP_BYTES,
+                "invalid op: larger than the wire allows ({MAX_OP_BYTES} bytes)"
+            );
             let hash = insert_op(&tx, &op, State::Rejected, None, true, now)?;
             let row = load_op(&tx, &hash)?.context("just inserted")?;
             let mut settler = Settler::new(&tx, now);
@@ -709,9 +713,11 @@ impl LauncherStore {
         peer: &DeviceId,
         adopt: bool,
     ) -> Result<[u8; 32]> {
+        // Remote bytes are parsed before the connection is taken: a parser bug must not poison it.
+        let bundle = checkpoint::bundle_from_bytes(bytes)?;
         self.with_conn(|conn| {
             let tx = tx(conn)?;
-            let h = checkpoint::accept_bytes(&tx, bytes, peer, adopt, now_ts())?;
+            let h = checkpoint::accept_bundle(&tx, bundle, peer, adopt, now_ts())?;
             tx.commit()?;
             Ok(h)
         })

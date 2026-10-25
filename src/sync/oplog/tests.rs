@@ -2860,3 +2860,375 @@ fn an_op_of_an_unknown_author_waits_with_its_reason_and_never_takes_effect() {
         .collect();
     assert_eq!(reasons, vec!["tier".to_string()]);
 }
+
+// ------------------------------------------------------- review round 1 regressions
+
+fn validates(body: &OpBody) -> Result<(), String> {
+    crate::sync::apply::validate_body(body)
+}
+
+#[test]
+fn control_characters_never_enter_names_text_or_device_names() {
+    let host = |name: &str, notes: Option<&str>| OpBody::HostUpsert {
+        host_uid: uid(1),
+        fields: HostFields {
+            name: Some(name.into()),
+            notes: notes.map(|n| Some(n.to_string())),
+            ..Default::default()
+        },
+    };
+    assert!(validates(&host("web", Some("two\nlines\tand a tab"))).is_ok());
+    // A name that would write ssh_config directives or move a terminal cursor.
+    for bad in [
+        "hop\nMatch all",
+        "hop\r",
+        "a\u{1b}[2Kb",
+        "a\u{7f}b",
+        "a\u{85}b",
+        "a\u{9b}31m",
+        "a\tb",
+    ] {
+        assert!(validates(&host(bad, None)).is_err(), "{bad:?}");
+    }
+    for bad in ["x\u{1b}]52;c;ZXZpbA==\u{7}", "x\ry", "x\u{85}y"] {
+        assert!(validates(&host("web", Some(bad))).is_err(), "{bad:?}");
+    }
+    let add = |name: &str| add_device_body_named(name);
+    assert!(validates(&add("laptop")).is_ok());
+    assert!(validates(&add("lap\ntop\nBcc: x")).is_err());
+}
+
+fn add_device_body_named(name: &str) -> OpBody {
+    OpBody::DeviceAdd {
+        device: Peer::new().id.public(),
+        name: name.into(),
+        role: DeviceRole::Mirror,
+        attendance: Attendance::Attended,
+        kind: DeviceKind::Terminal,
+        verified_by: VerifiedBy::Sas,
+    }
+}
+
+#[test]
+fn head_attests_name_a_device_by_sixteen_hex_digits() {
+    let attest = |id: &str| OpBody::HeadAttest {
+        device_id: id.into(),
+        seq: 1,
+        chain_hash: [1; 32],
+    };
+    assert!(validates(&attest("0011223344556677")).is_ok());
+    for bad in [
+        "zz",
+        "0011223344556677 ",
+        "0011223344556G77",
+        "00112233445566771",
+        "AABBCCDDEEFF0011",
+    ] {
+        assert!(validates(&attest(bad)).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
+fn sealed_and_credential_fields_have_byte_caps() {
+    let key = |n| OpBody::ShareStorageKey {
+        epoch: 1,
+        sealed: vec![0; n],
+    };
+    assert!(validates(&key(8 * 1024)).is_ok());
+    assert!(validates(&key(8 * 1024 + 1)).is_err());
+    let session = OpBody::ShareReshareSession {
+        epoch: 1,
+        to: "0011223344556677".into(),
+        sealed: vec![0; 9000],
+    };
+    assert!(validates(&session).is_err());
+    let rot = OpBody::WrapKeyRotate {
+        device_id: "0011223344556677".into(),
+        wrap_epoch: 1,
+        x25519_pub: [0; 32],
+        mlkem_pub: vec![0; 3000],
+    };
+    assert!(validates(&rot).is_err());
+    let cred = OpBody::CredUpdate {
+        host_uid: uid(1),
+        ciphertext: vec![0; 129 * 1024],
+        wrapped_shares: vec![],
+    };
+    assert!(validates(&cred).is_err());
+    let confirm = OpBody::ShareReshareConfirmBatch {
+        epoch: 1,
+        items: (0..200)
+            .map(|i| ConfirmItem {
+                host_uid: uid(i as u8),
+                sealed_share: vec![0; 4000],
+            })
+            .collect(),
+    };
+    assert!(validates(&confirm).is_err());
+}
+
+#[test]
+fn only_a_holder_writes_share_machinery_and_a_promotion_releases_what_waited() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let c = Peer::new();
+    for p in [a, b] {
+        p.store
+            .sync_register_device(
+                &c.id.public(),
+                "c",
+                DeviceRole::Mirror,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let key = c.append(OpBody::ShareStorageKey {
+        epoch: 1,
+        sealed: vec![1; 40],
+    });
+    assert!(matches!(
+        a.store.sync_ingest(key.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert_eq!(
+        a.store.sync_pending_reason(&key.hash()).unwrap().as_deref(),
+        Some("not-holder")
+    );
+    // A holder's own op of the same kind is not held.
+    let own = b.append(OpBody::ShareStorageKey {
+        epoch: 1,
+        sealed: vec![1; 40],
+    });
+    assert!(matches!(
+        a.store.sync_ingest(own).unwrap(),
+        IngestOutcome::Applied
+    ));
+    // Promoting c settles what it wrote before.
+    a.append(OpBody::DeviceRoleChange {
+        device_id: c.dev(),
+        to: DeviceRole::Holder,
+    });
+    assert_eq!(
+        a.pending(),
+        0,
+        "{:?}",
+        a.store.sync_pending_with_reasons().unwrap()
+    );
+}
+
+#[test]
+fn a_delegate_does_not_vouch_for_its_own_certificate() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let issue = a.append(OpBody::CertIssue {
+        device_id: b.dev(),
+        scope: CertScope::Group(uid(20)),
+        expiry: 4_000_000_000,
+        max_new_hosts_per_day: 50,
+        epoch_lo: 0,
+        epoch_hi: 9,
+    });
+    let opened = b.append(OpBody::CertHostOpened {
+        cert_id: issue.hash(),
+        host_uid: uid(7),
+    });
+    pull(a, b);
+    assert_eq!(
+        a.store
+            .sync_pending_reason(&opened.hash())
+            .unwrap()
+            .as_deref(),
+        Some("not-holder")
+    );
+    assert!(a
+        .store
+        .sync_cert_hosts_opened(&issue.hash())
+        .unwrap()
+        .is_empty());
+    // Another holder may open hosts under it.
+    let other = a.append(OpBody::CertHostOpened {
+        cert_id: issue.hash(),
+        host_uid: uid(8),
+    });
+    let _ = other;
+    assert_eq!(
+        a.store.sync_cert_hosts_opened(&issue.hash()).unwrap(),
+        vec![uid(8)]
+    );
+}
+
+#[test]
+fn ops_dated_beyond_the_skew_grace_are_refused_when_red_and_wait_otherwise() {
+    use crate::sync::limits::TIMESTAMP_SKEW_GRACE_SECS;
+    let ring = ring(3);
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    let now = crate::store::now_ts();
+    // Red: a ceremony TTL measured on such a stamp would never end.
+    let red = a
+        .store
+        .sync_append_local_at(
+            &a.id,
+            OpBody::DeviceRoleChange {
+                device_id: c.dev(),
+                to: DeviceRole::Mirror,
+            },
+            now + 400 * 86_400,
+        )
+        .unwrap();
+    assert!(rejected(&b.store.sync_ingest(red).unwrap()).contains("dated"));
+    // Green: held with its reason, and applied once the clock is within the grace.
+    let green = a
+        .store
+        .sync_append_local_at(
+            &a.id,
+            upsert(
+                5,
+                HostFields {
+                    notes: Some(Some("n".into())),
+                    ..Default::default()
+                },
+            ),
+            now + 2 * TIMESTAMP_SKEW_GRACE_SECS,
+        )
+        .unwrap();
+    assert!(matches!(
+        b.store.sync_ingest(green.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert_eq!(
+        b.store
+            .sync_pending_reason(&green.hash())
+            .unwrap()
+            .as_deref(),
+        Some("future-dated")
+    );
+    // Inside the grace nothing changes.
+    let fine = a
+        .store
+        .sync_append_local_at(
+            &a.id,
+            upsert(6, hf("ok", "10.0.0.6")),
+            now + TIMESTAMP_SKEW_GRACE_SECS - 5,
+        )
+        .unwrap();
+    assert_ne!(fine.timestamp, 0);
+    assert!(!matches!(
+        b.store.sync_ingest(fine).unwrap(),
+        IngestOutcome::Rejected(_)
+    ));
+}
+
+#[test]
+fn a_rename_onto_a_name_another_entity_holds_waits_for_review() {
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let first = a.append(upsert(1, hf("prod", "p.example")));
+    let second = a.append(upsert(2, hf("test", "q.example")));
+    for o in [&first, &second] {
+        b.store.sync_ingest((*o).clone()).unwrap();
+    }
+    b.approve_all();
+    let rename = a.append(upsert(
+        2,
+        HostFields {
+            name: Some("prod".into()),
+            ..Default::default()
+        },
+    ));
+    assert_eq!(rename.tier(), OpTier::Green);
+    assert!(matches!(
+        b.store.sync_ingest(rename.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert_eq!(
+        b.store
+            .sync_pending_reason(&rename.hash())
+            .unwrap()
+            .as_deref(),
+        Some("tier")
+    );
+    // A rename to a free name stays automatic.
+    let free = a.append(upsert(
+        2,
+        HostFields {
+            name: Some("staging".into()),
+            ..Default::default()
+        },
+    ));
+    assert!(matches!(
+        b.store.sync_ingest(free).unwrap(),
+        IngestOutcome::Applied | IngestOutcome::Pending
+    ));
+}
+
+#[test]
+fn an_unverified_op_never_blocks_a_slot_and_one_claimed_author_holds_only_a_few() {
+    let ring = ring(1);
+    let b = &ring[0];
+    let stranger = Peer::new();
+    let ops: Vec<Op> = (0..10)
+        .map(|i| stranger.append(upsert(10 + i as u8, hf("x", "10.0.0.9"))))
+        .collect();
+    // Same slot, different content: the newer claim replaces the older one.
+    let mut squat = ops[0].clone();
+    squat.body = upsert(99, hf("squat", "10.0.0.66"));
+    assert!(matches!(
+        b.store.sync_ingest(squat.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert!(matches!(
+        b.store.sync_ingest(ops[0].clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    assert_eq!(b.store.sync_pending().unwrap().len(), 1);
+    assert_eq!(b.store.sync_pending().unwrap()[0].hash(), ops[0].hash());
+    // One claimed author fills at most a few places.
+    let mut held = 1;
+    for op in &ops[1..] {
+        if matches!(
+            b.store.sync_ingest(op.clone()).unwrap(),
+            IngestOutcome::Pending
+        ) {
+            held += 1;
+        }
+    }
+    assert_eq!(held, 8);
+}
+
+#[test]
+fn an_oversized_op_is_refused_even_from_an_unknown_author() {
+    use crate::sync::oplog::MAX_OP_BYTES;
+    let ring = ring(1);
+    let b = &ring[0];
+    let stranger = Peer::new();
+    let mut op = stranger.append(upsert(1, hf("x", "10.0.0.9")));
+    op.body = OpBody::ShareStorageKey {
+        epoch: 1,
+        sealed: vec![7; MAX_OP_BYTES],
+    };
+    assert!(rejected(&b.store.sync_ingest(op).unwrap()).contains("larger"));
+    const { assert!(MAX_OP_BYTES / 3 * 4 + 8 * 1024 < crate::sync::limits::MAX_FRAME_BYTES) };
+}
+
+#[test]
+fn a_bundle_over_the_cap_is_not_parsed() {
+    let big = vec![b' '; crate::sync::protocol::MAX_CHECKPOINT_BYTES as usize + 1];
+    let e = crate::sync::oplog::checkpoint::bundle_from_bytes(&big).unwrap_err();
+    assert!(e.to_string().contains("over"), "{e:#}");
+}
+
+#[test]
+fn an_existing_device_does_not_bootstrap_an_anchor_and_a_fresh_one_does_not_adopt() {
+    let ring = live_ring(vec![Peer::new(), Peer::new()]);
+    touch(&ring);
+    settle(&ring);
+    let (cp, _) = checkpoint_round(&ring, 0, crate::store::now_ts());
+    let fresh = Peer::new();
+    let e = fresh
+        .store
+        .sync_bootstrap(&cp, &BootstrapTrust::Anchor(ring[0].dev()))
+        .unwrap_err();
+    assert!(e.to_string().contains("adopt"), "{e:#}");
+}

@@ -148,7 +148,7 @@ pub(crate) fn evidence(conn: &Connection, device: &str) -> Result<Option<ForkEvi
 pub(crate) fn check_heads_against_op(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<bool> {
     let mut stmt = conn.prepare_cached(
         "SELECT chain_hash, signature FROM sync_head_attests
-         WHERE device_id = ?1 AND seq = ?2 AND chain_hash != ?3",
+         WHERE device_id = ?1 AND seq = ?2 AND chain_hash != ?3 AND length(signature) = 64",
     )?;
     let rows: Vec<(Vec<u8>, Vec<u8>)> = stmt
         .query_map(params![op.device_id, op.seq as i64, &hash[..]], |r| {
@@ -216,7 +216,7 @@ pub(crate) fn record_head(conn: &Connection, head: &SignedHead) -> Result<HeadVe
     }
     // Against heads we already stored at the same seq.
     let others: Vec<(Vec<u8>, Vec<u8>)> = conn
-        .prepare("SELECT chain_hash, signature FROM sync_head_attests WHERE device_id = ?1 AND seq = ?2 AND chain_hash != ?3")?
+        .prepare("SELECT chain_hash, signature FROM sync_head_attests WHERE device_id = ?1 AND seq = ?2 AND chain_hash != ?3 AND length(signature) = 64")?
         .query_map(params![head.device_id, head.seq as i64, &head.hash[..]], |r| {
             Ok((r.get(0)?, r.get(1)?))
         })?
@@ -234,8 +234,10 @@ pub(crate) fn record_head(conn: &Connection, head: &SignedHead) -> Result<HeadVe
         }
     }
     conn.execute(
-        "INSERT OR IGNORE INTO sync_head_attests (device_id, seq, chain_hash, signature)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT INTO sync_head_attests (device_id, seq, chain_hash, signature)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (device_id, seq, chain_hash) DO UPDATE SET signature = excluded.signature
+         WHERE length(sync_head_attests.signature) <> 64",
         params![
             head.device_id,
             head.seq as i64,

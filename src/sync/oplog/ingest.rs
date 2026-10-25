@@ -18,14 +18,17 @@ use super::op::*;
 use super::store_impl::IngestOutcome;
 use crate::sync::apply::{reproject, validate_body};
 use crate::sync::crypto::ALG_CURRENT;
-use crate::sync::limits::{LAMPORT_JUMP_CAP, MAX_FRAME_BYTES, PENDING_QUARANTINE_MAX_PER_DEVICE};
+use crate::sync::limits::{LAMPORT_JUMP_CAP, PENDING_QUARANTINE_MAX_PER_DEVICE};
 
 fn reject(msg: impl Into<String>) -> Result<IngestOutcome> {
     Ok(IngestOutcome::Rejected(msg.into()))
 }
 
-/// Unverified ops held for review at most, over all unknown authors.
+/// Unverified ops held for review at most, over all unknown authors and per claimed author.
 const UNKNOWN_AUTHOR_MAX: i64 = 256;
+const UNKNOWN_AUTHOR_MAX_PER_ID: usize = 8;
+/// Pending bytes one device may keep in quarantine (next to the count cap).
+const PENDING_QUARANTINE_MAX_BYTES_PER_DEVICE: usize = 16 * 1024 * 1024;
 
 /// An op signed by nobody we know: its signature cannot be checked, so it only waits for a
 /// human (reason `unknown-author`). Nothing of it takes effect: no chain, no fold, never served.
@@ -35,7 +38,7 @@ fn unknown_author(
     now: i64,
     quarantine_cap: usize,
 ) -> Result<IngestOutcome> {
-    if op.canonical_bytes().len() > MAX_FRAME_BYTES {
+    if op.canonical_bytes().len() > MAX_OP_BYTES {
         return reject("op is larger than a transport frame");
     }
     if let Err(why) = validate_body(&op.body) {
@@ -44,24 +47,29 @@ fn unknown_author(
     if load_op(conn, &op.hash())?.is_some() {
         return reject("duplicate op");
     }
+    // A slot held by another unverified op gives way: nobody can squat a slot with a claim
+    // nobody could check. A slot of a verified op (a known author's chain) never does.
+    let slot: Option<Option<String>> = conn
+        .query_row(
+            "SELECT reason FROM sync_ops WHERE device_id = ?1 AND seq = ?2",
+            params![op.device_id, op.seq as i64],
+            |r| r.get(0),
+        )
+        .optional()?;
+    match slot {
+        Some(r) if r.as_deref() != Some("unknown-author") => return reject("duplicate op"),
+        Some(_) => forget_unverified(conn, &op.device_id, Some(op.seq))?,
+        None => {}
+    }
     let (per_author, all): (i64, i64) = conn.query_row(
         "SELECT COALESCE(SUM(device_id = ?1), 0), COUNT(*) FROM sync_ops WHERE reason = 'unknown-author'",
         params![op.device_id],
         |r| Ok((r.get(0)?, r.get(1)?)),
     )?;
-    if per_author as usize >= quarantine_cap || all >= UNKNOWN_AUTHOR_MAX {
-        return reject("quarantine full for unknown authors");
-    }
-    if conn
-        .query_row(
-            "SELECT 1 FROM sync_ops WHERE device_id = ?1 AND seq = ?2",
-            params![op.device_id, op.seq as i64],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some()
+    if per_author as usize >= UNKNOWN_AUTHOR_MAX_PER_ID.min(quarantine_cap)
+        || all >= UNKNOWN_AUTHOR_MAX
     {
-        return reject("duplicate op");
+        return reject("quarantine full for unknown authors");
     }
     insert_unverified(conn, &op, now)?;
     Ok(IngestOutcome::Pending)
@@ -109,7 +117,7 @@ pub(crate) fn ingest_capped(
     if !op.verify(&signer) {
         return reject("bad signature");
     }
-    if op.canonical_bytes().len() > MAX_FRAME_BYTES {
+    if op.canonical_bytes().len() > MAX_OP_BYTES {
         return reject("op is larger than a transport frame");
     }
     if let Err(why) = validate_body(&op.body) {
@@ -179,7 +187,7 @@ pub(crate) fn ingest_capped(
         reason: None,
         local: false,
     };
-    let (want, reason) = desired_state(conn, &probe)?;
+    let (want, reason) = desired_state(conn, &probe, now)?;
     if want == State::Pending {
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM sync_pending_ops WHERE device_id = ?1",
@@ -188,6 +196,15 @@ pub(crate) fn ingest_capped(
         )?;
         if n as usize >= quarantine_cap {
             return reject("quarantine full for this device");
+        }
+        let bytes: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(length(canonical)), 0) FROM sync_ops
+             WHERE state = 'pending' AND device_id = ?1",
+            params![op.device_id],
+            |r| r.get(0),
+        )?;
+        if bytes as usize + op.canonical_bytes().len() > PENDING_QUARANTINE_MAX_BYTES_PER_DEVICE {
+            return reject("quarantine full for this device (bytes)");
         }
     }
 
@@ -209,6 +226,9 @@ pub(crate) fn ingest_capped(
     Ok(match load_op(conn, &hash)?.map(|r| r.state) {
         Some(State::Applied | State::Approved) => IngestOutcome::Applied,
         Some(State::Pending) => IngestOutcome::Pending,
+        _ if reason == Some("future-dated") => {
+            IngestOutcome::Rejected("op is dated beyond the clock skew grace".into())
+        }
         _ => IngestOutcome::Rejected("void: signed at or after its author's revocation".into()),
     })
 }
