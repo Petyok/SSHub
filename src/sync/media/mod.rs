@@ -1,12 +1,14 @@
 //! Terminal-side receivers of the phone's share reply (design: "Share release", response
 //! channels): the microphone hears the audio burst, the camera reads the phone's looping reverse
-//! QR. One API for the unlock modal:
+//! QR, and (feature `bluetooth`) the phone page connects over Bluetooth Low Energy. One API for the
+//! unlock modal:
 //!
 //! ```ignore
 //! let support = media::available();              // compile-time feature AND a device present
 //! let (tx, rx) = std::sync::mpsc::channel();
-//! let handle = media::listen(&[MediaKind::Audio, MediaKind::Camera], tx);
+//! let handle = media::listen(&[MediaKind::Audio, MediaKind::Camera, MediaKind::Ble], tx);
 //! // poll rx: Status / Progress / Reply(kind, ShareResponseWire bytes) for unlock_paths::open_phone_reply
+//! handle.send_frame(challenge_frame);            // Bluetooth only: pushed to the phone once connected
 //! drop(handle);                                  // stops capture, releases the devices
 //! ```
 //!
@@ -19,21 +21,29 @@
 //! is dropped.
 //!
 //! `fsk` and `qrscan` are the decoders: always compiled, tested in CI. `mic` (feature `audio`,
-//! `cpal`) and `cam` (feature `camera`, `nokhwa`) only move samples and frames into them.
+//! `cpal`) and `cam` (feature `camera`, `linuxvideo` or `nokhwa`) only move samples and frames into
+//! them. `ble_link` is the pure link layer of the Bluetooth channel (contract C20); `ble` drives it
+//! over BlueZ or CoreBluetooth.
 
-pub mod fsk;
-pub mod qrscan;
-
+#[cfg(any(feature = "bluetooth", test))]
+mod ble;
+#[cfg(all(feature = "bluetooth", target_os = "linux"))]
+mod ble_bluez;
+pub mod ble_link;
+#[cfg(all(feature = "bluetooth", target_os = "macos"))]
+mod ble_mac;
 #[cfg(feature = "camera")]
 mod cam;
+pub mod fsk;
 #[cfg(feature = "audio")]
 mod mic;
+pub mod qrscan;
 #[cfg(test)]
 mod tests;
 
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
@@ -46,6 +56,8 @@ pub enum MediaKind {
     Audio,
     /// Webcam, the phone's looping reverse QR.
     Camera,
+    /// Bluetooth Low Energy: the terminal advertises, the phone page connects (contract C20).
+    Ble,
 }
 
 /// What this build and this machine can listen with right now.
@@ -53,6 +65,7 @@ pub enum MediaKind {
 pub struct MediaSupport {
     pub audio: bool,
     pub camera: bool,
+    pub ble: bool,
 }
 
 /// What a running listener tells the modal.
@@ -65,6 +78,9 @@ pub enum MediaEvent {
     /// The complete bytes of a `ShareResponseWire` (a valid frame, request id not yet checked):
     /// hand them to `unlock_paths::open_phone_reply`.
     Reply(MediaKind, Vec<u8>),
+    /// Bluetooth only: the frame queued with [`ListenHandle::send_frame`] reached the phone
+    /// (acknowledged in full).
+    Sent(MediaKind),
 }
 
 /// Compile-time features and run-time devices. May open the capture subsystem briefly (device
@@ -73,6 +89,7 @@ pub fn available() -> MediaSupport {
     MediaSupport {
         audio: audio_present(),
         camera: camera_present(),
+        ble: ble_present(),
     }
 }
 
@@ -92,9 +109,17 @@ fn camera_present() -> bool {
 fn camera_present() -> bool {
     false
 }
+#[cfg(feature = "bluetooth")]
+fn ble_present() -> bool {
+    ble::present()
+}
+#[cfg(not(feature = "bluetooth"))]
+fn ble_present() -> bool {
+    false
+}
 
-/// Human-readable lines for the devices behind [`available`], `audio: ...` and `camera: ...`
-/// (for diagnostics such as `examples/media-probe.rs`).
+/// Human-readable lines for the devices behind [`available`], `audio: ...`, `camera: ...` and
+/// `bluetooth: ...` (for diagnostics such as `examples/media-probe.rs`).
 pub fn devices() -> Vec<String> {
     #[allow(unused_mut)]
     let mut out: Vec<String> = Vec::new();
@@ -102,7 +127,23 @@ pub fn devices() -> Vec<String> {
     out.extend(mic::devices().into_iter().map(|d| format!("audio: {d}")));
     #[cfg(feature = "camera")]
     out.extend(cam::devices().into_iter().map(|d| format!("camera: {d}")));
+    #[cfg(feature = "bluetooth")]
+    out.extend(
+        ble::devices()
+            .into_iter()
+            .map(|d| format!("bluetooth: {d}")),
+    );
     out
+}
+
+/// What the application asks of a running Bluetooth channel.
+#[cfg_attr(not(any(feature = "bluetooth", test)), allow(dead_code))]
+pub(crate) enum BleCmd {
+    /// The frame of the step the terminal is on (the same document the QR shows). Pushed to the
+    /// phone as soon as it is connected, and again whenever a new one is queued.
+    Frame(Vec<u8>),
+    /// Disconnect whoever is connected and advertise again.
+    DropCentral,
 }
 
 /// Running capture. Dropping it stops the threads and releases the devices (blocks for at most
@@ -110,6 +151,33 @@ pub fn devices() -> Vec<String> {
 pub struct ListenHandle {
     stop: Arc<AtomicBool>,
     threads: Vec<JoinHandle<()>>,
+    ble: Option<Sender<BleCmd>>,
+    ble_tag: Option<String>,
+}
+
+impl ListenHandle {
+    /// Queues `frame` (a protocol frame of kinds 1 to 10, the same bytes a QR carries) for the
+    /// phone over Bluetooth. It goes out as soon as a phone is connected and again whenever a newer
+    /// frame is queued; the newest queued frame wins. False if no Bluetooth channel is running.
+    pub fn send_frame(&self, frame: Vec<u8>) -> bool {
+        self.ble
+            .as_ref()
+            .is_some_and(|c| c.send(BleCmd::Frame(frame)).is_ok())
+    }
+
+    /// Disconnects the connected phone (if any) and advertises again with the same tag.
+    pub fn drop_central(&self) {
+        if let Some(c) = &self.ble {
+            let _ = c.send(BleCmd::DropCentral);
+        }
+    }
+
+    /// The 4 character tag of this Bluetooth session, to show on screen next to the QR: the
+    /// terminal advertises as `SSHub-<tag>`. `None` when the channel is not running (not asked for,
+    /// or built without the `bluetooth` feature).
+    pub fn ble_tag(&self) -> Option<&str> {
+        self.ble_tag.as_deref()
+    }
 }
 
 impl Drop for ListenHandle {
@@ -124,8 +192,8 @@ impl Drop for ListenHandle {
 /// Which documents a listener hands over and whether it stops after the first.
 #[derive(Clone, Copy)]
 pub struct ListenOpts {
-    /// Called with every complete document (an audio frame payload or a reassembled QR
-    /// document); only documents it accepts become `Reply` events.
+    /// Called with every complete document (an audio frame payload, a reassembled QR document or
+    /// a Bluetooth frame); only documents it accepts become `Reply` events.
     pub accept: fn(&[u8]) -> bool,
     /// False: a channel ends after its first accepted reply. True: it keeps listening until
     /// the handle is dropped; a document identical to the last one it handed over is not sent
@@ -182,6 +250,11 @@ impl Emitter {
             .is_ok()
     }
 
+    #[cfg_attr(not(any(feature = "bluetooth", test)), allow(dead_code))]
+    pub(crate) fn sent(&self) -> bool {
+        self.tx.send(MediaEvent::Sent(self.kind)).is_ok()
+    }
+
     #[cfg_attr(not(feature = "camera"), allow(dead_code))]
     pub(crate) fn progress(&self, held: usize, needed: usize) -> bool {
         self.tx
@@ -191,7 +264,10 @@ impl Emitter {
 
     /// Hands `bytes` over if `accept` takes them. True when the channel should stop: the
     /// reply was sent and the caller wants no more, or nobody listens any longer.
-    #[cfg_attr(not(any(feature = "audio", feature = "camera")), allow(dead_code))]
+    #[cfg_attr(
+        not(any(feature = "audio", feature = "camera", feature = "bluetooth", test)),
+        allow(dead_code)
+    )]
     pub(crate) fn reply(&self, bytes: Vec<u8>) -> bool {
         if !(self.opts.accept)(&bytes) {
             return !self.status("received something this step does not expect, still listening");
@@ -213,26 +289,42 @@ pub fn listen(kinds: &[MediaKind], tx: Sender<MediaEvent>) -> ListenHandle {
     listen_with(kinds, tx, ListenOpts::SHARE_RESPONSE)
 }
 
+/// What the Bluetooth thread is given: the session tag and the commands from the application.
+type BleArgs = Option<(String, Receiver<BleCmd>)>;
+
 /// [`listen`] with the documents to hand over chosen by the caller (e.g.
 /// [`ListenOpts::ENROLL_FRAMES`] for the phone-enrollment flow).
 pub fn listen_with(kinds: &[MediaKind], tx: Sender<MediaEvent>, opts: ListenOpts) -> ListenHandle {
     let stop = Arc::new(AtomicBool::new(false));
     let mut threads = Vec::new();
+    let mut ble = None;
+    let mut ble_tag = None;
     for (i, kind) in kinds.iter().enumerate() {
         if kinds[..i].contains(kind) {
             continue;
         }
         let em = Emitter::new(*kind, tx.clone(), opts);
         let stop = stop.clone();
+        let mut ble_args: BleArgs = None;
+        if *kind == MediaKind::Ble && cfg!(feature = "bluetooth") {
+            let (ctx, crx) = std::sync::mpsc::channel();
+            let tag = ble_link::new_tag();
+            ble = Some(ctx);
+            ble_tag = Some(tag.clone());
+            ble_args = Some((tag, crx));
+        }
         let started = std::thread::Builder::new()
             .name(format!("sshub-media-{kind:?}"))
             .spawn(move || match em.kind {
                 MediaKind::Audio => run_audio(&stop, &em),
                 MediaKind::Camera => run_camera(&stop, &em),
+                MediaKind::Ble => run_ble(&stop, &em, ble_args),
             });
         match started {
             Ok(t) => threads.push(t),
             Err(e) => {
+                ble = None;
+                ble_tag = None;
                 let _ = tx.send(MediaEvent::Status(
                     *kind,
                     format!("cannot start capture: {e}"),
@@ -240,7 +332,12 @@ pub fn listen_with(kinds: &[MediaKind], tx: Sender<MediaEvent>, opts: ListenOpts
             }
         }
     }
-    ListenHandle { stop, threads }
+    ListenHandle {
+        stop,
+        threads,
+        ble,
+        ble_tag,
+    }
 }
 
 #[cfg(feature = "audio")]
@@ -258,4 +355,14 @@ fn run_camera(stop: &AtomicBool, em: &Emitter) {
 #[cfg(not(feature = "camera"))]
 fn run_camera(_stop: &AtomicBool, em: &Emitter) {
     em.status("built without the `camera` feature");
+}
+#[cfg(feature = "bluetooth")]
+fn run_ble(stop: &AtomicBool, em: &Emitter, args: BleArgs) {
+    if let Some((tag, cmds)) = args {
+        ble::run(stop, em, &tag, cmds);
+    }
+}
+#[cfg(not(feature = "bluetooth"))]
+fn run_ble(_stop: &AtomicBool, em: &Emitter, _args: BleArgs) {
+    em.status("built without the `bluetooth` feature");
 }
