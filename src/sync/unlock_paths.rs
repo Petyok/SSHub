@@ -71,6 +71,25 @@ fn snapshot_key(host: &HostUid) -> String {
     format!("snapshot:{}", uid_hex(host))
 }
 
+fn snapshot_state_key(host: &HostUid) -> String {
+    format!("snapshot-state:{}", uid_hex(host))
+}
+
+/// What a snapshot of `host` is bound to locally: the credential's ciphertext and the newest reshare
+/// epoch. A reissue (new DEK, reshare, mode change) changes it, and a snapshot made before holds a share
+/// of the old sharing: it is stale without anyone having to remember to drop it.
+fn credential_state(store: &LauncherStore, host: &HostUid) -> Result<Vec<u8>> {
+    let ct = store
+        .sync_cred_ciphertext(host)?
+        .map(|(c, _)| c)
+        .unwrap_or_default();
+    let newest = super::reshare::reshare_epochs(store)?
+        .into_iter()
+        .max()
+        .unwrap_or(0);
+    Ok(super::crypto::chain_hash(&[ct, newest.to_be_bytes().to_vec()].concat()).to_vec())
+}
+
 /// Keeps the snapshot blob of an earlier reply for the short-code path. A version 2 blob must name this
 /// credential, and a second blob is refused while the first is live: the phone issues one at a time, so
 /// two live codes for one credential mean a restored or hostile phone (use [`forget_snapshot`] after a
@@ -90,8 +109,10 @@ pub(crate) fn remember_snapshot_at(
         new.host_uid.is_none_or(|h| h == *host),
         "the snapshot is for another credential"
     );
+    let state = credential_state(store, host)?;
+    let stale = meta_get(store, &snapshot_state_key(host))?.is_none_or(|s| s != state);
     if let Some(old) = meta_get(store, &snapshot_key(host))? {
-        if old != blob {
+        if old != blob && !stale {
             if let Ok(old) = SnapshotBlob::from_bytes(&old) {
                 ensure!(
                     now - old.issued_at > SNAPSHOT_TTL_SECS || old.issued_at > now + TIMESTAMP_SKEW_GRACE_SECS,
@@ -100,6 +121,7 @@ pub(crate) fn remember_snapshot_at(
             }
         }
     }
+    meta_set(store, &snapshot_state_key(host), &state)?;
     meta_set(store, &snapshot_key(host), blob)
 }
 
@@ -112,7 +134,8 @@ pub fn forget_snapshot(store: &LauncherStore, host: &HostUid) -> Result<()> {
 pub fn apply_reply_ext(store: &LauncherStore, ext: &ReplyExt) -> Result<RoundSummary> {
     let summary = super::hub::courier_ingest(store, &ext.ops)?;
     if let Some((host, blob)) = &ext.snapshot {
-        remember_snapshot(store, host, blob)?;
+        // The snapshot is a convenience: a refusal (a live one is kept) never loses the share or the ops.
+        let _ = remember_snapshot(store, host, blob);
     }
     Ok(summary)
 }
@@ -127,6 +150,11 @@ pub fn share_from_code(
     let blob = meta_get(store, &snapshot_key(host))?
         .filter(|b| !b.is_empty())
         .context("no snapshot is stored for this credential: unlock with the phone once first")?;
+    ensure!(
+        meta_get(store, &snapshot_state_key(host))?
+            .is_some_and(|s| s == credential_state(store, host).unwrap_or_default()),
+        "the credential was reissued since the snapshot was made: unlock with the phone again"
+    );
     snapshot_open_for(
         &SnapshotBlob::from_bytes(&blob)?,
         host,

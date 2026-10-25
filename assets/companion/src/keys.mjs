@@ -13,6 +13,38 @@ export const PHONE_CONTEXT = 'sshub/sync/phone/v1';
 // the profile only prices an offline guess against a stolen browser profile.
 export const PIN_PROFILE = { mem_kib: 65536, iters: 3 };
 export const PIN_MIN_CHARS = 10;
+// Refused as a PIN: fewer than 5 different characters (1111111112, 1212121212), a short block repeated (1234512345), a run
+// of 7 or more consecutive characters up or down (1234567890, 1234567891, abcdefghij; digits wrap 9 to 0) and a few
+// worst-known substrings (password, qwerty). Not a big list on purpose: the length floor and the Argon2id profile are the
+// real price, and the setup screen says to use a passphrase.
+const WEAK_PARTS = ['password', 'passw0rd', 'qwerty', 'asdfgh', 'zxcvbn', 'letmein', 'iloveyou', 'admin', 'welcome', 'abc123', '123abc'];
+export function pinProblem(pin) {
+  const cps = Array.from(pin, (c) => c.codePointAt(0));
+  if (cps.length < PIN_MIN_CHARS) return `The PIN needs at least ${PIN_MIN_CHARS} characters.`;
+  const weak = 'That PIN is too easy to guess. Use a passphrase of several unrelated words instead.';
+  if (new Set(cps).size < 5) return weak;
+  for (let p = 1; p <= 5; p++) if (cps.every((c, i) => i < p || c === cps[i - p])) return weak;
+  const digits = cps.every((c) => c >= 48 && c <= 57);
+  const step = (a, b) => (digits ? (b - a + 10) % 10 : b - a);
+  const up = digits ? 1 : 1;
+  const down = digits ? 9 : -1;
+  let run = 1;
+  let dir = 0;
+  for (let i = 1; i < cps.length; i++) {
+    const s = step(cps[i - 1], cps[i]);
+    if (s === up || s === down) {
+      run = s === dir ? run + 1 : 2;
+      dir = s;
+    } else {
+      run = 1;
+      dir = 0;
+    }
+    if (run >= 7) return weak;
+  }
+  const lower = pin.toLowerCase();
+  if (WEAK_PARTS.some((w) => lower.includes(w))) return weak;
+  return null;
+}
 // Seconds to wait after the n-th wrong PIN in a row: none for two, then 5 s doubling up to an hour.
 export const pinDelaySecs = (n) => (n < 3 ? 0 : Math.min(3600, 5 * 2 ** (n - 3)));
 const MAGIC = new Uint8Array([0x53, 0x53, 0x48, 0x50]); // "SSHP"
@@ -44,17 +76,23 @@ function wrapGeneration(secret32, epoch) {
 
 // The identity at wrap epoch `wrapEpoch`: signing key fixed, wrap keys of the newest generation,
 // `unwrap(blob)` tries every generation from the newest down.
+// A restored phone does not know its wrap generation unless the adopted chain says so, so unwrap also tries the
+// generations above the one it was built for, up to this bound (derived once, then kept).
+export const WRAP_GEN_MAX = 32;
 export function identityOfSecret(secret32, wrapEpoch = 0) {
   const base = identityFromIkm(secret32, PHONE_CONTEXT);
   const gens = [];
   for (let e = 0; e <= wrapEpoch; e++) gens.push(wrapGeneration(secret32, e));
   const cur = gens[gens.length - 1];
-  return {
+  const tryGen = (i, blob) => hybridUnwrap(gens[i].xSecret, gens[i].mlkemDk, blob);
+  const ident = {
     ...base,
     ...cur,
     secret: secret32,
     deviceId: deviceIdOf(base.edPub),
     wrapEpoch,
+    // Highest generation an unwrap actually needed above `wrapEpoch`: a generation the ring uses, so a rotation must start above it.
+    seenWrapEpoch: wrapEpoch,
     // Zeroes every secret this identity holds (the secret, the signing seed, every wrap generation).
     wipe() {
       secret32.fill(0);
@@ -68,7 +106,19 @@ export function identityOfSecret(secret32, wrapEpoch = 0) {
       let last = new Error('no wrap key generation');
       for (let i = gens.length - 1; i >= 0; i--) {
         try {
-          return hybridUnwrap(gens[i].xSecret, gens[i].mlkemDk, blob);
+          const k = tryGen(i, blob);
+          ident.seenWrapEpoch = Math.max(ident.seenWrapEpoch, i);
+          return k;
+        } catch (e) {
+          last = e;
+        }
+      }
+      for (let i = wrapEpoch + 1; i <= WRAP_GEN_MAX; i++) {
+        if (!gens[i]) gens[i] = wrapGeneration(secret32, i);
+        try {
+          const k = tryGen(i, blob);
+          ident.seenWrapEpoch = Math.max(ident.seenWrapEpoch, i);
+          return k;
         } catch (e) {
           last = e;
         }
@@ -76,6 +126,7 @@ export function identityOfSecret(secret32, wrapEpoch = 0) {
       throw last;
     },
   };
+  return ident;
 }
 
 export const generateSecret = () => randomBytes(32);

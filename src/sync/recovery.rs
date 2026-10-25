@@ -17,6 +17,9 @@ use anyhow::{bail, ensure, Result};
 use super::limits::{RECOVERY_TIMELOCK_SECS, TIMESTAMP_SKEW_GRACE_SECS};
 use super::oplog::DeviceId;
 
+/// A recovery stays completable this long after its time lock ended; then it must be started again.
+pub const RECOVERY_READY_WINDOW_SECS: i64 = 3 * 86_400;
+
 /// Approvals from distinct attended devices that authorize a recovery without paper.
 pub const APPROVALS_NEEDED: usize = 2;
 
@@ -32,7 +35,12 @@ pub enum ReenrollVerdict {
     NeedsMoreTime {
         ready_at: i64,
     },
+    /// Everything else holds but the third factor was never proven (a `RedFactor` over this recovery's hash,
+    /// signed by the registered paper or email key). Naming a factor in the op proves nothing.
+    AwaitingFactor,
     Ready,
+    /// A `Ready` recovery nobody completed within [`RECOVERY_READY_WINDOW_SECS`]: it authorizes nothing any more.
+    Lapsed,
     /// The old phone is revoked and the new one enrolled: the recovery is spent.
     Completed,
 }
@@ -240,6 +248,8 @@ impl Recovery {
         let ready_at = first + RECOVERY_TIMELOCK_SECS;
         if now < ready_at {
             ReenrollVerdict::NeedsMoreTime { ready_at }
+        } else if now >= ready_at + RECOVERY_READY_WINDOW_SECS {
+            ReenrollVerdict::Lapsed
         } else {
             ReenrollVerdict::Ready
         }
@@ -332,13 +342,20 @@ pub fn liveness_set(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Ve
 }
 
 fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
-    Ok(super::ceremony::effective_devices(store, None)?
+    Ok(fresh_in(
+        super::ceremony::effective_devices(store, None)?,
+        now,
+    ))
+}
+
+fn fresh_in(devices: Vec<DeviceRow>, now: i64) -> Vec<DeviceRow> {
+    devices
         .into_iter()
         .filter(|d| {
             !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
                 && now - d.last_seen <= LIVE_DEVICE_WINDOW_SECS
         })
-        .collect())
+        .collect()
 }
 
 fn attended_live(row: &DeviceRow) -> bool {
@@ -354,6 +371,43 @@ fn attended_live(row: &DeviceRow) -> bool {
 
 /// Ops of one kind in any state but rejected or void, in log order: a recovery vote is a signed
 /// statement whether or not this device's user has reviewed it yet.
+/// Does a phone-loss recovery of `requester` stand in for the ceremony of `op`, one of its two completion
+/// ops (revoke the lost phone, admit the new one)? Yes when that recovery is `Ready` at `now`, older than
+/// `op`, and no new phone was admitted through it yet: one recovery buys exactly one replacement. The
+/// recovery already was the ceremony (two attended votes or the paper, a distinct third factor, the time
+/// lock with its acknowledgement), and the lost phone cannot sign anything.
+pub(crate) fn ready_recovery_for(store: &LauncherStore, op: &Op, now: i64) -> Result<bool> {
+    for re in signed_ops(store, "PhoneReenroll")?.into_iter().rev() {
+        if re.device_id != op.device_id || re.lamport >= op.lamport {
+            continue;
+        }
+        if !matches!(
+            validate_phone_reenroll_upto(store, &re, now, Some(op.lamport)),
+            Ok(ReenrollVerdict::Ready)
+        ) {
+            continue;
+        }
+        let mut used = false;
+        for add in super::quorum::ops_of(store, "DeviceAdd", Some(&op.device_id))? {
+            used |= add.lamport > re.lamport
+                && add.lamport < op.lamport
+                && add.hash() != op.hash()
+                && matches!(
+                    add.body,
+                    OpBody::DeviceAdd {
+                        kind: DeviceKind::Phone,
+                        ..
+                    }
+                )
+                && super::ceremony::in_force(store, &add)?;
+        }
+        if !used {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 fn signed_ops(store: &LauncherStore, kind: &str) -> Result<Vec<Op>> {
     store.with_conn(|c| {
         let mut st = c.prepare(
@@ -387,6 +441,17 @@ pub fn validate_phone_reenroll(
     op: &Op,
     now: i64,
 ) -> Result<ReenrollVerdict> {
+    validate_phone_reenroll_upto(store, op, now, None)
+}
+
+/// [`validate_phone_reenroll`] judged against the devices in force up to lamport `upto`: what the completion
+/// ops of a recovery use, since they are themselves part of the device view and must not feed back into it.
+fn validate_phone_reenroll_upto(
+    store: &LauncherStore,
+    op: &Op,
+    now: i64,
+    upto: Option<u64>,
+) -> Result<ReenrollVerdict> {
     let OpBody::PhoneReenroll {
         initiated_at,
         via_paper,
@@ -399,7 +464,7 @@ pub fn validate_phone_reenroll(
         bail!("not a PhoneReenroll op");
     };
     let hash = op.hash();
-    let devices = super::ceremony::effective_devices(store, None)?;
+    let devices = super::ceremony::effective_devices(store, upto)?;
     let requester = devices
         .iter()
         .find(|d| d.id == op.device_id)
@@ -444,7 +509,12 @@ pub fn validate_phone_reenroll(
     // this store hold the same chain position they must agree on the head.
     let heads = store.sync_chain_heads()?;
     let mut liveness_ok = true;
-    for d in fresh_devices(store, *initiated_at)? {
+    for d in fresh_in(devices.clone(), *initiated_at) {
+        // A device that joined after the request cannot have been in its liveness set (and enrolling one
+        // during the lock must not stop a recovery).
+        if super::ceremony::joined_after(store, &d.id, op.lamport)? {
+            continue;
+        }
         match liveness.iter().find(|a| a.device_id == d.id) {
             None => liveness_ok = false,
             Some(a) => {
@@ -474,7 +544,7 @@ pub fn validate_phone_reenroll(
         liveness_ok,
     }))?;
 
-    let phone = phone_device(store)?;
+    let phone = super::quorum::phone_device_in(&devices)?;
     let row = |id: &DeviceId| devices.iter().find(|d| d.id == *id);
     let mut events: Vec<(u64, DeviceId, u64, Event)> = Vec::new();
     for a in signed_ops(store, "RecoveryApprove")? {
@@ -530,9 +600,21 @@ pub fn validate_phone_reenroll(
                         by_phone: phone.as_ref() == Some(&c.device_id),
                     }
                 } else {
+                    // The factor is PROVEN for this cancellation (a RedFactor over its hash), not just named.
+                    let proven = match third_factor {
+                        Some(f) => super::ceremony::factor_proven(
+                            store,
+                            &c.hash(),
+                            &c.device_id,
+                            f,
+                            op.lamport,
+                            c.lamport,
+                            &[],
+                        )?,
+                        None => false,
+                    };
                     Event::CancelByDevice {
-                        with_factor: third_factor.is_some()
-                            && row(&c.device_id).is_some_and(attended_live),
+                        with_factor: proven && row(&c.device_id).is_some_and(attended_live),
                     }
                 };
                 events.push((c.lamport, c.device_id.clone(), c.seq, ev));
@@ -543,7 +625,26 @@ pub fn validate_phone_reenroll(
     for (_, _, _, ev) in events {
         let _ = m.apply(ev); // an event that does not qualify changes nothing
     }
-    Ok(m.verdict(now))
+    let v = m.verdict(now);
+    if v == ReenrollVerdict::Ready {
+        let voters: Vec<DeviceId> = signed_ops(store, "RecoveryApprove")?
+            .into_iter()
+            .filter(|a| matches!(&a.body, OpBody::RecoveryApprove { reenroll_hash } if *reenroll_hash == hash))
+            .map(|a| a.device_id)
+            .collect();
+        if !super::ceremony::factor_proven(
+            store,
+            &hash,
+            &op.device_id,
+            third_factor,
+            op.lamport,
+            op.lamport,
+            &voters,
+        )? {
+            return Ok(ReenrollVerdict::AwaitingFactor);
+        }
+    }
+    Ok(v)
 }
 
 // ------------------------------------------------------------------ builders for the UI

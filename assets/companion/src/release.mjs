@@ -93,13 +93,18 @@ export function evaluateChallenge(frame, ctx) {
 
   const f = op.fields;
   const names = Object.keys(f).join(',');
-  if (names !== 'host_uid,request_id,requester' || !/^[0-9a-f]{32}$/.test(f.host_uid) || !/^[0-9a-f]{16}$/.test(f.requester)) {
+  // Rust OpBody::ShareRelease { host_uid, request_id, requester, eph_x25519_pub } in this field order. The three field form
+  // is not emitted or accepted by any Rust path any more, so it is refused here too.
+  if (names !== 'host_uid,request_id,requester,eph_x25519_pub' || !/^[0-9a-f]{32}$/.test(f.host_uid) || !/^[0-9a-f]{16}$/.test(f.requester) || typeof f.eph_x25519_pub !== 'string' || !/^[0-9a-f]{64}$/.test(f.eph_x25519_pub)) {
     return refuse(checks, 'body', 'share release fields are malformed');
   }
   if (!isU64(f.request_id) || typeof f.request_id === 'string') return refuse(checks, 'body', 'share release fields are malformed: the request id is not an integer');
   if (BigInt(f.request_id) !== BigInt(ch.request_id)) return refuse(checks, 'request', 'the operation asks for a different request id than the challenge carries');
   if (f.requester !== op.device_id) return refuse(checks, 'requester', `the operation is signed by ${op.device_id} but names ${f.requester} as the requester`);
-  pass('request', 'request id and requester agree between the operation and the challenge');
+  // The signed op names the ephemeral key the share is sealed to: a challenge frame with another key than the signed one
+  // would send the share to whoever swapped the frame.
+  if (f.eph_x25519_pub !== hexOf(ch.eph_x25519_pub)) return refuse(checks, 'ephemeral', 'the signed operation names another ephemeral key than the challenge carries: the reply would not go to the device that asked');
+  pass('request', 'request id, requester and ephemeral key agree between the operation and the challenge');
 
   const known = Object.prototype.hasOwnProperty.call(ctx.ring, op.device_id) ? ctx.ring[op.device_id] : null;
   const warnings = [];

@@ -44,7 +44,8 @@ export const KNOWN_KINDS = Object.keys(DANGER);
 // be able to reorder or hide the text around it.
 // Every control, format, line and paragraph separator character (\p{Cc} \p{Cf} \p{Zl} \p{Zp}: bidi controls, zero-width
 // and word-joiner characters, soft hyphen, tag characters) plus the invisible fillers and variation selectors.
-const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u034f\u115f\u1160\u180e\u3164\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/gu;
+// Also the blank-looking ones: braille blank, hangul and khmer fillers, and every space separator except U+0020.
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u034f\u115f\u1160\u17b4\u17b5\u180e\u2800\u3164\uffa0\ufe00-\ufe0f\u{e0100}-\u{e01ef}]|(?!\u0020)\p{Zs}/gu;
 export const safeText = (s) =>
   String(s).replace(UNSAFE, (c) => {
     const cp = c.codePointAt(0);
@@ -58,7 +59,7 @@ export const MAX_OP_BYTES = 256 * 1024; // wire.rs MAX_COURIER_OP_BYTES
 const U64_MAX = (1n << 64n) - 1n;
 const I64_MIN = -(1n << 63n);
 const I64_MAX = (1n << 63n) - 1n;
-const inRange = (v, lo, hi) => (typeof v === 'number' || typeof v === 'bigint') && BigInt(v) >= lo && BigInt(v) <= hi;
+const inRange = (v, lo, hi) => (typeof v === 'bigint' || (typeof v === 'number' && Number.isInteger(v))) && BigInt(v) >= lo && BigInt(v) <= hi;
 export const isU64 = (v) => inRange(v, 0n, U64_MAX);
 export function parseOp(bytes) {
   if (bytes.length > MAX_OP_BYTES) throw new Error(`op is larger than ${MAX_OP_BYTES} bytes`);

@@ -47,6 +47,8 @@ pub const MAX_HEADS: usize = 256;
 pub const MAX_GOSSIP_HEADS: usize = 64;
 /// Fork proofs forwarded per round.
 pub const MAX_FORK_PROOFS: usize = 16;
+/// All the fork proofs of one `Heads` message together (a frame holds a mebibyte).
+pub const MAX_FORK_BYTES: usize = 256 * 1024;
 /// `WantTail` requests one side may make per pull phase.
 pub const MAX_WANTS_PER_PHASE: usize = 1024;
 /// Ops one round may deliver in total.
@@ -761,10 +763,18 @@ fn heads_msg(store: &LauncherStore, id: &DeviceIdentity) -> Result<HeadsMsg> {
             .collect::<Vec<_>>())
     })?;
     let mut forks = Vec::new();
+    // A proof is two whole ops: a byte budget for all of them keeps the Heads frame writable.
+    let mut budget = MAX_FORK_BYTES;
     for d in store.sync_devices()? {
         if d.status == DeviceStatus::Compromised && forks.len() < MAX_FORK_PROOFS {
             if let Some(e) = store.sync_fork_evidence(&d.id)? {
-                forks.push(WireFork::of(&e));
+                let proof = WireFork::of(&e);
+                // The peer derives the fork from the tails it pulls anyway.
+                let size = serde_json::to_vec(&proof).map_or(usize::MAX, |v| v.len());
+                if size <= budget {
+                    budget -= size;
+                    forks.push(proof);
+                }
             }
         }
     }
@@ -859,8 +869,10 @@ pub(crate) fn ingest_ops(
     for _pass in 0..4 {
         let mut retry = Vec::new();
         let mut progress = false;
-        for op in queue {
-            match store.sync_ingest(op.clone())? {
+        // One transaction for the whole pass: a frame of ops costs one commit.
+        let outcomes = store.sync_ingest_batch(queue.clone())?;
+        for (op, outcome) in queue.into_iter().zip(outcomes) {
+            match outcome {
                 IngestOutcome::Applied => {
                     sum.applied += 1;
                     progress = true;

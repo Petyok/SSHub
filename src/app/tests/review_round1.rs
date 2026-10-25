@@ -96,7 +96,12 @@ fn f2_host_review_shows_group_and_identity_names_not_counts() {
             OpBody::HostUpsert {
                 host_uid: [4; 16],
                 fields: HostFields {
-                    group_uids: Some(vec![guid, [0xee; 16]]),
+                    // The op-log wants sorted unique uids; the order of the names follows.
+                    group_uids: Some({
+                        let mut u = vec![guid, [0xee; 16]];
+                        u.sort();
+                        u
+                    }),
                     ..Default::default()
                 },
             },
@@ -107,7 +112,7 @@ fn f2_host_review_shows_group_and_identity_names_not_counts() {
     let c = v.changes.iter().find(|c| c.field == "group_uids").unwrap();
     assert!(c.dangerous);
     assert!(
-        c.to.starts_with("prod, (unknown group eeeeeeee"),
+        c.to.contains("prod") && c.to.contains("(unknown group eeeeeeee"),
         "{:?}",
         c.to
     );
@@ -224,6 +229,21 @@ fn f7_control_characters_of_foreign_text_are_escaped_for_the_terminal() {
     let shown = crate::cli::theme::sanitize_foreign(raw);
     assert!(!shown.chars().any(|c| c.is_control()), "{shown:?}");
     assert!(shown.contains("\\u{001b}[2K") && shown.contains("\\u{009b}"));
+    // Bidirectional and invisible format characters do not survive either.
+    let tricky = "evil\u{202e}gnp.exe a\u{200b}b \u{2066}x\u{2069} \u{feff}";
+    let shown = crate::cli::theme::sanitize_foreign(tricky);
+    for c in ['\u{202e}', '\u{200b}', '\u{2066}', '\u{2069}', '\u{feff}'] {
+        assert!(!shown.contains(c), "{shown:?}");
+    }
+    assert!(shown.contains("\\u{202e}"), "{shown}");
+    let more = crate::cli::theme::sanitize_foreign(
+        "a\u{2060}b\u{2064} \u{061c}c\u{2028}d\u{2029}e\u{00ad}f",
+    );
+    for c in [
+        '\u{2060}', '\u{2064}', '\u{061c}', '\u{2028}', '\u{2029}', '\u{00ad}',
+    ] {
+        assert!(!more.contains(c), "{more:?}");
+    }
     // Plain text, including non-ASCII letters above the C1 range, is untouched.
     assert_eq!(
         crate::cli::theme::sanitize_foreign("héllo wörld"),
@@ -314,5 +334,106 @@ fn f5_the_private_agent_does_not_outlive_sshub_killed_by_sigterm() {
 fn f5_the_private_agent_does_not_outlive_sshub_killed_by_sigkill() {
     if agent_ready() {
         killed_holder_leaves_nothing(libc::SIGKILL);
+    }
+}
+
+#[test]
+fn a_device_admission_review_shows_role_kind_and_key_and_a_mode_change_its_cosigner() {
+    use crate::sync::oplog::CredMode;
+    let newcomer = DeviceIdentity::generate().public();
+    let v = view_of(OpBody::DeviceAdd {
+        device: newcomer.clone(),
+        name: "laptop".into(),
+        role: DeviceRole::Holder,
+        attendance: Attendance::Attended,
+        kind: DeviceKind::Terminal,
+        verified_by: VerifiedBy::Sas,
+    });
+    assert!(
+        v.summary.contains("holder") && v.summary.contains("terminal"),
+        "{}",
+        v.summary
+    );
+    assert!(
+        v.summary.contains(&newcomer.device_id()[..8]),
+        "the key is named: {}",
+        v.summary
+    );
+    let v = view_of(OpBody::ModeChange {
+        to: CredMode::Vault,
+        migrated_on: "aabbccddeeff0011".into(),
+        cosigner: Some("0011223344556677".into()),
+    });
+    assert!(v.summary.contains("00112233"), "{}", v.summary);
+}
+
+/// The holder in its own process group, then a signal to the WHOLE group (Ctrl-C, Ctrl-\\ or a
+/// group kill): neither the agent nor its directory may be left.
+fn group_signal_leaves_nothing(signal: i32) {
+    use std::os::unix::process::CommandExt;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("sock");
+    let mut holder = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "app::tests::review_round1::f5_agent_holder",
+            "--nocapture",
+        ])
+        .env("REVIEW_AGENT_HOLDER", &out)
+        .process_group(0)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    for _ in 0..200 {
+        if out.exists() && !std::fs::read(&out).unwrap().is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let sock =
+        std::path::PathBuf::from(std::fs::read_to_string(&out).expect("holder never started"));
+    assert!(listed(&sock).contains("ssh-ed25519"));
+    // SAFETY: kill(2) on the holder's own process group.
+    unsafe { libc::kill(-(holder.id() as i32), signal) };
+    let _ = holder.wait();
+    let mut gone = false;
+    for _ in 0..100 {
+        if !listed(&sock).contains("ssh-ed25519") && !sock.parent().unwrap().exists() {
+            gone = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if !gone {
+        let _ = Command::new("pkill")
+            .args(["-f", &format!("ssh-agent -D -a {}", sock.display())])
+            .status();
+        let _ = std::fs::remove_dir_all(sock.parent().unwrap());
+    }
+    assert!(
+        gone,
+        "signal {signal} to the process group left the agent or its directory"
+    );
+}
+
+#[test]
+fn the_private_agent_and_its_directory_go_with_a_group_sigint() {
+    if agent_ready() {
+        group_signal_leaves_nothing(libc::SIGINT);
+    }
+}
+
+#[test]
+fn the_private_agent_and_its_directory_go_with_a_group_sigquit() {
+    if agent_ready() {
+        group_signal_leaves_nothing(libc::SIGQUIT);
+    }
+}
+
+#[test]
+fn the_private_agent_and_its_directory_go_with_a_group_sigterm() {
+    if agent_ready() {
+        group_signal_leaves_nothing(libc::SIGTERM);
     }
 }

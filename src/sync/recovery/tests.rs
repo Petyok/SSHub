@@ -88,7 +88,7 @@ fn state(name: &str) -> Recovery {
             approve("b"),
             ack(T0 + 10),
             Event::Complete {
-                now: T0 + 30 * 86_400,
+                now: T0 + RECOVERY_TIMELOCK_SECS + 3_600,
             },
         ],
         other => panic!("{other}"),
@@ -187,7 +187,7 @@ fn every_state_against_every_event() {
             let mut r = state(name);
             let ev = match (name, ev) {
                 ("ready", Event::Complete { .. }) => Event::Complete {
-                    now: T0 + 30 * 86_400,
+                    now: T0 + RECOVERY_TIMELOCK_SECS + 3_600,
                 },
                 (_, e) => e.clone(),
             };
@@ -358,6 +358,8 @@ mod over_the_log {
     /// that never writes and judges.
     struct World {
         d: Vec<Dev>,
+        phrase: String,
+        code: String,
     }
 
     const R: usize = 0;
@@ -398,7 +400,18 @@ mod over_the_log {
                 VerifiedBy::Sas,
             )
             .unwrap();
-        World { d }
+        // The ring registered both third factors (ceremonies forced on in these fixtures): the paper, and the
+        // emailed code with the hub as the mailbox duty.
+        let phrase = bip39_encode(&[0x36; 32]);
+        let (email_body, code) = crate::sync::ceremony::factor_register_email(&d[H].did).unwrap();
+        append(
+            &d[R],
+            crate::sync::quorum::paper_registration(&phrase).unwrap(),
+        );
+        append(&d[R], email_body);
+        let w = World { d, phrase, code };
+        w.sync();
+        w
     }
 
     impl World {
@@ -440,7 +453,21 @@ mod over_the_log {
                 },
             );
             self.sync();
+            self.prove(&op, via_paper);
             op
+        }
+
+        /// The requester proves the recovery's third factor: the emailed code when paper authorizes, else
+        /// the paper.
+        fn prove(&self, op: &Op, emailed: bool) {
+            let body = if emailed {
+                crate::sync::ceremony::red_factor_email(&self.d[R].store, &self.code, op).unwrap()
+            } else {
+                let recover = paper_derive(&self.phrase, PaperDomain::Recover).unwrap();
+                crate::sync::ceremony::red_factor_paper(&recover, op)
+            };
+            append(&self.d[R], body);
+            self.sync();
         }
 
         fn verdict(&self, op: &Op, now: i64) -> anyhow::Result<ReenrollVerdict> {
@@ -529,13 +556,24 @@ mod over_the_log {
         );
         w.sync();
         assert_eq!(w.verdict(&op, ready_at).unwrap(), ReenrollVerdict::Ready);
-        append(
+        let named = append(
             &w.d[B],
             OpBody::PhoneReenrollCancel {
                 reenroll_hash: op.hash(),
                 by_phone: false,
                 third_factor: Some(ThirdFactor::Paper),
             },
+        );
+        w.sync();
+        assert_eq!(
+            w.verdict(&op, ready_at).unwrap(),
+            ReenrollVerdict::Ready,
+            "a factor that is only named cancels nothing (review round 3, R3-F2)"
+        );
+        let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
+        append(
+            &w.d[B],
+            crate::sync::ceremony::red_factor_paper(&recover, &named),
         );
         w.sync();
         assert_eq!(
@@ -657,6 +695,169 @@ mod over_the_log {
         assert!(w.verdict(&by_hub, by_hub.timestamp).is_err());
     }
 
+    // crypto round 2, O1: a Ready recovery completes: the lost phone is revoked, the new one admitted, and
+    // the new phone supplies the phone proof of the next Red ceremony.
+    #[test]
+    fn a_ready_recovery_ends_with_a_new_phone_that_can_sign() {
+        use crate::sync::ceremony::{in_force, red_approve_body, red_phone_sign_body, red_status};
+        use crate::sync::quorum::phone_device;
+        use crate::sync::recovery::{ack_body, approve_body, completion_bodies, start_body};
+        let w = world();
+        for x in &w.d {
+            crate::sync::ceremony::test_force(&x.store, false);
+        }
+        let now = crate::store::now_ts();
+        let long_ago = now - 9 * 86_400;
+        let at =
+            |d: &Dev, body: OpBody, t: i64| d.store.sync_append_local_at(&d.id, body, t).unwrap();
+        // With the ceremony really on, the paper registration of the fixture needs its own proofs to be in
+        // force (the first factor of a ring: the phone and a second device, no factor yet).
+        let paper_reg = crate::sync::quorum::ops_of(&w.d[R].store, "FactorRegister", None)
+            .unwrap()
+            .remove(0);
+        at(&w.d[P], red_phone_sign_body(&paper_reg), now);
+        at(&w.d[A], red_approve_body(&paper_reg), now);
+        let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
+        let start = start_body(
+            &w.d[R].store,
+            &w.d[R].id,
+            long_ago,
+            None,
+            ThirdFactor::Paper,
+        )
+        .unwrap();
+        let op = at(&w.d[R], start, long_ago);
+        // The third factor is PROVEN: the paper signs this recovery (R3-F1).
+        at(
+            &w.d[R],
+            crate::sync::ceremony::red_factor_paper(&recover, &op),
+            long_ago + 30,
+        );
+        // Too early: the requester cannot revoke the phone yet.
+        let premature = at(
+            &w.d[R],
+            OpBody::DeviceRevoke {
+                device_id: w.d[P].did.clone(),
+            },
+            long_ago + 5,
+        );
+        w.sync();
+        assert!(!in_force(&w.d[OBS].store, &premature).unwrap());
+        at(&w.d[A], approve_body(&op).unwrap(), long_ago + 60);
+        at(&w.d[B], approve_body(&op).unwrap(), long_ago + 61);
+        at(
+            &w.d[A],
+            ack_body(&op, long_ago + 120).unwrap(),
+            long_ago + 120,
+        );
+        w.sync();
+        // Everybody first saw all of it nine days ago (the clock of the time lock is each device's own).
+        for x in &w.d {
+            x.store
+                .with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_ops SET received_at = timestamp WHERE timestamp < received_at",
+                        [],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert_eq!(
+            w.verdict(&op, now).unwrap(),
+            ReenrollVerdict::Ready,
+            "{:?}",
+            red_status(&w.d[OBS].store, &paper_reg, now)
+        );
+        // Ready: a revocation stamped before the lock ended stays out (its clock is its own stamp), the one
+        // issued now stands without the lost phone's signature, and the replacement is admitted once.
+        assert!(!in_force(&w.d[OBS].store, &premature).unwrap());
+        let new = Dev::new();
+        crate::sync::ceremony::test_force(&new.store, false);
+        let bodies =
+            completion_bodies(&w.d[R].store, &op, now, &new.id.public(), "new phone").unwrap();
+        let revoke = at(&w.d[R], bodies[0].clone(), now);
+        let add = at(&w.d[R], bodies[1].clone(), now + 1);
+        w.sync();
+        assert!(
+            in_force(&w.d[OBS].store, &revoke).unwrap(),
+            "{:?}",
+            red_status(&w.d[OBS].store, &revoke, now)
+        );
+        assert!(
+            in_force(&w.d[OBS].store, &add).unwrap(),
+            "{:?}",
+            red_status(&w.d[OBS].store, &add, now)
+        );
+        assert_eq!(
+            phone_device(&w.d[OBS].store).unwrap(),
+            Some(new.did.clone())
+        );
+        // A second admission through the same recovery is refused.
+        let again = Dev::new();
+        let add2 = at(
+            &w.d[R],
+            OpBody::DeviceAdd {
+                device: again.id.public(),
+                name: "another".into(),
+                role: DeviceRole::Holder,
+                attendance: Attendance::Attended,
+                kind: DeviceKind::Phone,
+                verified_by: VerifiedBy::Sas,
+            },
+            now + 1,
+        );
+        w.sync();
+        assert!(!in_force(&w.d[OBS].store, &add2).unwrap());
+        // The review marks exactly the ops the recovery completes: the revocation of the lost phone and
+        // the one admission, not the premature revocation or a second admission.
+        let rows = w.d[OBS].store.sync_devices().unwrap();
+        let marked = |op: &Op| {
+            crate::app::sync_view::pending_view(&w.d[OBS].store, op, &rows, None)
+                .summary
+                .contains(crate::app::sync_view::COMPLETES_RECOVERY)
+        };
+        assert!(marked(&revoke) && marked(&add));
+        assert!(!marked(&premature) && !marked(&add2));
+        // The new phone is the ring's phone: it signs the next Red ceremony.
+        let reg = at(
+            &w.d[R],
+            OpBody::BulkExport {
+                requester: w.d[R].did.clone(),
+                window_secs: 60,
+            },
+            now + 2,
+        );
+        w.sync();
+        for i in [R, A, B] {
+            new.trust_with(&w.d[i], Attendance::Attended, DeviceKind::Terminal);
+        }
+        new.trust_with(&w.d[P], Attendance::Attended, DeviceKind::Phone);
+        deliver(&w.d[R], &new);
+        // The new phone has the log from the requester now, but the lock ran long before: its clock for the
+        // recovery is what the requester's receipts say, as on the other devices.
+        new.store
+            .with_conn(|c| {
+                c.execute(
+                    "UPDATE sync_ops SET received_at = timestamp WHERE timestamp < received_at",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        append(&new, red_phone_sign_body(&reg));
+        append(&w.d[A], red_approve_body(&reg));
+        append(
+            &w.d[R],
+            crate::sync::ceremony::red_factor_paper(&recover, &reg),
+        );
+        w.sync();
+        deliver(&new, &w.d[OBS]);
+        deliver(&new, &w.d[A]);
+        let st = red_status(&w.d[OBS].store, &reg, now + 3).unwrap();
+        assert!(st.complete, "{st:?}");
+    }
+
     #[test]
     fn a_mirror_cannot_approve_or_acknowledge_a_recovery() {
         let w = world();
@@ -718,6 +919,58 @@ mod over_the_log {
         );
     }
 
+    // review round 3, R3-F1 and R3-F3: the third factor is proven, and a Ready recovery lapses.
+    #[test]
+    fn a_recovery_is_ready_only_with_a_proven_third_factor_and_lapses_unused() {
+        use crate::sync::recovery::RECOVERY_READY_WINDOW_SECS;
+        let w = world();
+        let now = crate::store::now_ts();
+        let op = append(
+            &w.d[R],
+            OpBody::PhoneReenroll {
+                initiated_at: now,
+                signers: vec![],
+                via_paper: false,
+                // Named, never proven.
+                third_factor: ThirdFactor::EmailCode,
+                liveness: crate::sync::recovery::liveness_set(&w.d[R].store, &w.d[R].did, now)
+                    .unwrap(),
+                paper_sig: None,
+            },
+        );
+        w.sync();
+        for x in [A, B] {
+            append(
+                &w.d[x],
+                OpBody::RecoveryApprove {
+                    reenroll_hash: op.hash(),
+                },
+            );
+        }
+        append(
+            &w.d[A],
+            OpBody::RecoveryAck {
+                reenroll_hash: op.hash(),
+                seen_at: now,
+            },
+        );
+        w.sync();
+        let ready_at = now + RECOVERY_TIMELOCK_SECS;
+        assert_eq!(
+            w.verdict(&op, ready_at).unwrap(),
+            ReenrollVerdict::AwaitingFactor
+        );
+        // The paper cannot stand in for a factor the op did not name, and the emailed code must be
+        // proven by the registered key: here the requester proves the named one.
+        w.prove(&op, true);
+        assert_eq!(w.verdict(&op, ready_at).unwrap(), ReenrollVerdict::Ready);
+        assert_eq!(
+            w.verdict(&op, ready_at + RECOVERY_READY_WINDOW_SECS)
+                .unwrap(),
+            ReenrollVerdict::Lapsed
+        );
+    }
+
     #[test]
     fn the_builders_drive_a_recovery_from_start_to_completion() {
         use crate::sync::recovery::{
@@ -731,6 +984,7 @@ mod over_the_log {
             start_body(&w.d[R].store, &w.d[R].id, now, None, ThirdFactor::Paper).unwrap(),
         );
         w.sync();
+        w.prove(&op, false);
         // The attended devices see it, the requester and the unattended hub do not owe an acknowledgement.
         assert_eq!(
             unacknowledged(&w.d[A].store, &w.d[A].id, now)

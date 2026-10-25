@@ -355,6 +355,11 @@ sshub sync-exemption on|off <device>          # master-phrase exemption (on need
 sshub sync-export --window <seconds> --out <path> [--wait <seconds>]   # bulk export (Red, window <= 3600 s, 0600 file)
 sshub sync-migrate [--remove-local]           # replicate this profile's saved secrets
 sshub sync-import-kit                         # second machine: set up the Vault from the kit and the phrase
+sshub sync-phone-enroll [--ble]               # enroll the phone as text: frames (base64) on stdin and stdout, the four words, then y or n (--ble: the frames also over Bluetooth)
+sshub sync-notice <op-id> [--ble]             # the kind 3 notice (base64) of a Red op for the phone (--ble: also handed over Bluetooth)
+sshub sync-phone-ops [--ble] < ops.txt        # take in the ops the phone copied (kind 5, base64); prints what applied (--ble: from the phone over Bluetooth)
+sshub sync-share-request <host> [--wait 120] [--ble]  # kind 1 challenge out, the phone's kind 2 reply on stdin (or over Bluetooth), opens the credential in this process
+sshub sync-cert-request (--group G | --host H...) [--days 30] [--budget 10] [--ble]   # kind 9 trust-session request for the phone
 # Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected. Admin verbs: 0 ok, 1 error, 2 usage.
 # sync-serve / sync-enroll are what a peer runs over ssh (frames on stdin and stdout); not for interactive use.
 
@@ -620,7 +625,7 @@ First run on a machine with no ring: the app issues a six-word master phrase (fr
 
 Joining: `t` on the hosts tab or `sshub sync-join <host>`. Enrollment shows four words. When both ends have a screen you compare them and answer yes only if they are identical (verified by SAS). When the other end has no terminal (for example `t` enrolls a server over a plain ssh command) the words prove nothing: the dialog says so, and you approve the admission on the strength of the SSH host key you verified for that host (recorded as verified by the SSH host key). Which of the two admitted a device is shown per device on this tab and in `sshub sync-status`. Roles follow ring membership, not who connected: the side that already has a ring invites, a blank side joins, and two different rings are never merged.
 
-A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal. In Vault mode you type the six words (the CLI asks on the terminal without echo). In Quorum mode the CLI writes a share release, syncs with the attended holders it has a host for and waits up to `SSHUB_UNLOCK_WAIT` seconds (default 120) for one of them to approve it: in its TUI, or with `sshub sync-review --approve <id>` there (the id is printed). The CLI does not try the phone or trust-session paths. In Quorum mode the modal asks holders that may release under a trust session, asks attended holders to approve on their screen, and arms the phone: it shows the phone's challenge code and accepts the pasted reply, the 16 character short code or the 24 words, and, in builds with the opt-in `audio` and `camera` features, listens for the phone's sound or reads its code by itself while the modal is open (the modal says when a listener is not compiled in or finds no device). A synced identity's key never touches a disk: it lives in a private `ssh-agent` of this process (and in memory for SFTP) until you lock or quit.
+A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal. In Vault mode you type the six words (the CLI asks on the terminal without echo). In Quorum mode the CLI writes a share release, syncs with the attended holders it has a host for and waits up to `SSHUB_UNLOCK_WAIT` seconds (default 120) for one of them to approve it: in its TUI, or with `sshub sync-review --approve <id>` there (the id is printed). The CLI does not try the phone or trust-session paths. In Quorum mode the modal asks holders that may release under a trust session, asks attended holders to approve on their screen, and arms the phone: it shows the phone's challenge code and accepts the pasted reply, the 16 character short code or the 24 words, and, in builds with the opt-in `audio`, `camera` and `bluetooth` features, listens for the phone's sound, reads its code, or serves it over Bluetooth by itself while the modal is open (the modal says when a listener is not compiled in or finds no device; with Bluetooth it shows the name to pick in the phone page's device list, `SSHub-` and four characters that change every time). A synced identity's key never touches a disk: it lives in a private `ssh-agent` of this process (and in memory for SFTP) until you lock or quit.
 
 While the profile is in a ring, saving a password, a passphrase or an identity's key file (host form, identity form, key generation, the auth prompt's remember choice, `host add --password-stdin`, `identity add`) writes a replicated credential instead of a local keyring entry, and clearing one replicates the clearing. `M` then "Move this machine's saved secrets into the ring" replicates what was saved before.
 
@@ -658,12 +663,13 @@ to = ["me@example.com"]
 from = "sshub@example.com"
 ```
 
-The mail is sent by `sshub sync-serve` on the device that serves the round (the Hub, in a ring with one); SMTP credentials belong to the sendmail command's own configuration, never to this file. The phone receivers are opt-in cargo features, off in release binaries: `audio` (microphone, FSK burst) needs the ALSA development files on Linux (`libasound2-dev` on Debian and Ubuntu) and CoreAudio on macOS; `camera` (webcam, the phone's reverse QR) needs nothing extra on Linux (V4L2) and uses AVFoundation on macOS. The developer check is:
+The mail is sent by `sshub sync-serve` on the device that serves the round (the Hub, in a ring with one); SMTP credentials belong to the sendmail command's own configuration, never to this file. The phone receivers are opt-in cargo features, off in release binaries: `audio` (microphone, FSK burst) needs the ALSA development files on Linux (`libasound2-dev` on Debian and Ubuntu) and CoreAudio on macOS; `camera` (webcam, the phone's reverse QR) needs nothing extra on Linux (V4L2) and uses AVFoundation on macOS; `bluetooth` (Bluetooth Low Energy: the terminal advertises as a GATT peripheral, the phone page connects with Web Bluetooth in Chrome on Android; contract C20 in `docs/host-sync-contract.md`) needs a running `bluetoothd` and an adapter on Linux (BlueZ over D-Bus, `libdbus-1-dev` to build) and uses CoreBluetooth on macOS (the first use asks for Bluetooth access). It carries the same frames as the QR, no pairing and no trust in the link; iOS browsers have no Web Bluetooth. The developer check is:
 
 ```bash
-cargo build --features audio,camera
-cargo clippy --all-targets --features audio,camera -- -D warnings
+cargo build --features audio,camera,bluetooth
+cargo clippy --all-targets --features audio,camera,bluetooth -- -D warnings
 cargo run --example media-probe --features audio,camera   # lists the devices and listens briefly
+cargo run --example media-probe --features bluetooth -- 120 --ble   # advertises, sends a test frame, prints what the page sends back
 ```
 
 #### Where sync keeps its state

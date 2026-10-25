@@ -1061,7 +1061,20 @@ pub const MAX_GRANTS: usize = 3;
 /// The requester looks for a holder's grant of the sharing at `epoch`; `Ok(None)` means none has
 /// arrived yet.
 pub fn peer_poll(store: &LauncherStore, req: &PeerRequest, epoch: u64) -> Result<Option<Share>> {
+    Ok(peer_poll_all(store, req, epoch)?.into_iter().next())
+}
+
+/// Every share granted for `req` at `epoch` by a holder in force, oldest first. A grant written by a
+/// mirror, a revoked device or anyone else enrolled is not a holder's answer and is skipped, so it cannot
+/// pre-empt the real one; a caller whose first share does not combine tries the next.
+pub fn peer_poll_all(store: &LauncherStore, req: &PeerRequest, epoch: u64) -> Result<Vec<Share>> {
     let me = &req.op.device_id;
+    let holders: Vec<DeviceId> = super::ceremony::effective_devices(store, None)?
+        .into_iter()
+        .filter(|d| d.role == DeviceRole::Holder && d.status != DeviceStatus::Compromised)
+        .map(|d| d.id)
+        .collect();
+    let mut out = Vec::new();
     for op in ops_of(store, "ShareGrant", None)? {
         if let OpBody::ShareGrant {
             host_uid,
@@ -1076,14 +1089,15 @@ pub fn peer_poll(store: &LauncherStore, req: &PeerRequest, epoch: u64) -> Result
                 && requester == me
                 && *e == epoch
                 && op.device_id != *me
+                && holders.contains(&op.device_id)
             {
                 if let Ok(share) =
                     super::share_release::unwrap_share_response(&req.eph_secret, sealed)
                 {
-                    return Ok(Some(share));
+                    out.push(share);
                 }
             }
         }
     }
-    Ok(None)
+    Ok(out)
 }

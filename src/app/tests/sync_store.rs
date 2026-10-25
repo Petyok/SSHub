@@ -464,3 +464,45 @@ fn enter_on_a_compromised_device_shows_the_proof_and_the_next_steps() {
     );
     assert!(fork.evidence.iter().any(|l| l.contains("hash")));
 }
+
+#[test]
+fn a_save_that_could_not_be_recorded_for_sync_shows_in_the_status_line() {
+    struct Failing;
+    impl crate::store::LocalChangeSink for Failing {
+        fn changed(
+            &self,
+            _: &rusqlite::Connection,
+            _: crate::store::ChangeScope,
+        ) -> anyhow::Result<()> {
+            anyhow::bail!("the op log is busy")
+        }
+    }
+    let mut app = test_app(vec![]);
+    // Only a profile in a ring records anything for sync.
+    app.store
+        .sync_register_device(
+            &DeviceIdentity::generate().public(),
+            "me",
+            crate::sync::oplog::DeviceRole::Holder,
+            crate::sync::oplog::Attendance::Attended,
+            crate::sync::oplog::DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    app.store.set_local_change_sink(Box::new(Failing));
+    // The row is saved; only the sync record failed.
+    app.store
+        .create_host(&crate::store::NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    app.poll_sync();
+    let notice = app.host_notice.clone().unwrap_or_default();
+    assert!(
+        notice.contains("saved, but not recorded for sync")
+            && notice.contains("the op log is busy"),
+        "{notice}"
+    );
+    // Shown once.
+    app.host_notice = None;
+    app.poll_sync();
+    assert!(app.host_notice.is_none());
+}

@@ -18,6 +18,8 @@ use crate::sync::runtime::RING_SECRET_KEY;
 /// How long a command waits for an attended holder to approve a share release
 /// (`SSHUB_UNLOCK_WAIT`, seconds).
 const DEFAULT_UNLOCK_WAIT_SECS: u64 = 120;
+/// No command waits longer than an hour for a holder, whatever the variable says.
+const MAX_UNLOCK_WAIT_SECS: u64 = 3600;
 /// Pause between looks at the holders.
 const POLL_EVERY: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -25,7 +27,8 @@ fn unlock_wait() -> std::time::Duration {
     let secs = std::env::var("SSHUB_UNLOCK_WAIT")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(DEFAULT_UNLOCK_WAIT_SECS);
+        .unwrap_or(DEFAULT_UNLOCK_WAIT_SECS)
+        .min(MAX_UNLOCK_WAIT_SECS);
     std::time::Duration::from_secs(secs)
 }
 
@@ -35,7 +38,11 @@ fn wait_for_grant(
     every: std::time::Duration,
     mut poll: impl FnMut() -> Option<Share>,
 ) -> Option<Share> {
-    let deadline = std::time::Instant::now() + wait;
+    let deadline = std::time::Instant::now()
+        .checked_add(wait)
+        .unwrap_or_else(|| {
+            std::time::Instant::now() + std::time::Duration::from_secs(MAX_UNLOCK_WAIT_SECS)
+        });
     loop {
         if let Some(share) = poll() {
             return Some(share);
@@ -245,6 +252,37 @@ impl Drop for NoEcho {
 /// The unlocker a CLI command uses when none was injected: needs a ring on
 /// this profile; the ring secret comes from the credential store.
 pub(crate) fn default_unlocker(ctx: &CliContext) -> Result<QuorumUnlocker> {
+    // No ring: say so before anything creates a device key.
+    ensure!(
+        !ctx.store.sync_devices()?.is_empty(),
+        "{}",
+        needs_share_message()
+    );
+    let runtime = runtime_of(ctx)?;
+    unlocker_with(
+        ctx,
+        Box::new(PromptShares {
+            runtime,
+            wait: unlock_wait(),
+            every: POLL_EVERY,
+        }),
+    )
+}
+
+fn runtime_of(ctx: &CliContext) -> Result<crate::sync::runtime::SyncRuntime> {
+    let local = crate::credentials::open_ungated_for_profile(&ctx.profile);
+    Ok(crate::sync::runtime::SyncRuntime::new(
+        ctx.profile.clone(),
+        ctx.store.clone(),
+        load_or_init_identity(&ctx.profile, local.as_ref())?,
+    ))
+}
+
+/// The ring's unlocker with `source` as the way to get the second share.
+pub(crate) fn unlocker_with(
+    ctx: &CliContext,
+    source: Box<dyn ShareSource>,
+) -> Result<QuorumUnlocker> {
     let gate = ctx
         .password_store()
         .shared_gate()
@@ -256,11 +294,6 @@ pub(crate) fn default_unlocker(ctx: &CliContext) -> Result<QuorumUnlocker> {
     );
     let local = crate::credentials::open_ungated_for_profile(&ctx.profile);
     let identity = load_or_init_identity(&ctx.profile, local.as_ref())?;
-    let runtime = crate::sync::runtime::SyncRuntime::new(
-        ctx.profile.clone(),
-        ctx.store.clone(),
-        load_or_init_identity(&ctx.profile, local.as_ref())?,
-    );
     let ring = local
         .get(RING_SECRET_KEY)?
         .and_then(|t| parse_ring_secret(&t).ok());
@@ -268,11 +301,7 @@ pub(crate) fn default_unlocker(ctx: &CliContext) -> Result<QuorumUnlocker> {
         ctx.store.clone(),
         Arc::new(identity),
         gate,
-        Box::new(PromptShares {
-            runtime,
-            wait: unlock_wait(),
-            every: POLL_EVERY,
-        }),
+        source,
         ring,
     ))
 }

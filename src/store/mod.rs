@@ -74,6 +74,14 @@ pub enum ChangeScope {
 /// come from applying a synced op: those use the connection-level helpers.
 pub trait LocalChangeSink: Send + Sync {
     fn changed(&self, conn: &Connection, scope: ChangeScope) -> Result<()>;
+
+    /// Called while the store's connection is NOT held, before [`Self::changed`], when the
+    /// profile is in a ring: anything slow or interactive (a keyring prompt for the device key)
+    /// belongs here. An error skips the recording with a warning; the next sync round
+    /// publishes what was missed.
+    fn prepare(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl LauncherStore {
@@ -139,18 +147,37 @@ impl LauncherStore {
     /// publishes what was missed.
     pub(crate) fn notify_change(&self, scope: ChangeScope) -> Result<()> {
         if let Some(sink) = self.capture.get() {
+            // The device key may need the keyring: never while the connection is held.
+            let in_ring = self.with_conn(|conn| {
+                Ok(
+                    conn.query_row("SELECT EXISTS(SELECT 1 FROM sync_devices)", [], |r| {
+                        r.get::<_, bool>(0)
+                    })?,
+                )
+            })?;
+            if !in_ring {
+                return Ok(());
+            }
+            if let Err(e) = sink.prepare() {
+                self.record_sync_warning(format!("{e:#}"));
+                return Ok(());
+            }
             if let Err(e) = self.with_conn(|conn| sink.changed(conn, scope)) {
-                let msg = format!("{e:#}");
-                if self
-                    .warn_on_stderr
-                    .load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    eprintln!("sshub: warning: {msg}");
-                }
-                *self.sync_warning.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+                self.record_sync_warning(format!("{e:#}"));
             }
         }
         Ok(())
+    }
+
+    /// Keep `msg` as the sync warning to show (and print on stderr in the CLI).
+    pub(crate) fn record_sync_warning(&self, msg: String) {
+        if self
+            .warn_on_stderr
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            eprintln!("sshub: warning: {msg}");
+        }
+        *self.sync_warning.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
     }
 
     /// The failure of the last attempt to record a local write for sync, if any (cleared).

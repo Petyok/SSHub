@@ -11,7 +11,7 @@ import { approveRelease, evaluateChallenge } from '../src/release.mjs';
 import { certRequestProblems, describeCertRequest, issueCert } from '../src/cert.mjs';
 import { describeOp, parseOp, safeText } from '../src/ops.mjs';
 import { planReshare } from '../src/reshare.mjs';
-import { HEAD_PENDING_MESSAGE, adoptOwnChain, appendHeadAttest, confirmNoChain, courierOps, emptyState, issueSnapshot, recordSnapshot, restoredState } from '../src/state.mjs';
+import { HEAD_PENDING_MESSAGE, acceptHead, adoptOwnChain, appendHeadAttest, confirmNoChain, courierOps, emptyState, issueSnapshot, recordSnapshot, restoredState } from '../src/state.mjs';
 import { parseReveal, revealBytes } from '../src/frames.mjs';
 import { snapshotOpen } from '../src/quorum.mjs';
 import { scenario as buildScenario } from './reshare-scenario.mjs';
@@ -44,8 +44,10 @@ function challenge({ op, opSig = new Uint8Array(64), expiry = NOW + 100, request
     rnd(32, 1), be(expiry, 8), rnd(32, 2), be(requestId, 8), u32(opBytes.length), opBytes, opSig, u32(material.length), material,
   );
 }
-const shareReleaseOp = ({ device = requester.deviceId, lamport = 5, epoch = 3, ts = NOW - 10, reqId = '7', req = device } = {}) =>
-  `{"device_id":"${device}","seq":1,"lamport":${lamport},"prev_hash":"${'0'.repeat(64)}","timestamp":${ts},"epoch":${epoch},"alg":[1,1],"body":{"ShareRelease":{"host_uid":"${HOST}","request_id":${reqId},"requester":"${req}"}}}`;
+// eph: the ephemeral key the op names; the challenge() frame carries rnd(32, 2), so the default agrees with it.
+// eph = null writes the old three field body (no Rust path emits it any more).
+const shareReleaseOp = ({ device = requester.deviceId, lamport = 5, epoch = 3, ts = NOW - 10, reqId = '7', req = device, eph = '02'.repeat(32) } = {}) =>
+  `{"device_id":"${device}","seq":1,"lamport":${lamport},"prev_hash":"${'0'.repeat(64)}","timestamp":${ts},"epoch":${epoch},"alg":[1,1],"body":{"ShareRelease":{"host_uid":"${HOST}","request_id":${reqId},"requester":"${req}"${eph === null ? '' : `,"eph_x25519_pub":"${eph}"`}}}}`;
 const ctx = (ring = {}) => ({ now: NOW, identity: phone, ring, aliases: {} });
 
 // ---------------------------------------------------------------- F1: the parser terminates on every malformed input
@@ -139,7 +141,11 @@ test('F3 a restored key does not author until it has its chain head; the head co
   const forged = ops.map((o) => ({ ...o, signature: new Uint8Array(64) }));
   assert.throws(() => adoptOwnChain(restoredState(), id, forged), /does not verify/);
   assert.throws(() => adoptOwnChain(restoredState(), id, [ops[1]].concat(ops[1])), /one chain|nothing/);
-  const r = adoptOwnChain(restored, identityOfSecret(secret), ops);
+  const first = adoptOwnChain(restored, identityOfSecret(secret), ops);
+  assert.equal(first.agreed, false, 'one list is not enough');
+  assert.throws(() => appendHeadAttest(restored, identityOfSecret(secret), NOW + 6, null), /must not sign yet/);
+  assert.equal(adoptOwnChain(restored, identityOfSecret(secret), ops).agreed, true);
+  const r = acceptHead(restored);
   assert.equal(r.head_seq, '2');
   const next = appendHeadAttest(restored, identityOfSecret(secret), NOW + 9, null);
   const op = parseOp(next.canonical);
@@ -151,7 +157,8 @@ test('F3 a key that never signed anything can say so, and then authors from seq 
   const s = restoredState();
   const id = identityOfSecret(rnd(32, 13));
   assert.throws(() => appendHeadAttest(s, id, NOW, null), /must not sign yet/);
-  confirmNoChain(s);
+  assert.throws(() => confirmNoChain(s, id, 'not the id'), /device id/);
+  confirmNoChain(s, id, ` ${id.deviceId.toUpperCase()} `);
   assert.equal(String(parseOp(appendHeadAttest(s, id, NOW, null).canonical).seq), '1');
 });
 
@@ -311,10 +318,11 @@ test('S2 two batches written by ONE device are not two contributors', () => {
   assert.equal(r.ok, false, 'one author with two from-bytes must not combine a share');
   const honest = buildScenario({ phone });
   assert.equal(planReshare(phone, honest.signed, 1, { ring: honest.ring }).ok, true);
+  // SU2: contributors this phone has not verified do not make a plan
   const plan = planReshare(phone, honest.signed, 1, { ring: {} });
-  assert.equal(plan.ok, true);
+  assert.equal(plan.ok, false);
+  assert.match(plan.error, /fewer than 2 contributors/);
   assert.ok(plan.contributors.every((c) => c.known === false), 'contributors the phone does not know are marked');
-  assert.equal(plan.seen.lamport, 0n, 'counters are not adopted from unverified ops');
 });
 
 test('S5 parseReveal accepts only 0 and 1 for the attended flag', () => {
@@ -360,3 +368,17 @@ test('sound: expiry window, kind, requester mismatch, wrong material host', () =
   assert.equal(evaluateChallenge(frame, ctx()).ok, true);
 });
 
+
+test('ShareRelease carries eph_x25519_pub: it must equal the challenge ephemeral key; the three field body is refused', () => {
+  const ok = evaluateChallenge(challenge({ op: shareReleaseOp() }), ctx());
+  assert.equal(ok.ok, true, ok.refusal);
+  const swapped = evaluateChallenge(challenge({ op: shareReleaseOp({ eph: '03'.repeat(32) }) }), ctx());
+  assert.equal(swapped.ok, false);
+  assert.match(swapped.refusal, /another ephemeral key/);
+  const old = evaluateChallenge(challenge({ op: shareReleaseOp({ eph: null }) }), ctx());
+  assert.equal(old.ok, false);
+  assert.match(old.refusal, /malformed/);
+  for (const eph of ['02'.repeat(31), 'zz'.repeat(32), 'AB'.repeat(32)]) {
+    assert.equal(evaluateChallenge(challenge({ op: shareReleaseOp({ eph }) }), ctx()).ok, false, eph);
+  }
+});

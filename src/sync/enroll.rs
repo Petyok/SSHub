@@ -517,7 +517,10 @@ fn run<L: SyncLink>(
     let known = store.sync_devices()?.iter().any(|d| d.id == peer_id);
     // Two members of one ring meeting again (a repeat ceremony, rehabilitation): nothing to hand over, and
     // the one that already has history cannot adopt an anchor. Roles stay what the ring says they are.
-    let repeat = my_ring.is_some() && my_ring == peer_hello.ring;
+    // The hello's ring id is only a claim: it counts only when the peer's verified key is already a
+    // device of this ring in MY table. An unknown key that names my ring is a stranger, and is never
+    // registered as anything without an adopted anchor.
+    let repeat = my_ring.is_some() && my_ring == peer_hello.ring && known;
     let ring = match role {
         // The inviter admits the joiner as a mirror (Yellow on the rest of the ring) and, if it had no
         // ring yet, founds one: the ring id is the founder's device id.
