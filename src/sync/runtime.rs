@@ -823,7 +823,7 @@ mod mail_tests {
         for x in &d {
             settle_red_ops(&x.store, ereg.timestamp + 5).unwrap();
         }
-        remember_email_code(&d[2].store, &code).unwrap();
+        remember_email_code(&d[2].store, &d[2].id, &code).unwrap();
         sync(&d);
         let op = propose(
             0,
@@ -838,7 +838,7 @@ mod mail_tests {
         sync(&d);
         let now = crate::store::now_ts();
         assert_eq!(
-            owed_code_mails(&d[2].store, &d[2].did, now).unwrap().len(),
+            owed_code_mails(&d[2].store, &d[2].id, now).unwrap().len(),
             1,
             "the sender owes the code once the other proofs are in"
         );
@@ -870,7 +870,7 @@ mod mail_tests {
             )
             .unwrap();
         };
-        let owed = || owed_code_mails(&d[2].store, &d[2].did, now).unwrap().len();
+        let owed = || owed_code_mails(&d[2].store, &d[2].id, now).unwrap().len();
 
         // No config: nothing is sent, nothing is marked.
         rt.mail_owed_codes();

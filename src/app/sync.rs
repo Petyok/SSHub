@@ -137,6 +137,9 @@ pub struct RedView {
     pub expired: bool,
     /// A rule that makes the change impossible (too few live holders ...).
     pub blocked: Option<String>,
+    /// A participant rule the proofs break (the same device giving two of them ...): the change
+    /// cannot complete as it stands.
+    pub rule_violation: Option<String>,
     /// Only one attended holder terminal: the second device is waived, the paper needed.
     pub single_machine: bool,
 }

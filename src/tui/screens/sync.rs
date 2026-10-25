@@ -301,6 +301,12 @@ pub fn render_review(frame: &mut Frame, app: &App) {
                 color(app, ColorRole::StatusError),
             ));
         }
+        if let Some(why) = &red.rule_violation {
+            body.push(Line::styled(
+                format!("  rule broken: {why}"),
+                color(app, ColorRole::StatusError),
+            ));
+        }
         if red.expired {
             body.push(Line::styled(
                 "  the time for this ceremony ran out: reject it and propose it again",

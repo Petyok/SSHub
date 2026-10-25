@@ -540,6 +540,7 @@ fn red_view(store: &LauncherStore, op: &Op) -> Option<super::sync::RedView> {
             .collect(),
         expired: st.expired,
         blocked: st.blocked,
+        rule_violation: st.rule_violation,
         single_machine: st.single_machine_ring,
     })
 }

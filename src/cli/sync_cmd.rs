@@ -788,7 +788,8 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
                     "reason": v.reason,
                     "ceremony": v.red.as_ref().map(|r| json!({
                         "have": r.have, "missing": r.missing, "expired": r.expired,
-                        "blocked": r.blocked, "single_machine": r.single_machine,
+                        "blocked": r.blocked, "rule_violation": r.rule_violation,
+                        "single_machine": r.single_machine,
                     })),
                     "changes": v.changes.iter().map(|c| json!({
                         "field": c.field, "from": c.from, "to": c.to, "dangerous": c.dangerous,
@@ -829,6 +830,9 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             }
             if let Some(why) = &red.blocked {
                 println!("    impossible as it stands: {}", plain(why));
+            }
+            if let Some(why) = &red.rule_violation {
+                println!("    rule broken: {}", plain(why));
             }
             if red.expired {
                 println!("    expired: reject it and propose it again");

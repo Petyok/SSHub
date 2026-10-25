@@ -348,7 +348,7 @@ sshub sync-revoke <device>                    # revoke a device (Red for a holde
 sshub sync-role <device> holder|mirror        # promote or demote (Red)
 sshub sync-approve <op-id>                    # second-device vote on a Red change
 sshub sync-factor <op-id> --paper|--email-code   # third factor, read without echo
-sshub sync-factor-register paper|email [--sender <device>]
+sshub sync-factor-register paper|email [--sender <this device>]   # the emailed code is kept, sealed, only on its sender: register on the device that will mail it
 sshub sync-recovery start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status
 sshub sync-mode vault|quorum [--cosigner <device>]   # two steps: the first call proposes the change (Red); run it again once its ceremony completed to re-encrypt the credentials
 sshub sync-exemption on|off <device>          # master-phrase exemption (on needs the TUI)
