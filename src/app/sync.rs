@@ -728,6 +728,10 @@ impl App {
     /// worker's events into the [`SyncView`]. This is the one place worker
     /// events become view state.
     pub fn poll_sync(&mut self) {
+        // A save that could not be recorded for sync is still saved: say so in the status line.
+        if let Some(warning) = self.store.take_sync_warning() {
+            self.host_notice = Some(format!("saved, but not recorded for sync: {warning}"));
+        }
         self.poll_unlock_resume();
         self.forward_sync_intents();
         super::sync_phone::tick(self);
