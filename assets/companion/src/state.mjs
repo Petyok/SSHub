@@ -131,21 +131,22 @@ export async function loadState(kv) {
   // A copy: the memory backend hands out the stored object itself, IndexedDB a clone; callers mutate their state in place.
   return s && s.v === 1 ? JSON.parse(JSON.stringify(s)) : emptyState();
 }
-// Two copies of the page on one storage (the installed page and a tab) would each append the same seq and fork the chain.
-// A save therefore only goes through when the in-memory chain extends the stored one (same op at the stored length).
-// `replace` is for the deliberate resets (new key, restore) that start a chain over. The check and the write run under a
-// Web Lock where there is one, so two tabs cannot interleave them.
+// Two copies of the page on one storage (the installed page and a tab) would each append the same seq and fork the chain,
+// or overwrite each other's short-code records, enrollments and names. Every stored state carries a version counter (`rev`);
+// a save only goes through when the stored counter is the one this copy loaded, and then bumps it. `replace` is for the
+// deliberate resets (new key, restore): it always writes, one above whatever is stored, so a stale copy refuses afterwards.
+// The check and the write run under a Web Lock where there is one, so two tabs cannot interleave them.
 // ponytail: without navigator.locks the read and the write are two storage calls; a very tight race is still possible.
 export async function saveState(kv, state, { replace = false } = {}) {
   const write = async () => {
-    if (!replace) {
-      const stored = await kv.get('state');
-      const sc = stored && stored.v === 1 && Array.isArray(stored.chain) ? stored.chain : [];
-      if (sc.length && !(state.chain[sc.length - 1] && state.chain[sc.length - 1].hash === sc[sc.length - 1].hash)) {
-        throw new Error('Another copy of this page changed this phone since this one started. Close the other copy and reload this page.');
-      }
+    const stored = await kv.get('state');
+    const have = stored && stored.v === 1 ? Number(stored.rev || 0) : 0;
+    if (!replace && have !== Number(state.rev || 0)) {
+      throw new Error('Another copy of this page changed this phone since this one started. Close the other copy and reload this page.');
     }
-    await kv.set('state', JSON.parse(JSON.stringify(state)));
+    const next = have + 1;
+    await kv.set('state', JSON.parse(JSON.stringify({ ...state, rev: next })));
+    state.rev = next;
   };
   const locks = globalThis.navigator && globalThis.navigator.locks;
   return locks ? locks.request('sshub-companion-state', write) : write();

@@ -66,6 +66,7 @@ export function cutFrame(frame, frameId, chunk) {
   if (!frameLooksValid(frame)) throw new Error('not a SSHub frame (SWR1, kind 1 to 10)');
   if (frame.length > BLE.MAX_FRAME_BYTES) throw new Error('frame is larger than 1 MiB');
   const count = chunkCount(frame.length, chunk);
+  if (count > 0xffff) throw new Error(`the frame needs ${count} chunks of ${chunk} bytes, more than the 65535 a frame may have`);
   const out = [];
   let at = 0;
   for (let idx = 0; idx < count; idx++) {
@@ -208,14 +209,34 @@ export class BleSession {
     this.arm('idle', this.tm.IDLE_MS, () => this.end('nothing heard from the terminal', true, BYE.TIMEOUT));
     switch (m[0]) {
       case T.HELLO_ACK: {
-        if (this.state !== 'hello' || m.length < 5) return;
+        if ((this.state !== 'hello' && this.state !== 'open') || m.length < 5) return;
         const [ver, chunk, window] = [m[1], rd16(m, 2), m[4]];
         if (ver !== 1) return this.end(`the terminal speaks version ${ver}`, true, BYE.ERROR);
         if (chunk < BLE.CHUNK_MIN || chunk > this.proposal || window < 1) return this.end('the terminal answered HELLO with unusable numbers', true, BYE.ERROR);
+        const restart = this.state === 'open';
         this.chunk = chunk;
         this.window = window;
         this.inbox = new Reassembler({ chunk, window, maxFrame: this.maxFrame });
+        this.clear(this.timers.frame);
         this.state = 'open';
+        if (restart) {
+          // C20: a HELLO_ACK while open restarts the session: the half-received frame is forgotten and the frame in
+          // flight is queued again under a new frame_id.
+          const o = this.out;
+          if (o) {
+            let msgs;
+            try {
+              o.id = this.nextId;
+              this.nextId = o.id === 0xffff ? 1 : o.id + 1;
+              msgs = cutFrame(o.frame, o.id, chunk);
+            } catch (e) {
+              return this.finishOut(e);
+            }
+            Object.assign(o, { msgs, acked: 0, sent: 0, high: 0, went: false, retries: 0 });
+            this.pump();
+          }
+          return;
+        }
         this.clear(this.timers.hello);
         this.helloDone.resolve({ chunk, window });
         this.helloDone = null;
@@ -223,9 +244,10 @@ export class BleSession {
       }
       case T.DATA: {
         if (this.state !== 'open') return;
-        const first = m.length >= 7 && rd16(m, 3) === 0;
+        const had = !!this.inbox.cur;
         const r = this.inbox.push(m);
-        if (first && this.inbox.cur) this.arm('frame', this.tm.FRAME_MS, () => {
+        // The frame window starts when the frame starts: a repeated chunk 0 does not re-arm it.
+        if (!had && this.inbox.cur) this.arm('frame', this.tm.FRAME_MS, () => {
           const id = this.inbox.cur && this.inbox.cur.id;
           this.inbox.abortCurrent();
           if (id) this.write(abortMsg(id, ABORT.TIMEOUT));
@@ -266,7 +288,7 @@ export class BleSession {
       return Promise.reject(e);
     }
     return new Promise((resolve, reject) => {
-      this.out = { id, msgs, acked: 0, sent: 0, retries: 0, resolve, reject, pumping: false };
+      this.out = { id, frame, msgs, acked: 0, sent: 0, high: 0, went: false, retries: 0, resolve, reject, pumping: false };
       this.pump();
     });
   }
@@ -279,6 +301,7 @@ export class BleSession {
       while (this.out === o && o.sent < o.msgs.length && o.sent - o.acked < this.window) {
         const msg = o.msgs[o.sent];
         o.sent += 1;
+        o.high = Math.max(o.high, o.sent);
         await this.send(msg);
         if (this.out === o) this.arm('ack', this.tm.ACK_MS, () => this.ackTimeout(o));
       }
@@ -291,9 +314,23 @@ export class BleSession {
 
   gotAck(id, next) {
     const o = this.out;
-    if (!o || o.id !== id || next <= o.acked || next > o.msgs.length) return;
+    // Any ACK up to the highest chunk ever sent counts (it may answer chunks sent before a go-back); beyond that the
+    // peer claims chunks that never left this phone.
+    if (!o || o.id !== id || next > o.high) return;
+    if (next === o.acked) {
+      // C20: an ACK equal to the last acknowledged next while chunks are outstanding means a gap: go back once, then
+      // wait for progress before doing so again.
+      if (o.high > o.acked && !o.went) {
+        o.went = true;
+        o.sent = o.acked;
+        this.pump();
+      }
+      return;
+    }
+    if (next < o.acked) return;
     o.acked = next;
     o.retries = 0;
+    o.went = false;
     if (next === o.msgs.length) return this.finishOut(null);
     this.arm('ack', this.tm.ACK_MS, () => this.ackTimeout(o));
     this.pump();

@@ -95,8 +95,9 @@ PIN again. After two wrong PINs in a row each further wrong try makes the page w
 and the wait survives a reload. Tries are counted one at a time, so tapping Unlock quickly does not count five wrong
 PINs as one. Someone who can edit the browser's storage can reset that counter: it protects
 against a person holding the unlocked-looking screen, not against a copy of the storage, where only the length of the
-PIN and the Argon2id cost count. A PIN of one repeated character or an ascending or descending run (1111111111,
-1234567890) is refused.
+PIN and the Argon2id cost count. A PIN with fewer than 5 different characters, a short block repeated (1234512345),
+a run of 7 or more consecutive characters (1234567890, abcdefghij) or a well-known word (password, qwerty) is refused:
+use a passphrase of several unrelated words.
 
 ## Enrollment
 
@@ -142,6 +143,10 @@ The approval screen is built from the signed operation bytes, not from any text 
 A requester this phone has never met cannot be checked: the page refuses to enable **Approve** until you have typed
 the requester's device id (shown in the warning) into the box. Approve such a request only if you started it yourself
 on a terminal and its id is the one printed there.
+
+The signed request names the ephemeral key the reply is sealed to (`eph_x25519_pub`, next to the host, the request id
+and the requester). The page refuses a request whose signed key differs from the key in the challenge frame, and a
+request without the field (the older three-field form no terminal writes any more).
 
 Options before you approve: show a QR code, copy to the clipboard, play a sound (fast or slow), and optionally
 issue a short code. Tap **Approve and release**. The phone then fires every channel you left on:
@@ -250,9 +255,9 @@ keeps no old shares. Menu **Reshare and wrap keys**: **Rotate wrap keys** first 
 they derive from the same 24 words), then **Adopt a reshare** and scan or paste the reshare ops a terminal shows for
 the phone. The page shows the epoch, the holder number, how many credentials are ready and the contributors (with
 "signature not checked" for contributors it has never met), and **Publish the new shares** adds the phone's new
-shares, sealed, to its chain for a terminal to take. At least two contributors must be terminals this phone enrolled
-with and whose signature verifies; a holder id that is not a 16 character device id, or an epoch outside the 64 bit
-range, ends on a refusal. The screen states the consequence of this design: a revocation
+shares, sealed, to its chain for a terminal to take. Only the contributions of terminals this phone enrolled with, whose
+signature verifies, are combined, and at least two of them are needed per credential; a holder id that is not a 16
+character device id, or an epoch outside the 64 bit range, ends on a refusal. The screen states the consequence of this design: a revocation
 needs at least two other terminal holders to contribute, so a ring of two terminals plus the phone cannot revoke a
 terminal by resharing (the paper phrase is offline and cannot contribute either); add a third terminal first.
 
@@ -267,8 +272,9 @@ is signed or sealed end to end exactly as on a camera or a speaker, so a wrong d
 checks a forged QR code fails. The session lasts while you move through one ceremony and ends (BYE, disconnect) when you
 return to the home screen or the page locks. The page speaks contract C20 (service
 `b62f7d3f-0001-42dd-8371-6ffd96411583`, chunks of at most 244 bytes with a CRC, a window of 8, retries after 5 s) and
-keeps `connect-src 'none'`: Web Bluetooth is not a network API. A frame the terminal pushes before the receiving
-screen is up waits for it.
+keeps `connect-src 'none'`: Web Bluetooth is not a network API. A frame the terminal pushes while no screen takes it
+(between two steps of enrollment or of the head adoption) waits, the newest per kind, for the next receiving screen:
+tap **Receive over Bluetooth** there. Two identical entries for the terminal's name in the browser list mean: stop.
 
 ## Handing ops to a terminal without a camera
 
@@ -340,8 +346,9 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
   still look right. Compare with the newest seq of this phone on a terminal. The terminal does not yet vouch for the
   head with its own signature; until it does, this is the limit. A wrongly adopted head makes the next op reuse a seq
   the ring holds, which the ring reads as a fork.
-- Two copies of the page on one browser storage (the installed page and a tab): the one that is behind refuses to
-  save ("Another copy of this page changed this phone"). Close one and reload the other.
+- Two copies of the page on one browser storage (the installed page and a tab): every save carries a version counter,
+  and the copy that is behind refuses to save anything (chain, short codes, enrollments, names): "Another copy of this
+  page changed this phone". Close one and reload the other. A restore in one copy makes every other copy refuse.
 - Names and values from other devices are shown with every control, format, line, paragraph, filler and space
   separator character (all but the plain space) written as an escape, never raw. After a reload only the stored
   time keeps a wrong-PIN delay; while the page stays open a forward clock change does not end it.
