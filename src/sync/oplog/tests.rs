@@ -3347,5 +3347,8 @@ fn a_non_ascii_byte_in_a_state_hex_field_does_not_panic_the_cache_rebuild() {
             crate::sync::oplog::checkpoint::rebuild_caches_for_test(c)
         })
         .unwrap();
-    assert!(a.store.sync_devices().is_ok(), "the store is still usable");
+    assert!(
+        a.store.sync_chain_heads().is_ok(),
+        "the store is still usable (not poisoned)"
+    );
 }
