@@ -111,6 +111,9 @@ check (unlike a headless machine reached over ssh, where the words prove nothing
    (someone sits between you). Hold the phone's confirmation QR to the terminal camera, then scan the terminal's
    confirmation.
 
+Each frame the phone shows during enrollment is also offered as text under **Show as text for a terminal without a camera**
+(the same bytes as the QR code, base64, with a Copy button): a terminal that has no camera takes the phone's frames by paste.
+
 Only after the terminal's signed confirmation does the phone record the terminal. Declining or a bad signature
 enrolls nothing. The terminal then adds the phone to the ring (promotion to holder is a separate step on the
 terminal).
