@@ -463,7 +463,7 @@ pub(crate) fn pending_view(
         }
         OpBody::ExemptionSet { device_id, slot } => match slot {
             Some(key) => format!(
-                "enable the master-phrase exemption for {} (slot key {})",
+                "enable the master-phrase exemption for {} (slot key {}, computed by that machine itself: only as trustworthy as it is)",
                 device_name(devices, device_id),
                 short(&key.device_id())
             ),

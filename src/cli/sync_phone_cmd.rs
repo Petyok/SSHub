@@ -285,18 +285,26 @@ impl ShareChallenge {
         })
     }
 
-    /// Open the phone's kind 2 text; its courier ops and snapshot are taken in.
-    pub fn open(&self, store: &LauncherStore, reply: &str) -> Result<crate::sync::crypto::Share> {
+    /// Open the phone's kind 2 text. The share is what matters: its courier ops and snapshot are
+    /// taken in on the way, and a failure of that is returned as a warning, not an error (the
+    /// share was received and is valid; the TUI reports it the same way).
+    pub fn open(
+        &self,
+        store: &LauncherStore,
+        reply: &str,
+    ) -> Result<(crate::sync::crypto::Share, Option<String>)> {
         let r = crate::sync::unlock_paths::open_phone_reply_clipboard(
             reply,
             &self.challenge,
             &self.eph,
             &self.phone_ed25519,
         )?;
-        if let Some(ext) = &r.ext {
-            crate::sync::unlock_paths::apply_reply_ext(store, ext)?;
-        }
-        Ok(r.share)
+        let warning = r.ext.as_ref().and_then(|ext| {
+            crate::sync::unlock_paths::apply_reply_ext(store, ext)
+                .err()
+                .map(|e| format!("reply accepted; courier ops not kept: {e:#}"))
+        });
+        Ok((r.share, warning))
     }
 }
 
@@ -584,7 +592,10 @@ fn share_request(
         Duration::from_secs(a.wait),
     )
     .with_context(|| format!("no reply from the phone within {} s", a.wait))?;
-    let share = ch.open(store, &line)?;
+    let (share, warning) = ch.open(store, &line)?;
+    if let Some(w) = warning {
+        emit(out, a.json, "warning", plain(&w), json!({"warning": w}));
+    }
     let unlocker = super::unlock::unlocker_with(&ctx, Box::new(GivenShare(share)))?;
     let key = crate::credentials::host_key(host.id);
     crate::credentials::ensure_unlocked(&[crate::credentials::SecretRef::Key(key)], &unlocker)
