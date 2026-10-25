@@ -1196,3 +1196,167 @@ mod review {
         assert_eq!(plain_text("evil\nBcc: x\u{1b}[2K\r."), "evilBcc: x[2K.");
     }
 }
+
+// ------------------------------------------------ phone admission through a CLI peer
+
+/// A ring of two terminals (proposer `r`, second holder `a`) and a phone that only the proposer
+/// (and the phone itself) knows: the state right after `sync-phone-enroll` on the proposer.
+fn phone_admission_world() -> (Dev, Dev, Dev, Op) {
+    let (r, a, ph) = (Dev::new(), Dev::new(), Dev::new());
+    for x in [&r, &a, &ph] {
+        crate::sync::ceremony::test_force(&x.store, false);
+    }
+    for x in [&r, &a] {
+        for y in [&r, &a] {
+            x.store
+                .sync_register_device(
+                    &y.id.public(),
+                    "terminal",
+                    DeviceRole::Holder,
+                    Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+        }
+    }
+    // What `admit_phone` does on the proposer: register the phone locally, propose its admission.
+    r.store
+        .sync_register_device(
+            &ph.id.public(),
+            "phone",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Phone,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    ph.store
+        .sync_register_device(
+            &r.id.public(),
+            "terminal",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    let add = append(
+        &r,
+        OpBody::DeviceAdd {
+            device: ph.id.public(),
+            name: "phone".into(),
+            role: DeviceRole::Holder,
+            attendance: Attendance::Attended,
+            kind: DeviceKind::Phone,
+            verified_by: VerifiedBy::Sas,
+        },
+    );
+    (r, a, ph, add)
+}
+
+#[test]
+fn a_phone_is_admitted_on_a_peer_that_never_heard_of_it() {
+    let (r, a, ph, add) = phone_admission_world();
+    let known = |x: &Dev| {
+        x.store
+            .sync_devices()
+            .unwrap()
+            .iter()
+            .any(|d| d.id == ph.did)
+    };
+    assert!(!known(&a), "the second holder starts without the phone");
+    // The phone sees the notice and signs for its own admission; the proposer carries both.
+    pull(&r, &ph);
+    append(&ph, red_phone_sign_body(&add));
+    pull(&ph, &r);
+    pull(&r, &a);
+    pull(&a, &r);
+    // The second holder holds the DeviceAdd (pending) and the phone's proof (an unknown author).
+    assert!(a
+        .store
+        .sync_pending()
+        .unwrap()
+        .iter()
+        .any(|o| o.hash() == add.hash()));
+    let proof_row_unknown = a
+        .store
+        .sync_pending_with_reasons()
+        .unwrap()
+        .iter()
+        .any(|(o, why)| o.device_id == ph.did && why == "unknown-author");
+    assert!(
+        proof_row_unknown,
+        "the phone's proof waits as an unknown author"
+    );
+    // The ceremony counts the phone's proof for its own admission, from the key in the DeviceAdd.
+    append(&a, red_approve_body(&add));
+    let now = add.timestamp + 60;
+    let st = red_status(&a.store, &add, now).unwrap();
+    assert!(st.have.contains(&RedProof::Phone), "{st:?}");
+    assert!(st.have.contains(&RedProof::SecondDevice), "{st:?}");
+    assert!(st.complete, "{st:?}");
+    assert_eq!(
+        settle_red_ops(&a.store, now).unwrap().applied,
+        vec![add.hash()]
+    );
+    assert!(known(&a), "the phone is a device of the second holder now");
+    // Its later ops are known-author everywhere: seq 1 (the proof) is released, seq 2 is plain.
+    let later = append(&ph, red_phone_sign_body(&add));
+    pull(&ph, &r);
+    pull(&r, &a);
+    let ops = a.store.sync_chain_tail(&ph.did, 0).unwrap();
+    assert!(
+        ops.iter().any(|o| o.hash() == later.hash()),
+        "the phone's later op is part of its chain at the second holder"
+    );
+    assert!(a
+        .store
+        .sync_pending_with_reasons()
+        .unwrap()
+        .iter()
+        .all(|(o, _)| o.device_id != ph.did));
+}
+
+#[test]
+fn a_proof_for_its_own_admission_is_checked_against_the_key_in_the_device_add() {
+    let (r, a, ph, add) = phone_admission_world();
+    // A stranger claims the phone's id: its signature is not by the key the DeviceAdd carries.
+    let stranger = Dev::new();
+    stranger
+        .store
+        .sync_register_device(
+            &r.id.public(),
+            "t",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    pull(&r, &stranger);
+    let mut forged = append(&stranger, red_phone_sign_body(&add));
+    forged.device_id = ph.did.clone();
+    forged.seq = 1;
+    forged.signature = stranger.id.sign(&forged.canonical_bytes());
+    pull(&r, &a);
+    a.store.sync_ingest(forged).unwrap();
+    append(&a, red_approve_body(&add));
+    let st = red_status(&a.store, &add, add.timestamp + 60).unwrap();
+    assert!(!st.have.contains(&RedProof::Phone), "{st:?}");
+    // And a genuine proof for ANOTHER op does not count for this one.
+    let other = append(
+        &r,
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            migrated_on: r.did.clone(),
+            cosigner: None,
+        },
+    );
+    pull(&r, &ph);
+    append(&ph, red_phone_sign_body(&other));
+    pull(&ph, &r);
+    pull(&r, &a);
+    let st = red_status(&a.store, &add, add.timestamp + 60).unwrap();
+    assert!(!st.have.contains(&RedProof::Phone), "{st:?}");
+}
