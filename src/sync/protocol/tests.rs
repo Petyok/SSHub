@@ -1497,3 +1497,137 @@ fn rv_the_largest_accepted_op_fits_a_tail_frame() {
         r.err()
     );
 }
+
+// ============================================================ P7: a large log (measurement)
+
+/// A device on a file-backed database (fsync per commit, like a real profile).
+fn file_dev(dir: &std::path::Path, name: &str) -> Dev {
+    let id = Arc::new(DeviceIdentity::generate());
+    let did = id.public().device_id();
+    let store = Arc::new(LauncherStore::open(dir.join(format!("{name}.db"))).unwrap());
+    crate::sync::ceremony::test_force(&store, true);
+    Dev { store, id, did }
+}
+
+#[test]
+#[ignore = "measurement: run by hand with --ignored --nocapture"]
+fn p7_measure_a_round_over_a_large_log() {
+    use std::time::Instant;
+    let n: usize = std::env::var("P7_OPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4500);
+    let dir = tempfile::tempdir().unwrap();
+    let a = file_dev(dir.path(), "a");
+    let b = file_dev(dir.path(), "b");
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        x.trust(y);
+        x.store
+            .sync_register_device(
+                &x.id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    let t = Instant::now();
+    for i in 0..n {
+        let mut uid = [0u8; 16];
+        uid[..8].copy_from_slice(&(i as u64).to_be_bytes());
+        a.store
+            .sync_append_local(
+                &a.id,
+                OpBody::CredUpdate {
+                    host_uid: uid,
+                    ciphertext: vec![9; 1000],
+                    wrapped_shares: vec![crate::sync::oplog::WrappedShare {
+                        recipient: b.did.clone(),
+                        alg: crate::sync::crypto::ALG_CURRENT,
+                        sealed: vec![1; 900],
+                    }],
+                },
+            )
+            .unwrap();
+    }
+    eprintln!("P7 append {n} ops on a: {:?}", t.elapsed());
+    let (bytes, _) = (a.store.sync_log_growth(0).unwrap().1, 0);
+    eprintln!("P7 log bytes: {bytes}");
+
+    let t = Instant::now();
+    let (cl, sv) = round(&b, &a);
+    eprintln!(
+        "P7 first round b<-a: {:?} client {:?} server {:?}",
+        t.elapsed(),
+        cl.as_ref()
+            .map(|s| (s.applied, s.pending_arrived, s.received, s.rejected))
+            .map_err(|e| e.to_string()),
+        sv.map(|s| s.sent).map_err(|e| e.to_string())
+    );
+    eprintln!("P7 b pending {}", b.store.sync_pending().unwrap().len());
+
+    let t = Instant::now();
+    let anchor = a.store.sync_join_anchor_build(&a.id);
+    eprintln!(
+        "P7 join anchor build: {:?} -> {:?}",
+        t.elapsed(),
+        anchor
+            .as_ref()
+            .map(|x| x.state.len())
+            .map_err(|e| e.to_string())
+    );
+
+    let now = crate::store::now_ts();
+    let t = Instant::now();
+    let proposed = a.store.sync_checkpoint_propose(&a.id, None, now);
+    eprintln!(
+        "P7 a proposes: {:?} {:?}",
+        t.elapsed(),
+        proposed.as_ref().map(|_| ()).map_err(|e| e.to_string())
+    );
+    let t = Instant::now();
+    let r = round(&b, &a);
+    eprintln!(
+        "P7 round with the proposal: {:?} client ok={}",
+        t.elapsed(),
+        r.0.is_ok()
+    );
+    let rows = |x: &Dev| -> Vec<String> {
+        x.store
+            .sync_checkpoints()
+            .unwrap()
+            .iter()
+            .map(|c| {
+                format!(
+                    "{:?} signers={}/{}",
+                    c.status,
+                    c.signers.len(),
+                    c.required.len()
+                )
+            })
+            .collect()
+    };
+    eprintln!("P7 checkpoints a {:?} b {:?}", rows(&a), rows(&b));
+    let verdict = proposed.as_ref().ok().map(|(op, st)| {
+        b.store
+            .sync_checkpoint_verify(op, st)
+            .map_err(|e| e.to_string())
+    });
+    eprintln!("P7 b verifies the proposal while its pending ops wait: {verdict:?}");
+    let t = Instant::now();
+    approve_all(&b);
+    eprintln!("P7 b approves all {n}: {:?}", t.elapsed());
+    for k in 0..3 {
+        let t = Instant::now();
+        let _ = round(&b, &a);
+        let _ = round(&a, &b);
+        eprintln!(
+            "P7 settle round {k}: {:?}; a {:?} b {:?}",
+            t.elapsed(),
+            rows(&a),
+            rows(&b)
+        );
+    }
+}
