@@ -20,6 +20,11 @@ const DANGEROUS_GROUP = new Set([
   'default_proxy_jump', 'default_identity_uid', 'default_username', 'default_port',
   'default_transport', 'default_forward_agent', 'parent_uid',
 ]);
+// Every field the Rust bodies know (op.rs HostFields, GroupFields): a key outside the list is shown as dangerous.
+const KNOWN_FIELDS = {
+  HostUpsert: new Set([...DANGEROUS_HOST, 'name', 'label', 'os_icon', 'tags', 'notes', 'favorite']),
+  GroupUpsert: new Set([...DANGEROUS_GROUP, 'name']),
+};
 // kind -> which leaf rows are dangerous: '*' all, a Set of leaf names, or null for none.
 const DANGER = {
   HostUpsert: DANGEROUS_HOST, GroupUpsert: DANGEROUS_GROUP, HostDelete: '*', GroupDelete: '*',
@@ -37,15 +42,26 @@ export const KNOWN_KINDS = Object.keys(DANGER);
 
 // Control and bidi characters never reach the screen raw: a name from another machine must not
 // be able to reorder or hide the text around it.
-// eslint-disable-next-line no-control-regex
-const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g;
+// Every control, format, line and paragraph separator character (\p{Cc} \p{Cf} \p{Zl} \p{Zp}: bidi controls, zero-width
+// and word-joiner characters, soft hyphen, tag characters) plus the invisible fillers and variation selectors.
+const UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\u034f\u115f\u1160\u180e\u3164\ufe00-\ufe0f\u{e0100}-\u{e01ef}]/gu;
 export const safeText = (s) =>
-  String(s).replace(UNSAFE, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  String(s).replace(UNSAFE, (c) => {
+    const cp = c.codePointAt(0);
+    return cp > 0xffff ? `\\u{${cp.toString(16)}}` : `\\u${cp.toString(16).padStart(4, '0')}`;
+  });
 
 const asBig = (v) => (typeof v === 'bigint' ? v : BigInt(v));
 
 // Strict parse of canonical op bytes. Throws with a reason a person can read.
+export const MAX_OP_BYTES = 256 * 1024; // wire.rs MAX_COURIER_OP_BYTES
+const U64_MAX = (1n << 64n) - 1n;
+const I64_MIN = -(1n << 63n);
+const I64_MAX = (1n << 63n) - 1n;
+const inRange = (v, lo, hi) => (typeof v === 'number' || typeof v === 'bigint') && BigInt(v) >= lo && BigInt(v) <= hi;
+export const isU64 = (v) => inRange(v, 0n, U64_MAX);
 export function parseOp(bytes) {
+  if (bytes.length > MAX_OP_BYTES) throw new Error(`op is larger than ${MAX_OP_BYTES} bytes`);
   let text;
   try {
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -66,6 +82,9 @@ export function parseOp(bytes) {
   for (const k of ['seq', 'lamport', 'timestamp', 'epoch']) {
     if (typeof v[k] !== 'number' && typeof v[k] !== 'bigint') throw new Error(`op ${k} is not an integer`);
   }
+  // The Rust field types: seq, lamport, epoch are u64, timestamp is i64 (canonical.rs get_u64 / get_i64).
+  for (const k of ['seq', 'lamport', 'epoch']) if (!isU64(v[k])) throw new Error(`op ${k} is outside u64`);
+  if (!inRange(v.timestamp, I64_MIN, I64_MAX)) throw new Error('op timestamp is outside i64');
   if (!Array.isArray(v.alg) || v.alg.length !== 2 || !v.alg.every((n) => Number.isInteger(n) && n >= 0 && n < 256)) {
     throw new Error('op alg tag is malformed');
   }
@@ -100,7 +119,7 @@ function flatten(value, path, out, top) {
   }
 }
 
-const iso = (t) => {
+export const iso = (t) => {
   try {
     return new Date(Number(t) * 1000).toISOString().replace('.000Z', 'Z');
   } catch {
@@ -110,7 +129,7 @@ const iso = (t) => {
 
 // description = { kind, headline, requester, rows: [{label, value, danger}], dangerCount }
 // aliases: deviceId -> name the user gave. The requesting device is always named by id and alias.
-export function describeOp(op, aliases = {}) {
+export function describeOp(op, aliases = {}, { now = null, staleAfter = 120 } = {}) {
   const who = (id) => `${aliases[id] ? `${safeText(aliases[id])} ` : '(no name known) '}[${safeText(id)}]`;
   const danger = DANGER[op.kind];
   const rows = [];
@@ -130,12 +149,17 @@ export function describeOp(op, aliases = {}) {
     rows.push({ label: 'Op signed by', value: who(op.device_id), danger: false });
     const leaves = [];
     flatten(op.fields, '', leaves, null);
+    const known = KNOWN_FIELDS[op.kind];
     for (const l of leaves) {
-      const hot = danger === '*' || (danger instanceof Set && (danger.has(l.leaf) || danger.has(l.top)));
-      rows.push({ label: l.path || op.kind, value: l.value, danger: !!hot });
+      const segs = l.path.split('.');
+      let hot = danger === '*' || (danger instanceof Set && segs.some((x) => danger.has(x)));
+      if (known && segs[0] === 'fields' && segs.length > 1 && !known.has(segs[1])) hot = true;
+      rows.push({ label: safeText(l.path || op.kind), value: l.value, danger: !!hot });
     }
   }
-  rows.push({ label: 'Op time', value: iso(op.timestamp), danger: false });
+  // A signed op much older than its request is highlighted (the caller passes the phone clock).
+  const stale = now !== null && Math.abs(now - Number(op.timestamp)) > staleAfter;
+  rows.push({ label: 'Op time', value: stale ? `${iso(op.timestamp)} (${Math.round(Math.abs(now - Number(op.timestamp)))} s from now)` : iso(op.timestamp), danger: stale });
   rows.push({ label: 'Op seq / epoch', value: `${op.seq} / ${op.epoch}`, danger: false });
   return { kind: op.kind, headline, requester, rows, dangerCount: rows.filter((r) => r.danger).length };
 }

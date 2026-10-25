@@ -13,6 +13,9 @@ const SNAPSHOT_TTL_SECS = 7 * 86400;
 const TIMESTAMP_SKEW_GRACE_SECS = 600;
 const SNAPSHOT_MAGIC = [0x53, 0x53, 0x48, 0x4e]; // "SSHN"
 const SNAPSHOT_HEADER = 4 + 1 + 4 + 4 + 8 + 16;
+// Version 2 appends host_uid(16) to the header (so it is part of the AEAD associated data): the blob names the credential
+// it opens, and a terminal can refuse a second live blob for the same host_uid. Version 1 stays readable (test vectors).
+const SNAPSHOT_HEADER_V2 = SNAPSHOT_HEADER + 16;
 const WIRE_MAGIC = [0x53, 0x57, 0x52, 0x31]; // "SWR1"
 const WIRE_VERSION = 1;
 const KIND_CHALLENGE = 1;
@@ -82,10 +85,13 @@ export function normalizeCode(input) {
 
 // snapshot.rs snapshot_open. Returns { ok, share_index, share_bytes }. TTL and profile bounds
 // are checked before any Argon2 work; any failure reports ok false (never a partial share).
-export async function snapshotOpen(blob, code, now) {
+export async function snapshotOpen(blob, code, now, hostUid = null) {
   const fail = { ok: false, share_index: 0, share_bytes: new Uint8Array(0) };
   if (blob.length < SNAPSHOT_HEADER + 24 + 16 || !SNAPSHOT_MAGIC.every((m, i) => blob[i] === m)) return fail;
-  if (blob[4] !== 1) return fail;
+  if (blob[4] !== 1 && blob[4] !== 2) return fail;
+  const headerLen = blob[4] === 2 ? SNAPSHOT_HEADER_V2 : SNAPSHOT_HEADER;
+  if (blob.length < headerLen + 24 + 16) return fail;
+  if (hostUid && (blob[4] !== 2 || !equalBytes(blob.slice(SNAPSHOT_HEADER, SNAPSHOT_HEADER_V2), hostUid))) return fail;
   const memKib = readU32be(blob, 5);
   const iters = readU32be(blob, 9);
   const issuedAt = readI64be(blob, 13);
@@ -96,9 +102,9 @@ export async function snapshotOpen(blob, code, now) {
   const norm = normalizeCode(code);
   if (!norm.ok || norm.code.length !== 16) return fail;
   const key = await argon2idDerive(norm.code, salt, { mem_kib: memKib, iters });
-  const header = blob.slice(0, SNAPSHOT_HEADER);
-  const nonce = blob.slice(SNAPSHOT_HEADER, SNAPSHOT_HEADER + 24);
-  const ct = blob.slice(SNAPSHOT_HEADER + 24);
+  const header = blob.slice(0, headerLen);
+  const nonce = blob.slice(headerLen, headerLen + 24);
+  const ct = blob.slice(headerLen + 24);
   let plain;
   try {
     plain = xchacha20poly1305(key, nonce, header).decrypt(ct);
@@ -114,14 +120,15 @@ const i64be = (n) => beBytes(BigInt.asUintN(64, BigInt(n)), 8);
 
 // snapshot.rs seal_with: the phone issues a short-code snapshot of its own share. Blob header
 // (magic, version, Argon2 profile, issued_at, salt) is the AAD; sealed = nonce || ciphertext.
-export async function snapshotSeal(shareIndex, shareBytes, code, issuedAt, profile, salt, nonce) {
+export async function snapshotSeal(shareIndex, shareBytes, code, issuedAt, profile, salt, nonce, hostUid = null) {
   const header = concat(
     Uint8Array.from(SNAPSHOT_MAGIC),
-    Uint8Array.of(1),
+    Uint8Array.of(hostUid ? 2 : 1),
     u32be(profile.mem_kib),
     u32be(profile.iters),
     i64be(issuedAt),
     salt,
+    ...(hostUid ? [hostUid] : []),
   );
   const key = await argon2idDerive(normalizeCode(code).code, salt, profile);
   const ct = xchacha20poly1305(key, nonce, header).encrypt(concat(Uint8Array.of(shareIndex), shareBytes));

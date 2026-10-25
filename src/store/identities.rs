@@ -4,7 +4,8 @@ use std::path::PathBuf;
 
 use super::migrate::now_ts;
 use super::types::{DeleteIdentityOutcome, Identity, IdentityUpdate, NewIdentity};
-use super::LauncherStore;
+use super::{ChangeScope, LauncherStore};
+use crate::sync::oplog::tier::EntityKind;
 
 const DEFAULT_IDENTITY_NAME: &str = "Default";
 
@@ -34,7 +35,9 @@ impl LauncherStore {
     }
 
     pub fn create_identity(&self, identity: &NewIdentity) -> Result<Identity> {
-        self.with_conn(|conn| create_identity_on(conn, identity))
+        let created = self.with_conn(|conn| create_identity_on(conn, identity))?;
+        self.notify_change(ChangeScope::Identity(created.id))?;
+        Ok(created)
     }
 
     pub fn get_identity(&self, id: i64) -> Result<Option<Identity>> {
@@ -71,7 +74,11 @@ impl LauncherStore {
     }
 
     pub fn update_identity(&self, id: i64, update: &IdentityUpdate) -> Result<Option<Identity>> {
-        self.with_conn(|conn| update_identity_on(conn, id, update))
+        let updated = self.with_conn(|conn| update_identity_on(conn, id, update))?;
+        if updated.is_some() {
+            self.notify_change(ChangeScope::Identity(id))?;
+        }
+        Ok(updated)
     }
 
     /// Count launcher hosts referencing this identity.
@@ -89,9 +96,15 @@ impl LauncherStore {
             return Ok(DeleteIdentityOutcome::InUse { host_count });
         }
 
+        let uid = self.identity_uid(id)?;
         let deleted = self.with_conn(|conn| delete_identity_on(conn, id))?;
 
         if deleted {
+            if let Some(uid) = uid {
+                self.notify_change(ChangeScope::Deleted(EntityKind::Identity, uid))?;
+                // Groups and hosts that named it lose the reference.
+                self.notify_change(ChangeScope::Everything)?;
+            }
             Ok(DeleteIdentityOutcome::Deleted)
         } else {
             Ok(DeleteIdentityOutcome::NotFound)

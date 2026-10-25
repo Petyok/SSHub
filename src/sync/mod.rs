@@ -11,6 +11,7 @@ pub mod cred_ops;
 pub mod crypto;
 pub mod email;
 pub mod enroll;
+pub mod entity_capture;
 pub mod exemption;
 pub mod export;
 pub mod fountain;

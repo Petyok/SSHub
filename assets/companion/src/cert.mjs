@@ -3,14 +3,16 @@
 // from the bytes of the request (kind 9, kind 10). Everything the phone knows about the certificates
 // it issued is read back from its own chain, so there is no second record to drift.
 import { CERT_NEW_HOSTS_PER_DAY, MAX_CERT_REQUEST_HOSTS } from './frames.mjs';
-import { parseOp, safeText } from './ops.mjs';
+import { iso, parseOp, safeText } from './ops.mjs';
 import { appendCertExtend, appendCertIssue, appendCertRevoke } from './state.mjs';
 
 export const CERT_TERM_MAX_SECS = 90 * 86400; // limits.rs
+// A terminal asks for the phone's current epoch plus this much slack (src/app/sync_trust.rs passes 1): a certificate then
+// ends with the next reshare that revokes someone. A wider range would outlive it.
+export const CERT_EPOCH_SLACK = 1n;
 export const EXTEND_WINDOW_SECS = 86400; // one extension per certificate per rolling 24 hours
 
 const fromHex = (s) => Uint8Array.from(s.match(/../g) ?? [], (b) => parseInt(b, 16));
-const iso = (t) => new Date(Number(t) * 1000).toISOString().replace('.000Z', 'Z');
 
 export function describeTerm(secs) {
   const s = Number(secs);
@@ -34,14 +36,14 @@ export function describeCertRequest(req, now, aliases = {}) {
       ...scopeRows,
       { label: 'Term', value: `${describeTerm(term)} (until ${iso(req.expiry)})`, danger: true },
       { label: 'New hosts per day', value: String(req.max_new_hosts_per_day), danger: true },
-      { label: 'Phone epochs it holds for', value: `${req.epoch_lo} to ${req.epoch_hi}`, danger: false },
+      { label: 'Phone epochs it holds for', value: `${req.epoch_lo} to ${req.epoch_hi}`, danger: true },
     ],
     delegateKnown: !!aliases[req.device_id],
   };
 }
 
 // The refusals, each a sentence a person can act on. Returns [] when the phone may sign.
-export function certRequestProblems(req, now, ownId) {
+export function certRequestProblems(req, now, ownId, ownEpoch = null) {
   const out = [];
   const term = req.expiry - BigInt(Math.floor(now));
   if (term < 1n) out.push('The term has already ended: the expiry is not in the future.');
@@ -49,6 +51,8 @@ export function certRequestProblems(req, now, ownId) {
   if (req.max_new_hosts_per_day < 1 || req.max_new_hosts_per_day > CERT_NEW_HOSTS_PER_DAY) out.push(`The daily budget of new hosts must be between 1 and ${CERT_NEW_HOSTS_PER_DAY}, not ${req.max_new_hosts_per_day}.`);
   if (req.scope.hosts && (req.scope.hosts.length < 1 || req.scope.hosts.length > MAX_CERT_REQUEST_HOSTS)) out.push(`A list names 1 to ${MAX_CERT_REQUEST_HOSTS} hosts; use a group for more.`);
   if (req.epoch_lo > req.epoch_hi) out.push('The epoch range is inverted.');
+  else if (req.epoch_hi - req.epoch_lo > CERT_EPOCH_SLACK) out.push(`The epoch range ${req.epoch_lo} to ${req.epoch_hi} is wider than a terminal asks for (this phone's epoch plus ${CERT_EPOCH_SLACK}): the certificate would outlive the next reshare.`);
+  if (ownEpoch !== null && req.epoch_lo !== BigInt(ownEpoch)) out.push(`The range starts at epoch ${req.epoch_lo}, but this phone is at epoch ${ownEpoch}. Deliver this phone's newest ops to the terminal (Export my ops) and ask again.`);
   if (req.device_id === ownId) out.push('The request names this phone as the trusted device. A phone does not delegate to itself.');
   return out;
 }
@@ -106,7 +110,7 @@ export function describeCert(c, aliases = {}) {
 // The three signing entry points: each re-checks its limits at the moment of signing, then chains and
 // signs the op on the phone's own chain. They throw a sentence for the screen.
 export function issueCert(state, identity, req, now) {
-  const problems = certRequestProblems(req, now, identity.deviceId);
+  const problems = certRequestProblems(req, now, identity.deviceId, state.epoch);
   if (problems.length) throw new Error(problems.join(' '));
   return appendCertIssue(state, identity, req, now, null);
 }
