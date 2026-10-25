@@ -35,16 +35,16 @@ echo "--- peer-b sync-review (plain)"
 peer peer-b $SSHUB sync-review 2>&1 || true
 echo "--- peer-b sync-review (json)"
 peer peer-b $SSHUB sync-review --format json 2>&1 || true
-check "web1 address not applied before approval" "! peer peer-b $SSHUB host list 2>/dev/null | grep -q web1.internal"
+check "web1 address not applied before approval" "! peer peer-b $SSHUB host list --format json 2>/dev/null | grep -q web1.internal"
 check "held web1 change is in the review queue" "test -n '$(rid web1.internal)'"
 check "approve held web1 change on peer-b" "peer peer-b $SSHUB sync-review --approve $(rid web1.internal)"
-check "web1 address applied after approval" "peer peer-b $SSHUB host list 2>/dev/null | grep -q web1.internal"
+check "web1 address applied after approval" "peer peer-b $SSHUB host list --format json 2>/dev/null | grep -q web1.internal"
 
 check "peer-a adds host web2" "peer peer-a $SSHUB host add --name web2 --address web2.internal"
 snow peer-b >/dev/null
 check "held web2 change is in the review queue" "test -n '$(rid web2.internal)'"
 check "reject held web2 change on peer-b" "peer peer-b $SSHUB sync-review --reject $(rid web2.internal)"
-check "web2 address absent after rejection" "! peer peer-b $SSHUB host list 2>/dev/null | grep -q web2.internal"
+check "web2 address absent after rejection" "! peer peer-b $SSHUB host list --format json 2>/dev/null | grep -q web2.internal"
 dump_state "after review"
 
 finish "$NAME"
