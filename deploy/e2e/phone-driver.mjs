@@ -110,8 +110,9 @@ async function home() {
   for (let i = 0; i < 4; i++) {
     if (await has('#device-id')) return;
     if (await has('#unlock')) {
+      await page.waitForTimeout(500); // the unlock screen settles after a reload
       await page.fill('#pin', PIN);
-      await page.click('#unlock');
+      await page.click('#unlock', { force: true });
       await waitAny(['#device-id', '#unlock-error']);
       continue;
     }
@@ -130,7 +131,13 @@ async function home() {
 }
 
 async function setup({ words = S.words, pin = PIN } = {}) {
-  // The page draws its first screen asynchronously (it reads its storage first).
+  // The page draws its first screen asynchronously (it reads its storage first). A flow that ended on a screen
+  // without a way back (a refusal) is left by reloading the page, as a person would reopen it.
+  try {
+    await page.waitForSelector('#words-input, #unlock, #device-id', { timeout: 5000 });
+  } catch {
+    await page.reload();
+  }
   await page.waitForSelector('#words-input, #unlock, #device-id', { timeout: 60000 });
   if (await has('#words-input')) {
     await page.fill('#words-input', words);
@@ -203,6 +210,15 @@ function decodeOps(f) {
   }
   if (at !== f.length) throw new Error('ops frame has trailing bytes');
   return out;
+}
+
+// An enrollment frame as the page shows it as text (#enroll-b64), cross-checked against the QR it draws.
+async function enrollFrame() {
+  await page.waitForSelector("#enroll-qr");
+  const t = (await page.locator("#enroll-b64").inputValue()).trim();
+  const qr = b64(await readQr("#enroll-qr"));
+  if (t !== qr) throw new Error("the enrollment text differs from the QR the page draws");
+  return t;
 }
 
 const rowsOf = () => page.evaluate(() => Array.from(document.querySelectorAll('#desc .k')).map((k) => [k.textContent, k.nextElementSibling && k.nextElementSibling.textContent, k.nextElementSibling && k.nextElementSibling.dataset.danger === '1']));
@@ -292,19 +308,19 @@ const commands = {
     await paste(frame);
     await waitAny(['#enroll-qr', '#refusal']);
     if (await has('#refusal')) return { ok: false, refusal: await text('#refusal') };
-    return { ok: true, frame: b64(await readQr('#enroll-qr')) };
+    return { ok: true, frame: await enrollFrame() };
   },
   async 'enroll-reveal'({ frame }) {
     await page.click('#enroll-next');
     await paste(frame);
     await waitAny(['#sas-words', '#refusal']);
     if (await has('#refusal')) return { ok: false, refusal: await text('#refusal') };
-    return { ok: true, words: await text('#sas-words'), frame: b64(await readQr('#enroll-qr')) };
+    return { ok: true, words: await text('#sas-words'), frame: await enrollFrame() };
   },
   async 'enroll-match'({ ok = true } = {}) {
     await page.click(ok ? '#sas-match' : '#sas-differ');
     await page.waitForSelector('#enroll-qr');
-    return { frame: b64(await readQr('#enroll-qr')) };
+    return { frame: await enrollFrame() };
   },
   async 'enroll-finish'({ frame }) {
     await page.click('#enroll-next');
@@ -348,7 +364,7 @@ const commands = {
     return { ok: true, ops: out, device_id: S.identity.deviceId, op_hash: named };
   },
 
-  // ---- the terminal frame builders the CLI does not offer yet (kept next to the driver, see phone-gaps in the scenario)
+  // ---- the terminal frame builders the CLI does not offer yet (used by phone-selftest.sh only, which has no CLI peer; scenarios use the CLI verb sync-notice)
   async 'frame-notice'({ canonicalHex, signatureHex }) {
     const canonical = Uint8Array.from(Buffer.from(canonicalHex, 'hex'));
     const signature = Uint8Array.from(Buffer.from(signatureHex, 'hex'));

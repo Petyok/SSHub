@@ -78,6 +78,20 @@ services:
     hostname: mailpit
     networks: [e2e]
 
+  # Android emulator with Google Play Chrome, for the page tests. Opt-in: `--profile android`, see android/README.md.
+  android:
+    build:
+      context: ./android
+    image: sshub-hostsync-android:local
+    pull_policy: never
+    profiles: [android]
+    hostname: android
+    devices:
+      - /dev/kvm
+    cpus: 4
+    mem_limit: 6g
+    networks: [e2e]
+
 networks:
   e2e:
     internal: true
