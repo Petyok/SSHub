@@ -571,7 +571,10 @@ mod over_the_log {
             "a factor that is only named cancels nothing (review round 3, R3-F2)"
         );
         let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
-        append(&w.d[B], crate::sync::ceremony::red_factor_paper(&recover, &named));
+        append(
+            &w.d[B],
+            crate::sync::ceremony::red_factor_paper(&recover, &named),
+        );
         w.sync();
         assert_eq!(
             w.verdict(&op, ready_at).unwrap(),
@@ -834,7 +837,10 @@ mod over_the_log {
             .unwrap();
         append(&new, red_phone_sign_body(&reg));
         append(&w.d[A], red_approve_body(&reg));
-        append(&w.d[R], crate::sync::ceremony::red_factor_paper(&recover, &reg));
+        append(
+            &w.d[R],
+            crate::sync::ceremony::red_factor_paper(&recover, &reg),
+        );
         w.sync();
         deliver(&new, &w.d[OBS]);
         deliver(&new, &w.d[A]);
@@ -924,18 +930,33 @@ mod over_the_log {
         );
         w.sync();
         for x in [A, B] {
-            append(&w.d[x], OpBody::RecoveryApprove { reenroll_hash: op.hash() });
+            append(
+                &w.d[x],
+                OpBody::RecoveryApprove {
+                    reenroll_hash: op.hash(),
+                },
+            );
         }
-        append(&w.d[A], OpBody::RecoveryAck { reenroll_hash: op.hash(), seen_at: now });
+        append(
+            &w.d[A],
+            OpBody::RecoveryAck {
+                reenroll_hash: op.hash(),
+                seen_at: now,
+            },
+        );
         w.sync();
         let ready_at = now + RECOVERY_TIMELOCK_SECS;
-        assert_eq!(w.verdict(&op, ready_at).unwrap(), ReenrollVerdict::AwaitingFactor);
+        assert_eq!(
+            w.verdict(&op, ready_at).unwrap(),
+            ReenrollVerdict::AwaitingFactor
+        );
         // The paper cannot stand in for a factor the op did not name, and the emailed code must be
         // proven by the registered key: here the requester proves the named one.
         w.prove(&op, true);
         assert_eq!(w.verdict(&op, ready_at).unwrap(), ReenrollVerdict::Ready);
         assert_eq!(
-            w.verdict(&op, ready_at + RECOVERY_READY_WINDOW_SECS).unwrap(),
+            w.verdict(&op, ready_at + RECOVERY_READY_WINDOW_SECS)
+                .unwrap(),
             ReenrollVerdict::Lapsed
         );
     }

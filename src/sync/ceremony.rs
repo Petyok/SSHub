@@ -595,7 +595,14 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     let any_registered = paper.is_some() || email.is_some();
     // The first phone of a ring with no factor yet cannot wait for a factor: registering the first
     // factor needs that phone's proof (the other half of the same bootstrap).
-    let bootstrap = (replacing.is_some() || admitted_phone.is_some()) && !any_registered;
+    // It is the SETUP of a ring only: no factor is registered, and for a phone no other phone was ever admitted
+    // (a revoked phone still counts, so a recovery cannot reopen it, nor can a removed factor).
+    let first_phone_ever = admitted_phone.as_ref().is_some_and(|dev| {
+        !devices.iter().any(|d| {
+            d.kind == DeviceKind::Phone && d.role == DeviceRole::Holder && d.id != dev.device_id()
+        })
+    });
+    let bootstrap = (replacing.is_some() || first_phone_ever) && !any_registered;
     let mut factor_ok = false;
     let mut factor_named: Option<ThirdFactor> = None;
     let mut factor_at: Option<i64> = None;
@@ -652,16 +659,12 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         complete_at = complete_at.max(factor_at.unwrap_or(0));
         have.push(RedProof::Factor(factor_named.clone()));
     } else if !bootstrap {
-        missing.push(RedProof::Factor(
-            replacing
-                .clone()
-                .filter(|r| {
-                    registered_before(store, r.clone(), Some(op.lamport))
-                        .ok()
-                        .flatten()
-                        .is_some()
-                }),
-        ));
+        missing.push(RedProof::Factor(replacing.clone().filter(|r| {
+            registered_before(store, r.clone(), Some(op.lamport))
+                .ok()
+                .flatten()
+                .is_some()
+        })));
     }
     // The two completion ops of a Ready phone-loss recovery need no proof of the lost phone: the recovery
     // was the ceremony (contract 4h).
