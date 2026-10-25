@@ -529,7 +529,20 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
 
   function enrollShow(heading, hint, doc, next, extra = []) {
     const canvas = h('canvas', { class: 'qr', id: 'enroll-qr' });
-    show(title(heading, hint), canvas, ...extra, next ? btn('Next', next, 'primary', 'enroll-next') : null, btn('Cancel', home, '', 'back'));
+    // The same frame as text for a terminal without a camera (paste it there), like the ops text of opsOut.
+    const text = toBase64(doc);
+    const status = h('p', { class: 'mut', id: 'enroll-copy-status' }, 'No camera on the terminal? Copy this text and paste it there.');
+    const copyBox = h('details', {}, h('summary', {}, 'Show as text for a terminal without a camera'),
+      h('textarea', { id: 'enroll-b64', readonly: true, spellcheck: 'false' }, text), status,
+      btn('Copy the text', async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          status.textContent = 'Copied. Paste it into the terminal.';
+        } catch {
+          status.textContent = 'The browser refused the clipboard: select the text and copy it by hand.';
+        }
+      }, '', 'enroll-copy'));
+    show(title(heading, hint), canvas, copyBox, ...extra, next ? btn('Next', next, 'primary', 'enroll-next') : null, btn('Cancel', home, '', 'back'));
     app.cleanup.push(loopQr(canvas, reverseQrFrames(doc)).stop);
   }
 
