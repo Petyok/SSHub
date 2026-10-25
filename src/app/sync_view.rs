@@ -326,15 +326,20 @@ pub(crate) const COMPLETES_RECOVERY: &str =
     "completes the ready phone recovery: no signature of the lost phone is needed";
 
 fn recovery_suffix(store: &LauncherStore, op: &Op) -> String {
-    let completes =
-        matches!(
-            &op.body,
-            OpBody::DeviceAdd {
-                kind: crate::sync::oplog::DeviceKind::Phone,
-                ..
-            } | OpBody::DeviceRevoke { .. }
-        ) && crate::sync::recovery::ready_recovery_for(store, op, crate::store::now_ts())
-            .unwrap_or(false);
+    let completes = matches!(
+        &op.body,
+        OpBody::DeviceAdd {
+            kind: crate::sync::oplog::DeviceKind::Phone,
+            ..
+        } | OpBody::DeviceRevoke { .. }
+    ) && crate::sync::recovery::ready_recovery_for(
+        store,
+        op,
+        // The ceremony's own clock: never later than the op was first seen here.
+        crate::store::now_ts()
+            .min(crate::sync::ceremony::received_at(store, op).unwrap_or(i64::MAX)),
+    )
+    .unwrap_or(false);
     if completes {
         format!(" [{COMPLETES_RECOVERY}]")
     } else {
