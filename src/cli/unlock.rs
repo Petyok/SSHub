@@ -15,7 +15,70 @@ use crate::sync::oplog::HostUid;
 use crate::sync::quorum::{parse_ring_secret, QuorumUnlocker, ShareSource};
 use crate::sync::runtime::RING_SECRET_KEY;
 
-struct PromptShares;
+/// How long a command waits for an attended holder to approve a share release
+/// (`SSHUB_UNLOCK_WAIT`, seconds).
+const DEFAULT_UNLOCK_WAIT_SECS: u64 = 120;
+/// Pause between looks at the holders.
+const POLL_EVERY: std::time::Duration = std::time::Duration::from_secs(3);
+
+fn unlock_wait() -> std::time::Duration {
+    let secs = std::env::var("SSHUB_UNLOCK_WAIT")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_UNLOCK_WAIT_SECS);
+    std::time::Duration::from_secs(secs)
+}
+
+/// Look with `poll` every `every` until it yields a share or `wait` is over.
+fn wait_for_grant(
+    wait: std::time::Duration,
+    every: std::time::Duration,
+    mut poll: impl FnMut() -> Option<Share>,
+) -> Option<Share> {
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        if let Some(share) = poll() {
+            return Some(share);
+        }
+        if std::time::Instant::now() + every > deadline {
+            return None;
+        }
+        std::thread::sleep(every);
+    }
+}
+
+/// The second share from the command line: the Vault phrase is typed here; in Quorum
+/// mode this device writes a `ShareRelease`, syncs with the holders it can reach and
+/// waits (bounded) for one of them to approve it, on its screen or with
+/// `sshub sync-review --approve <id>`.
+struct PromptShares {
+    runtime: crate::sync::runtime::SyncRuntime,
+    wait: std::time::Duration,
+}
+
+impl PromptShares {
+    /// Other terminals that hold shares, are not revoked or compromised, and have a host here.
+    fn holders(&self) -> Vec<(crate::sync::oplog::DeviceId, String)> {
+        use crate::sync::oplog::{DeviceKind, DeviceRole, DeviceStatus};
+        let me = self.runtime.identity.public().device_id();
+        let (Ok(rows), Ok(peers)) = (
+            crate::sync::ceremony::effective_devices(&self.runtime.store, None),
+            crate::sync::runtime::Peers::load(&self.runtime.paths),
+        ) else {
+            return Vec::new();
+        };
+        rows.into_iter()
+            .filter(|d| {
+                d.id != me
+                    && d.role == DeviceRole::Holder
+                    && d.kind == DeviceKind::Terminal
+                    && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+                    && peers.host_of(&d.id).is_some()
+            })
+            .map(|d| (d.id, d.name))
+            .collect()
+    }
+}
 
 impl ShareSource for PromptShares {
     fn master_phrase(&self) -> Option<Zeroizing<String>> {
@@ -24,13 +87,41 @@ impl ShareSource for PromptShares {
 
     fn second_share(
         &self,
-        _host: &HostUid,
-        _epoch: u64,
+        host: &HostUid,
+        epoch: u64,
         _mine: &Share,
     ) -> std::result::Result<Share, UnlockError> {
-        Err(UnlockError::NeedsShares(
-            "no way to ask another holder from the command line yet: open it from the TUI".into(),
-        ))
+        let holders = self.holders();
+        if holders.is_empty() || self.wait.is_zero() {
+            return Err(UnlockError::NeedsShares(
+                "no holder can be asked from here (none has a known host, or SSHUB_UNLOCK_WAIT is 0): open it in the TUI of a device that can, or use a trust session".into(),
+            ));
+        }
+        let rt = &self.runtime;
+        let req = crate::sync::quorum::peer_request(&rt.store, &rt.identity, host)
+            .map_err(|e| UnlockError::Failed(format!("{e:#}")))?;
+        let names: Vec<&str> = holders.iter().map(|(_, n)| n.as_str()).collect();
+        eprintln!(
+            "Asked {} for a share. Waiting up to {} s: approve it there in the TUI or with `sshub sync-review --approve {}`.",
+            super::theme::sanitize_foreign(&names.join(" or ")),
+            self.wait.as_secs(),
+            &crate::cli::sync_cmd::op_id(&req.op.hash()),
+        );
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let found = wait_for_grant(self.wait, POLL_EVERY, || {
+            for (id, _) in &holders {
+                let _ = rt.sync_with(id, &cancel);
+            }
+            crate::sync::quorum::peer_poll(&rt.store, &req, epoch)
+                .ok()
+                .flatten()
+        });
+        found.ok_or_else(|| {
+            UnlockError::NeedsShares(format!(
+                "no holder approved within {} s",
+                self.wait.as_secs()
+            ))
+        })
     }
 }
 
@@ -164,6 +255,11 @@ pub(crate) fn default_unlocker(ctx: &CliContext) -> Result<QuorumUnlocker> {
     );
     let local = crate::credentials::open_ungated_for_profile(&ctx.profile);
     let identity = load_or_init_identity(&ctx.profile, local.as_ref())?;
+    let runtime = crate::sync::runtime::SyncRuntime::new(
+        ctx.profile.clone(),
+        ctx.store.clone(),
+        load_or_init_identity(&ctx.profile, local.as_ref())?,
+    );
     let ring = local
         .get(RING_SECRET_KEY)?
         .and_then(|t| parse_ring_secret(&t).ok());
@@ -171,7 +267,10 @@ pub(crate) fn default_unlocker(ctx: &CliContext) -> Result<QuorumUnlocker> {
         ctx.store.clone(),
         Arc::new(identity),
         gate,
-        Box::new(PromptShares),
+        Box::new(PromptShares {
+            runtime,
+            wait: unlock_wait(),
+        }),
         ring,
     ))
 }
@@ -188,6 +287,29 @@ mod tests {
             assert_eq!(libc::tcgetattr(fd, &mut t), 0);
             t.c_lflag & libc::ECHO != 0
         }
+    }
+
+    #[test]
+    fn the_wait_for_a_grant_is_bounded_and_returns_the_first_share() {
+        let none = wait_for_grant(
+            std::time::Duration::from_millis(30),
+            std::time::Duration::from_millis(10),
+            || None,
+        );
+        assert!(none.is_none(), "gives up when the wait is over");
+        let mut looks = 0;
+        let got = wait_for_grant(
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_millis(5),
+            || {
+                looks += 1;
+                (looks == 3).then(|| Share {
+                    index: 1,
+                    bytes: vec![7; 32],
+                })
+            },
+        );
+        assert!(got.is_some() && looks == 3);
     }
 
     #[test]

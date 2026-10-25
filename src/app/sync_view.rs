@@ -319,6 +319,11 @@ fn host_changes(
     (changes, current)
 }
 
+/// A share release is asked about only while its requester's challenge could still be live.
+pub(crate) fn release_is_fresh(asked_at: i64, now: i64) -> bool {
+    (now - asked_at).abs() <= crate::sync::limits::CHALLENGE_EXPIRY_SECS
+}
+
 /// What a pending op does, as the review screen shows it.
 pub(crate) fn pending_view(
     store: &LauncherStore,
@@ -408,7 +413,10 @@ pub(crate) fn pending_view(
                 .flatten()
                 .and_then(|id| store.get_host(id).ok().flatten())
                 .map_or_else(|| short(&uid_hex(host_uid)), |m| m.name);
-            format!("release a share of {what} to {who}")
+            format!(
+                "release a share of {what} to {who} (device {requester}, asked {} s ago)",
+                (crate::store::now_ts() - op.timestamp).max(0)
+            )
         }
         OpBody::BulkExport {
             requester,
@@ -679,8 +687,7 @@ impl App {
                     ..
                 } if !answered.contains(&op.hash())
                     // A stale request is not asked about: the requester's challenge is long gone.
-                    && (crate::store::now_ts() - op.timestamp).abs()
-                        <= crate::sync::limits::CHALLENGE_EXPIRY_SECS =>
+                    && release_is_fresh(op.timestamp, crate::store::now_ts()) =>
                 {
                     Some((op.hash(), *host_uid, requester.clone(), op.timestamp))
                 }
@@ -805,5 +812,22 @@ impl App {
             }
             Err(e) => self.host_notice = Some(format!("sync: {e:#}")),
         }
+    }
+}
+
+#[cfg(test)]
+mod release_age_tests {
+    use super::release_is_fresh;
+
+    #[test]
+    fn a_release_request_older_than_the_challenge_lifetime_is_not_asked_about() {
+        let limit = crate::sync::limits::CHALLENGE_EXPIRY_SECS;
+        assert!(release_is_fresh(1_000, 1_000));
+        assert!(release_is_fresh(1_000, 1_000 + limit));
+        assert!(!release_is_fresh(1_000, 1_000 + limit + 1));
+        assert!(
+            !release_is_fresh(1_000 + limit + 1, 1_000),
+            "future-dated too"
+        );
     }
 }

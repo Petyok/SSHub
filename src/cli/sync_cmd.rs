@@ -663,6 +663,21 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     Ok(0)
 }
 
+/// A share release is answered only while its requester can still be waiting.
+fn release_fresh(op: &crate::sync::oplog::Op, now: i64) -> Result<()> {
+    let age = now - op.timestamp;
+    anyhow::ensure!(
+        age.abs() <= crate::sync::limits::CHALLENGE_EXPIRY_SECS,
+        "this request is {age} s old: too old to answer, the requester has to ask again"
+    );
+    Ok(())
+}
+
+/// The 12-hex-digit id `sync-review` shows for a pending op.
+pub(crate) fn op_id(hash: &[u8; 32]) -> String {
+    hex(hash)[..12].to_string()
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -709,7 +724,30 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             .find(|v| v.hash == hash)
             .expect("resolved above");
         let id = hex(&hash)[..12].to_string();
-        crate::sync::ceremony::resolve(&store, &hash, *approve, crate::store::now_ts())?;
+        let now = crate::store::now_ts();
+        // A share release is answered with the grants the TUI's confirmation would write: the
+        // explicit approval is this `--approve` (the listing names the requester, its full id and
+        // the request's age). A stale request is refused, as the TUI does not ask about it.
+        let release = store
+            .sync_pending()?
+            .into_iter()
+            .find(|o| o.hash() == hash && *approve)
+            .filter(|o| matches!(o.body, crate::sync::oplog::OpBody::ShareRelease { .. }));
+        let grants = match &release {
+            Some(op) => {
+                release_fresh(op, now)?;
+                let identity = open_identity(paths)?;
+                let bodies = crate::sync::quorum::grant_bodies(&store, &identity, op)?;
+                Some((identity, bodies))
+            }
+            None => None,
+        };
+        crate::sync::ceremony::resolve(&store, &hash, *approve, now)?;
+        if let Some((identity, bodies)) = grants {
+            for body in bodies {
+                store.sync_append_local(&identity, body)?;
+            }
+        }
         let verb = if *approve { "Approved" } else { "Rejected" };
         if json_out {
             let doc = json!({
@@ -931,6 +969,31 @@ mod tests {
             "{out}"
         );
         assert!(out.ends_with("Do they match? [y/N] "), "{out}");
+    }
+
+    #[test]
+    fn a_stale_share_release_is_refused_and_a_fresh_one_is_not() {
+        use crate::sync::oplog::OpBody;
+        let author = LauncherStore::open_in_memory().unwrap();
+        let id = DeviceIdentity::generate();
+        let op = author
+            .sync_append_local(
+                &id,
+                OpBody::ShareRelease {
+                    host_uid: [1; 16],
+                    request_id: 1,
+                    requester: id.public().device_id(),
+                    eph_x25519_pub: [2; 32],
+                },
+            )
+            .unwrap();
+        assert!(release_fresh(&op, op.timestamp + 5).is_ok());
+        let e = release_fresh(&op, op.timestamp + 3_600).unwrap_err();
+        assert!(e.to_string().contains("too old"), "{e}");
+        assert!(
+            release_fresh(&op, op.timestamp - 3_600).is_err(),
+            "future-dated too"
+        );
     }
 
     #[test]

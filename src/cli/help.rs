@@ -359,8 +359,11 @@ brackets after the summary (`tier`, `stale`, `resurrection`, `revoke-conflict`,
 `unknown-author`) and is the `reason` field of the JSON items. A Red change
 shows its ceremony (proofs present and missing). --approve / --reject take a
 unique prefix (at least 4 hex characters) of an id and resolve the change the
-way the TUI does: a Red change is approved only when its ceremony is complete.
-Read-only otherwise; never creates a device key.
+way the TUI does: a Red change is approved only when its ceremony is complete. Approving
+a share release (a requester asking this holder for a share of a credential) is the explicit
+consent: the line names the requester, its full device id and the request age, and the grants
+are written as the TUI confirmation would; a request older than 120 s is refused.
+Read-only otherwise; never creates a device key (approving a share release loads the existing one).
 
 EXIT CODES:
     0  listed, approved or rejected (also when nothing is waiting)

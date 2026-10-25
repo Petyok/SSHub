@@ -612,6 +612,11 @@ and the update check.
 .B SSHUB_VERSION_LABEL
 Replace the version label in the tab bar; set but empty hides it.
 .TP
+.B SSHUB_UNLOCK_WAIT
+Seconds a command waits, in Quorum mode, for an attended holder to approve its share
+release (default 120; 0 does not ask). The holder approves in its TUI or with
+.BR "sshub sync\-review \-\-approve" .
+.TP
 .B SSHUB_INSTALL_CHANNEL
 How sshub was installed
 .RB ( npm ", " cargo ", " source ,
