@@ -53,6 +53,7 @@ check "exec dest without the phrase fails: K stays locked" '! run_dest "" >/dev/
 JIP=$(psh peer-b 'getent hosts jump | cut -d" " -f1')
 check "peer-b resolves jump's address" '[ -n "$JIP" ]'
 OUT=$(run_dest "$PHRASE" 2>&1)
+[ "$OUT" = dest ] || { echo "--- exec output:"; echo "$OUT" | sed 's/^/     | /'; }
 check "exec dest with the phrase reaches dest" '[ "$OUT" = dest ]'
 check "dest saw the connection from jump's address (hop)" "$C logs --no-color dest 2>&1 | grep -q 'Accepted publickey for ci from $JIP '"
 
