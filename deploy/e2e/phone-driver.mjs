@@ -97,21 +97,23 @@ const targets = {
     if (devices.length !== 1) throw new Error(`expected 1 device on ${host}:${port}, got ${devices.length}`);
     const device = devices[0];
     const sh = async (c) => (await device.shell(c)).toString();
+    const shTry = (c) => sh(c).catch(() => ''); // uiautomator and friends fail while the UI is still starting
     const FRE = [/^use without an account$/i, /^no,? thanks$/i, /^don.t turn on$/i, /^accept (&|and) continue$/i, /^skip$/i, /^got it$/i, /^continue$/i, /^next$/i, /^not now$/i, /^don.t allow$/i];
     const tapOnce = async () => {
-      const xml = await sh('uiautomator dump /dev/tty');
+      const xml = await shTry('uiautomator dump /dev/tty');
       const nodes = [...xml.matchAll(/<node [^>]*?text="([^"]*)"[^>]*?clickable="true"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g)];
       const hit = FRE.map((re) => nodes.find((n) => re.test(n[1]))).find(Boolean);
       if (!hit) return false;
       await sh(`input tap ${(+hit[2] + +hit[4]) / 2} ${(+hit[3] + +hit[5]) / 2}`);
       return true;
     };
+    for (let i = 0; i < 30 && !(await shTry('pm path com.android.chrome')).includes('package:'); i++) await sleep(2000);
     await sh('am start -n com.android.chrome/com.google.android.apps.chrome.Main');
     let up = false;
     for (let i = 0; i < 30 && !up; i++) {
       await sleep(2500);
       const tapped = await tapOnce();
-      const socket = Number((await sh('cat /proc/net/unix | grep -c chrome_devtools_remote')).trim()) > 0;
+      const socket = Number((await shTry('cat /proc/net/unix | grep -c chrome_devtools_remote')).trim()) > 0;
       up = !tapped && socket && i >= 2;
     }
     if (!up) throw new Error('Chrome did not reach its tab switcher');

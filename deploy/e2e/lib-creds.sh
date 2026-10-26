@@ -189,19 +189,24 @@ ring_with_phone() {
   phone_signs peer-a "$ADD"
   st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
   expect "the phone is a holder in force on peer-a" "$st" '[.devices[] | select(.name=="my phone") | .role] == ["holder"]'
-  for t in peer-b $( [ "$1" = ring3 ] && echo peer-c ); do
-    spread "$t" peer-a "$t"
-    show "peer-a sync-role $t holder" peer peer-a $SSHUB sync-role "$(devid peer-a "$t")" holder --format json
+  promote() { # $1 = terminal, $2 = setup (own approval, no paper) or full (phone, second holder, paper)
+    spread "$1" peer-a "$1"
+    show "peer-a sync-role $1 holder" peer peer-a $SSHUB sync-role "$(devid peer-a "$1")" holder --format json
     ROLEOP=$(opid "$LAST_OUT")
-    phone_signs peer-a "$ROLEOP"
-    spread peer-a "$t" peer-a
-    show "$t sync-approve its own promotion" peer "$t" $SSHUB sync-approve "$ROLEOP" --format json
-    spread peer-a "$t" peer-a
-    echo "$t as peer-a sees it: $(peer peer-a $SSHUB sync-status --format json | pjq -c --arg n "$t" '[.devices[] | select(.name==$n) | {role, status}]')"
-  done
+    if [ "$2" = setup ]; then
+      phone_signs peer-a "$ROLEOP"
+      spread peer-a "$1" peer-a
+      show "$1 sync-approve its own promotion" peer "$1" $SSHUB sync-approve "$ROLEOP" --format json
+    else
+      red_complete "$ROLEOP"
+    fi
+    spread peer-a "$1" peer-a
+  }
+  promote peer-b setup
   show "peer-a registers the paper factor (Red)" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-a $SSHUB sync-factor-register paper --format json"
   REG=$(opid "$LAST_OUT")
   red_complete "$REG" nofactor
+  [ "$1" = ring3 ] && promote peer-c full
   spread peer-b peer-c peer-a peer-b peer-c peer-a
   ring_view
 }
