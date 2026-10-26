@@ -62,6 +62,9 @@ pub(crate) struct PromptShares {
     pub(crate) runtime: crate::sync::runtime::SyncRuntime,
     pub(crate) wait: std::time::Duration,
     pub(crate) every: std::time::Duration,
+    /// The phrase typed once is kept for the rest of this process: a connection through a jump host opens the
+    /// credential of every hop, and a pipe on stdin holds one line only.
+    pub(crate) phrase: std::sync::Mutex<Option<Zeroizing<String>>>,
 }
 
 impl PromptShares {
@@ -90,7 +93,11 @@ impl PromptShares {
 
 impl ShareSource for PromptShares {
     fn master_phrase(&self) -> Option<Zeroizing<String>> {
-        prompt_secret("Master phrase (six words): ")
+        let mut kept = self.phrase.lock().ok()?;
+        if kept.is_none() {
+            *kept = prompt_secret("Master phrase (six words): ");
+        }
+        kept.as_ref().map(|p| Zeroizing::new(p.to_string()))
     }
 
     fn second_share(
@@ -265,6 +272,7 @@ pub(crate) fn default_unlocker(ctx: &CliContext) -> Result<QuorumUnlocker> {
             runtime,
             wait: unlock_wait(),
             every: POLL_EVERY,
+            phrase: Default::default(),
         }),
     )
 }

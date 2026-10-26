@@ -175,7 +175,9 @@ fn labels_of(anchor: &[u8]) -> Vec<(String, String)> {
         .as_object()
         .map(|m| {
             m.iter()
-                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.chars().take(60).collect::<String>())))
+                .filter_map(|(k, v)| {
+                    Some((k.clone(), v.as_str()?.chars().take(60).collect::<String>()))
+                })
                 .filter(|(k, n)| k.len() <= 64 && !n.is_empty())
                 .take(256)
                 .collect()
