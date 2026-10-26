@@ -179,7 +179,7 @@ roles come from the observed table.
 The ring's phone is the committed companion page driven through the real CLI verbs (`sync-phone-enroll`,
 `sync-notice`, `sync-phone-ops`, `sync-share-request`); no shim remains. Logs: `hs-e2e-phone3f-20261025T202759.log`
 (65 green on d49e4e0), `hs-e2e-phone3l-20261025T221224.log` (95 green on d49e4e0), `hs-e2e-phone4b-20261026T001102.log`
-and `hs-e2e-phone4e-20261026T014026.log` (6726118).
+and `hs-e2e-phone4e-20261026T010122.log` (6726118).
 
 ### Q1. A ring built with the CLI cannot reach "two terminal holders plus the phone" (product, blocks 60, 65, 70, 95 on 6726118)
 
@@ -203,8 +203,8 @@ unreachable. On d49e4e0 the same ring "worked" only because the two joiners show
 ### Q2. The earlier `sync-revoke`: "the ring has 1" (explained)
 
 On d49e4e0 peer-a listed 3 holders but the revoke counted 1 remaining terminal holder. On 6726118 peer-b and peer-c are
-mirrors in every peer's table and `sync-revoke peer-c` is a Yellow change (`{"op":"cde093dd...","steps":[],"tier":"Red"}`
-printed, status `revoked` on peer-a only, `Pending changes: 1`). The message is gone with the demotion bug; the Red revoke
+mirrors in every peer's table and `sync-revoke peer-c` is accepted with no ceremony field (`{"op":"cde093dd...","steps":[],"tier":"Red"}`,
+status `revoked` on peer-a only, `Pending changes: 1`). The message is gone with the demotion bug; the Red revoke
 of a holder needs Q1 solved first. peer-b and peer-c do not see the revocation until peer-a's op reaches them.
 
 ### Q3. Test-side notes
