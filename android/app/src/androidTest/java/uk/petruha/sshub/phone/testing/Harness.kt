@@ -1,0 +1,43 @@
+package uk.petruha.sshub.phone.testing
+
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.test.junit4.ComposeContentTestRule
+import androidx.compose.ui.unit.Density
+import uk.petruha.sshub.phone.core.LocalPlatform
+import uk.petruha.sshub.phone.core.Platform
+import uk.petruha.sshub.phone.fake.FakePlatform
+import uk.petruha.sshub.phone.ui.theme.SshubTheme
+
+/** Renders `content` in the app theme with a fake platform, at a given theme and font scale (spec 4.3: test at 1.0, 1.3, 2.0). */
+fun ComposeContentTestRule.setScreen(
+    dark: Boolean = true,
+    fontScale: Float = 1f,
+    platform: Platform = FakePlatform(),
+    content: @Composable () -> Unit,
+) = setContent {
+    val d = LocalDensity.current
+    CompositionLocalProvider(LocalPlatform provides platform, LocalDensity provides Density(d.density, fontScale)) {
+        SshubTheme(dark = dark, reducedMotion = false) { content() }
+    }
+}
+
+/** Spec 9: every clickable node is at least 48 x 48 dp. Call at the end of a screen test. */
+fun ComposeContentTestRule.assertTargets48() {
+    val density = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+    val min = 48f * density - 1f
+    val bad = onAllNodes(androidx.compose.ui.test.hasClickAction()).fetchSemanticsNodes().filter { it.size.width < min || it.size.height < min }
+    check(bad.isEmpty()) { "clickable nodes under 48dp: " + bad.joinToString { "${it.size.width}x${it.size.height}px at ${it.positionInRoot}" } }
+}
+
+/** Spec 4.3 / D4: no text on the screen is clipped. */
+fun ComposeContentTestRule.assertNoVisualOverflow() {
+    val bad = onAllNodes(androidx.compose.ui.test.SemanticsMatcher("has text") { it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.Text) })
+        .fetchSemanticsNodes().filter {
+            val r = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            it.config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult)?.action?.invoke(r)
+            r.any { l -> l.hasVisualOverflow }
+        }
+    check(bad.isEmpty()) { "texts with visual overflow: ${bad.size}" }
+}

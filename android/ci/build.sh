@@ -44,20 +44,27 @@ fi
 
 echo "== versions"; cat /opt/VERSIONS.txt
 
-echo "== core unit tests (host)"
-cargo test --locked --manifest-path "$CORE"
+# The Rust core lives in crates/sshub-phone-core (owned by the phone-core branch). Until it is merged here the app
+# builds against the Kotlin fake only and this block is skipped.
+if [ -f "$CORE" ]; then
+    echo "== core unit tests (host)"
+    cargo test --locked --manifest-path "$CORE"
 
-echo "== cargo-ndk"
-rm -rf android/app/src/main/jniLibs
-RUSTFLAGS="$RF" cargo ndk -t arm64-v8a -t x86_64 --platform 30 -o android/app/src/main/jniLibs \
-    build --locked --release --manifest-path "$CORE"
+    echo "== cargo-ndk"
+    rm -rf android/app/src/main/jniLibs
+    RUSTFLAGS="$RF" cargo ndk -t arm64-v8a -t x86_64 --platform 30 -o android/app/src/main/jniLibs \
+        build --locked --release --manifest-path "$CORE"
 
-echo "== uniffi bindings"
-cargo build --locked --manifest-path "$CORE" --features cli --bin uniffi-bindgen
-rm -rf android/app/build/generated/uniffi/kotlin
-"$CARGO_TARGET_DIR/debug/uniffi-bindgen" generate \
-    --library "$CARGO_TARGET_DIR/x86_64-linux-android/release/libsshub_phone_core.so" \
-    --language kotlin --out-dir android/app/build/generated/uniffi/kotlin
+    echo "== uniffi bindings"
+    cargo build --locked --manifest-path "$CORE" --features cli --bin uniffi-bindgen
+    rm -rf android/app/build/generated/uniffi/kotlin
+    "$CARGO_TARGET_DIR/debug/uniffi-bindgen" generate \
+        --library "$CARGO_TARGET_DIR/x86_64-linux-android/release/libsshub_phone_core.so" \
+        --language kotlin --out-dir android/app/build/generated/uniffi/kotlin
+else
+    echo "== no $CORE: building the UI without the native library"
+    rm -rf android/app/src/main/jniLibs android/app/build/generated/uniffi
+fi
 
 echo "== gradle"
 cd android
@@ -66,5 +73,5 @@ cp app/build/outputs/apk/debug/app-debug.apk /out/
 cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk /out/
 ls -l /out/*.apk
 sha256sum /out/*.apk
-unzip -l /out/app-debug.apk | grep -E '\.so$'
+unzip -l /out/app-debug.apk | grep -E '\.so$' || true
 
