@@ -179,7 +179,7 @@ The Bluetooth transport has one more check that needs a Bluetooth stack: an `#[i
 the real BlueZ transport on one virtual controller and drives it from a GATT client on a second one
 (`src/sync/media/ble_bluez/vhci_tests.rs`). It needs the `hci_vhci` kernel module on the machine and runs
 only inside the container of `tests/ble-vhci/` (private D-Bus, `btvirt`, `bluetoothd`; see
-`tests/ble-vhci/run.sh` for the flags and `poc/results/ble.md` for the details), never in CI by default.
+`tests/ble-vhci/run.sh` for the flags and `docs/host-sync-poc-results.md` for the details), never in CI by default.
 `SSHUB_BLE_ADAPTER=hciN` makes the transport serve on that adapter instead of BlueZ's default.
 
 Run a specific test:

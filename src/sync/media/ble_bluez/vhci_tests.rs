@@ -4,7 +4,7 @@
 //! (`SSHUB_BLE_TEST_CLIENT`) with the link layer's test-only phone side.
 //!
 //! `#[ignore]`d: it needs those controllers, a running `bluetoothd` and a system D-Bus, which
-//! only the container of `tests/ble-vhci/` provides (see `poc/results/ble.md`):
+//! only the container of `tests/ble-vhci/` provides (see `docs/host-sync-poc-results.md`):
 //!
 //! ```text
 //! SSHUB_BLE_ADAPTER=hci0 SSHUB_BLE_TEST_CLIENT=hci1 \
@@ -418,7 +418,7 @@ async fn scenario(server_adapter: &str, client_adapter: &str, btmon_path: &std::
 }
 
 #[test]
-#[ignore = "needs two BlueZ controllers, see tests/ble-vhci/ and poc/results/ble.md"]
+#[ignore = "needs two BlueZ controllers, see tests/ble-vhci/ and docs/host-sync-poc-results.md"]
 fn the_real_bluez_transport_exchanges_frames_with_a_gatt_client_on_the_second_controller() {
     let server = env("SSHUB_BLE_ADAPTER");
     let client = env("SSHUB_BLE_TEST_CLIENT");
