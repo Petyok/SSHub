@@ -6,22 +6,34 @@ All notable changes to SSHub are documented in this file.
 
 ### Added
 
-- **Host sync between your own machines** - hosts, groups and identities replicate over SSH between devices you
-  enroll yourself (`t` on a host in the hosts tab makes that machine one of your devices, or run `sshub sync-join
-  <host>`; the four words are a real check only when both machines have a screen, with a headless machine reached
-  over ssh they prove nothing and its identity rests on the verified SSH host key; the Sync tab shows which method
-  admitted each device). The Sync tab (`7`) shows the devices and what is waiting for review; changes to dangerous fields (address, jump
-  host, remote command, user, key) never apply silently and wait for your approval (`sync-review`), safe fields merge
-  on their own. `sync-serve` is the peer end, `sync-now` and `sync-status` run and inspect a round. Credentials sync in
-  one of two modes: **Vault** (encrypted under a master phrase and a ring secret from a printed kit) or **Quorum**
-  (every secret needs two shares, so a copy of one device opens nothing; shares live on your machines, on paper
-  and on the **phone companion**, a single offline page you open on Android that shows what is being asked and who asks
-  and releases a share by QR code, clipboard or, with the opt-in `audio` and `bluetooth` cargo features, sound or Bluetooth). Docs:
-  `docs/host-sync-design.md`, `docs/host-sync-companion.md`, measurements in `docs/host-sync-poc-results.md`.
-  Limits, stated plainly: metadata (addresses, notes, groups) is readable by every ring device; revocation protects
-  the future, not what a device already downloaded; the ML-KEM crate is not independently audited; a phone page
-  cannot prove it is the page you meant (compare its fingerprint with the terminal's); the camera, sound and
-  phone-loss flows were verified with simulated devices only and not yet on a physical phone or on iOS.
+- **Host sync between your own machines** - hosts, groups and identities replicate over plain SSH between devices you
+  enroll yourself, end to end encrypted, with no daemon, no server and no open port (a sync is
+  `ssh <peer> sshub sync-serve`). Enroll with `t` on a host in the hosts tab or `sshub sync-join <host>`; the four words
+  are a real check only when both ends have a screen, otherwise the admission rests on the verified SSH host key, and the
+  Sync tab (`7`) shows which method admitted each device. Changes to dangerous fields (address, jump host, remote
+  command, user, key) never apply silently and wait for your approval in the review list (`R`, or `sshub sync-review`);
+  safe fields merge on their own. Credentials sync in one of two modes: **Vault** (encrypted under a six-word master
+  phrase and a ring secret from a printed kit) or **Quorum** (every secret needs two shares held by your machines, a
+  paper phrase and the phone, so a copy of one device opens nothing; unlocking from the terminal asks an attended holder
+  or the phone, and `SSHUB_UNLOCK_WAIT` bounds the wait). The **phone companion** is one offline page you open on Android
+  that shows what is being asked and who asks, signs the approval and releases a share by QR code or clipboard, or, with
+  the opt-in cargo features, by sound (`audio`), the webcam (`camera`) or Bluetooth Low Energy (`bluetooth`). Dangerous
+  ring changes (a new or revoked holder, a mode switch, a new phone, a bulk export) are **Red ceremonies**: the phone, a
+  second attended device and a third factor from outside your devices (a paper phrase or an emailed code) each have to
+  prove it, and every device checks the same rule. **Trust sessions** let a machine open a group or marked hosts for
+  7, 30 or 90 days under a phone-signed certificate with a daily budget. A lost phone is replaced by **recovery** (two
+  other devices or the paper, a proven third factor, a 7 day time lock that every device shows, cancellable by the real
+  phone). CLI verbs: `sync-join`, `sync-now`, `sync-status`, `sync-review`, `sync-revoke`, `sync-role`, `sync-approve`,
+  `sync-factor`, `sync-factor-register`, `sync-recovery`, `sync-mode`, `sync-exemption`, `sync-export`, `sync-migrate`,
+  `sync-import-kit`, `sync-phone-enroll`, `sync-notice`, `sync-phone-ops`, `sync-share-request`, `sync-cert-request`
+  (plus `sync-serve` and `sync-enroll`, which a peer runs over ssh). Config: `[sync] auto_sync_on_start`, `[sync.notify]`
+  for recovery mails. Docs: the README "Sync (tab 7)" section with a step-by-step quick start,
+  `docs/host-sync-design.md` (with every default and why), `docs/host-sync-companion.md`, `docs/host-sync-contract.md`,
+  measurements in `docs/host-sync-poc-results.md`. Limits, stated plainly: metadata (addresses, notes, groups) is
+  readable by every ring device; revocation protects the future, not what a device already downloaded; the ML-KEM crate
+  is not independently audited; a phone page cannot prove it is the page you meant (compare its fingerprint with the
+  terminal's); the camera, sound, Bluetooth and phone-loss flows were verified with simulated devices only and not yet
+  on a physical phone or on iOS.
 
 ## [0.20.0] - 2026-10-24
 

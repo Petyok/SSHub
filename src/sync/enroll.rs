@@ -343,10 +343,10 @@ fn run<L: SyncLink>(
     let known = store.sync_devices()?.iter().any(|d| d.id == peer_id);
     // Two members of one ring meeting again (a repeat ceremony, rehabilitation): nothing to hand over, and
     // the one that already has history cannot adopt an anchor. Roles stay what the ring says they are.
-    // The hello's ring id is only a claim: it counts only when the peer's verified key is already a
-    // device of this ring in MY table. An unknown key that names my ring is a stranger, and is never
-    // registered as anything without an adopted anchor.
-    let repeat = my_ring.is_some() && my_ring == peer_hello.ring && known;
+    // The hello's ring id is only a claim and both ends must read it the same way (it shapes the frames), so it
+    // decides the SHAPE only. Who the peer becomes does not follow from it: a key this device does not know yet
+    // is never registered as a holder without an adopted anchor (below).
+    let repeat = my_ring.is_some() && my_ring == peer_hello.ring;
     let ring = match role {
         // The inviter admits the joiner as a mirror (Yellow on the rest of the ring) and, if it had no
         // ring yet, founds one: the ring id is the founder's device id.
@@ -434,10 +434,18 @@ fn run<L: SyncLink>(
                 set_ring_id(store, &ring)?;
                 note(&mut ui, EnrollProgress::Adopted { hosts });
             }
+            // An inviter that came with an anchor is a holder by that anchor. A repeat ceremony hands none over:
+            // a peer this device already knew keeps its row, a stranger that merely names this ring is a mirror
+            // (the ring admits holders through its own ops, never through a claimed ring id).
+            let role_of_peer = if repeat && !known {
+                DeviceRole::Mirror
+            } else {
+                DeviceRole::Holder
+            };
             store.sync_register_device(
                 &peer_pub,
                 &peer_reveal.name,
-                DeviceRole::Holder,
+                role_of_peer,
                 attendance,
                 DeviceKind::Terminal,
                 verified,

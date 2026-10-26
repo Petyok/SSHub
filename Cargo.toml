@@ -36,7 +36,10 @@ exclude = [
     "assets/companion/package*.json",
     "assets/companion/build.mjs",
     "assets/companion/poc",
+    "assets/companion/scripts",
     "deploy",
+    "android",
+    "tests/fixtures/media/gen",
 ]
 
 [workspace]

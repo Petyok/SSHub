@@ -3723,3 +3723,44 @@ fn a_batch_ingest_keeps_what_was_valid_before_a_failing_op_and_lets_go_of_the_lo
         Some(250)
     );
 }
+
+// e2e: a device that came through an anchor is labelled with its id until something names it.
+#[test]
+fn a_device_known_only_by_its_id_takes_the_first_name_it_is_met_with_and_keeps_it() {
+    let r = ring(1);
+    let a = &r[0];
+    let other = DeviceIdentity::generate().public();
+    let oid = other.device_id();
+    let label = |s: &LauncherStore| {
+        s.sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == oid)
+            .map(|d| d.name)
+            .unwrap()
+    };
+    a.store
+        .sync_register_device(
+            &other,
+            &oid,
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    assert_eq!(label(&a.store), oid, "the placeholder");
+    for (given, want) in [("laptop", "laptop"), ("something else", "laptop")] {
+        a.store
+            .sync_register_device(
+                &other,
+                given,
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        assert_eq!(label(&a.store), want);
+    }
+}

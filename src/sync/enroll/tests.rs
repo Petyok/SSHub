@@ -754,10 +754,33 @@ fn a_peer_that_claims_the_ring_of_a_member_is_not_registered_as_its_holder() {
         .into_iter()
         .find(|d| d.id == x.did);
     assert!(
-        row.is_none(),
+        row.as_ref().is_none_or(|d| d.role != DeviceRole::Holder),
         "member ended {:?}, claimant ended {:?}; the claimant is now in the member's table as {:?}",
         rm.as_ref().map(|o| o.role).map_err(|e| e.to_string()),
         rx.as_ref().map(|o| o.role).map_err(|e| e.to_string()),
         row.map(|d| (d.role, d.attendance))
+    );
+}
+
+// e2e Q3: two members of one ring that never met each other enroll directly (sync-join peer-b -> peer-c).
+#[test]
+fn two_members_who_joined_through_the_hub_can_meet_each_other() {
+    let (hub, a, b, c) = (Dev::new(), Dev::new(), Dev::new(), Dev::new());
+    let yes = || |_: &SasPrompt<'_>| true;
+    let (mut y1, mut y2) = (yes(), yes());
+    let (f1, f2) = enroll_raw(&hub, &a, Some(&mut y1), Some(&mut y2));
+    assert!(f1.is_ok() && f2.is_ok());
+    for x in [&b, &c] {
+        let (mut y1, mut y2) = (yes(), yes());
+        let (r1, r2) = enroll_raw(&hub, x, Some(&mut y1), Some(&mut y2));
+        assert!(r1.is_ok() && r2.is_ok());
+    }
+    let (mut y1, mut y2) = (yes(), yes());
+    let (rb, rc) = enroll_raw(&c, &b, Some(&mut y1), Some(&mut y2));
+    assert!(
+        rb.is_ok() && rc.is_ok(),
+        "b meets c: {:?} {:?}",
+        rb.map(|o| o.role).map_err(|e| e.to_string()),
+        rc.map(|o| o.role).map_err(|e| e.to_string())
     );
 }
