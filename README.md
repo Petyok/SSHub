@@ -357,7 +357,7 @@ sshub sync-migrate [--remove-local]           # replicate this profile's saved s
 sshub sync-import-kit                         # second machine: set up the Vault from the kit and the phrase
 sshub sync-phone-enroll [--ble]               # enroll the phone as text: frames (base64) on stdin and stdout, the four words, then y or n (--ble: the frames also over Bluetooth)
 sshub sync-notice <op-id> [--ble]             # the kind 3 notice (base64) of a Red op for the phone (--ble: also handed over Bluetooth)
-sshub sync-phone-ops [--ble] < ops.txt        # take in the ops the phone copied (kind 5, base64); prints what applied (--ble: from the phone over Bluetooth)
+sshub sync-phone-ops [--ble] < ops.txt        # take in the ops the phone copied (kind 5, base64); prints what applied and why the rest was skipped (chain-gap, already-known, invalid) (--ble: from the phone over Bluetooth)
 sshub sync-share-request <host> [--wait 120] [--ble]  # kind 1 challenge out, the phone's kind 2 reply on stdin (or over Bluetooth), opens the credential in this process
 sshub sync-cert-request (--group G | --host H...) [--days 30] [--budget 10] [--ble]   # kind 9 trust-session request for the phone
 # Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected. Admin verbs: 0 ok, 1 error, 2 usage.
