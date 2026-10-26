@@ -1,6 +1,7 @@
 package uk.petruha.sshub.phone.recovery
 
 import android.view.WindowManager
+import androidx.compose.ui.test.assert
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -9,7 +10,6 @@ import androidx.compose.ui.test.SemanticsNodeInteractionsProvider
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
-import androidx.compose.ui.test.onNode
 import org.junit.Assert.assertEquals
 
 /** A button is found by its label; labels used on one screen are unique. */
