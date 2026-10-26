@@ -1,6 +1,7 @@
 package uk.petruha.sshub.phone.testing
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
