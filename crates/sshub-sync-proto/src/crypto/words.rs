@@ -30,6 +30,12 @@ pub fn bip39_decode(phrase: &str) -> Result<[u8; 32]> {
     Ok(entropy[..32].try_into().expect("length checked"))
 }
 
+/// Whether `word` (any case) is a word of the English BIP39 list: input validation while someone types a phrase.
+pub fn is_bip39_word(word: &str) -> bool {
+    bip39::Language::English
+        .find_word(&word.trim().to_lowercase())
+        .is_some()
+}
 /// Lowercase, single-spaced form used for hashing and comparison.
 pub fn normalize(phrase: &str) -> String {
     phrase

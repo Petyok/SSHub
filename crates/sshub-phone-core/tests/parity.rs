@@ -210,6 +210,63 @@ fn every_op_the_phone_authors_is_byte_identical() {
         assert_eq!(hex::encode(c), s(&w["canonical"]));
         assert_eq!(hex::encode(sig), s(&w["signature"]));
     }
+
+    // the trust screen's list as structured rows: the same certificates, scope, term, extensions as the page's list
+    let certs = cert::issued_certs(&st, &BTreeMap::new(), now0 + 100);
+    let want_certs = p["issued_certs"].as_array().unwrap();
+    assert_eq!(certs.len(), want_certs.len());
+    for (c, w) in certs.iter().zip(want_certs) {
+        assert_eq!(c.cert_id, s(&w["id"]));
+        assert_eq!(c.device_id, s(&w["device_id"]));
+        assert_eq!(c.issued_at, w["issued_at"].as_i64().unwrap());
+        assert_eq!(c.expiry, w["expiry"].as_i64().unwrap());
+        assert_eq!(c.term_secs, c.expiry - c.issued_at);
+        assert_eq!(
+            c.term_text,
+            s(&w["term_text"]),
+            "the term in the page's words"
+        );
+        assert_eq!(
+            u64::from(c.max_new_hosts_per_day),
+            w["max_new_hosts_per_day"].as_u64().unwrap()
+        );
+        assert_eq!(c.revoked, w["revoked"].as_bool().unwrap());
+        match (&c.group, w["scope"].get("Group")) {
+            (Some(g), Some(wg)) => assert_eq!(g, s(wg)),
+            (None, None) => {
+                let want: Vec<String> = w["scope"]["Hosts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|h| s(h).to_string())
+                    .collect();
+                assert_eq!(c.hosts, want);
+            }
+            other => panic!("scope differs: {other:?}"),
+        }
+        let want_ext = w["extensions"].as_array().unwrap();
+        assert_eq!(c.extensions.len(), want_ext.len());
+        for (e, we) in c.extensions.iter().zip(want_ext) {
+            assert_eq!(e.at, we["at"].as_i64().unwrap());
+            assert_eq!(u64::from(e.extra_hosts), we["extra"].as_u64().unwrap());
+        }
+    }
+    assert!(certs.iter().any(|c| c.revoked) && certs.iter().any(|c| !c.revoked));
+
+    // per-op rows of the export: the page's description of each exported op, row for row, danger flag included
+    let want_rows = p["export_rows"].as_array().unwrap();
+    assert_eq!(tail.len(), want_rows.len());
+    for ((c, sig), w) in tail.iter().zip(want_rows) {
+        let op = Op::from_canonical(c, *sig).unwrap();
+        let d = describe_op(&op, c, &BTreeMap::new(), None, 0);
+        assert_eq!(d.headline, s(&w["headline"]));
+        assert_eq!(rows_of(&d.rows), w["rows"]);
+        assert_eq!(
+            u64::from(d.danger_count),
+            w["danger_count"].as_u64().unwrap()
+        );
+        assert!(d.rows.iter().any(|r| r.danger) || d.danger_count == 0);
+    }
 }
 
 fn uid_hex(s: &str) -> [u8; 16] {
@@ -337,6 +394,31 @@ fn share_release_every_challenge_same_checks_refusals_and_reply() {
             "{label}"
         );
         assert_eq!(view.requester, s(&rec["requester"]));
+        // "known" is what the page decided: the requester's signature verified under a ring key (the unknown-requester
+        // challenge is signed by a stranger, so it stays unknown even when the laptop is in the ring)
+        let met = !rec["unknown_requester"].as_bool().unwrap();
+        assert_eq!(view.requester_known, met, "{label}");
+        assert_eq!(
+            view.requester_name.as_deref(),
+            met.then_some("work laptop"),
+            "{label}: the name the page prints in the requesting device row"
+        );
+        assert_eq!(
+            view.requester_key.as_deref(),
+            met.then(|| s(&fx["requester"]["pub"]["ed25519_pub"])),
+            "{label}"
+        );
+        if met {
+            assert!(
+                s(&rec["description"]["headline"]).contains("work laptop"),
+                "the page names the same device"
+            );
+        }
+        assert_eq!(
+            u64::from(view.share_index),
+            fx["phone_share"]["index"].as_u64().unwrap()
+        );
+        assert!(["hybrid", "envelope"].contains(&view.share_kind.as_str()));
         assert_eq!(view.host_uid, s(&rec["host"]));
         assert_eq!(
             view.op.headline,
@@ -777,6 +859,93 @@ fn fountain_frames_and_the_fsk_burst() {
         assert!(
             worst <= 1,
             "{name}: the PCM differs by {worst} least significant bits"
+        );
+    }
+}
+
+#[test]
+fn the_red_notice_window_counts_from_the_signed_time() {
+    use sshub_phone_core::notices::open_notice;
+    use sshub_sync_proto::wire::RecoveryNoticeWire;
+    let p = page();
+    let v = load("ops.vectors.json");
+    let signer_pub = s(&v["meta"]["signer_ed25519_pub_hex"]).to_string();
+    let want = p["red_window"].as_array().unwrap();
+    assert!(!want.is_empty());
+    for w in want {
+        let id = s(&w["id"]);
+        let x = v["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| s(&x["id"]) == id)
+            .unwrap();
+        let canonical = hx(s(&x["canonical_hex"]));
+        let sig: [u8; 64] = hx(s(&x["signature_hex"])).try_into().unwrap();
+        let ts = w["timestamp"].as_i64().unwrap();
+        let frame = RecoveryNoticeWire {
+            op_canonical: canonical,
+            op_signature: sig,
+        }
+        .encode();
+        let mut views = Vec::new();
+        // the same notice read soon after it was signed and two days later: the window is the op's, not the reader's
+        for read_at in [ts + 100, ts + 2 * 86_400] {
+            let mut id_ = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
+            let mut state = PhoneState::default();
+            state.ring.insert(
+                "723ed85f0566df0c".into(),
+                RingDevice {
+                    name: "terminal A".into(),
+                    ed25519_pub: signer_pub.clone(),
+                    enrolled_at: 0,
+                },
+            );
+            let mut r = rng();
+            let ctx = Ctx {
+                id: &mut id_,
+                state: &mut state,
+                rng: &mut r,
+                now: read_at,
+            };
+            match open_notice(&frame, &ctx, 1).0 {
+                Opened::RedNotice { view } => views.push(view),
+                other => panic!("{id}: not a Red notice: {other:?}"),
+            }
+        }
+        for view in &views {
+            assert_eq!(view.proposed_at, ts, "{id}");
+            assert_eq!(view.lamport, w["lamport"].as_u64().unwrap(), "{id}");
+            assert_eq!(view.seq, w["seq"].as_u64().unwrap(), "{id}");
+            assert_eq!(
+                view.lapses_at,
+                w["lapses_at"].as_i64().unwrap(),
+                "{id}: the page's lapse time"
+            );
+            assert_eq!(view.proposer, "723ed85f0566df0c");
+            assert_eq!(view.proposer_name.as_deref(), Some("terminal A"));
+        }
+        // and the page's refusal after the window: three days and a second after the signed time
+        let mut id_ = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
+        let mut state = PhoneState::default();
+        state.ring.insert(
+            "723ed85f0566df0c".into(),
+            RingDevice {
+                name: "terminal A".into(),
+                ed25519_pub: signer_pub.clone(),
+                enrolled_at: 0,
+            },
+        );
+        let mut r = rng();
+        let ctx = Ctx {
+            id: &mut id_,
+            state: &mut state,
+            rng: &mut r,
+            now: ts + 3 * 86_400 + 1,
+        };
+        assert!(
+            matches!(open_notice(&frame, &ctx, 1).0, Opened::Refused { .. }),
+            "{id}: lapsed after 3 days"
         );
     }
 }

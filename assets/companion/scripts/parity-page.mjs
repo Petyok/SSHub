@@ -12,13 +12,13 @@ import { bytesOf, hexOf, sealedBoxOpen } from '../src/lib.mjs';
 import { xchacha20poly1305 } from '../vendor/noble-ciphers-2.4.0/chacha.js';
 import { blake3 } from '../vendor/noble-hashes-2.4.0/blake3.js';
 import { identityOfSecret } from '../src/keys.mjs';
-import { describeOp, parseOp } from '../src/ops.mjs';
+import { describeOp, isRedOp, parseOp } from '../src/ops.mjs';
 import {
   appendCertExtend, appendCertIssue, appendCertRevoke, appendConfirmBatch, appendHeadAttest, appendReenrollCancel, appendRedPhoneSign, appendShareStorageKey,
   appendWrapKeyRotate, courierOps, emptyState,
 } from '../src/state.mjs';
 import { approveRelease, evaluateChallenge } from '../src/release.mjs';
-import { certRequestProblems, describeCertRequest } from '../src/cert.mjs';
+import { certRequestProblems, describeCertRequest, describeTerm, issuedCerts } from '../src/cert.mjs';
 import { envelopeAad, ownStorageKey, planReshare, publishReshare } from '../src/reshare.mjs';
 import { commitOf, confirmMessage, encodeEnrollCommit, encodeEnrollConfirm, encodeEnrollReveal, transcriptHash } from '../src/frames.mjs';
 import { fountainEncode } from '../src/quorum.mjs';
@@ -69,6 +69,15 @@ out.identity = ['42', '0b'].map((s) => Array.from({ length: 3 }, (_, g) => {
   keep(appendConfirmBatch(state, g1, 4n, [{ host_uid: '0a'.repeat(16), sealed_share: pattern(70, 2) }, { host_uid: '0b'.repeat(16), sealed_share: pattern(70, 3) }], NOW0 + 10, null));
   out.chain = { ops: ops(list), head_hash: state.chain.at(-1).hash, cert_id: certId };
   out.courier_tail = ops(courierOps(state, 8));
+  // the trust screen's list (structured) and the rows of every exported op as an approval screen would show them
+  out.issued_certs = issuedCerts(state).map((c) => ({
+    id: c.id, device_id: c.device_id, scope: c.scope, issued_at: c.issued_at, expiry: Number(c.expiry), max_new_hosts_per_day: c.max_new_hosts_per_day,
+    revoked: c.revoked, extensions: c.extensions, term_text: describeTerm(c.expiry - BigInt(c.issued_at)),
+  }));
+  out.export_rows = courierOps(state, 8).map((o) => {
+    const d = describeOp(parseOp(o.canonical), {});
+    return { headline: d.headline, rows: rows(d), danger_count: d.dangerCount };
+  });
 }
 
 // ---------------------------------------------------------------- what an approval screen shows (op descriptions)
@@ -79,6 +88,10 @@ out.identity = ['42', '0b'].map((s) => Array.from({ length: 3 }, (_, g) => {
     const d = describeOp(parseOp(h(x.canonical_hex)), aliases);
     return { id: x.id, headline: d.headline, requester: d.requester, rows: rows(d), danger_count: d.dangerCount };
   });
+  // The Red notice window as the page computes it (app.mjs redNotice): the op's own signed time, lapsing after 3 days.
+  out.red_window = v.vectors.map((x) => ({ x, op: parseOp(h(x.canonical_hex)) })).filter(({ op }) => isRedOp(op)).map(({ x, op }) => ({
+    id: x.id, timestamp: Number(op.timestamp), lamport: Number(op.lamport), seq: Number(op.seq), lapses_at: Number(op.timestamp) + 3 * 86400,
+  }));
 }
 
 // ---------------------------------------------------------------- share release: every challenge of the fixture, with and without the requester in the ring

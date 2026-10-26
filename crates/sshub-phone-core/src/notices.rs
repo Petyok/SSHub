@@ -21,6 +21,7 @@ use crate::text::safe_text;
 use crate::views::{Opened, Outgoing, RedNoticeView, ReenrollNoticeView, RefusalView};
 
 /// A notice that passed every check and waits for the person.
+#[derive(Clone)]
 pub enum PendingNotice {
     Red {
         token: u64,
@@ -183,6 +184,12 @@ fn open_red(
         },
         blocked: blocked.clone(),
         type_to_approve: (blocked.is_none() && !met).then(|| op.device_id.clone()),
+        proposed_at: op.timestamp,
+        lamport: op.lamport,
+        seq: op.seq,
+        lapses_at: op.timestamp.saturating_add(RED_CEREMONY_TTL_SECS),
+        proposer_name: aliases.get(&op.device_id).filter(|s| !s.is_empty()).map(|s| safe_text(s)),
+        proposer: op.device_id.clone(),
     };
     let pending = PendingNotice::Red {
         token,
@@ -219,6 +226,8 @@ fn open_reenroll(
         op: desc,
         op_hash: hex::encode(op_hash),
         ends_at: initiated_at.saturating_add(RECOVERY_TIMELOCK_SECS),
+        proposed_at: op.timestamp,
+        lamport: op.lamport,
         signature_note: if sig_ok == Some(true) {
             "The signature verifies.".to_string()
         } else {

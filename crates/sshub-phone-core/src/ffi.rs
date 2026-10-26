@@ -24,7 +24,7 @@ use crate::notices::{self, PendingNotice};
 use crate::release::{self, PendingRelease};
 use crate::reshare::{self, PendingReshare};
 use crate::state::{PhoneState, COURIER_TAIL};
-use crate::text::{from_base64, to_base64};
+use crate::text::{from_base64, safe_text, to_base64};
 use crate::views::*;
 
 enum Pending {
@@ -67,6 +67,13 @@ pub fn create_secret() -> Vec<u8> {
     s
 }
 
+/// Whether `word` (any case) is a word of the BIP39 list the 24 backup words and the manual entry use: input
+/// validation while the person types (the four enrollment SAS words come from the same list). Not a check of the phrase (the checksum is checked by `restore_from_words`).
+#[uniffi::export]
+pub fn is_word(word: String) -> bool {
+    sshub_sync_proto::crypto::is_bip39_word(&word)
+}
+
 fn kind_of(frame: &[u8]) -> Option<u8> {
     (frame.len() >= 7 && frame[..4] == WIRE_MAGIC).then(|| frame[6])
 }
@@ -94,6 +101,8 @@ fn info(u: &Unlocked, now: i64) -> UnlockInfo {
             .keys()
             .filter(|k| u.state.live_snapshot(k, now).is_some())
             .count() as u32,
+        device_name: u.state.enrolled.as_ref().map(|e| safe_text(&e.name)),
+        ring_epoch: u.state.epoch,
         ring: u
             .state
             .ring
@@ -380,7 +389,8 @@ impl PhoneCore {
             };
             let r = flow.decide(&decision, &mut ctx);
             let ended = matches!(&decision, Decision::EnrollSas { matches: false });
-            if r.is_ok() && !ended {
+            // a refusal for what was typed leaves the enrollment where it was
+            if !ended && (r.is_ok() || matches!(r, Err(CoreError::BadInput { .. }))) {
                 g.enroll = Some(flow);
             }
             return r;
@@ -389,11 +399,20 @@ impl PhoneCore {
             .pending
             .remove(&token)
             .ok_or_else(|| CoreError::bad("this request is no longer pending"))?;
+        // an explicit cancel consumes the request
         if matches!(decision, Decision::Refuse) {
             return Ok(none_outgoing("Refused."));
         }
+        // A decision that is refused for what the person typed (the device id) leaves the request open: only a completed
+        // decision, a refusal that ends the request (expired, blocked) or an explicit cancel consumes the token.
+        let keep = match &p {
+            Pending::Release(r) => Some(Pending::Release(r.clone())),
+            Pending::Notice(n) => Some(Pending::Notice(n.clone())),
+            Pending::Cert(c) => Some(Pending::Cert(c.clone())),
+            _ => None,
+        };
         let mut ctx = g.ctx(now)?;
-        match (p, decision) {
+        let out = match (p, decision) {
             (Pending::Release(p), Decision::Release { options }) => {
                 release::approve(*p, &options, &mut ctx)
             }
@@ -413,7 +432,13 @@ impl PhoneCore {
                 )))
             }
             _ => Err(CoreError::bad("that decision does not fit this request")),
+        };
+        if matches!(out, Err(CoreError::BadInput { .. })) {
+            if let Some(k) = keep {
+                g.pending.insert(token, k);
+            }
         }
+        out
     }
 
     /// The head adoption step 1 for a list given directly (the same as `open_frame` on a kind 5 list of own ops).
@@ -449,6 +474,32 @@ impl PhoneCore {
             }
             .encode(),
         ))
+    }
+
+    /// The newest ops of this phone's chain (what `export_ops_text` carries), one `OpView` per op in chain order,
+    /// rendered from the signed bytes with the same rows and danger marks as an approval screen.
+    pub fn export_ops_view(&self) -> Result<Vec<OpView>> {
+        let g = self.lock_inner();
+        let u = g.unlocked.as_ref().ok_or(CoreError::Locked)?;
+        let mut aliases = u.state.aliases.clone();
+        for (id, d) in &u.state.ring {
+            aliases.insert(id.clone(), d.name.clone());
+        }
+        chain::courier_ops(&u.state, COURIER_TAIL)
+            .iter()
+            .map(|(canonical, sig)| {
+                let op = sshub_sync_proto::oplog::canonical::decode_op(canonical, *sig).map_err(
+                    |e| {
+                        CoreError::internal(format!(
+                            "an op of this phone's own chain does not parse: {e:#}"
+                        ))
+                    },
+                )?;
+                Ok(crate::describe::describe_op(
+                    &op, canonical, &aliases, None, 0,
+                ))
+            })
+            .collect()
     }
 
     /// The state encrypted under the secret. Call after every mutation; Kotlin writes it atomically.
@@ -538,5 +589,235 @@ impl PhoneCore {
     /// Base64 text of pasted/shared frames (clipboard): the frame, or None when it is not valid base64.
     pub fn frame_from_text(&self, text: String) -> Option<Vec<u8>> {
         from_base64(&text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand_chacha::{rand_core::SeedableRng, ChaCha8Rng};
+
+    fn core() -> Arc<PhoneCore> {
+        PhoneCore::with_rng(None, Box::new(ChaCha8Rng::seed_from_u64(5)))
+    }
+
+    fn fixture() -> serde_json::Value {
+        let p = format!(
+            "{}/../../assets/companion/test/fixtures/challenges.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    }
+
+    fn frame_of(f: &serde_json::Value, name: &str) -> Vec<u8> {
+        let c = f["challenges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap();
+        hex::decode(c["frame_hex"].as_str().unwrap()).unwrap()
+    }
+
+    fn release(typed: Option<&str>) -> Decision {
+        Decision::Release {
+            options: ReleaseOptions {
+                typed_id: typed.map(str::to_string),
+                qr: false,
+                clipboard: false,
+                sound: false,
+                audio_profile: AudioProfile::Fast,
+                issue_short_code: false,
+            },
+        }
+    }
+
+    #[test]
+    fn a_decision_refused_for_the_typed_id_does_not_consume_the_token() {
+        let f = fixture();
+        let now = f["now"].as_i64().unwrap();
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!("not a share request");
+        };
+        let want = view
+            .type_to_approve
+            .clone()
+            .expect("an unmet requester needs its id typed");
+        for typed in [None, Some("0000000000000000"), Some("")] {
+            let e = c.decide(view.token, release(typed), now + 1).unwrap_err();
+            assert!(matches!(e, CoreError::BadInput { .. }), "{typed:?}");
+        }
+        // the same request is still open and the right id completes it
+        let out = c.decide(view.token, release(Some(&want)), now + 1).unwrap();
+        assert_eq!(out.kind, 2);
+        // a completed decision consumed the token
+        assert!(c.decide(view.token, release(Some(&want)), now + 1).is_err());
+    }
+
+    #[test]
+    fn an_explicit_cancel_and_an_expired_request_consume_the_token() {
+        let f = fixture();
+        let now = f["now"].as_i64().unwrap();
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        c.decide(view.token, Decision::Refuse, now).unwrap();
+        assert!(
+            c.decide(view.token, release(view.type_to_approve.as_deref()), now)
+                .is_err(),
+            "cancelled"
+        );
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        let late = view.expires_at;
+        let e = c
+            .decide(view.token, release(view.type_to_approve.as_deref()), late)
+            .unwrap_err();
+        assert!(
+            matches!(e, CoreError::Refused { .. }),
+            "an expired request is refused for good: {e}"
+        );
+        assert!(c
+            .decide(view.token, release(view.type_to_approve.as_deref()), now)
+            .is_err());
+    }
+
+    #[test]
+    fn unlock_info_carries_the_device_name_and_the_epoch() {
+        let c = core();
+        let i = c.unlock(vec![0x42; 32]).unwrap();
+        assert_eq!((i.device_name.clone(), i.ring_epoch), (None, 0));
+        {
+            let mut g = c.lock_inner();
+            let u = g.unlocked.as_mut().unwrap();
+            u.state.enrolled = Some(crate::state::Enrolled {
+                device_id: "aaaaaaaaaaaaaaaa".into(),
+                name: "my\u{202e}phone".into(),
+                at: 1,
+            });
+            u.state.epoch = 7;
+        }
+        let i = c.status(2).unwrap();
+        assert_eq!(
+            i.device_name.as_deref(),
+            Some("my\\u202ephone"),
+            "escaped like every name from a screen"
+        );
+        assert_eq!(i.ring_epoch, 7);
+    }
+
+    #[test]
+    fn the_exported_ops_come_with_their_rows() {
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.never_signed(c.status(0).unwrap().device_id).unwrap();
+        {
+            let mut g = c.lock_inner();
+            let g = &mut *g;
+            let u = g.unlocked.as_mut().unwrap();
+            for t in 0..3 {
+                chain::head_attest(&mut u.state, &u.id, 1_900_000_000 + t, None).unwrap();
+            }
+        }
+        let rows = c.export_ops_view().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows
+            .iter()
+            .all(|v| v.kind == "HeadAttest" && v.rows.len() >= 3));
+        let text = c.export_ops_text().unwrap();
+        assert_eq!(
+            PhoneOpsWire::decode(&from_base64(&text).unwrap())
+                .unwrap()
+                .ops
+                .len(),
+            rows.len()
+        );
+    }
+
+    #[test]
+    fn sas_words_pass_is_word() {
+        let w = sshub_sync_proto::crypto::sas_words(&[0x5a; 32]);
+        for word in w.split('-') {
+            assert!(is_word(word.into()), "{word}");
+        }
+        assert!(!is_word("harbour2".into()) && !is_word("".into()));
+    }
+
+    #[test]
+    fn a_refused_enrollment_name_leaves_the_enrollment_where_it_was() {
+        use sshub_sync_proto::wire::EnrollFrame;
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let commit = EnrollFrame::Commit {
+            role: 1,
+            commit: [7; 32],
+        }
+        .encode();
+        let Opened::Enroll { view } = c.open_frame(commit, 10).unwrap() else {
+            panic!("not an enrollment step");
+        };
+        for bad in ["", "   ", "tab\there", "line\nbreak"] {
+            let e = c
+                .decide(view.token, Decision::EnrollName { name: bad.into() }, 11)
+                .unwrap_err();
+            assert!(matches!(e, CoreError::BadInput { .. }), "{bad:?}");
+        }
+        let long = "x".repeat(65);
+        assert!(matches!(
+            c.decide(view.token, Decision::EnrollName { name: long }, 11)
+                .unwrap_err(),
+            CoreError::BadInput { .. }
+        ));
+        // the same flow still takes a good name and answers with the phone commitment (kind 6)
+        let out = c
+            .decide(
+                view.token,
+                Decision::EnrollName {
+                    name: "my phone".into(),
+                },
+                12,
+            )
+            .unwrap();
+        assert_eq!(out.kind, 6);
+        // and a SAS decision before the terminal revealed its keys is refused without ending the flow
+        let e = c
+            .decide(view.token, Decision::EnrollSas { matches: true }, 13)
+            .unwrap_err();
+        assert!(matches!(e, CoreError::BadInput { .. }));
+        assert!(
+            c.decide(
+                view.token,
+                Decision::EnrollName {
+                    name: "again".into()
+                },
+                14
+            )
+            .is_err(),
+            "the commitment step is over"
+        );
+    }
+
+    #[test]
+    fn words_are_checked_against_the_bip39_list() {
+        for w in ["abandon", "ZOO", " zoo ", "legal"] {
+            assert!(is_word(w.into()), "{w}");
+        }
+        for w in ["", "zzzz", "abandons", "ab and", "тест"] {
+            assert!(!is_word(w.into()), "{w}");
+        }
     }
 }

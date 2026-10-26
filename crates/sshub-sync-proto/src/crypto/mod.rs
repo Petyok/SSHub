@@ -41,5 +41,5 @@ pub use shamir::{
 pub use vault::vault_recipient;
 #[doc(hidden)]
 pub use vault::{exempt_slot_with, vault_recipient_with};
-pub use words::{bip39_decode, bip39_encode, eff_decode, eff_encode};
+pub use words::{bip39_decode, bip39_encode, eff_decode, eff_encode, is_bip39_word};
 pub use wrap::{blob_alg, hybrid_unwrap, hybrid_wrap, try_hybrid_wrap};
