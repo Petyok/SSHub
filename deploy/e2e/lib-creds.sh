@@ -188,6 +188,7 @@ red_complete() {
 # from then on every Red op wants phone, second holder and paper (red_complete).
 ring_with_phone() {
   check "the phone daemon answers" phone_ready
+  show "the phone forgets its site data (a new ring meets a phone with an empty chain)" phone reset
   show "the phone restores its fixed test identity" phone setup
   "$1"
   enroll_phone peer-a

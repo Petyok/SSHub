@@ -285,6 +285,15 @@ const commands = {
     return { fingerprint, fingerprint_ok: fingerprintOk, heading: await heading(), device_id: (await has('#device-id')) ? await text('#device-id') : null, expected_device_id: S.identity.deviceId };
   },
   setup,
+  // Forget everything this origin stored (the key, its chain, the ring) as a person would by clearing the site's data,
+  // so each scenario's fresh ring meets a phone whose chain starts at seq 1 (the page lists only its newest 8 ops).
+  async reset() {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Storage.clearDataForOrigin', { origin: new URL(page.url()).origin, storageTypes: 'all' });
+    await cdp.detach().catch(() => {});
+    await page.reload();
+    return { reset: true };
+  },
   async home() {
     await home();
     return { device_id: await text('#device-id') };
