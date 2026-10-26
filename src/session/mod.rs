@@ -23,10 +23,10 @@ use anyhow::Result;
 pub use parser::ParserState;
 pub use pty::{PtyEvent, PtyRuntime};
 
-/// Smallest grid a session is ever given. Stock vt100 0.16 panics below 2x2:
-/// wrapping text on a 1-row grid panics in `Grid::col_wrap`, and a wide
-/// character on a 1-column grid underflows `cols - width` in `Screen::text`.
-/// The renderer clips whatever no longer fits the pane.
+/// Smallest grid a session is ever given. vt100 0.16 panicked below 2x2
+/// (wrapping text on a 1-row grid, a wide character on a 1-column grid);
+/// 0.17 fixed both, and the floor stays as the smallest grid a shell is of
+/// use in. The renderer clips whatever no longer fits the pane.
 pub(crate) fn floor_grid((rows, cols): (u16, u16)) -> (u16, u16) {
     (rows.max(2), cols.max(2))
 }
@@ -444,7 +444,7 @@ impl Session {
             self.selection = None;
             return None;
         }
-        let (rows, cols) = self.parser.screen().size();
+        let (rows, cols) = self.parser.size();
         // contents_between's end column is exclusive; +1 to include the cell
         // under the cursor, clamped to the row width.
         let end_col = end.1.saturating_add(1).min(cols);
@@ -479,7 +479,7 @@ impl Session {
         end_col: u16,
     ) -> String {
         let cur = self.parser.scrollback() as i32;
-        let (rows, cols) = self.parser.screen().size();
+        let (rows, cols) = self.parser.size();
         let mut out = String::new();
         for r in start.0..=end.0 {
             // Bring current-frame row `r` on-screen: scrolling to `cur - r`
@@ -535,7 +535,7 @@ impl Session {
             self.drag_autoscroll = None;
             return;
         }
-        let (rows, _) = self.parser.screen().size();
+        let (rows, _) = self.parser.size();
         if dir > 0 {
             // Toward newer output: nothing below once we're at the live bottom.
             if self.parser.scrollback() == 0 {
@@ -1135,11 +1135,11 @@ impl Session {
     /// A no-op when the size is unchanged, so callers may call it every frame:
     /// the kernel would not signal an unchanged size either, but the parser's
     /// held sync frame would be dropped for nothing. An exited session is
-    /// never resized: no program is left to repaint, and on vt100 a shrink and
-    /// grow round trip cuts its frozen screen.
+    /// never resized: no program is left to repaint, and a narrower grid cuts
+    /// its frozen screen for good (vt100 does not reflow columns).
     pub fn resize(&mut self, grid: (u16, u16)) {
         let (rows, cols) = floor_grid(grid);
-        if self.phase.is_terminal() || self.parser.screen().size() == (rows, cols) {
+        if self.phase.is_terminal() || self.parser.size() == (rows, cols) {
             return;
         }
         self.parser.set_size(rows, cols);
@@ -1464,11 +1464,8 @@ fn ends_with_prompt(line: &str, needles: &[&str]) -> bool {
 /// Text of the cursor row up to (and excluding) the cursor column.
 fn line_before_cursor(screen: &vt100::Screen) -> String {
     let (rows, _) = screen.size();
-    if rows == 0 {
-        return String::new();
-    }
     let (cursor_row, cursor_col) = screen.cursor_position();
-    let row = cursor_row.min(rows - 1);
+    let row = cursor_row.min(rows.get() - 1);
     let mut out = String::new();
     for col in 0..cursor_col {
         if let Some(cell) = screen.cell(row, col) {
@@ -1503,15 +1500,12 @@ impl Drop for Session {
 /// the top of a fresh screen or at the bottom of a scrolled shell.
 fn current_screen_tail(screen: &vt100::Screen) -> String {
     let (rows, cols) = screen.size();
-    if rows == 0 {
-        return String::new();
-    }
     let (cursor_row, _) = screen.cursor_position();
-    let last = cursor_row.min(rows - 1);
+    let last = cursor_row.min(rows.get() - 1);
     let start = last.saturating_sub(3);
     let mut out = String::new();
     for row in start..=last {
-        for col in 0..cols {
+        for col in 0..cols.get() {
             if let Some(cell) = screen.cell(row, col) {
                 if cell.has_contents() {
                     out.push_str(cell.contents());
@@ -2759,7 +2753,7 @@ mod prompt_tests {
 
     #[test]
     fn host_key_verification_prompt_is_detected() {
-        let mut parser = vt100::Parser::new(40, 100, 0);
+        let mut parser = ParserState::new(40, 100);
         parser.process(
             b"The authenticity of host 'srv (10.0.0.1)' can't be established.\r\n\
               ED25519 key fingerprint is SHA256:abc123def456.\r\n\
@@ -2779,7 +2773,7 @@ mod prompt_tests {
         // at the top of a tall PTY, leaving the bottom blank. The scanner must
         // still see the prompt (it used to read the physical bottom 3 rows and
         // find "(blank)", so the stored password was never auto-typed).
-        let mut parser = vt100::Parser::new(40, 100, 0);
+        let mut parser = ParserState::new(40, 100);
         parser.process(
             b"** WARNING: connection is not using a post-quantum key exchange algorithm.\r\n\
               ** This session may be vulnerable to \"store now, decrypt later\" attacks.\r\n\
@@ -2796,7 +2790,7 @@ mod prompt_tests {
     fn motd_mentioning_password_does_not_trigger_autotype() {
         // A banner that *mentions* "password:" mid-text must not match: the
         // scanner now looks only at the cursor line, which must end with ':'.
-        let mut parser = vt100::Parser::new(40, 100, 0);
+        let mut parser = ParserState::new(40, 100);
         parser.process(
             b"* Policy: you must change your password: rotate it every 90 days.\r\n\
               Loading profile...\r\n",
@@ -2818,7 +2812,7 @@ mod prompt_tests {
 
     #[test]
     fn passphrase_prompt_matches_at_cursor_line() {
-        let mut parser = vt100::Parser::new(10, 100, 0);
+        let mut parser = ParserState::new(10, 100);
         parser.process(b"Enter passphrase for key '/home/me/.ssh/id_rsa': ");
         let line = line_before_cursor(parser.screen());
         assert!(ends_with_prompt(

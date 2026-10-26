@@ -511,7 +511,7 @@ mod tests {
                 }
                 assert!(Instant::now() < deadline,
                     "authentication fixture timed out at {stage}: terminal={:?}, connected={}, terminal_phase={}, modal={}",
-                    app.sessions[0].parser.screen().size(), app.sessions[0].is_connected(),
+                    app.sessions[0].parser.size(), app.sessions[0].is_connected(),
                     app.sessions[0].phase.is_terminal(), app.auth_modal.is_some());
                 std::thread::sleep(Duration::from_millis(1));
             }

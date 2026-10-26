@@ -87,7 +87,7 @@ fn a_workspace_saves_the_layout_and_reopens_it_at_each_panes_size() {
     for view in &views[..2] {
         let session = &app.sessions[view.session.unwrap()];
         assert_eq!(
-            session.parser.screen().size(),
+            session.parser.size(),
             crate::session::render::grid_of(view.rect)
         );
     }
