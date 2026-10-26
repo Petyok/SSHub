@@ -191,7 +191,7 @@ class SecurityMenuScreenTest {
             )
         }
         for (t in listOf("Trust sessions", "Short codes I issued", "Reshare and wrap keys", "Recovery and a new phone", "Recovery words", "Export my ops as text", "About and security", "Lock now")) {
-            rule.onNodeWithText(t).performClick()
+            rule.onNodeWithText(t).performScrollTo().performClick()
         }
         assertEquals(listOf("trust", "codes", "reshare", "recovery", "backup", "export", "about", "lock"), hit)
         rule.assertTargets48()

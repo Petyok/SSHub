@@ -1,6 +1,9 @@
 package uk.petruha.sshub.phone.testing
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
@@ -26,6 +29,7 @@ fun ComposeContentTestRule.setScreen(
 
 /** Spec 9: every clickable node is at least 48 x 48 dp. Call at the end of a screen test. */
 fun ComposeContentTestRule.assertTargets48() {
+    snapshot()
     val density = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
     val min = 48f * density - 1f
     val bad = onAllNodes(androidx.compose.ui.test.hasClickAction()).fetchSemanticsNodes().filter { it.size.width < min || it.size.height < min }
@@ -62,4 +66,20 @@ private fun androidx.compose.ui.text.TextLayoutResult.reallyClipped(): Boolean {
     val tooTall = c.hasBoundedHeight && size.height > c.maxHeight + 1
     val ellipsized = (0 until lineCount).any { isLineEllipsized(it) }
     return tooWide || tooTall || ellipsized
+}
+
+/**
+ * Writes a PNG of the whole screen to <app files>/shots/<TestClass>.<method>.png (pulled by android/ci/build.sh after the run).
+ * Called by assertTargets48, which every screen test ends with, so each tested state leaves a picture to compare with the
+ * prototype screenshots. A failure to capture never fails a test.
+ */
+fun ComposeContentTestRule.snapshot() {
+    runCatching {
+        val frame = Throwable().stackTrace.firstOrNull { it.className.startsWith("uk.petruha.sshub.phone.") && !it.className.contains(".testing.") }
+            ?: return
+        val name = frame.className.substringAfterLast('.') + "." + frame.methodName
+        val dir = java.io.File(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.filesDir, "shots").apply { mkdirs() }
+        val bmp = onRoot().captureToImage().asAndroidBitmap()
+        java.io.File(dir, "$name.png").outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
+    }
 }

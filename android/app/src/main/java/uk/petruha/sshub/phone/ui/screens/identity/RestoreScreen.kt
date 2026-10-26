@@ -200,12 +200,14 @@ private fun WordCell(index: Int, word: String, wordState: WordState, onChange: (
                     WordState.Partial -> "not a whole word yet"
                     WordState.Empty -> "empty"
                 }
-            }.heightIn(min = 48.dp).padding(vertical = 12.dp),
+            }.heightIn(min = 48.dp),
             textStyle = SshubText.monoBody.merge(TextStyle(color = cs.onSurface, fontWeight = FontWeight.Bold)),
             cursorBrush = SolidColor(cs.onSurface),
             keyboardOptions = KeyboardOptions(
                 capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Next,
             ),
+            // the padding lives inside the field so the touch target (the semantics node) keeps the whole 48dp
+            decorationBox = { inner -> Box(Modifier.heightIn(min = 48.dp).padding(vertical = 12.dp), contentAlignment = Alignment.CenterStart) { inner() } },
         )
         if (ok) Glyph(GlyphKind.Check, sc.ok, Modifier.clearAndSetSemantics { }, size = 16.dp)
         if (bad) Glyph(GlyphKind.Cross, sc.dangerText, Modifier.clearAndSetSemantics { }, size = 16.dp)

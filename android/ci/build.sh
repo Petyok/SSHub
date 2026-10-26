@@ -35,6 +35,7 @@ if [ "$mode" = connected ]; then
     cd android
     rc=0
     ./gradlew --no-daemon --console=plain connectedDebugAndroidTest ${TEST_CLASS:+-Pandroid.testInstrumentationRunnerArguments.class=$TEST_CLASS} || rc=$?
+    mkdir -p /out/shots && adb exec-out run-as uk.petruha.sshub.phone tar -cf - -C files shots 2>/dev/null | tar -xf - -C /out 2>/dev/null || true
     cp -r app/build/outputs/androidTest-results /out/ 2>/dev/null || true
     cp -r app/build/reports/androidTests /out/ 2>/dev/null || true
     exit "$rc"
