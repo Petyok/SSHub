@@ -259,6 +259,7 @@ fn every_op_the_phone_authors_is_byte_identical() {
     for ((c, sig), w) in tail.iter().zip(want_rows) {
         let op = Op::from_canonical(c, *sig).unwrap();
         let d = describe_op(&op, c, &BTreeMap::new(), None, 0);
+        assert_eq!(d.hash, s(&w["hash"]), "the exported op's hash");
         assert_eq!(d.headline, s(&w["headline"]));
         assert_eq!(rows_of(&d.rows), w["rows"]);
         assert_eq!(
@@ -288,6 +289,7 @@ fn what_an_approval_screen_shows_is_the_same_text() {
         let op = Op::from_canonical(&canonical, sig)
             .unwrap_or_else(|e| panic!("{}: {e:#}", s(&x["id"])));
         let d = describe_op(&op, &canonical, &aliases, None, 120);
+        assert_eq!(d.hash, s(&w["hash"]), "{} op hash", s(&w["id"]));
         assert_eq!(d.headline, s(&w["headline"]), "{} headline", s(&w["id"]));
         assert_eq!(
             d.requester.as_deref(),

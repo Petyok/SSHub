@@ -450,6 +450,7 @@ pub fn describe_op(
         requester,
         rows,
         danger_count,
+        hash: hex::encode(sshub_sync_proto::crypto::chain_hash(canonical)),
     }
 }
 

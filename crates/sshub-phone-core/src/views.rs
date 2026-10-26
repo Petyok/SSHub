@@ -33,6 +33,9 @@ pub struct OpView {
     pub requester: Option<String>,
     pub rows: Vec<Row>,
     pub danger_count: u32,
+    /// Hex of the BLAKE3 of the op's canonical bytes (the op hash the ring and the terminal show): compare it with the
+    /// terminal.
+    pub hash: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -324,6 +327,10 @@ pub struct ChainAdopted {
     pub ops: u32,
     /// The seq the earlier, disagreeing list ended at.
     pub previous_seq: Option<u64>,
+    /// The sentence the page prints under the title: "Newest op in this list: seq N, signed ...Z (n op(s) read)."
+    pub summary: String,
+    /// What to do next, in the page's words (take another list, or the warning to read before adopting).
+    pub note: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -410,5 +417,10 @@ pub enum ScanEvent {
     /// A completed document (a whole frame of kinds 1 to 10): hand it to `open_frame`.
     Document {
         bytes: Vec<u8>,
+    },
+    /// A completed document that is not an SSHub frame (no `SWR1` magic, or a kind outside 1..=10): the page ignores it
+    /// ("not what this step needs"). The collector was reset; nothing is handed to `open_frame`.
+    Foreign {
+        len: u32,
     },
 }
