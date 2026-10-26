@@ -467,11 +467,13 @@ mod replication_tests {
                 .len()
         };
         assert_eq!(updates(), 0);
-        ctx.password_store()
-            .set(&host_key(host), "s3cret")
-            .unwrap();
+        ctx.password_store().set(&host_key(host), "s3cret").unwrap();
         assert_eq!(updates(), 1, "the save is replicated");
         ctx.password_store().set(&host_key(host), "n3w").unwrap();
-        assert_eq!(updates(), 2, "an edit appends one more, not zero and not two");
+        assert_eq!(
+            updates(),
+            2,
+            "an edit appends one more, not zero and not two"
+        );
     }
 }
