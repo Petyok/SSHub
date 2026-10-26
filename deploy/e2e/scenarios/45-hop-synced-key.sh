@@ -55,7 +55,7 @@ check "peer-b resolves jump's address" '[ -n "$JIP" ]'
 OUT=$(run_dest "$PHRASE" 2>&1)
 [ "$OUT" = dest ] || { echo "--- exec output:"; echo "$OUT" | sed 's/^/     | /'; }
 check "exec dest with the phrase reaches dest" '[ "$OUT" = dest ]'
-check "dest saw the connection from jump's address (hop)" "$C logs --no-color dest 2>&1 | grep -q 'Accepted publickey for ci from $JIP '"
+check "dest saw the connection from jump's address (hop)" "psh dest \"grep -q 'Accepted publickey for ci from $JIP ' \\\"\\\$HOME/ssh/sshd.log\\\"\""
 
 check "no key bytes on peer-b's disk after exec" '[ -z "$(disk_hits)" ]'
 check "no PRIVATE KEY block in sshub's dirs or runtime dir" '[ -z "$(pem_hits)" ]'

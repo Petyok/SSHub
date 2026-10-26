@@ -70,5 +70,6 @@ EOF
 echo "peer-entrypoint: $PEER_NAME ready, sshd on $SSH_PORT"
 # sshd daemonizes (pid in $H/ssh/sshd.pid) so scenarios can stop and restart it.
 # This shell holds the container open; as PID 1 sshd would ignore SIGTERM.
-/usr/sbin/sshd -e -f "$H/ssh/sshd_config"
+# The log goes to a file too: a daemonised sshd keeps no stderr the compose logs could show.
+/usr/sbin/sshd -E "$H/ssh/sshd.log" -f "$H/ssh/sshd_config"
 exec sleep infinity
