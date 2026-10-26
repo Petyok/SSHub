@@ -7,10 +7,22 @@
 
 uniffi::setup_scaffolding!();
 
+pub mod ble;
+pub mod cert;
 pub mod chain;
+pub mod channels;
+pub mod ctx;
+pub mod describe;
+pub mod enroll;
 pub mod error;
 pub mod identity;
+pub mod notices;
+pub mod outgoing;
+pub mod release;
+pub mod reshare;
 pub mod state;
+pub mod text;
+pub mod views;
 
 pub use error::CoreError;
 use sshub_sync_proto::crypto::{bip39_encode, chain_hash, verify, DeviceIdentity};
