@@ -57,6 +57,10 @@ services:
     pull_policy: never
     hostname: phone
     networks: [e2e]
+    environment:
+      PHONE_TARGET: ${PHONE_TARGET:-desktop}
+      ADB_HOST: android
+      ADB_PORT: "5037"
 
   mailpit:
     image: axllent/mailpit:v1.32.0

@@ -24,6 +24,7 @@
 //                                          seq 1 continuous, last op of `kind` (RedPhoneSign naming `opHash`)
 //   screen                                 text of the whole page (diagnostics)
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -40,7 +41,7 @@ const SECRET_HEX = '42'.repeat(32); // the fixture phone of the Rust side (its d
 
 const require = createRequire(import.meta.url);
 const lib = (f) => import(pathToFileURL(path.join(COMPANION, 'src', f)).href);
-const { chromium } = require('playwright');
+const { chromium, _android: android } = require('playwright');
 const jsQR = require(path.join(COMPANION, 'vendor/jsqr-1.4.0/jsQR.cjs'));
 
 // ------------------------------------------------------------------ the page file under test
@@ -57,7 +58,7 @@ const S = {}; // loaded library modules and the identity
 // A target is the one place that knows about the browser: open(pageHtml) serves the page and returns
 // { page, close }, where page is a Playwright Page (everything below only uses the Page API, so every target runs the
 // same steps). PHONE_TARGET picks one; 'desktop' is headless Chromium in this container. A second target (Chrome on
-// an Android emulator) is added here when its service is ready, nothing else in this file changes.
+// an Android emulator) is `android` below; nothing else in this file knows which one runs.
 const targets = {
   async desktop(html) {
     const server = http.createServer((req, res) => {
@@ -77,6 +78,56 @@ const targets = {
     p.on('pageerror', (e) => console.error('[pageerror]', e.message));
     await p.goto(`${origin}/sshub-companion.html`);
     return { page: p, close: async () => { await ctx.close(); server.close(); } };
+  },
+
+  // Google Chrome on the Android emulator of the compose service `android` (adb server android:5037). Chrome is a user
+  // build, so Playwright cannot launch it with flags: the first run is tapped through with uiautomator, Chrome's
+  // always-present devtools socket is relayed to 127.0.0.1:9222 and Playwright attaches over CDP (same approach as the
+  // Android app's chrome probe). The page is not served over the network: its committed bytes are fulfilled for one
+  // https origin by a route, which makes it a secure context (camera, clipboard, crypto) without any adb forwarding.
+  async android(html) {
+    const host = process.env.ADB_HOST || 'android';
+    const port = Number(process.env.ADB_PORT || 5037);
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const devices = await android.devices({ host, port });
+    if (devices.length !== 1) throw new Error(`expected 1 device on ${host}:${port}, got ${devices.length}`);
+    const device = devices[0];
+    const sh = async (c) => (await device.shell(c)).toString();
+    const FRE = [/^use without an account$/i, /^no,? thanks$/i, /^don.t turn on$/i, /^accept (&|and) continue$/i, /^skip$/i, /^got it$/i, /^continue$/i, /^next$/i, /^not now$/i, /^don.t allow$/i];
+    const tapOnce = async () => {
+      const xml = await sh('uiautomator dump /dev/tty');
+      const nodes = [...xml.matchAll(/<node [^>]*?text="([^"]*)"[^>]*?clickable="true"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g)];
+      const hit = FRE.map((re) => nodes.find((n) => re.test(n[1]))).find(Boolean);
+      if (!hit) return false;
+      await sh(`input tap ${(+hit[2] + +hit[4]) / 2} ${(+hit[3] + +hit[5]) / 2}`);
+      return true;
+    };
+    await sh('am start -n com.android.chrome/com.google.android.apps.chrome.Main');
+    let up = false;
+    for (let i = 0; i < 30 && !up; i++) {
+      await sleep(2500);
+      const tapped = await tapOnce();
+      const socket = Number((await sh('cat /proc/net/unix | grep -c chrome_devtools_remote')).trim()) > 0;
+      up = !tapped && socket && i >= 2;
+    }
+    if (!up) throw new Error('Chrome did not reach its tab switcher');
+    const relay = net.createServer(async (conn) => {
+      const dev = await device.open('localabstract:chrome_devtools_remote');
+      conn.on('data', (b) => dev.write(b));
+      dev.on('data', (b) => conn.write(b));
+      conn.on('close', () => dev.close().catch(() => {}));
+      dev.on('close', () => conn.destroy());
+      conn.on('error', () => {});
+    });
+    await new Promise((r) => relay.listen(9222, '127.0.0.1', r));
+    const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+    const ctx = browser.contexts()[0] ?? (await browser.newContext());
+    const origin = 'https://phone.e2e.test';
+    await ctx.route(`${origin}/**`, (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html.toString('utf8') }));
+    const p = await ctx.newPage();
+    p.on('pageerror', (e) => console.error('[pageerror]', e.message));
+    await p.goto(`${origin}/sshub-companion.html`);
+    return { page: p, close: async () => { await p.close().catch(() => {}); await browser.close().catch(() => {}); relay.close(); await device.close().catch(() => {}); } };
   },
 };
 
@@ -291,9 +342,9 @@ const commands = {
     await page.click('#approve');
     await waitAny(['#send-done', '#release-error'], 120000);
     if ((await has('#release-error')) && (await text('#release-error')) && !(await has('#send-done'))) return { ok: false, error: await text('#release-error') };
-    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    const clip = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
     const qr = b64(await readQr('#reverse-qr'));
-    return { ok: true, reply: clip, qr_equals_clipboard: clip === qr, code: (await has('#snapshot-code')) ? await text('#snapshot-code') : null };
+    return { ok: true, reply: clip ?? qr, clipboard_readable: clip !== null, qr_equals_clipboard: clip === null ? null : clip === qr, code: (await has('#snapshot-code')) ? await text('#snapshot-code') : null };
   },
 
   // ---- enrollment (phone is the initiator, role 0): kinds 6, 7, 8

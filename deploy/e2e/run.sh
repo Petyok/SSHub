@@ -7,7 +7,12 @@ set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 cd "$HERE" || exit 2
 P=sshub-hostsync-e2e
+# The phone's browser: desktop (headless Chromium in the phone service) or android (Chrome on the emulator service).
+# A file next to this script picks it, because the runner passes no environment (gpu-verify/e2e.sh).
+PHONE_TARGET=$(cat "$HERE/phone-target" 2>/dev/null || echo desktop)
+export PHONE_TARGET
 C="docker compose -p $P -f docker-compose.yml"
+[ "$PHONE_TARGET" = android ] && C="$C --profile android"
 PEERS="peer-a peer-b peer-c hub"
 E2E_DIR=$HERE
 export E2E_DIR C PEERS
@@ -18,6 +23,17 @@ cleanup() {
 trap cleanup EXIT
 
 cleanup
+if [ "$PHONE_TARGET" = android ]; then
+  echo "$(date -u +%H:%M:%S) compose up --build android (the emulator boots first, the phone driver attaches to it)"
+  $C up --build -d android || { echo "compose up android failed"; exit 1; }
+  i=0
+  until [ "$($C ps --format '{{.Health}}' android 2>/dev/null)" = healthy ]; do
+    i=$((i + 1))
+    [ "$i" -le 120 ] || { echo "emulator not healthy after 10 min"; $C logs --no-color android | tail -n 40; exit 1; }
+    sleep 5
+  done
+  echo "$(date -u +%H:%M:%S) emulator healthy"
+fi
 echo "$(date -u +%H:%M:%S) compose up --build"
 $C up --build -d || { echo "compose up failed"; exit 1; }
 
