@@ -429,7 +429,7 @@ pub(crate) mod gate_tests {
 #[cfg(test)]
 mod replication_tests {
     use super::tests::bootstrapped;
-    use crate::credentials::{host_key, open_ungated_for_profile, PasswordStore};
+    use crate::credentials::{host_key, open_ungated_for_profile};
     use crate::sync::crypto::Argon2Profile;
     use crate::sync::oplog::{Attendance, DeviceKind, DeviceRole, VerifiedBy};
 
