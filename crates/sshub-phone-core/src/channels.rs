@@ -300,6 +300,9 @@ mod tests {
                     } => {
                         assert!(have <= total && total > 0 && damaged == 0);
                     }
+                    ScanEvent::Foreign { .. } => {
+                        unreachable!("the Scanner never classifies documents")
+                    }
                 }
             }
         }

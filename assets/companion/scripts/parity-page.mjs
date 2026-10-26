@@ -12,7 +12,7 @@ import { bytesOf, hexOf, sealedBoxOpen } from '../src/lib.mjs';
 import { xchacha20poly1305 } from '../vendor/noble-ciphers-2.4.0/chacha.js';
 import { blake3 } from '../vendor/noble-hashes-2.4.0/blake3.js';
 import { identityOfSecret } from '../src/keys.mjs';
-import { describeOp, isRedOp, parseOp } from '../src/ops.mjs';
+import { describeOp, isRedOp, opHashHex, parseOp } from '../src/ops.mjs';
 import {
   appendCertExtend, appendCertIssue, appendCertRevoke, appendConfirmBatch, appendHeadAttest, appendReenrollCancel, appendRedPhoneSign, appendShareStorageKey,
   appendWrapKeyRotate, courierOps, emptyState,
@@ -76,7 +76,7 @@ out.identity = ['42', '0b'].map((s) => Array.from({ length: 3 }, (_, g) => {
   }));
   out.export_rows = courierOps(state, 8).map((o) => {
     const d = describeOp(parseOp(o.canonical), {});
-    return { headline: d.headline, rows: rows(d), danger_count: d.dangerCount };
+    return { hash: opHashHex(o.canonical), headline: d.headline, rows: rows(d), danger_count: d.dangerCount };
   });
 }
 
@@ -86,7 +86,7 @@ out.identity = ['42', '0b'].map((s) => Array.from({ length: 3 }, (_, g) => {
   const aliases = { '723ed85f0566df0c': 'terminal A' };
   out.describe = v.vectors.map((x) => {
     const d = describeOp(parseOp(h(x.canonical_hex)), aliases);
-    return { id: x.id, headline: d.headline, requester: d.requester, rows: rows(d), danger_count: d.dangerCount };
+    return { id: x.id, hash: opHashHex(h(x.canonical_hex)), headline: d.headline, requester: d.requester, rows: rows(d), danger_count: d.dangerCount };
   });
   // The Red notice window as the page computes it (app.mjs redNotice): the op's own signed time, lapsing after 3 days.
   out.red_window = v.vectors.map((x) => ({ x, op: parseOp(h(x.canonical_hex)) })).filter(({ op }) => isRedOp(op)).map(({ x, op }) => ({

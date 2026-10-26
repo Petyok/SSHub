@@ -74,6 +74,10 @@ pub fn is_word(word: String) -> bool {
     sshub_sync_proto::crypto::is_bip39_word(&word)
 }
 
+/// An SSHub frame: the `SWR1` magic and a kind from 1 to 10 (what `PhoneCore::open_frame` can look at).
+fn is_sshub_frame(b: &[u8]) -> bool {
+    kind_of(b).is_some_and(|k| (1..=10).contains(&k))
+}
 fn kind_of(frame: &[u8]) -> Option<u8> {
     (frame.len() >= 7 && frame[..4] == WIRE_MAGIC).then(|| frame[6])
 }
@@ -181,6 +185,17 @@ impl Inner {
                 newest_at: r.newest_at,
                 ops: r.ops,
                 previous_seq: r.previous_seq,
+                summary: format!(
+                    "Newest op in this list: seq {}, signed {}Z ({} op(s) read).",
+                    r.head_seq,
+                    crate::text::iso(r.newest_at).chars().take(16).collect::<String>(),
+                    r.ops
+                ),
+                note: match (r.agreed, r.previous_seq) {
+                    (true, _) => format!("This phone will continue after seq {}. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.", r.head_seq),
+                    (false, Some(p)) => format!("The earlier list ended at seq {p}, so one of the two is behind. Take a list from another terminal, or again after it synced."),
+                    (false, None) => "Take a second list, from another terminal or from the same one later, before this chain head is trusted.".to_string(),
+                },
             },
         })
     }
@@ -570,7 +585,22 @@ impl PhoneCore {
 
     /// A camera frame (luma plane): decodes QR codes and feeds the fountain decoder.
     pub fn scan_gray(&self, w: u32, h: u32, luma: Vec<u8>) -> Vec<ScanEvent> {
-        self.lock_inner().scanner.push_gray(w, h, &luma)
+        let mut g = self.lock_inner();
+        let events = g.scanner.push_gray(w, h, &luma);
+        let mut out = Vec::with_capacity(events.len());
+        for e in events {
+            match e {
+                // like the page's `accept`: a document that is not an SSHub frame is ignored and the collector starts over
+                ScanEvent::Document { bytes } if !is_sshub_frame(&bytes) => {
+                    g.scanner.reset();
+                    out.push(ScanEvent::Foreign {
+                        len: bytes.len() as u32,
+                    });
+                }
+                other => out.push(other),
+            }
+        }
+        out
     }
 
     /// Forgets a half-read document (the person left the scan screen).
@@ -718,6 +748,101 @@ mod tests {
             "escaped like every name from a screen"
         );
         assert_eq!(i.ring_epoch, 7);
+    }
+
+    fn gray(f: &QrFrame, scale: usize) -> (u32, u32, Vec<u8>) {
+        let n = f.size as usize;
+        let side = (n + 8) * scale;
+        let mut px = vec![255u8; side * side];
+        for r in 0..n {
+            for c in 0..n {
+                if f.modules[r * n + c] == 1 {
+                    for y in 0..scale {
+                        for x in 0..scale {
+                            px[((r + 4) * scale + y) * side + (c + 4) * scale + x] = 0;
+                        }
+                    }
+                }
+            }
+        }
+        (side as u32, side as u32, px)
+    }
+
+    fn scan_all(c: &PhoneCore, doc: &[u8]) -> Vec<ScanEvent> {
+        let mut seen = Vec::new();
+        let frames = channels::qr_frames(doc, 25).unwrap();
+        for f in frames.iter().chain(frames.iter()) {
+            let (w, h, px) = gray(f, 6);
+            seen.extend(c.scan_gray(w, h, px));
+        }
+        seen
+    }
+
+    #[test]
+    fn a_qr_that_is_not_an_sshub_frame_is_reported_as_foreign_and_a_real_frame_is_a_document() {
+        let c = core();
+        let alien: Vec<u8> = (0..300u32).map(|i| (i * 7) as u8).collect();
+        let ev = scan_all(&c, &alien);
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, ScanEvent::Foreign { len: 300 })),
+            "{ev:?}"
+        );
+        assert!(!ev.iter().any(|e| matches!(e, ScanEvent::Document { .. })));
+        // the collector started over: a real frame (magic, version, kind 1) is handed on as a document
+        let mut real = vec![0x53, 0x57, 0x52, 0x31, 0, 1, 1];
+        real.extend((0..200u32).map(|i| (i * 3) as u8));
+        let ev = scan_all(&c, &real);
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, ScanEvent::Document { bytes } if *bytes == real)),
+            "{ev:?}"
+        );
+        assert!(is_sshub_frame(&real) && !is_sshub_frame(&alien));
+        let mut bad_kind = real.clone();
+        bad_kind[6] = 11;
+        assert!(!is_sshub_frame(&bad_kind));
+    }
+
+    #[test]
+    fn the_chain_view_says_what_the_page_says() {
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.lock_inner().unlocked.as_mut().unwrap().state = PhoneState::restored();
+        let id = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
+        let mut live = PhoneState::default();
+        for t in 0..3 {
+            chain::head_attest(&mut live, &id, 1_893_452_400 + t, None).unwrap();
+        }
+        let wire = |n: usize| {
+            PhoneOpsWire {
+                ops: chain::courier_ops(&live, 8).into_iter().take(n).collect(),
+            }
+            .encode()
+        };
+        let first = c.take_chain(wire(2)).unwrap();
+        assert!(!first.agreed);
+        assert_eq!(
+            first.summary,
+            "Newest op in this list: seq 2, signed 2029-12-31T23:00Z (2 op(s) read)."
+        );
+        assert_eq!(first.note, "Take a second list, from another terminal or from the same one later, before this chain head is trusted.");
+        let second = c.take_chain(wire(3)).unwrap();
+        assert!(!second.agreed);
+        assert!(
+            second
+                .note
+                .starts_with("The earlier list ended at seq 2, so one of the two is behind."),
+            "{}",
+            second.note
+        );
+        let agreed = c.take_chain(wire(3)).unwrap();
+        assert!(agreed.agreed);
+        assert_eq!(
+            agreed.summary,
+            "Newest op in this list: seq 3, signed 2029-12-31T23:00Z (3 op(s) read)."
+        );
+        assert_eq!(agreed.note, "This phone will continue after seq 3. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.");
     }
 
     #[test]

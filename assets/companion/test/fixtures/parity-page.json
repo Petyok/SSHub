@@ -175,6 +175,7 @@
  ],
  "export_rows": [
   {
+   "hash": "ecd1fdcf1e394f71d2771b455e861e72dbea0248b1e0e98784a2e7c795259790",
    "headline": "WrapKeyRotate by (no name known) [ee8a1d5cf97016a7]",
    "rows": [
     {
@@ -216,6 +217,7 @@
    "danger_count": 4
   },
   {
+   "hash": "2c4cd80569d95fb296ead7db9d663827ed007a93081587016f3fa2d057f81e02",
    "headline": "CertIssue by (no name known) [ee8a1d5cf97016a7]",
    "rows": [
     {
@@ -272,6 +274,7 @@
    "danger_count": 7
   },
   {
+   "hash": "46db7d6b715f171b2b682aa6f4326990ed3836ffc884d64dde8803a07cece418",
    "headline": "CertIssue by (no name known) [ee8a1d5cf97016a7]",
    "rows": [
     {
@@ -323,6 +326,7 @@
    "danger_count": 6
   },
   {
+   "hash": "2d82135eb53c88ca3c4dbae8624f3f5ed5661c1a60ffb2d4f8bc9af8bb7fb266",
    "headline": "CertExtend by (no name known) [ee8a1d5cf97016a7]",
    "rows": [
     {
@@ -354,6 +358,7 @@
    "danger_count": 2
   },
   {
+   "hash": "d52f4151bf6a71d050e661ee40ef8268e4e8b57075f24b6a375cfb4028e24842",
    "headline": "CertRevoke by (no name known) [ee8a1d5cf97016a7]",
    "rows": [
     {
@@ -380,6 +385,7 @@
    "danger_count": 1
   },
   {
+   "hash": "6747712c1e13f5a9e03f2b533992445295a13b4bde972fbdba4a1b12b5a067ad",
    "headline": "PhoneReenrollCancel by (no name known) [ee8a1d5cf97016a7]",
    "rows": [
     {
@@ -416,6 +422,7 @@
    "danger_count": 3
   },
   {
+   "hash": "6cacc1985a015a8f2b95f8c7c9ef6019b5b77f43fbce8ee856279452771e96d2",
    "headline": "ShareStorageKey by (no name known) [ee8a1d5cf97016a7]",
    "rows": [
     {
@@ -447,6 +454,7 @@
    "danger_count": 2
   },
   {
+   "hash": "7a4205a0dc112e673b870e6304bca6ee3b8a38265d7187881c27f85af65fad0a",
    "headline": "ShareReshareConfirmBatch by (no name known) [ee8a1d5cf97016a7]",
    "rows": [
     {
@@ -496,6 +504,7 @@
  "describe": [
   {
    "id": "host-upsert-empty-patch",
+   "hash": "cf709e2b92667dee37abb71c88dba43eba0c431163fbea6ad73e780ada61aee3",
    "headline": "HostUpsert by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -529,6 +538,7 @@
   },
   {
    "id": "host-upsert-full",
+   "hash": "9d2e875b2eb83adb5903a6c7f9981cd59696eff81951c5f812e94f5c83580de0",
    "headline": "HostUpsert by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -657,6 +667,7 @@
   },
   {
    "id": "host-upsert-every-field-cleared",
+   "hash": "baaf02e2d51422dc706d2747a53e2a1d9bfcb079f385b07e93d2743d81833980",
    "headline": "HostUpsert by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -755,6 +766,7 @@
   },
   {
    "id": "host-upsert-escapes-cyrillic-emoji",
+   "hash": "7c9c87438f193d4b6096fcb94efbfeacfff7b213c33c76169e05677d61c613c5",
    "headline": "HostUpsert by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -793,6 +805,7 @@
   },
   {
    "id": "host-delete",
+   "hash": "4b74d0c7330d7aa08961e6a9d42030d4688b0dff15cd421d2f481ba8efeac003",
    "headline": "HostDelete by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -821,6 +834,7 @@
   },
   {
    "id": "group-upsert-full",
+   "hash": "1f8498cb1e74035a4aa42893edb5f64cb831740853e7d4a14d8a525b9b2d2a47",
    "headline": "GroupUpsert by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -889,6 +903,7 @@
   },
   {
    "id": "group-upsert-cleared",
+   "hash": "2eeebc46b651782c12f15d261e19a86004f9ce7b36d69a5ba2289c0c86572804",
    "headline": "GroupUpsert by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -952,6 +967,7 @@
   },
   {
    "id": "group-delete",
+   "hash": "895274ac1e1c292e411bb47f8ab461ff53c9a059e7e28932792af74fbfdb44a8",
    "headline": "GroupDelete by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -980,6 +996,7 @@
   },
   {
    "id": "identity-upsert",
+   "hash": "f7fa0d0b3c9e4a60530a226a4d190e88e7f1d9a2cb4e1ca4fad6e7be78e85673",
    "headline": "IdentityUpsert by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1023,6 +1040,7 @@
   },
   {
    "id": "identity-delete",
+   "hash": "c6ff84a8602265bc2748ec1388fe5f6dfd3e8ef8626b2fb18d284701e67abbb2",
    "headline": "IdentityDelete by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1051,6 +1069,7 @@
   },
   {
    "id": "cred-update",
+   "hash": "833d9f20ffd81f214ef05a3942c89d8d2208f23aa6dcace2a0f09081db23465b",
    "headline": "CredUpdate by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1124,6 +1143,7 @@
   },
   {
    "id": "cred-update-empty",
+   "hash": "9726223ed1ad086d3c943975e04e00c98c0dd71a7233e42dc56c937ee44b1d41",
    "headline": "CredUpdate by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1162,6 +1182,7 @@
   },
   {
    "id": "device-add-mirror",
+   "hash": "0ba217e827c5254de3a95580c5b8331dfe331cf7fc198342ce69f88d978dd164",
    "headline": "DeviceAdd by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1225,6 +1246,7 @@
   },
   {
    "id": "device-add-holder",
+   "hash": "68eef637b14c63828e17e593dfbda602b86fab12b2859199c116004fc281e223",
    "headline": "DeviceAdd by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1288,6 +1310,7 @@
   },
   {
    "id": "device-revoke",
+   "hash": "f8787a6fd3db48a490b3cf9381bc46f2614605616892b5ea72db1aa00a05e54d",
    "headline": "DeviceRevoke by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1316,6 +1339,7 @@
   },
   {
    "id": "share-release-u64-max",
+   "hash": "6b1d6b8279f47520e621a8cd7334032e07545c8a178093711f006ec5582491ed",
    "headline": "Release your share of host credential 02020202020202020202020202020202 to terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1354,6 +1378,7 @@
   },
   {
    "id": "share-grant",
+   "hash": "4014093b721f08d1ec10904f79414bcd81debcb5dd8412044af2cec6ebb136b4",
    "headline": "ShareGrant by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1402,6 +1427,7 @@
   },
   {
    "id": "share-grant-empty",
+   "hash": "b3a7102f0b87494f1d0aec97ef99d2f52b85406ca0bac5d8bc7066d2d97af4d9",
    "headline": "ShareGrant by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1450,6 +1476,7 @@
   },
   {
    "id": "share-reshare-session",
+   "hash": "e26b003fb03facbddc72e6f57dc8d7b24644c3b199b5d65a3ee2e4ac80a5da13",
    "headline": "ShareReshareSession by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1488,6 +1515,7 @@
   },
   {
    "id": "share-storage-key-empty",
+   "hash": "3cf2a6983b24c77d54617b2751de439c90ed24fcd349148a444702c06a96b9da",
    "headline": "ShareStorageKey by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1521,6 +1549,7 @@
   },
   {
    "id": "share-reshare-batch",
+   "hash": "dbd1715a53b79449aee77e8654ca488f1e5fb524f8fa8e9d4beae4e5035dafaa",
    "headline": "ShareReshareBatch by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1614,6 +1643,7 @@
   },
   {
    "id": "share-reshare-batch-empty",
+   "hash": "5bb841c0cc46fc42e819241ffd8947cad1e91d79d1afb25d05b38aa72c6e1d8a",
    "headline": "ShareReshareBatch by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1652,6 +1682,7 @@
   },
   {
    "id": "share-reshare-confirm-batch",
+   "hash": "2e1c96e88a0e5bbe8be41b9366ea39046f851fd9f79c0e235faedf3280ac71eb",
    "headline": "ShareReshareConfirmBatch by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1700,6 +1731,7 @@
   },
   {
    "id": "wrap-key-rotate",
+   "hash": "cb2bb58e8e08e20a5a16b0b85c33b71b4566972ad5133f8d6ffafd01ef4b6f41",
    "headline": "WrapKeyRotate by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1743,6 +1775,7 @@
   },
   {
    "id": "cert-issue-hosts",
+   "hash": "b796a718299ed2dabe76358dc4d8e570caf4fb7bfefd4be84f1775a55b60d9a6",
    "headline": "CertIssue by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1801,6 +1834,7 @@
   },
   {
    "id": "cert-issue-group-extremes",
+   "hash": "558b756be8c136f70f4de4634ba2654482bbf68e32c11526fe069e85aa265c77",
    "headline": "CertIssue by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1854,6 +1888,7 @@
   },
   {
    "id": "cert-revoke",
+   "hash": "72176a690dc9b62b0a167991a82cc8d62794ce2a7460a166ceed0a3e839021ba",
    "headline": "CertRevoke by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1882,6 +1917,7 @@
   },
   {
    "id": "cert-host-opened",
+   "hash": "87855f7d039a286abe5e4520433a683539df87e93deecf250ef10deee67c4682",
    "headline": "CertHostOpened by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1915,6 +1951,7 @@
   },
   {
    "id": "phone-reenroll-hardware-key",
+   "hash": "05d1a76f467d1bbf2ff24dad68bdf2604bb85f97b77b19e98f6be02cd20522fa",
    "headline": "PhoneReenroll by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -1998,6 +2035,7 @@
   },
   {
    "id": "phone-reenroll-paper-empty",
+   "hash": "69f5cd4069af698a4b20c11b71b2acf66f14075dfaa497b80b5573cbd294a2f8",
    "headline": "PhoneReenroll by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2051,6 +2089,7 @@
   },
   {
    "id": "phone-reenroll-email-code",
+   "hash": "1e43561f07fbf58ee39b9d6ca277df0fc21a1547b5886aeba4b897aea7d7ae81",
    "headline": "PhoneReenroll by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2104,6 +2143,7 @@
   },
   {
    "id": "phone-reenroll-cancel-some",
+   "hash": "a876bf6d78f05013f38729bdb89e4ecc55ac6bdfe2165dd6e53d53d23094f260",
    "headline": "PhoneReenrollCancel by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2142,6 +2182,7 @@
   },
   {
    "id": "phone-reenroll-cancel-none",
+   "hash": "364c789ba93071300b841636a966aadd17504fbb5dd3733718fd58ccb9f41c2b",
    "headline": "PhoneReenrollCancel by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2180,6 +2221,7 @@
   },
   {
    "id": "recovery-ack",
+   "hash": "adce049bf1df4d575c910c700dfe9f8689754e81f0fd4ae915e55e8f024ab223",
    "headline": "RecoveryAck by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2213,6 +2255,7 @@
   },
   {
    "id": "mode-change-some",
+   "hash": "70c135a08e2c564aeb8e208fa3f406aa363c0415032bdb8bbb530026a39aea0c",
    "headline": "ModeChange by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2251,6 +2294,7 @@
   },
   {
    "id": "mode-change-none",
+   "hash": "fb58712a03201eacb18478c6cad5aa2cecb556570a3d9d51a13e61a3c59d2f12",
    "headline": "ModeChange by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2289,6 +2333,7 @@
   },
   {
    "id": "recovery-approve",
+   "hash": "05c7052e71c57c94373dce40dbb76fa01604402cd7aae911852c1358c456948c",
    "headline": "RecoveryApprove by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2317,6 +2362,7 @@
   },
   {
    "id": "red-approve",
+   "hash": "1809da38b400f035fad8e77ca96e6004c3aaa700f9f4038c9426b2b91174ed08",
    "headline": "RedApprove by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2345,6 +2391,7 @@
   },
   {
    "id": "red-phone-sign",
+   "hash": "ef743ebf1170f5d8ce47a703237831db50bd3c85f9acf7faa75a1a45d1d53dd7",
    "headline": "RedPhoneSign by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2373,6 +2420,7 @@
   },
   {
    "id": "red-factor",
+   "hash": "fcb64b0a6f6500cbb5ec7ede20a3ecce8c0361afa23809dd1a62808526caac35",
    "headline": "RedFactor by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2411,6 +2459,7 @@
   },
   {
    "id": "factor-register-paper",
+   "hash": "de0acd75d0d164bccfebf3deaa9da9ee8ac41b77fdbed45bd88a5e0488694acb",
    "headline": "FactorRegister by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2459,6 +2508,7 @@
   },
   {
    "id": "factor-register-email",
+   "hash": "4d98354d4759cda0a2a6ba8482bbb45d51a8378d2920fb06bc1c7f7bb191876b",
    "headline": "FactorRegister by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2507,6 +2557,7 @@
   },
   {
    "id": "device-role-change",
+   "hash": "0effcf80175ab5d10d7d71f4a06f642b3136ac77ab6fea0f8867690febb1cc4e",
    "headline": "DeviceRoleChange by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2540,6 +2591,7 @@
   },
   {
    "id": "exemption-set-on",
+   "hash": "c5eca5dc2ad21f999eb4bdc28aeb58e662948e087514115058009f926b3c736c",
    "headline": "ExemptionSet by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2583,6 +2635,7 @@
   },
   {
    "id": "exemption-set-off",
+   "hash": "e5d456c8c67730c2c0bef90b82f6f938344871834213f0574a984615cccbbea2",
    "headline": "ExemptionSet by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2616,6 +2669,7 @@
   },
   {
    "id": "cert-extend",
+   "hash": "0a5d549231138204cec41533e1de52782843dc44d41ea803c93d6ffb40e810b3",
    "headline": "CertExtend by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2649,6 +2703,7 @@
   },
   {
    "id": "bulk-export",
+   "hash": "d47f1b3a1db097a62f251d37dac50251e196501466d73af509e4f4d2182ee1c9",
    "headline": "BulkExport by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2682,6 +2737,7 @@
   },
   {
    "id": "checkpoint-propose",
+   "hash": "8e667a893325b0239f87247179dd13a2233f53529e89a7e9756534d67f22e71c",
    "headline": "CheckpointPropose by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2770,6 +2826,7 @@
   },
   {
    "id": "checkpoint-propose-empty",
+   "hash": "3b578ac7bd11149471aa712421b14ebc45ad39a67bd901fde64bd3b717fbd716",
    "headline": "CheckpointPropose by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2818,6 +2875,7 @@
   },
   {
    "id": "checkpoint-sign",
+   "hash": "5f8f54ca6de5da7074757d76d6b16b7554e0be78fdf52f2e749a4f9eea4a102a",
    "headline": "CheckpointSign by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
@@ -2846,6 +2904,7 @@
   },
   {
    "id": "head-attest-u64-max",
+   "hash": "29805f4d5280c3269cf6b270ebc2ae9600e8f055c88bb0b70dcb4f3aaaa9ad6e",
    "headline": "HeadAttest by terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
