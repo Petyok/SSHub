@@ -423,3 +423,55 @@ pub(crate) mod gate_tests {
         assert_eq!(secret.unwrap().value(), "pw");
     }
 }
+
+/// T1: a password saved through the CLI's own credential store, in a ring whose Vault is set up, must become a
+/// replicated credential (one `CredUpdate`), like the same save in the TUI.
+#[cfg(test)]
+mod replication_tests {
+    use super::tests::bootstrapped;
+    use crate::credentials::{host_key, open_ungated_for_profile, PasswordStore};
+    use crate::sync::crypto::Argon2Profile;
+    use crate::sync::oplog::{Attendance, DeviceKind, DeviceRole, VerifiedBy};
+
+    #[test]
+    fn a_cli_password_save_in_a_ring_with_the_vault_appends_exactly_one_cred_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = bootstrapped(dir.path(), &["web"]);
+        let secrets = open_ungated_for_profile(&ctx.profile);
+        let id = crate::sync::identity_store::load_or_init_identity(&ctx.profile, secrets.as_ref())
+            .unwrap();
+        ctx.store
+            .sync_register_device(
+                &id.public(),
+                "me",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        crate::sync::quorum::vault_setup_with(
+            &ctx.store,
+            "abacus abdomen abdominal abide abiding ability",
+            &[7u8; 16],
+            Argon2Profile {
+                mem_kib: 8,
+                iters: 1,
+            },
+        )
+        .unwrap();
+        let host = ctx.host_by_name("web").unwrap().managed().unwrap().id;
+        let updates = || {
+            crate::sync::quorum::ops_of(&ctx.store, "CredUpdate", None)
+                .unwrap()
+                .len()
+        };
+        assert_eq!(updates(), 0);
+        ctx.password_store()
+            .set(&host_key(host), "s3cret")
+            .unwrap();
+        assert_eq!(updates(), 1, "the save is replicated");
+        ctx.password_store().set(&host_key(host), "n3w").unwrap();
+        assert_eq!(updates(), 2, "an edit appends one more, not zero and not two");
+    }
+}
