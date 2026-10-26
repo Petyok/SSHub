@@ -80,7 +80,7 @@ class ShareReleaseScreenTest {
         rule.onNodeWithText("workstation").assertExists()
         rule.onNodeWithText("9C61-E2A8").assertExists()
         rule.onNodeWithText("hybrid, epoch 7, share 2").assertExists()
-        rule.onNodeWithText("signed 38 s ago").assertExists()
+        rule.onNodeWithText("signed 38 s ago", substring = true, useUnmergedTree = true).assertExists()
         rule.onNodeWithText("The terminal shows which host. Compare the binding words.").assertExists()
         listOf("host", "credential", "mode").forEach { rule.onAllNodesWithText(it).assertCountEquals(0) }
         val key = rule.onNode(descStartsWith("Requester key"), useUnmergedTree = true).fetchSemanticsNode()

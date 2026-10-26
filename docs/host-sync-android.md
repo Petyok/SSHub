@@ -379,9 +379,15 @@ Everything runs in a pinned container on gpu-serv; nothing is built on the lapto
   `cargo-ndk =4.1.2` (`--locked`). The resolved versions are written to `/opt/VERSIONS.txt` and printed in every log.
 - Rust: `Cargo.lock` committed, `--locked` everywhere; `RUSTFLAGS="--remap-path-prefix=/work=/src --remap-path-prefix=/cargo-home=/cargo -C link-arg=-Wl,--build-id=none -C link-arg=-Wl,-z,max-page-size=16384"`
   (no absolute paths, no build id, 16 KiB page alignment as Android 15 and the Play requirement need).
-- Gradle: plugin versions pinned in `build.gradle.kts`, dependency versions pinned inline. Gradle dependency verification
-  (`gradle/verification-metadata.xml`, sha256 of every artifact) is NOT done in phase 1: it must be written by a run that also resolves the
-  instrumented-test runner artifacts, i.e. a connected run (phase 2 item).
+- Gradle: plugin versions pinned in `build.gradle.kts`, dependency versions pinned inline, and Gradle dependency verification is ON:
+  `android/gradle/verification-metadata.xml` holds the sha256 of every artifact the build, the release variant and the instrumented tests resolve
+  (about 500 components). A changed or new artifact fails the build. To refresh after a dependency change, run on gpu-serv
+  `GRADLE_EXTRA="--write-verification-metadata sha256" TEST_CLASS=uk.petruha.sshub.phone.app.AppRootTest gpu-verify/android.sh <checkout> <name> test`
+  (it covers assembleDebug, assembleRelease and connectedDebugAndroidTest), review the diff of the XML and commit it. Signature verification is not used (sha256 only).
+- Reproducibility (checked 2026-10-26): `app-release-unsigned.apk` built twice in two clean containers (separate source copy, cargo target and Gradle project
+  dirs; only the download caches are shared) is byte for byte identical: 541 entries, whole file sha256 75b128a7...f4a3 (`android/ci/apk-diff.py A B` lists differing
+  entries). Signing adds only META-INF. The inputs that make it so: pinned image, `--locked`, `--remap-path-prefix`, no build id, `-z max-page-size=16384`, AGP's fixed zip timestamps.
+- R8 / minify is off. It is a later option to shrink the APK (about 31 MB unsigned release today); it needs keep rules for uniffi and JNA and a re-run of the reproducibility check.
 - Driver: `gpu-verify/android.sh <checkout> <name> bootstrap|build|test|chrome` syncs the checkout, builds the image, runs
   `android/ci/build.sh` as uid 10001 with a target dir and caches under `/root/sshub-ci/android-app/`, logs to
   `gpu-verify/logs/android-<name>-<UTC>.log`, registered in `/agents/host-sync-sshub.md`.
@@ -461,7 +467,7 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
 - Known limits of what the Rust core reports (the UI hides what it cannot fill, see 2.3): no device name or ring epoch in `UnlockInfo`, no per-row
   danger flag, no requester fingerprint, issued certificates arrive as one summary line, the export has no per-op rows. Suggested Rust additions are in the
   adapter notes of 2.3.
-- Not done: Gradle dependency verification, a reproducibility check of the APK, R8, and screens for scenes that need a second device (BLE against a real terminal,
+- Not done: R8 (later size option), and screens for scenes that need a second device (BLE against a real terminal,
   camera against a real screen): covered by fakes and by the e2e target, not by this run.
 
 ## 12. Plan after phase 1
