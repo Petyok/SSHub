@@ -21,4 +21,4 @@ writes `slow-48.wav`.
 `SSHUB_DUMP_DIR=/tmp/qr cargo test dump_qr_variants -- --ignored` writes camera-like PGM variants of the page
 frames (and `rot/`: rotation only). `gen/qrexp.rs` (+ `qrexp.Cargo.toml`, copy both into a scratch cargo package as
 `src/main.rs` / `Cargo.toml`) runs rqrr, quircs and rxing over them, `gen/qr-oracle.py` runs zxing-cpp and OpenCV
-(tools container). Numbers: `poc/results/media.md`.
+(tools container). Numbers: `docs/host-sync-poc-results.md`.

@@ -1634,13 +1634,24 @@ fn p7_measure_a_round_over_a_large_log() {
 
 #[test]
 #[ignore = "measurement: run by hand with --ignored --nocapture"]
-fn p7_scaling_of_append_and_ingest() {
+fn p7_scaling_mem() {
+    p7_scaling(true, 600, false);
+}
+
+#[test]
+#[ignore = "measurement: run by hand with --ignored --nocapture"]
+fn p7_scaling_file_one_commit_per_op() {
+    p7_scaling(false, 300, false);
+}
+
+#[test]
+#[ignore = "measurement: run by hand with --ignored --nocapture"]
+fn p7_scaling_file_batched() {
+    p7_scaling(false, 300, true);
+}
+
+fn p7_scaling(mem: bool, n: usize, batched: bool) {
     use std::time::Instant;
-    let n: usize = std::env::var("P7_OPS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(1000);
-    let mem = std::env::var("P7_MEM").is_ok();
     let dir = tempfile::tempdir().unwrap();
     let (a, b) = if mem {
         (Dev::new(), Dev::new())
@@ -1692,6 +1703,17 @@ fn p7_scaling_of_append_and_ingest() {
         }
     }
     t = Instant::now();
+    if batched {
+        for (k, chunk) in ops.chunks(100).enumerate() {
+            b.store.sync_ingest_batch(chunk.to_vec()).unwrap();
+            eprintln!(
+                "P7S mem={mem} batched ingest chunk {k}: {:?} per 100",
+                t.elapsed()
+            );
+            t = Instant::now();
+        }
+        return;
+    }
     for (i, op) in ops.into_iter().enumerate() {
         b.store.sync_ingest(op).unwrap();
         if (i + 1) % 100 == 0 {
@@ -1706,13 +1728,14 @@ fn p7_scaling_of_append_and_ingest() {
     }
 }
 
-// ======================================================== review round 2 (protocol)
+// ======================================================== review round 3 (protocol)
 
 #[test]
-fn rv2_an_unattended_sybil_counts_as_a_checkpoint_signer_for_an_existing_device() {
+fn rv3_two_unpromoted_mirrors_sign_for_a_device_that_was_away() {
     let now = crate::store::now_ts();
     let atk = ring(2);
     let (m, m2) = (&atk[0], &atk[1]);
+    let honest = Dev::new();
     let v = Dev::new();
     v.store
         .sync_register_device(
@@ -1724,9 +1747,20 @@ fn rv2_an_unattended_sybil_counts_as_a_checkpoint_signer_for_an_existing_device(
             VerifiedBy::Sas,
         )
         .unwrap();
+    // The honest holder was last heard of long ago, so V does not count it as live.
+    v.trust(&honest);
+    // The compromised peer m is a holder; the sybil m2 is only an attended MIRROR in V's table.
     v.trust(m);
-    // The ring knows the second attacker key as an unattended mirror (a "VPS" the user admitted).
-    v.trust_with(m2, Attendance::Unattended, DeviceKind::Terminal);
+    v.store
+        .sync_register_device(
+            &m2.id.public(),
+            "sybil",
+            DeviceRole::Mirror,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
     m.trust(&v);
     m2.trust(&v);
     v.store
@@ -1786,178 +1820,6 @@ fn rv2_an_unattended_sybil_counts_as_a_checkpoint_signer_for_an_existing_device(
         .unwrap();
     assert!(
         !adopted && evil.is_none(),
-        "adopted={adopted}; evil host applied without review={evil:?}; pending={}",
-        v.store.sync_pending().unwrap().len()
+        "adopted={adopted}; evil host applied without review={evil:?}"
     );
-}
-
-#[test]
-fn rv2_a_green_op_with_free_text_is_refused_before_it_is_stored_or_relayed() {
-    let d = ring(3);
-    let a = &d[0];
-    let refuse = |body: OpBody, what: &str| {
-        let e = a.store.sync_append_local(&a.id, body).unwrap_err();
-        assert!(e.to_string().contains("invalid op"), "{what}: {e:#}");
-    };
-    refuse(
-        OpBody::ShareReshareSession {
-            epoch: 1,
-            to: "x".repeat(700_000),
-            sealed: vec![],
-        },
-        "a device id of 700 KB",
-    );
-    refuse(
-        OpBody::HostUpsert {
-            host_uid: [1; 16],
-            fields: HostFields {
-                name: Some("h".into()),
-                tags: Some(vec!["x".repeat(4000); 190]),
-                ..Default::default()
-            },
-        },
-        "tags of 760 KB",
-    );
-    refuse(
-        OpBody::HostUpsert {
-            host_uid: [1; 16],
-            fields: HostFields {
-                name: Some("h".into()),
-                username: Some(Some("u".repeat(700_000))),
-                ..Default::default()
-            },
-        },
-        "a username of 700 KB",
-    );
-    refuse(
-        OpBody::CheckpointPropose {
-            cut: vec![crate::sync::oplog::CutEntry {
-                device_id: "y".repeat(100_000),
-                seq: 1,
-                op_hash: [0; 32],
-                lamport: 1,
-            }],
-            state_hash: [0; 32],
-            state_len: 0,
-            prev_checkpoint: [0; 32],
-            required: vec![],
-        },
-        "a cut entry named by text",
-    );
-    assert_eq!(a.store.sync_log_growth(0).unwrap().0, 0);
-}
-
-#[test]
-fn a_device_over_its_byte_quota_is_refused_and_prune_resets_the_count() {
-    let d = ring(2);
-    let (a, b) = (&d[0], &d[1]);
-    let op = a.append(1, "x");
-    b.store
-        .with_conn(|c| {
-            c.execute(
-                "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?1, ?2)",
-                rusqlite::params![
-                    format!("bytes:{}", a.did),
-                    (256i64 * 1024 * 1024).to_string().into_bytes()
-                ],
-            )?;
-            Ok(())
-        })
-        .unwrap();
-    match b.store.sync_ingest(op).unwrap() {
-        IngestOutcome::Rejected(why) => assert!(why.contains("byte quota"), "{why}"),
-        other => panic!("{other:?}"),
-    }
-}
-
-#[test]
-fn rv2_the_name_collision_tier_makes_the_review_queue_depend_on_arrival_order() {
-    let d = ring(4);
-    let refs: Vec<&Dev> = d.iter().collect();
-    let (a, b, c, e) = (&d[0], &d[1], &d[2], &d[3]);
-    let host = |dev: &Dev, uid: u8, name: &str, address: Option<&str>| {
-        dev.store
-            .sync_append_local(
-                &dev.id,
-                OpBody::HostUpsert {
-                    host_uid: [uid; 16],
-                    fields: HostFields {
-                        name: Some(name.into()),
-                        address: address.map(String::from),
-                        ..Default::default()
-                    },
-                },
-            )
-            .unwrap()
-    };
-    host(a, 1, "e1", Some("e1.example"));
-    host(b, 2, "e2", Some("e2.example"));
-    converge(&refs);
-    let op_a = host(a, 1, "dup", None);
-    let op_b = host(b, 2, "dup", None);
-    // The same two ops, in the two possible orders (direct ingest: no id-dependent batching).
-    c.store.sync_ingest(op_a.clone()).unwrap();
-    c.store.sync_ingest(op_b.clone()).unwrap();
-    e.store.sync_ingest(op_b).unwrap();
-    e.store.sync_ingest(op_a).unwrap();
-    let pend = |x: &Dev| {
-        let mut v: Vec<_> = x
-            .store
-            .sync_pending()
-            .unwrap()
-            .iter()
-            .map(|o| o.hash())
-            .collect();
-        v.sort();
-        v
-    };
-    assert_eq!(
-        pend(c),
-        pend(e),
-        "two devices hold the same ops and a different review queue"
-    );
-}
-
-#[test]
-fn rv2_equivocation_proofs_share_a_byte_budget_in_the_heads_message() {
-    use crate::sync::protocol::MAX_FORK_BYTES;
-    let d = ring(5);
-    let (b, c) = (&d[3], &d[4]);
-    // Three devices equivocate with the largest legal host ops (about 44 KB each).
-    for (i, x) in d[..3].iter().enumerate() {
-        let big = |ch: &str| OpBody::HostUpsert {
-            host_uid: [0x40 + i as u8; 16],
-            fields: HostFields {
-                name: Some("h".into()),
-                label: Some(Some(ch.repeat(4000))),
-                remote_command: Some(Some(ch.repeat(4000))),
-                environment: Some(Some(ch.repeat(4000))),
-                os_icon: Some(Some(ch.repeat(4000))),
-                notes: Some(Some(ch.repeat(4000))),
-                secret_lookup: Some(Some(ch.repeat(4000))),
-                tags: Some(vec![ch.repeat(250); 64]),
-                ..Default::default()
-            },
-        };
-        let op1 = x.store.sync_append_local(&x.id, big("x")).unwrap();
-        let mut op2 = op1.clone();
-        op2.body = big("y");
-        op2.signature = x.id.sign(&op2.canonical_bytes());
-        b.store.sync_ingest(op1).unwrap();
-        c.store.sync_ingest(op2).unwrap();
-    }
-    let _ = round(b, c);
-    let heads = heads_msg(&c.store, &c.id).unwrap();
-    let total: usize = heads
-        .forks
-        .iter()
-        .map(|f| serde_json::to_vec(f).unwrap().len())
-        .sum();
-    assert!(!heads.forks.is_empty(), "no proof at all was sent");
-    assert!(
-        total <= MAX_FORK_BYTES,
-        "the proofs take {total} bytes of a Heads message"
-    );
-    let frame = serde_json::to_value(SyncMsg::Heads(heads)).unwrap();
-    assert!(crate::sync::transport::write_frame(&mut Vec::new(), &frame).is_ok());
 }

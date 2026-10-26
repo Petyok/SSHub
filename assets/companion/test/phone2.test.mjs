@@ -87,7 +87,9 @@ test('wrap key generations: rotation derives new keys, every generation still un
   const fresh = wrapTo(g2, utf8('fresh'));
   assert.equal(new TextDecoder().decode(g2.unwrap(old)), 'old');
   assert.equal(new TextDecoder().decode(g2.unwrap(fresh)), 'fresh');
-  assert.throws(() => g0.unwrap(fresh));
+  // Round 2 (PF2): a phone that lost its generation counter still opens a newer generation (tried upward, bounded at 32).
+  assert.equal(new TextDecoder().decode(g0.unwrap(fresh)), 'fresh');
+  assert.equal(g0.seenWrapEpoch, 2);
   const state = emptyState();
   const r = appendWrapKeyRotate(state, g0, g1, 1893452500, null);
   const op = parseOp(r.canonical);

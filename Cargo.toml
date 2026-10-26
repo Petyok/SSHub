@@ -36,10 +36,16 @@ exclude = [
     "assets/companion/package*.json",
     "assets/companion/build.mjs",
     "assets/companion/poc",
+    "assets/companion/scripts",
     "deploy",
-    # Native Android companion (docs/host-sync-android.md): Gradle project, not part of the crate.
     "android",
+    "tests/fixtures/media/gen",
 ]
+
+[workspace]
+members = [".", "crates/sshub-sync-proto"]
+default-members = ["."]
+resolver = "2"
 
 [[bin]]
 name = "sshub"
@@ -76,9 +82,17 @@ vendored = ["ssh2/vendored-openssl"]
 # Linux, nokhwa/AVFoundation on macOS). Off by default; the decoders behind them always build.
 audio = ["dep:cpal"]
 camera = ["dep:linuxvideo", "dep:nokhwa"]
+# Bluetooth Low Energy channel to the phone page (contract C20): the terminal advertises as a GATT
+# peripheral (BlueZ on Linux, CoreBluetooth on macOS), the page connects with Web Bluetooth.
+bluetooth = [
+    "dep:bluer", "dep:tokio", "dep:futures",
+    "dep:objc2", "dep:objc2-foundation", "dep:objc2-core-bluetooth", "dep:dispatch2",
+]
 
 [dependencies]
 anyhow = "1"
+# The pure protocol core (crypto, op types, wire frames, decoders); published before `sshub`.
+sshub-sync-proto = { path = "crates/sshub-sync-proto", version = "=0.20.0", features = ["qr-decode"] }
 crossterm = "0.29"
 # Enable real OS backends. Without a backend feature, keyring 3.x silently
 # falls back to an in-memory mock store: set()/get() work within one process
@@ -98,9 +112,6 @@ portable-pty = "0.9"
 # Pure-Rust QR encoder for the host sync unlock modal (half-block frames in the
 # terminal). No image or svg features: only the core encoder.
 qrcode = { version = "0.14", default-features = false }
-# Pure-Rust QR decoder (a quirc port) for the reverse-QR reply (sync::media::qrscan): raw
-# grayscale in, raw payload bytes out, no image-crate integration.
-quircs = "0.10"
 # Capture backends of the opt-in `audio` and `camera` features (see above).
 cpal = { version = "0.18", optional = true }
 # Exact Paragraph::line_count for the auth prompt scroll range (the plain
@@ -145,9 +156,19 @@ zeroize = "1"
 dbus-secret-service = { version = "4.1", features = ["crypto-rust"] }
 # V4L2 in pure Rust: no libv4l at run time, no bindgen/libclang at build time.
 linuxvideo = { version = "0.3", optional = true }
+# BlueZ over D-Bus for the `bluetooth` feature. bluer is async on tokio: the runtime lives on one
+# thread owned by sync::media::ble_bluez (current_thread), nothing async leaks out of it.
+bluer = { version = "=0.17.4", features = ["bluetoothd"], optional = true }
+tokio = { version = "1", default-features = false, features = ["rt", "sync", "macros", "time"], optional = true }
+futures = { version = "0.3", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nokhwa = { version = "0.10", default-features = false, features = ["input-avfoundation"], optional = true }
+# CoreBluetooth peripheral manager for the `bluetooth` feature (objc2 family; cpal already pulls it in).
+objc2 = { version = "0.6", optional = true }
+objc2-foundation = { version = "0.3", optional = true }
+objc2-core-bluetooth = { version = "0.3", optional = true }
+dispatch2 = { version = "0.3", optional = true }
 
 [dev-dependencies]
 assert_cmd = "2"

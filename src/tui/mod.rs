@@ -5779,6 +5779,38 @@ mod tests {
     }
 
     #[test]
+    fn the_unlock_footer_offers_drop_phone_only_with_a_bluetooth_channel() {
+        use crate::app::sync::{UnlockPathKind, UnlockPathView, UnlockView};
+        let view = |paths: Vec<UnlockPathKind>| UnlockView {
+            host: "web-1".into(),
+            have: 1,
+            need: 2,
+            paths: paths
+                .into_iter()
+                .map(|kind| UnlockPathView {
+                    kind,
+                    status: "x".into(),
+                })
+                .collect(),
+            frames: vec![],
+            code: String::new(),
+        };
+        for (paths, expect) in [
+            (vec![UnlockPathKind::PhoneQr], false),
+            (
+                vec![UnlockPathKind::PhoneQr, UnlockPathKind::Bluetooth],
+                true,
+            ),
+        ] {
+            let mut app = test_app_with_hosts();
+            app.sync = crate::app::sync::sample_sync_view();
+            app.open_sync_unlock(view(paths));
+            let buffer = render_to_buffer(&app, 120, 38);
+            assert_eq!(buffer_contains(&buffer, "drop phone"), expect);
+        }
+    }
+
+    #[test]
     fn the_review_shows_a_broken_ceremony_rule() {
         let mut app = test_app_with_hosts();
         app.mode = AppMode::SyncReview;
@@ -5791,9 +5823,11 @@ mod tests {
             rule_violation: Some(
                 "the sender of the emailed code also approved as second device".into(),
             ),
+            note: Some("the emailed code cannot count here".into()),
             single_machine: false,
         });
         let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "emailed code cannot count"));
         assert!(buffer_contains(&buffer, "rule broken"));
         assert!(buffer_contains(&buffer, "also approved as second device"));
     }

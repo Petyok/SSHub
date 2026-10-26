@@ -11,7 +11,7 @@
 // Confirm item: aead_seal(storage key, host_uid || epoch u64 BE || own index, index || share).
 import { xchacha20poly1305 } from '../vendor/noble-ciphers-2.4.0/chacha.js';
 import { bytesOf, concat, deriveKey, edVerify, hexOf, hybridWrap, reshareCombine, utf8 } from './lib.mjs';
-import { b64dec, parseOp } from './ops.mjs';
+import { b64dec, isU64, parseOp } from './ops.mjs';
 import { randomBytes } from './keys.mjs';
 import { COURIER_TAIL, appendConfirmBatch, appendShareStorageKey, courierOps } from './state.mjs';
 
@@ -55,9 +55,14 @@ function planReshareChecked(identity, ops, epoch, { ring = {}, existingStorage =
   const batches = parsed.filter((p) => p.op.kind === 'ShareReshareBatch' && BigInt(p.op.fields.epoch) === BigInt(epoch));
   const sessions = parsed.filter((p) => p.op.kind === 'ShareReshareSession' && BigInt(p.op.fields.epoch) === BigInt(epoch) && p.op.fields.to === me);
   const fail = (error) => ({ ok: false, error });
+  // Every number this phone later writes into its own chain comes from here: a u64, like the Rust field.
+  if (!isU64(epoch)) return fail('the reshare epoch is not a number a terminal can read (u64)');
   if (!batches.length) return fail(`no reshare batches for epoch ${epoch} in these ops`);
   for (const p of [...batches, ...sessions]) if (sig(p) === false) return fail(`the signature of ${p.op.device_id} does not verify over its reshare op`);
-  const holders = [...batches[0].op.fields.new_holders].sort();
+  const newHolders = batches[0].op.fields.new_holders;
+  // A holder id is the 16 lower-case hex characters of a device id; anything else never reaches a screen.
+  if (!batches.every((b) => Array.isArray(b.op.fields.new_holders) && b.op.fields.new_holders.every((id) => typeof id === 'string' && /^[0-9a-f]{16}$/.test(id)))) return fail('a holder id in the reshare is not a device id');
+  const holders = [...newHolders].sort();
   if (!batches.every((b) => [...b.op.fields.new_holders].sort().join() === holders.join())) return fail('the contributors disagree on the new holder set');
   const at = holders.indexOf(me);
   if (at < 0) return fail('this phone is not a holder at that epoch');
@@ -74,6 +79,8 @@ function planReshareChecked(identity, ops, epoch, { ring = {}, existingStorage =
   }
   const authors = [...new Set(batches.map((b) => b.op.device_id))];
   const contributors = authors.map((a) => ({ id: a, session: keys.has(a), verified: sig(batches.find((b) => b.op.device_id === a)) === true, known: Object.prototype.hasOwnProperty.call(ring, a) }));
+  // Contributors this phone has not met prove nothing: at least SHARE_K of them must be devices it enrolled with, with a signature that verifies.
+  if (contributors.filter((c) => c.verified).length < SHARE_K) return { ...fail(`fewer than ${SHARE_K} contributors have a signature this phone could verify (it only knows the terminals it enrolled with)`), contributors };
 
   const hosts = [...new Set(batches.flatMap((b) => b.op.fields.items.map((i) => i.host_uid)))].sort();
   let storage = existingStorage;
@@ -86,7 +93,8 @@ function planReshareChecked(identity, ops, epoch, { ring = {}, existingStorage =
     for (const b of batches) {
       const key = keys.get(b.op.device_id);
       const item = b.op.fields.items.find((i) => i.host_uid === host);
-      if (!key || !item) continue;
+      // Only a contribution of an author this phone verified is combined: the k check below counts these very entries.
+      if (!key || !item || sig(b) !== true) continue;
       const pos = item.sub_shares.findIndex(([to]) => to === me);
       if (pos < 0 || !item.commitments[pos]) continue;
       let plain;

@@ -21,7 +21,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use anyhow::{anyhow, bail, ensure, Result};
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -37,6 +36,7 @@ use super::ratchet::{
     save_pair, PairState, Transcript,
 };
 use crate::store::LauncherStore;
+pub(crate) use sshub_sync_proto::serde_hex::{b64, hex32, hex64};
 
 pub const PROTO_MAX: u16 = 1;
 pub const PROTO_MIN: u16 = 1;
@@ -60,20 +60,6 @@ const MAX_REASON_BYTES: usize = 200;
 const CLIENT: u8 = 0;
 const SERVER: u8 = 1;
 
-pub(crate) mod hex32 {
-    use serde::{de::Error, Deserialize, Deserializer, Serializer};
-    pub fn serialize<S: Serializer>(v: &[u8; 32], s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&hex::encode(v))
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 32], D::Error> {
-        let s = String::deserialize(d)?;
-        hex::decode(&s)
-            .map_err(D::Error::custom)?
-            .try_into()
-            .map_err(|_| D::Error::custom("expected 32 bytes"))
-    }
-}
-
 pub(crate) mod hex16 {
     use serde::{de::Error, Deserialize, Deserializer, Serializer};
     pub fn serialize<S: Serializer>(v: &[u8; 16], s: S) -> Result<S::Ok, S::Error> {
@@ -85,20 +71,6 @@ pub(crate) mod hex16 {
             .map_err(D::Error::custom)?
             .try_into()
             .map_err(|_| D::Error::custom("expected 16 bytes"))
-    }
-}
-
-pub(crate) mod hex64 {
-    use serde::{de::Error, Deserialize, Deserializer, Serializer};
-    pub fn serialize<S: Serializer>(v: &[u8; 64], s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&hex::encode(v))
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<[u8; 64], D::Error> {
-        let s = String::deserialize(d)?;
-        hex::decode(&s)
-            .map_err(D::Error::custom)?
-            .try_into()
-            .map_err(|_| D::Error::custom("expected 64 bytes"))
     }
 }
 
@@ -119,18 +91,6 @@ mod opt_hex32 {
                     .map_err(|_| D::Error::custom("expected 32 bytes"))
             })
             .transpose()
-    }
-}
-
-pub(crate) mod b64 {
-    use super::{Engine, B64};
-    use serde::{de::Error, Deserialize, Deserializer, Serializer};
-    pub fn serialize<S: Serializer>(v: &[u8], s: S) -> Result<S::Ok, S::Error> {
-        s.serialize_str(&B64.encode(v))
-    }
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
-        B64.decode(String::deserialize(d)?)
-            .map_err(D::Error::custom)
     }
 }
 
@@ -869,8 +829,10 @@ pub(crate) fn ingest_ops(
     for _pass in 0..4 {
         let mut retry = Vec::new();
         let mut progress = false;
-        for op in queue {
-            match store.sync_ingest(op.clone())? {
+        // One transaction for the whole pass: a frame of ops costs one commit.
+        let outcomes = store.sync_ingest_batch(queue.clone())?;
+        for (op, outcome) in queue.into_iter().zip(outcomes) {
+            match outcome {
                 IngestOutcome::Applied => {
                     sum.applied += 1;
                     progress = true;

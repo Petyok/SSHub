@@ -319,6 +319,34 @@ fn host_changes(
     (changes, current)
 }
 
+/// The completion of a ready phone-loss recovery (revoke the lost phone, admit the new one) is
+/// not a Red change that waits for the lost phone's signature: the recovery already was the
+/// ceremony. Say so in the review, or the reader looks for a phone proof that cannot come.
+pub(crate) const COMPLETES_RECOVERY: &str =
+    "completes the ready phone recovery: no signature of the lost phone is needed";
+
+fn recovery_suffix(store: &LauncherStore, op: &Op) -> String {
+    let completes = matches!(
+        &op.body,
+        OpBody::DeviceAdd {
+            kind: crate::sync::oplog::DeviceKind::Phone,
+            ..
+        } | OpBody::DeviceRevoke { .. }
+    ) && crate::sync::recovery::ready_recovery_for(
+        store,
+        op,
+        // The ceremony's own clock: never later than the op was first seen here.
+        crate::store::now_ts()
+            .min(crate::sync::ceremony::received_at(store, op).unwrap_or(i64::MAX)),
+    )
+    .unwrap_or(false);
+    if completes {
+        format!(" [{COMPLETES_RECOVERY}]")
+    } else {
+        String::new()
+    }
+}
+
 /// A share release is asked about only while its requester's challenge could still be live.
 pub(crate) fn release_is_fresh(asked_at: i64, now: i64) -> bool {
     (now - asked_at).abs() <= crate::sync::limits::CHALLENGE_EXPIRY_SECS
@@ -406,8 +434,12 @@ pub(crate) fn pending_view(
             format!("{role:?}").to_lowercase(),
             format!("{kind:?}").to_lowercase(),
             short(&device.device_id())
+        ) + &recovery_suffix(store, op),
+        OpBody::DeviceRevoke { device_id } => format!(
+            "revoke device {}{}",
+            short(device_id),
+            recovery_suffix(store, op)
         ),
-        OpBody::DeviceRevoke { device_id } => format!("revoke device {}", short(device_id)),
         OpBody::ModeChange { to, cosigner, .. } => match cosigner {
             Some(c) => format!(
                 "switch credential mode to {to:?}, co-signed by {}",
@@ -558,6 +590,7 @@ fn red_view(store: &LauncherStore, op: &Op) -> Option<super::sync::RedView> {
         expired: st.expired,
         blocked: st.blocked,
         rule_violation: st.rule_violation,
+        note: st.note,
         single_machine: st.single_machine_ring,
     })
 }

@@ -2891,6 +2891,12 @@ fn control_characters_never_enter_names_text_or_device_names() {
         "a\u{200B}b",
         "a\u{FEFF}b",
         "a\u{2066}b\u{2069}",
+        "a\u{2060}b",
+        "a\u{2064}b",
+        "a\u{061C}b",
+        "a\u{2028}b",
+        "a\u{2029}b",
+        "a\u{00AD}b",
     ] {
         assert!(validates(&host(bad, None)).is_err(), "{bad:?}");
     }
@@ -2900,6 +2906,79 @@ fn control_characters_never_enter_names_text_or_device_names() {
     let add = |name: &str| add_device_body_named(name);
     assert!(validates(&add("laptop")).is_ok());
     assert!(validates(&add("lap\ntop\nBcc: x")).is_err());
+}
+
+// Every device id a body carries has a shape rule: a bad id is refused in each kind that holds one.
+// (The match in `validate_ids` has no wildcard, so a new variant cannot be added without a decision.)
+#[test]
+fn every_body_that_carries_a_device_id_refuses_a_malformed_one() {
+    let bad = "x\nBcc: y".to_string();
+    let bodies = vec![
+        OpBody::HeadAttest {
+            device_id: bad.clone(),
+            seq: 1,
+            chain_hash: [0; 32],
+        },
+        OpBody::DeviceRevoke {
+            device_id: bad.clone(),
+        },
+        OpBody::DeviceRoleChange {
+            device_id: bad.clone(),
+            to: DeviceRole::Mirror,
+        },
+        OpBody::ExemptionSet {
+            device_id: bad.clone(),
+            slot: None,
+        },
+        OpBody::BulkExport {
+            requester: bad.clone(),
+            window_secs: 60,
+        },
+        OpBody::ShareReshareSession {
+            epoch: 1,
+            to: bad.clone(),
+            sealed: vec![],
+        },
+        OpBody::ShareReshareBatch {
+            epoch: 1,
+            new_holders: vec![bad.clone()],
+            items: vec![],
+        },
+        OpBody::ShareGrant {
+            host_uid: [0; 16],
+            request_id: 1,
+            requester: bad.clone(),
+            epoch: 1,
+            sealed: vec![],
+        },
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            migrated_on: bad.clone(),
+            cosigner: None,
+        },
+        OpBody::FactorRegister {
+            factor: crate::sync::oplog::ThirdFactor::Paper,
+            public: [0; 32],
+            sealed: vec![],
+            salt: [0; 16],
+            sender: Some(bad.clone()),
+        },
+        OpBody::CheckpointPropose {
+            cut: vec![CutEntry {
+                device_id: bad.clone(),
+                seq: 1,
+                op_hash: [0; 32],
+                lamport: 1,
+            }],
+            state_hash: [0; 32],
+            state_len: 0,
+            prev_checkpoint: [0; 32],
+            required: vec![],
+        },
+    ];
+    for b in bodies {
+        assert!(validates(&b).is_err(), "{b:?}");
+    }
 }
 
 fn add_device_body_named(name: &str) -> OpBody {
@@ -3417,4 +3496,271 @@ fn an_approved_unusable_hop_name_refuses_connections_instead_of_going_direct() {
         refused.is_err(),
         "the connection is refused, not made direct: {refused:?}"
     );
+}
+
+#[test]
+fn a_batch_ingest_gives_the_outcomes_and_state_of_one_op_at_a_time() {
+    let ring = ring(3);
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    let mut ops = Vec::new();
+    for i in 0..40u8 {
+        ops.push(a.append(upsert(i, hf(&format!("h{i}"), "10.0.0.1"))));
+    }
+    ops.push(a.append(upsert(
+        3,
+        HostFields {
+            notes: Some(Some("n".into())),
+            ..Default::default()
+        },
+    )));
+    // The same ops, one transaction versus one per op; a duplicate and a gap ride along.
+    let mut batch = ops.clone();
+    batch.push(ops[0].clone());
+    let outcomes = b.store.sync_ingest_batch(batch.clone()).unwrap();
+    let single: Vec<IngestOutcome> = batch
+        .into_iter()
+        .map(|o| c.store.sync_ingest(o).unwrap())
+        .collect();
+    assert_eq!(format!("{outcomes:?}"), format!("{single:?}"));
+    assert!(matches!(outcomes.last(), Some(IngestOutcome::Rejected(w)) if w.contains("duplicate")));
+    assert_eq!(
+        b.store.sync_state_hash().unwrap(),
+        c.store.sync_state_hash().unwrap()
+    );
+    assert_eq!(b.pending(), c.pending());
+}
+
+// ---- review round 3, app R3-F1: no Safe rename may re-bind a reviewed hop
+
+fn raw_hop_ring() -> (Vec<Peer>, impl Fn(&Peer) -> Option<String>) {
+    let r = ring(2);
+    let (a, b) = (&r[0], &r[1]);
+    a.append(upsert(1, hf("bastion", "10.0.0.1")));
+    a.append(upsert(3, hf("evil", "203.0.113.9")));
+    let mut web = hf("web", "10.0.0.2");
+    web.proxy_jump = Some(Some("ops@bastion".into())); // a raw hop that names the saved host
+    a.append(upsert(2, web));
+    pull(b, a);
+    b.approve_all();
+    let jump = |p: &Peer| {
+        let h = p.host(&uid(2)).unwrap();
+        p.store.resolve_connection(&h).unwrap().jump_argv
+    };
+    assert!(jump(b).as_deref().unwrap().contains("10.0.0.1"));
+    (r, jump)
+}
+
+#[test]
+fn two_safe_renames_cannot_redirect_a_reviewed_raw_hop_to_another_address() {
+    let (r, jump) = raw_hop_ring();
+    let (a, b) = (&r[0], &r[1]);
+    let before = jump(b);
+    a.append(upsert(
+        1,
+        HostFields {
+            name: Some("bastion-old".into()),
+            ..Default::default()
+        },
+    ));
+    a.append(upsert(
+        3,
+        HostFields {
+            name: Some("bastion".into()),
+            ..Default::default()
+        },
+    ));
+    pull(b, a);
+    assert_eq!(b.pending(), 2, "both renames wait for a human");
+    assert_eq!(jump(b), before, "nothing moved before review");
+}
+
+#[test]
+fn a_rename_that_touches_no_hop_stays_safe() {
+    let (r, _) = raw_hop_ring();
+    let (a, b) = (&r[0], &r[1]);
+    a.append(upsert(
+        3,
+        HostFields {
+            name: Some("evil-renamed".into()),
+            ..Default::default()
+        },
+    ));
+    pull(b, a);
+    assert_eq!(b.pending(), 0);
+}
+
+// e2e: after a repeat ceremony and a state rebuild, sync-now showed a peer's device id where its name was.
+#[test]
+fn a_rebuild_of_the_caches_keeps_the_local_label_of_an_anchor_device() {
+    let r = ring(2);
+    let (a, b) = (&r[0], &r[1]);
+    let named = |p: &Peer, id: &str| -> String {
+        p.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == id)
+            .map(|d| d.name)
+            .unwrap()
+    };
+    let bid = b.id.public().device_id();
+    let before = named(a, &bid);
+    assert_ne!(before, bid, "the fixture registers a label");
+    a.store
+        .with_conn(crate::sync::oplog::checkpoint::rebuild_caches_for_test)
+        .unwrap();
+    assert_eq!(named(a, &bid), before, "the label survives the rebuild");
+}
+
+// ------------------------------------------------------- review round 3
+
+#[test]
+fn rv3_a_revoked_authors_pending_op_does_not_apply_when_the_author_is_rejudged() {
+    let ring = ring(3);
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    for n in 0..6u8 {
+        a.append(upsert(10 + n, hf(&format!("a{n}"), "10.0.0.1")));
+    }
+    let revoke = a.append(OpBody::DeviceRevoke { device_id: c.dev() });
+    pull(b, a);
+    b.store.sync_resolve_pending(&revoke.hash(), true).unwrap();
+    let late = c.append(upsert(
+        70,
+        HostFields {
+            name: Some("late".into()),
+            ..Default::default()
+        },
+    ));
+    assert!(matches!(
+        b.store.sync_ingest(late.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    // Any later event that re-judges the author (here: a second revoke the user approves).
+    let again = a.append(OpBody::DeviceRevoke { device_id: c.dev() });
+    pull(b, a);
+    b.store.sync_resolve_pending(&again.hash(), true).unwrap();
+    assert!(
+        b.host(&uid(70)).is_none(),
+        "a pending op of a revoked author applied without a human (state now {:?})",
+        b.store.sync_pending_reason(&late.hash()).unwrap()
+    );
+}
+
+#[test]
+fn rv3_a_collision_puts_back_the_effective_name_writer_not_a_rejected_write_of_the_same_name() {
+    let ring = ring(3);
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    let first = a.append(upsert(1, hf("e1", "e1.example")));
+    let second = b.append(upsert(2, hf("e2", "e2.example")));
+    for o in [&first, &second] {
+        c.store.sync_ingest((*o).clone()).unwrap();
+    }
+    c.approve_all();
+    // a renames e1 to "dup" (Green, applied); then a rejected, later write of the same name.
+    let rename = a.append(upsert(
+        1,
+        HostFields {
+            name: Some("dup".into()),
+            ..Default::default()
+        },
+    ));
+    c.store.sync_ingest(rename.clone()).unwrap();
+    let noisy = a.append(upsert(
+        1,
+        HostFields {
+            name: Some("dup".into()),
+            address: Some("noisy.example".into()),
+            ..Default::default()
+        },
+    ));
+    assert!(matches!(
+        c.store.sync_ingest(noisy.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    c.store.sync_resolve_pending(&noisy.hash(), false).unwrap();
+    // b claims "dup" for e2: both claims wait, the one that holds the name is the applied rename.
+    let claim = b.append(upsert(
+        2,
+        HostFields {
+            name: Some("dup".into()),
+            ..Default::default()
+        },
+    ));
+    assert!(matches!(
+        c.store.sync_ingest(claim.clone()).unwrap(),
+        IngestOutcome::Pending
+    ));
+    let held: Vec<[u8; 32]> = c
+        .store
+        .sync_pending()
+        .unwrap()
+        .iter()
+        .map(|o| o.hash())
+        .collect();
+    assert!(
+        held.contains(&claim.hash()) && held.contains(&rename.hash()),
+        "{held:?}"
+    );
+}
+
+#[test]
+fn a_batch_ingest_keeps_what_was_valid_before_a_failing_op_and_lets_go_of_the_lock_between_chunks()
+{
+    let ring = ring(2);
+    let (a, b) = (&ring[0], &ring[1]);
+    let ops: Vec<Op> = (0..250u32)
+        .map(|i| a.append(upsert((i % 200) as u8, hf(&format!("h{i}"), "10.0.0.1"))))
+        .collect();
+    let outcomes = b.store.sync_ingest_batch(ops).unwrap();
+    assert_eq!(outcomes.len(), 250);
+    assert_eq!(
+        b.store
+            .sync_chain_heads()
+            .unwrap()
+            .iter()
+            .map(|(_, s, _)| *s)
+            .max(),
+        Some(250)
+    );
+}
+
+// e2e: a device that came through an anchor is labelled with its id until something names it.
+#[test]
+fn a_device_known_only_by_its_id_takes_the_first_name_it_is_met_with_and_keeps_it() {
+    let r = ring(1);
+    let a = &r[0];
+    let other = DeviceIdentity::generate().public();
+    let oid = other.device_id();
+    let label = |s: &LauncherStore| {
+        s.sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == oid)
+            .map(|d| d.name)
+            .unwrap()
+    };
+    a.store
+        .sync_register_device(
+            &other,
+            &oid,
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    assert_eq!(label(&a.store), oid, "the placeholder");
+    for (given, want) in [("laptop", "laptop"), ("something else", "laptop")] {
+        a.store
+            .sync_register_device(
+                &other,
+                given,
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        assert_eq!(label(&a.store), want);
+    }
 }
