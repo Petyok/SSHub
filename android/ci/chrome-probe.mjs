@@ -29,7 +29,7 @@ async function diagnose(tag) {
 
 // Chrome's first run (terms, sign-in, notifications) blocks everything until it is answered; the guest is a user
 // build, so no command-line flag can skip it. Tap through it with uiautomator text matching, bounded.
-const FRE_TEXTS = [/^accept (&|and) continue$/i, /^no thanks$/i, /^skip$/i, /^got it$/i, /^continue$/i, /^next$/i, /^not now$/i, /^don.t allow$/i];
+const FRE_TEXTS = [/^use without an account$/i, /^no,? thanks$/i, /^don.t turn on$/i, /^accept (&|and) continue$/i, /^no thanks$/i, /^skip$/i, /^got it$/i, /^continue$/i, /^next$/i, /^not now$/i, /^don.t allow$/i];
 async function firstRun() {
   await device.shell('am start -n com.android.chrome/com.google.android.apps.chrome.Main');
   for (let i = 0; i < 12; i++) {

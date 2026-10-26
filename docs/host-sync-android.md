@@ -351,9 +351,12 @@ Everything runs in a pinned container on gpu-serv; nothing is built on the lapto
    `challenges.json` `phone.pub`.
 3. **Compose UI tests** (`androidTest`, `createAndroidComposeRule`) on the emulator service: restore, approve a release from the fixtures'
    challenge text, refusal screens, lock behaviour, permission manifest check.
-4. **Emulator**: the shared `sshub-hostsync-android` service (Android 15 Google Play x86_64, KVM). `android.sh ... test` takes
-   `flock /root/sshub-ci/e2e.lock`, brings the project up, joins its `_e2e` network, `adb connect android:5555`, runs
-   `connectedDebugAndroidTest`, tears the project down. Never a physical device.
+4. **Emulator**: the shared `sshub-hostsync-android` service (Android 15 Google Play x86_64, KVM). `android.sh ... test` builds
+   first (no emulator, no lock), then takes `flock /root/sshub-ci/e2e.lock`, brings the project up, runs `connectedDebugAndroidTest` in a container on its
+   `_e2e` network and tears the project down. The emulator container runs the adb SERVER on `android:5037` (internal network only); the guest adbd is a
+   secure user build that authorizes only that server, so clients use `adb -H android`, a socat relay to `localhost:5037` for Gradle, or Playwright
+   `_android.devices({host:'android',port:5037})`; a direct `adb connect android:5555` fails with "failed to authenticate". The test container also
+   joins the default bridge because Gradle resolves its test-runner artifacts at that point. Never a physical device.
 5. **E2E with the terminal**: the existing headless phone driver (`deploy/e2e/phone-driver.mjs`, commands `enroll-*`, `red-*`, `share-*`,
    `verify-ops`; its `targets` table) gets a second target `android`. The app adds NOTHING to release builds. The `debug` build type
    adds (a) `testTagsAsResourceId`, so every control is a UI Automator resource id, and (b) a debug-only broadcast receiver for
