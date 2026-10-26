@@ -683,6 +683,8 @@ cargo run --example media-probe --features audio,camera   # lists the devices an
 cargo run --example media-probe --features bluetooth -- 120 --ble   # advertises, sends a test frame, prints what the page sends back
 ```
 
+On a machine with several adapters, `SSHUB_BLE_ADAPTER=hci1` (an adapter name as BlueZ lists it) makes the Bluetooth channel serve on that adapter; without it BlueZ's default adapter is used.
+
 #### Where sync keeps its state
 
 Sync state lives in the profile directory under `sync/`: `device.key` (this device's identity, encrypted; its passphrase is in the credential store) and `peers.json` (which ssh host reaches which device). Both are owner-only files, belong to one profile, and are never copied by profile transfers or the guided migration, which move hosts, groups, identities and tunnels only.
