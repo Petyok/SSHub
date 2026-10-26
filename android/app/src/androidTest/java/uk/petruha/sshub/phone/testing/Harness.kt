@@ -36,13 +36,17 @@ fun ComposeContentTestRule.assertTargets48() {
     } }
 }
 
-/** Spec 4.3 / D4: no text on the screen is clipped. */
+/** Spec 4.3 / D4: no text on the screen is clipped. Reports which flag fired, for the first few offenders. */
 fun ComposeContentTestRule.assertNoVisualOverflow() {
-    val bad = onAllNodes(androidx.compose.ui.test.SemanticsMatcher("has text") { it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.Text) })
-        .fetchSemanticsNodes().filter {
+    val bad = mutableListOf<String>()
+    onAllNodes(androidx.compose.ui.test.SemanticsMatcher("has text") { it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.Text) })
+        .fetchSemanticsNodes().forEach { n ->
             val r = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
-            it.config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult)?.action?.invoke(r)
-            r.any { l -> l.hasVisualOverflow }
+            n.config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult)?.action?.invoke(r)
+            r.filter { it.hasVisualOverflow }.forEach { l ->
+                val t = n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.joinToString("|") { it.text }?.take(30)
+                bad += "[$t] w=${l.didOverflowWidth} h=${l.didOverflowHeight} lines=${l.lineCount} size=${l.size} max=${l.layoutInput.constraints.maxWidth}x${l.layoutInput.constraints.maxHeight} ml=${l.layoutInput.maxLines}"
+            }
         }
-    check(bad.isEmpty()) { "texts with visual overflow: ${bad.size}: " + bad.take(6).joinToString { n -> "[" + (n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.joinToString("|") { it.text }?.take(40)) + "] ${n.size.width}x${n.size.height}" } }
+    check(bad.isEmpty()) { "texts with visual overflow: ${bad.size}: " + bad.take(4).joinToString(" ; ") }
 }
