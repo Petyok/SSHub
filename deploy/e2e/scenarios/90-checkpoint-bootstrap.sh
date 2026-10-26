@@ -12,17 +12,20 @@ ring2
 check "peer-a sets up the Vault" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-a $SSHUB sync-import-kit"
 check "peer-b imports the kit" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-b $SSHUB sync-import-kit"
 check "peer-a adds host big with a password" "printf 'pw0\n' | peer peer-a $SSHUB host add --name big --address big.internal --password-stdin"
-# Finding P1: `host edit` never appends an op, so the log cannot be grown with host
-# edits. An import of 5300 hosts costs about 0.4 s per host (half an hour), so the log is grown past the BYTE
-# trigger instead: about a dozen 600 KB password edits, each one CredUpdate op, with a progress line per edit.
-grow='pw=$(head -c 600000 /dev/zero | tr "\000" x); i=0
-while [ $i -lt 25 ]; do
-  printf "%s%s\n" "$pw" $i | sshub --profile default host edit --name big --set-password-stdin >/dev/null 2>&1 || { echo "edit $i failed"; exit 1; }
+# Finding P1 (settled): a password edit appends no op, but a host add appends one HostUpsert. An import of 5300
+# hosts costs about 0.4 s per host (half an hour), so the log is grown past the BYTE trigger (8 MiB) instead with
+# about 85 hosts whose remote command is 100 KB each (one op each, a second or less per host), one progress line
+# per 10 hosts.
+grow='rc=$(head -c 100000 /dev/zero | tr "\000" x); i=0
+while [ $i -lt 150 ]; do
+  sshub --profile default host add --name gbig$i --address a$i.internal --remote-command "$rc" >/dev/null 2>&1 || { echo "add $i failed"; exit 1; }
   i=$((i+1))
-  db=$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)
-  b=$(sqlite3 "$db" "SELECT coalesce(sum(length(canonical)),0) FROM sync_ops")
-  echo "grow $i ops bytes $b"
-  [ "$b" -lt 8800000 ] || exit 0
+  if [ $((i % 10)) -eq 0 ]; then
+    db=$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)
+    b=$(sqlite3 "$db" "SELECT coalesce(sum(length(canonical)),0) FROM sync_ops")
+    echo "grow $i hosts, ops bytes $b"
+    [ "$b" -lt 8800000 ] || exit 0
+  fi
 done'
 check "peer-a grows its log past the checkpoint threshold" "psh peer-a '$grow'"
 show "peer-a ops in the log" sq peer-a 'SELECT count(*), sum(length(canonical)) FROM sync_ops'
