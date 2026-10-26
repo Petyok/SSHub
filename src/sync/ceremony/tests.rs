@@ -1478,6 +1478,21 @@ fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_en
     setup_register(&b, &b, DeviceRole::Mirror, DeviceKind::Terminal);
     setup_register(&c, &c, DeviceRole::Mirror, DeviceKind::Terminal);
     setup_register(&ph, &ph, DeviceRole::Holder, DeviceKind::Phone);
+    // b and c were admitted to the ring as mirrors by ops (what a hub's admission leaves in every log): a position in
+    // the log from which a LATER promotion must not be read backwards.
+    for who in [&b, &c] {
+        append(
+            &a,
+            OpBody::DeviceAdd {
+                device: who.id.public(),
+                name: "joiner".into(),
+                role: DeviceRole::Mirror,
+                attendance: Attendance::Attended,
+                kind: DeviceKind::Terminal,
+                verified_by: VerifiedBy::Sas,
+            },
+        );
+    }
     // The phone is enrolled on a (what `sync-phone-enroll` does) and a proposes its admission.
     setup_register(&a, &ph, DeviceRole::Holder, DeviceKind::Phone);
     let add = append(
@@ -1606,5 +1621,74 @@ fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_en
             role.lamport,
             third.lamport
         );
+    }
+
+    // The same ops, fed to a fresh device in any arrival order, give the same roles (no verdict depends on the
+    // order or on which device proposed what).
+    let chains: Vec<(&str, Vec<Op>)> = [("a", &a), ("b", &b), ("c", &c), ("phone", &ph)]
+        .into_iter()
+        .map(|(n, d)| (n, d.store.sync_chain_tail(&d.did, 0).unwrap()))
+        .collect();
+    let orders: [&[&str]; 4] = [
+        &["a", "b", "c", "phone"],
+        &["phone", "c", "b", "a"],
+        &["b", "phone", "a", "c"],
+        &["c", "a", "phone", "b"],
+    ];
+    for order in orders {
+        let v = Dev::new();
+        crate::sync::ceremony::test_force(&v.store, false);
+        // What a device that joined through an anchor holds: the founder as holder, the joiners as mirrors.
+        setup_register(&v, &a, DeviceRole::Holder, DeviceKind::Terminal);
+        setup_register(&v, &b, DeviceRole::Mirror, DeviceKind::Terminal);
+        setup_register(&v, &c, DeviceRole::Mirror, DeviceKind::Terminal);
+        for who in order {
+            for op in &chains.iter().find(|(n, _)| n == who).unwrap().1 {
+                v.store.sync_ingest(op.clone()).unwrap();
+            }
+        }
+        for _ in 0..4 {
+            settle_red_ops(&v.store, now).unwrap();
+        }
+        if roles(&v) != want {
+            let mut dbg = String::new();
+            for (kind, who) in [
+                ("add", &add),
+                ("role", &role),
+                ("reg", &reg),
+                ("third", &third),
+            ] {
+                dbg += &format!(
+                    "{kind}: {:?} state {:?}\n",
+                    red_status(&v.store, who, now),
+                    v.store
+                        .sync_pending()
+                        .unwrap()
+                        .iter()
+                        .any(|p| p.hash() == who.hash())
+                );
+            }
+            dbg += &format!(
+                "ph={} b={} c={} a={} lam add={} role={} reg={} third={}\n{:?}",
+                ph.did,
+                b.did,
+                c.did,
+                a.did,
+                add.lamport,
+                role.lamport,
+                reg.lamport,
+                third.lamport,
+                effective_devices(&v.store, None).map(|r| r
+                    .into_iter()
+                    .map(|d| (d.id, d.role, d.kind))
+                    .collect::<Vec<_>>())
+            );
+            let rows: Vec<(String, String, String, i64, i64)> = v.store.with_conn(|conn| {
+                let mut q = conn.prepare("SELECT kind, state, coalesce(reason,''), lamport, seq FROM sync_ops WHERE device_id = ?1 ORDER BY seq")?;
+                let r = q.query_map([&ph.did], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?.collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(r)
+            }).unwrap();
+            panic!("a fresh device fed in the order {order:?}\n{dbg}\nphone ops {rows:?}");
+        }
     }
 }
