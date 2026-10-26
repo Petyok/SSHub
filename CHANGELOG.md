@@ -4,6 +4,20 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Session panes resize like a terminal** - growing a pane now brings back the
+  rows a shrink scrolled into history instead of adding blank rows below, and a
+  shrink scrolls the top away also under a scroll region and on the alternate
+  screen. A resize returns a scrolled-back view to the live screen, as xterm
+  does. The terminal emulator under the panes moved to vt100 0.18.
+
+### Fixed
+
+- **Sessions** - `CSI 3 J` (sent by `clear` in most shells) now also empties the
+  session's scrollback, and an emoji written with VS16 (`❤️`) takes two cells
+  instead of one, so the text after it no longer lands on top of it.
+
 ## [0.20.0] - 2026-10-24
 
 ### Added

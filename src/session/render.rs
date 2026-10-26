@@ -1,10 +1,10 @@
 //! Fullscreen session view: 1-row header, body, 1-row footer.
 //!
-//! The body is the live PTY grid via `tui_term` — including while connecting,
-//! so the real ssh handshake (`ssh -v`) is shown verbatim with nothing
-//! fabricated. Header / footer take their styles from the runtime theme's
-//! `components.header.*` and `components.session.*` roles; the grid itself is
-//! the host's own output and is never recoloured.
+//! The body is the live PTY grid, drawn by `parser::draw_screen` — including
+//! while connecting, so the real ssh handshake (`ssh -v`) is shown verbatim
+//! with nothing fabricated. Header / footer take their styles from the
+//! runtime theme's `components.header.*` and `components.session.*` roles;
+//! the grid itself is the host's own output and is never recoloured.
 
 use std::time::{Duration, Instant};
 
@@ -13,8 +13,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use ratatui::Frame;
-
-use tui_term::widget::{Cursor, PseudoTerminal};
 
 use crate::app::App;
 use crate::config::{KeyAction, KeybindsConfig};
@@ -37,7 +35,7 @@ fn session_chunks(frame_area: Rect) -> std::rc::Rc<[Rect]> {
 /// The rectangle the remote PTY grid occupies in a full-screen session frame.
 ///
 /// The single source of the protected geometry: this renderer draws the
-/// `tui_term` widget into it, and `crate::tui`'s app-background pass excludes
+/// grid into it, and `crate::tui`'s app-background pass excludes
 /// exactly it. Two independently derived rects is how a one-cell drift ships,
 /// and one drifted cell means a theme colour written over the host's own
 /// output — which is why it goes through the real layout instead of the
@@ -527,15 +525,13 @@ fn render_body(
     }
     // Only the pane that takes the keys shows a cursor: in a split view the
     // others would otherwise each draw one, and the eye cannot tell which.
-    let term =
-        PseudoTerminal::new(session.parser.screen()).cursor(Cursor::default().visibility(cursor));
-    frame.render_widget(term, area);
+    super::parser::draw_screen(session.parser.screen(), area, frame.buffer_mut(), cursor);
 
     // Overlay the in-app text selection by reversing the selected cells. Done
     // as a post-pass over the buffer so it survives every repaint (unlike the
     // outer terminal's native selection, which a redraw wipes).
     if let Some(sel) = session.selection {
-        let (rows, cols) = session.parser.screen().size();
+        let (rows, cols) = session.parser.size();
         let buf = frame.buffer_mut();
         for r in 0..rows.min(area.height) {
             for c in 0..cols.min(area.width) {
@@ -579,7 +575,7 @@ pub(crate) fn paint_ghost(
     if first.is_empty() {
         return;
     }
-    let (rows, cols) = session.parser.screen().size();
+    let (rows, cols) = session.parser.size();
     let width = cols.min(area.width);
     let height = rows.min(area.height);
     if width == 0 || height == 0 {
@@ -954,7 +950,7 @@ mod tests {
 
     #[test]
     fn the_protected_rect_is_the_rect_the_pty_widget_gets() {
-        // `render` hands `session_chunks(..)[1]` to the `tui_term` widget, so
+        // `render` hands `session_chunks(..)[1]` to `draw_screen`, so
         // the exclusion is the viewport by construction. What this pins is that
         // it stays that way — and that the `y + 1 / height - 2` arithmetic this
         // used to use is not quietly swapped back in.

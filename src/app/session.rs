@@ -93,7 +93,7 @@ impl App {
         // view is its pane, not the terminal.
         let body_rows = self
             .active_session()
-            .map_or(1, |s| usize::from(s.parser.screen().size().0));
+            .map_or(1, |s| usize::from(s.parser.size().0));
 
         let cancel_connecting = matches!(
             self.active_session().map(|s| &s.phase),
@@ -542,7 +542,7 @@ impl App {
         let mode = session.parser.screen().mouse_protocol_mode();
         let encoding = session.parser.screen().mouse_protocol_encoding();
         let alternate_screen = session.parser.screen().alternate_screen();
-        let (rows, cols) = session.parser.screen().size();
+        let (rows, cols) = session.parser.size();
 
         // Pane-local grid coordinates.
         let row = mouse.row.saturating_sub(pane.y).min(rows.saturating_sub(1));

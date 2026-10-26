@@ -404,7 +404,7 @@ impl FrameComposition {
 
         // 1. The live viewport, while the session view *is* the frame. Both the
         //    rect and the decision come from `session::render`, so the protected
-        //    region cannot drift from what the `tui_term` widget really covers.
+        //    region cannot drift from what the PTY grid really covers.
         //    The connecting spinner and the failure screen occupy the same rows
         //    but are SSHub's own chrome, and a theme is allowed to back them.
         //    During a tab slide the live layer is shifted, so the transition's
@@ -4212,7 +4212,7 @@ mod tests {
     }
 
     /// A full-screen session app on `theme_id`, with a live PTY grid in the
-    /// body (phase `Running`, so `render_body` draws the tui-term widget).
+    /// body (phase `Running`, so `render_body` draws the PTY grid).
     fn session_app_with_theme(theme_id: &str) -> App {
         let mut app = app_with_builtin_theme(theme_id);
         enter_live_session(&mut app);
