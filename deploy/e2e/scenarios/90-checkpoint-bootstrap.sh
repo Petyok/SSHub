@@ -12,6 +12,9 @@ ring2
 check "peer-a sets up the Vault" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-a $SSHUB sync-import-kit"
 check "peer-b imports the kit" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-b $SSHUB sync-import-kit"
 check "peer-a adds host big with a password" "printf 'pw0\n' | peer peer-a $SSHUB host add --name big --address big.internal --password-stdin"
+show "peer-a op kinds before a password edit" sq peer-a 'SELECT kind, count(*) FROM sync_ops GROUP BY kind'
+show "peer-a edits the password of big (T1: one CredUpdate expected)" sh -c "printf 'pw1\n' | $C exec -T peer-a $SSHUB host edit --name big --set-password-stdin"
+show "peer-a op kinds after the password edit" sq peer-a 'SELECT kind, count(*) FROM sync_ops GROUP BY kind'
 # Finding P1 (settled): a password edit appends no op and the remote command of a host does not travel in its op (an op is
 # about 350 bytes), so only the op trigger (5000) can be reached: 8 workers add 650 hosts each (one HostUpsert op per
 # add, about 0.4 s a process), a progress line per 100 adds, so a silent log means a hang.
