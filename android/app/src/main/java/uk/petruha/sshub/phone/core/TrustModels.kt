@@ -21,7 +21,7 @@ data class TrustDevice(
 )
 
 /** One row of the diff box, rendered as is (the key may already contain a count, e.g. `Hosts (5)`). */
-data class TrustFieldView(val key: String, val value: String)
+data class TrustFieldView(val key: String, val value: String, val danger: Boolean = false)
 
 data class TrustCheck(val text: String, val ok: Boolean)
 

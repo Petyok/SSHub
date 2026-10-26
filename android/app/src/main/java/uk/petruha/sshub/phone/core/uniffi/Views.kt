@@ -133,7 +133,6 @@ internal fun mapRelease(v: RsShareRequestView): OpenedRelease {
             token = v.token.toLong(),
             requesterName = v.requesterName.orEmpty(),
             requesterId = v.requester,
-            met = must == null,
             requesterKey = v.requesterKey,
             requesterKnown = v.requesterKnown,
             shareKind = v.shareKind,

@@ -18,6 +18,7 @@ import uk.petruha.sshub.phone.core.OpenedTrustRequest
 import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.core.PendingItem
 import uk.petruha.sshub.phone.core.PendingKind
+import uk.petruha.sshub.phone.core.PhoneCoreApi
 import uk.petruha.sshub.phone.core.ExportOpRow
 import uk.petruha.sshub.phone.core.PhoneStatus
 import uk.petruha.sshub.phone.core.RecoveryNoticeOpened

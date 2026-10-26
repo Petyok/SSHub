@@ -58,7 +58,7 @@ data class RecoveryNoticeView(
 /** `openFrame` result for a recovery notice frame; leads to the recovery-notice screen for `token`. */
 class RecoveryNoticeOpened(val token: Long, val view: RecoveryNoticeView) : Opened
 
-data class ExportOpRow(val seq: Long, val kind: String, val time: String, val hash: String)
+data class ExportOpRow(val seq: Long, val kind: String, val time: String, val hash: String, val danger: Boolean = false)
 
 /** `outgoing` is null when this phone chain has no signed ops yet. */
 class ExportedOps(val rows: List<ExportOpRow>, val total: Int, val outgoing: Outgoing?)
