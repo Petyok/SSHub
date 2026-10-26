@@ -137,6 +137,362 @@
    "signature": "8b36deea7b35b021e6cff72a053c21701b5bbaf625e03b21056cafd3cc685a335c26871b9768b2bcc75aa1a53fb9e11d73dca014758ad569256ae765e484c20e"
   }
  ],
+ "issued_certs": [
+  {
+   "id": "2c4cd80569d95fb296ead7db9d663827ed007a93081587016f3fa2d057f81e02",
+   "device_id": "cccccccccccccccc",
+   "scope": {
+    "Hosts": [
+     "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+     "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"
+    ]
+   },
+   "issued_at": 1900000004,
+   "expiry": 1900086400,
+   "max_new_hosts_per_day": 5,
+   "revoked": true,
+   "extensions": [
+    {
+     "at": 1900000006,
+     "extra": 7
+    }
+   ],
+   "term_text": "23 h 59 min"
+  },
+  {
+   "id": "46db7d6b715f171b2b682aa6f4326990ed3836ffc884d64dde8803a07cece418",
+   "device_id": "dddddddddddddddd",
+   "scope": {
+    "Group": "06060606060606060606060606060606"
+   },
+   "issued_at": 1900000005,
+   "expiry": 1902592000,
+   "max_new_hosts_per_day": 50,
+   "revoked": false,
+   "extensions": [],
+   "term_text": "29 days 23 h"
+  }
+ ],
+ "export_rows": [
+  {
+   "headline": "WrapKeyRotate by (no name known) [ee8a1d5cf97016a7]",
+   "rows": [
+    {
+     "label": "Op signed by",
+     "value": "(no name known) [ee8a1d5cf97016a7]",
+     "danger": false
+    },
+    {
+     "label": "device_id",
+     "value": "ee8a1d5cf97016a7",
+     "danger": true
+    },
+    {
+     "label": "wrap_epoch",
+     "value": "1",
+     "danger": true
+    },
+    {
+     "label": "x25519_pub",
+     "value": "64 base64 chars: 78edf008313dba73...",
+     "danger": true
+    },
+    {
+     "label": "mlkem_pub",
+     "value": "1580 base64 chars: 1tOIUKSynmbN0Rcf...",
+     "danger": true
+    },
+    {
+     "label": "Op time",
+     "value": "2030-03-17T17:46:43Z",
+     "danger": false
+    },
+    {
+     "label": "Op seq / epoch",
+     "value": "4 / 3",
+     "danger": false
+    }
+   ],
+   "danger_count": 4
+  },
+  {
+   "headline": "CertIssue by (no name known) [ee8a1d5cf97016a7]",
+   "rows": [
+    {
+     "label": "Op signed by",
+     "value": "(no name known) [ee8a1d5cf97016a7]",
+     "danger": false
+    },
+    {
+     "label": "device_id",
+     "value": "cccccccccccccccc",
+     "danger": true
+    },
+    {
+     "label": "scope.Hosts.0",
+     "value": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+     "danger": true
+    },
+    {
+     "label": "scope.Hosts.1",
+     "value": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+     "danger": true
+    },
+    {
+     "label": "expiry",
+     "value": "1900086400",
+     "danger": true
+    },
+    {
+     "label": "max_new_hosts_per_day",
+     "value": "5",
+     "danger": true
+    },
+    {
+     "label": "epoch_lo",
+     "value": "3",
+     "danger": true
+    },
+    {
+     "label": "epoch_hi",
+     "value": "4",
+     "danger": true
+    },
+    {
+     "label": "Op time",
+     "value": "2030-03-17T17:46:44Z",
+     "danger": false
+    },
+    {
+     "label": "Op seq / epoch",
+     "value": "5 / 3",
+     "danger": false
+    }
+   ],
+   "danger_count": 7
+  },
+  {
+   "headline": "CertIssue by (no name known) [ee8a1d5cf97016a7]",
+   "rows": [
+    {
+     "label": "Op signed by",
+     "value": "(no name known) [ee8a1d5cf97016a7]",
+     "danger": false
+    },
+    {
+     "label": "device_id",
+     "value": "dddddddddddddddd",
+     "danger": true
+    },
+    {
+     "label": "scope.Group",
+     "value": "06060606060606060606060606060606",
+     "danger": true
+    },
+    {
+     "label": "expiry",
+     "value": "1902592000",
+     "danger": true
+    },
+    {
+     "label": "max_new_hosts_per_day",
+     "value": "50",
+     "danger": true
+    },
+    {
+     "label": "epoch_lo",
+     "value": "3",
+     "danger": true
+    },
+    {
+     "label": "epoch_hi",
+     "value": "3",
+     "danger": true
+    },
+    {
+     "label": "Op time",
+     "value": "2030-03-17T17:46:45Z",
+     "danger": false
+    },
+    {
+     "label": "Op seq / epoch",
+     "value": "6 / 3",
+     "danger": false
+    }
+   ],
+   "danger_count": 6
+  },
+  {
+   "headline": "CertExtend by (no name known) [ee8a1d5cf97016a7]",
+   "rows": [
+    {
+     "label": "Op signed by",
+     "value": "(no name known) [ee8a1d5cf97016a7]",
+     "danger": false
+    },
+    {
+     "label": "cert_id",
+     "value": "64 base64 chars: 2c4cd80569d95fb2...",
+     "danger": true
+    },
+    {
+     "label": "extra_hosts",
+     "value": "7",
+     "danger": true
+    },
+    {
+     "label": "Op time",
+     "value": "2030-03-17T17:46:46Z",
+     "danger": false
+    },
+    {
+     "label": "Op seq / epoch",
+     "value": "7 / 3",
+     "danger": false
+    }
+   ],
+   "danger_count": 2
+  },
+  {
+   "headline": "CertRevoke by (no name known) [ee8a1d5cf97016a7]",
+   "rows": [
+    {
+     "label": "Op signed by",
+     "value": "(no name known) [ee8a1d5cf97016a7]",
+     "danger": false
+    },
+    {
+     "label": "cert_id",
+     "value": "64 base64 chars: 2c4cd80569d95fb2...",
+     "danger": true
+    },
+    {
+     "label": "Op time",
+     "value": "2030-03-17T17:46:47Z",
+     "danger": false
+    },
+    {
+     "label": "Op seq / epoch",
+     "value": "8 / 3",
+     "danger": false
+    }
+   ],
+   "danger_count": 1
+  },
+  {
+   "headline": "PhoneReenrollCancel by (no name known) [ee8a1d5cf97016a7]",
+   "rows": [
+    {
+     "label": "Op signed by",
+     "value": "(no name known) [ee8a1d5cf97016a7]",
+     "danger": false
+    },
+    {
+     "label": "reenroll_hash",
+     "value": "64 base64 chars: 2222222222222222...",
+     "danger": true
+    },
+    {
+     "label": "by_phone",
+     "value": "true",
+     "danger": true
+    },
+    {
+     "label": "third_factor",
+     "value": "(cleared)",
+     "danger": true
+    },
+    {
+     "label": "Op time",
+     "value": "2030-03-17T17:46:48Z",
+     "danger": false
+    },
+    {
+     "label": "Op seq / epoch",
+     "value": "9 / 9",
+     "danger": false
+    }
+   ],
+   "danger_count": 3
+  },
+  {
+   "headline": "ShareStorageKey by (no name known) [ee8a1d5cf97016a7]",
+   "rows": [
+    {
+     "label": "Op signed by",
+     "value": "(no name known) [ee8a1d5cf97016a7]",
+     "danger": false
+    },
+    {
+     "label": "epoch",
+     "value": "4",
+     "danger": true
+    },
+    {
+     "label": "sealed",
+     "value": "80 base64 chars: ASA/Xn2cu9r5GDdW...",
+     "danger": true
+    },
+    {
+     "label": "Op time",
+     "value": "2030-03-17T17:46:49Z",
+     "danger": false
+    },
+    {
+     "label": "Op seq / epoch",
+     "value": "10 / 9",
+     "danger": false
+    }
+   ],
+   "danger_count": 2
+  },
+  {
+   "headline": "ShareReshareConfirmBatch by (no name known) [ee8a1d5cf97016a7]",
+   "rows": [
+    {
+     "label": "Op signed by",
+     "value": "(no name known) [ee8a1d5cf97016a7]",
+     "danger": false
+    },
+    {
+     "label": "epoch",
+     "value": "4",
+     "danger": true
+    },
+    {
+     "label": "items.0.host_uid",
+     "value": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+     "danger": true
+    },
+    {
+     "label": "items.0.sealed_share",
+     "value": "96 base64 chars: AiFAX36dvNv6GThX...",
+     "danger": true
+    },
+    {
+     "label": "items.1.host_uid",
+     "value": "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+     "danger": true
+    },
+    {
+     "label": "items.1.sealed_share",
+     "value": "96 base64 chars: AyJBYH+evdz7GjlY...",
+     "danger": true
+    },
+    {
+     "label": "Op time",
+     "value": "2030-03-17T17:46:50Z",
+     "danger": false
+    },
+    {
+     "label": "Op seq / epoch",
+     "value": "11 / 9",
+     "danger": false
+    }
+   ],
+   "danger_count": 5
+  }
+ ],
  "describe": [
   {
    "id": "host-upsert-empty-patch",
@@ -2525,6 +2881,92 @@
     }
    ],
    "danger_count": 0
+  }
+ ],
+ "red_window": [
+  {
+   "id": "device-add-holder",
+   "timestamp": 1,
+   "lamport": 14,
+   "seq": 14,
+   "lapses_at": 259201
+  },
+  {
+   "id": "device-revoke",
+   "timestamp": 1,
+   "lamport": 15,
+   "seq": 15,
+   "lapses_at": 259201
+  },
+  {
+   "id": "cert-issue-hosts",
+   "timestamp": 1,
+   "lamport": 19,
+   "seq": 19,
+   "lapses_at": 259201
+  },
+  {
+   "id": "cert-issue-group-extremes",
+   "timestamp": 1,
+   "lamport": 20,
+   "seq": 20,
+   "lapses_at": 259201
+  },
+  {
+   "id": "mode-change-some",
+   "timestamp": 1,
+   "lamport": 29,
+   "seq": 29,
+   "lapses_at": 259201
+  },
+  {
+   "id": "mode-change-none",
+   "timestamp": 1,
+   "lamport": 30,
+   "seq": 30,
+   "lapses_at": 259201
+  },
+  {
+   "id": "factor-register-paper",
+   "timestamp": 1,
+   "lamport": 44,
+   "seq": 44,
+   "lapses_at": 259201
+  },
+  {
+   "id": "factor-register-email",
+   "timestamp": 1,
+   "lamport": 45,
+   "seq": 45,
+   "lapses_at": 259201
+  },
+  {
+   "id": "device-role-change",
+   "timestamp": 1,
+   "lamport": 46,
+   "seq": 46,
+   "lapses_at": 259201
+  },
+  {
+   "id": "exemption-set-on",
+   "timestamp": 1,
+   "lamport": 48,
+   "seq": 48,
+   "lapses_at": 259201
+  },
+  {
+   "id": "exemption-set-off",
+   "timestamp": 1,
+   "lamport": 49,
+   "seq": 49,
+   "lapses_at": 259201
+  },
+  {
+   "id": "bulk-export",
+   "timestamp": 1,
+   "lamport": 47,
+   "seq": 47,
+   "lapses_at": 259201
   }
  ],
  "release": [

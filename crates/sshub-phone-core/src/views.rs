@@ -55,6 +55,10 @@ pub struct UnlockInfo {
     pub wrap_epoch: u32,
     pub live_short_codes: u32,
     pub ring: Vec<RingEntry>,
+    /// The name this phone gave itself when it enrolled (None before the first enrollment).
+    pub device_name: Option<String>,
+    /// The highest epoch this phone has seen on its own chain (what a certificate request must start at).
+    pub ring_epoch: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -132,12 +136,35 @@ pub enum CertStatus {
 /// A trust session this phone issued, read back from its own chain.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct IssuedCertView {
-    /// Hex of the `CertIssue` op hash.
     pub cert_id: String,
     /// The one line description (device, scope, term, budget, extensions).
     pub summary: String,
     pub status: CertStatus,
     pub can_revoke: bool,
+    /// The trusted device and the name this phone knows it by (escaped).
+    pub device_id: String,
+    pub device_name: Option<String>,
+    /// Scope: either one group (`group` set, `hosts` empty) or a list of hosts (uid hex each).
+    pub group: Option<String>,
+    pub hosts: Vec<String>,
+    /// The signed time of the `CertIssue` op, the expiry it names and the term between them (seconds).
+    pub issued_at: i64,
+    pub expiry: i64,
+    pub term_secs: i64,
+    /// `term_secs` in the page's words ("30 days", "36 h 5 min").
+    pub term_text: String,
+    pub max_new_hosts_per_day: u32,
+    pub epoch_lo: u64,
+    pub epoch_hi: u64,
+    pub revoked: bool,
+    pub extensions: Vec<CertExtensionView>,
+}
+
+/// One `CertExtend` this phone signed for a certificate: the signed time and the extra new hosts it allowed.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CertExtensionView {
+    pub at: i64,
+    pub extra_hosts: u32,
 }
 
 // ---------------------------------------------------------------- Opened
@@ -169,8 +196,20 @@ pub struct ShareRequestView {
     pub binding_hash: String,
     pub checks: Vec<Check>,
     pub expires_at: i64,
-    /// Set for a requester this phone never met: Approve needs this id typed (`Decision::Release.typed_id`).
     pub type_to_approve: Option<String>,
+    /// The requester as this phone knows it: name (escaped), whether it is a terminal this phone enrolled with, and the
+    /// Ed25519 public key (hex) it enrolled with, only when the requester's signature verified under that key (the
+    /// device id is its first 8 bytes).
+    pub requester_name: Option<String>,
+    pub requester_known: bool,
+    pub requester_key: Option<String>,
+    /// What this phone's own share is: `"hybrid"` (the original sharing) or `"envelope"` (after a reshare), the
+    /// epoch the share belongs to, and its index in the sharing (all read from the phone material the terminal sent
+    /// and this phone opened). The credential's name and mode (single or quorum) are NOT in the signed request: a
+    /// terminal does not send them, so the core has nothing to show.
+    pub share_kind: String,
+    pub share_epoch: u64,
+    pub share_index: u32,
     pub short_code: ShortCodeOffer,
 }
 
@@ -187,6 +226,16 @@ pub struct RedNoticeView {
     pub blocked: Option<String>,
     /// Set for a proposer this phone never met: Approve needs this id typed.
     pub type_to_approve: Option<String>,
+    /// Everything below comes from the SIGNED op, never from when the phone read the notice. `proposed_at` is the op's
+    /// own timestamp, `lamport` and `seq` its own counters, `lapses_at` = `proposed_at` + 3 days: a Red ceremony
+    /// lapses then (the page refuses the op after that), whatever the phone clock says when it was scanned.
+    pub proposed_at: i64,
+    pub lamport: u64,
+    pub seq: u64,
+    pub lapses_at: i64,
+    /// Name this phone knows the proposer by (a terminal it enrolled with, or a name it was given), escaped.
+    pub proposer_name: Option<String>,
+    pub proposer: String,
 }
 
 /// Kind 3 carrying a `PhoneReenroll`: a recovery that this phone (still alive) can cancel.
@@ -197,6 +246,9 @@ pub struct ReenrollNoticeView {
     pub op_hash: String,
     /// When the ring accepts the new phone unless it is cancelled.
     pub ends_at: i64,
+    /// The signed time of the `PhoneReenroll` op (the timelock counts from it) and its lamport.
+    pub proposed_at: i64,
+    pub lamport: u64,
     pub signature_note: String,
 }
 

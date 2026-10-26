@@ -38,6 +38,7 @@ const MAX_AGE: i64 = CHALLENGE_EXPIRY_SECS + TIMESTAMP_SKEW_GRACE_SECS;
 
 /// A share request that passed every check and waits for the person: what `approve` needs. The share is live in memory
 /// until this is dropped (and zeroed then).
+#[derive(Clone)]
 pub struct PendingRelease {
     token: u64,
     ch: ChallengeWire,
@@ -336,6 +337,16 @@ pub fn open_challenge(
         checks,
         expires_at: ch.expiry,
         type_to_approve: type_to_approve.clone(),
+        requester_name: ctx
+            .aliases()
+            .get(&op.device_id)
+            .filter(|n| !n.is_empty())
+            .map(|n| safe_text(n)),
+        requester_known: known.is_some(),
+        requester_key: known.as_ref().map(|k| k.ed25519_pub.clone()),
+        share_kind: kind.to_string(),
+        share_epoch: ch.phone_material.epoch,
+        share_index: u32::from(share[0]),
         short_code,
     };
     let pending = PendingRelease {

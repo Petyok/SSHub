@@ -18,7 +18,8 @@ use crate::outgoing::ops_out;
 use crate::state::{PhoneState, COURIER_TAIL};
 use crate::text::{iso, safe_text};
 use crate::views::{
-    CertExtendView, CertRequestView, CertStatus, IssuedCertView, Opened, RefusalView, Row,
+    CertExtendView, CertExtensionView, CertRequestView, CertStatus, IssuedCertView, Opened,
+    RefusalView, Row,
 };
 
 /// A terminal asks for the phone's current epoch plus this much slack (`src/app/sync_trust.rs` passes 1): a certificate
@@ -209,8 +210,12 @@ pub struct IssuedCert {
     pub id: [u8; 32],
     pub device_id: String,
     pub scope: CertScope,
+    /// The signed time of the `CertIssue` op.
+    pub issued_at: i64,
     pub expiry: i64,
     pub max_new_hosts_per_day: u32,
+    pub epoch_lo: u64,
+    pub epoch_hi: u64,
     pub revoked: bool,
     /// `(timestamp of the op, extra hosts)`.
     pub extensions: Vec<(i64, u32)>,
@@ -236,13 +241,17 @@ pub fn issued_cert_records(state: &PhoneState) -> Vec<IssuedCert> {
                 scope,
                 expiry,
                 max_new_hosts_per_day,
-                ..
+                epoch_lo,
+                epoch_hi,
             } => certs.push(IssuedCert {
                 id: e.hash32(),
                 device_id,
                 scope,
+                issued_at: op.timestamp,
                 expiry,
                 max_new_hosts_per_day,
+                epoch_lo,
+                epoch_hi,
                 revoked: false,
                 extensions: Vec::new(),
             }),
@@ -334,17 +343,44 @@ pub fn issued_certs(
 ) -> Vec<IssuedCertView> {
     issued_cert_records(state)
         .iter()
-        .map(|c| IssuedCertView {
-            cert_id: hex::encode(c.id),
-            summary: describe_cert(c, aliases),
-            status: if c.revoked {
-                CertStatus::Revoked
-            } else if now < c.expiry {
-                CertStatus::Active
-            } else {
-                CertStatus::Expired
-            },
-            can_revoke: c.live(now),
+        .map(|c| {
+            let (group, hosts) = match &c.scope {
+                CertScope::Group(g) => (Some(uid_hex(g)), Vec::new()),
+                CertScope::Hosts(h) => (None, h.iter().map(uid_hex).collect()),
+            };
+            let term_secs = c.expiry.saturating_sub(c.issued_at);
+            IssuedCertView {
+                cert_id: hex::encode(c.id),
+                summary: describe_cert(c, aliases),
+                status: if c.revoked {
+                    CertStatus::Revoked
+                } else if now < c.expiry {
+                    CertStatus::Active
+                } else {
+                    CertStatus::Expired
+                },
+                can_revoke: c.live(now),
+                device_id: c.device_id.clone(),
+                device_name: alias(aliases, &c.device_id).map(safe_text),
+                group,
+                hosts,
+                issued_at: c.issued_at,
+                expiry: c.expiry,
+                term_secs,
+                term_text: describe_term(term_secs),
+                max_new_hosts_per_day: c.max_new_hosts_per_day,
+                epoch_lo: c.epoch_lo,
+                epoch_hi: c.epoch_hi,
+                revoked: c.revoked,
+                extensions: c
+                    .extensions
+                    .iter()
+                    .map(|(at, extra)| CertExtensionView {
+                        at: *at,
+                        extra_hosts: *extra,
+                    })
+                    .collect(),
+            }
         })
         .collect()
 }
