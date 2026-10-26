@@ -320,7 +320,7 @@ impl RecoveryNoticeWire {
     }
 }
 
-pub(crate) fn encode_op_list(ops: &[SignedOpBytes]) -> Vec<u8> {
+pub fn encode_op_list(ops: &[SignedOpBytes]) -> Vec<u8> {
     assert!(
         ops.len() <= MAX_COURIER_OPS,
         "at most {MAX_COURIER_OPS} ops per list"
@@ -335,7 +335,7 @@ pub(crate) fn encode_op_list(ops: &[SignedOpBytes]) -> Vec<u8> {
 }
 
 /// Parses a list starting at `body[0]`; returns the ops and the number of bytes used.
-pub(crate) fn decode_op_list(body: &[u8]) -> Result<(Vec<SignedOpBytes>, usize)> {
+pub fn decode_op_list(body: &[u8]) -> Result<(Vec<SignedOpBytes>, usize)> {
     if body.len() > MAX_FRAME_BYTES {
         bail!("op list exceeds the frame cap");
     }
@@ -777,8 +777,8 @@ mod tests {
     /// phone, a real storage key blob. The breakdown is printed with `--nocapture`.
     #[test]
     fn a_realistic_challenge_is_under_two_kilobytes() {
-        use crate::sync::crypto::{hybrid_wrap, DeviceIdentity};
-        use crate::sync::fountain::{fountain_encode, frame_bytes_for_area};
+        use crate::crypto::{hybrid_wrap, DeviceIdentity};
+        use crate::fountain::{fountain_encode, frame_bytes_for_area};
         let phone = DeviceIdentity::generate().public();
         let op = format!(
             r#"{{"device_id":"{}","seq":1234,"lamport":5678,"prev_hash":"{}","timestamp":1893452400,"epoch":3,"alg":{{"sig":1,"wrap":1}},"body":{{"ShareRelease":{{"host_uid":"{}","request_id":1234567890123,"requester":"{}"}}}}}}"#,
@@ -891,7 +891,7 @@ mod phone_frame_tests {
 #[cfg(test)]
 mod cert_request_tests {
     use super::*;
-    use crate::sync::oplog::CertScope;
+    use crate::oplog::CertScope;
 
     #[test]
     fn a_certificate_request_round_trips_and_refuses_damage() {
@@ -930,7 +930,7 @@ mod cert_request_tests {
         };
         assert!(CertRequestWire::decode(&many.encode()).is_err());
         assert!(
-            matches!(hosts.to_body(), crate::sync::oplog::OpBody::CertIssue { ref device_id, .. } if device_id == "0707070707070707")
+            matches!(hosts.to_body(), crate::oplog::OpBody::CertIssue { ref device_id, .. } if device_id == "0707070707070707")
         );
         assert!(CertRequestWire::decode(
             &ShareResponseWire {

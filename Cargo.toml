@@ -42,6 +42,11 @@ exclude = [
     "tests/fixtures/media/gen",
 ]
 
+[workspace]
+members = [".", "crates/sshub-sync-proto"]
+default-members = ["."]
+resolver = "2"
+
 [[bin]]
 name = "sshub"
 path = "src/main.rs"
@@ -86,6 +91,8 @@ bluetooth = [
 
 [dependencies]
 anyhow = "1"
+# The pure protocol core (crypto, op types, wire frames, decoders); published before `sshub`.
+sshub-sync-proto = { path = "crates/sshub-sync-proto", version = "=0.20.0", features = ["qr-decode"] }
 crossterm = "0.29"
 # Enable real OS backends. Without a backend feature, keyring 3.x silently
 # falls back to an in-memory mock store: set()/get() work within one process
@@ -105,9 +112,6 @@ portable-pty = "0.9"
 # Pure-Rust QR encoder for the host sync unlock modal (half-block frames in the
 # terminal). No image or svg features: only the core encoder.
 qrcode = { version = "0.14", default-features = false }
-# Pure-Rust QR decoder (a quirc port) for the reverse-QR reply (sync::media::qrscan): raw
-# grayscale in, raw payload bytes out, no image-crate integration.
-quircs = "0.10"
 # Capture backends of the opt-in `audio` and `camera` features (see above).
 cpal = { version = "0.18", optional = true }
 # Exact Paragraph::line_count for the auth prompt scroll range (the plain

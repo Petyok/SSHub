@@ -160,7 +160,7 @@ def shamir_combine(shares):
     return bytes(out)
 
 
-EFF = [w for w in (ROOT / "assets/wordlists/eff_large.txt").read_text().split("\n") if w]
+EFF = [w for w in (ROOT / "crates/sshub-sync-proto/assets/wordlists/eff_large.txt").read_text().split("\n") if w]
 assert len(EFF) == 7776
 
 

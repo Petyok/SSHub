@@ -3,7 +3,7 @@
 use anyhow::{bail, Result};
 use argon2::{Algorithm, Argon2, Params, Version};
 
-use crate::sync::limits::{
+use crate::limits::{
     ARGON2_EMAIL_PROFILE, ARGON2_MASTER_PROFILE, ARGON2_MAX_ITERS, ARGON2_MAX_MEM_KIB,
     SNAPSHOT_ARGON2_FLOOR,
 };

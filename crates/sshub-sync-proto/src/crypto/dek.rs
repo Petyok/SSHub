@@ -19,7 +19,8 @@ pub fn dek_seal(dek: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
     dek_seal_with(dek, plaintext, &nonce)
 }
 
-pub(crate) fn dek_seal_with(dek: &[u8; 32], plaintext: &[u8], nonce: &[u8; 24]) -> Vec<u8> {
+#[doc(hidden)]
+pub fn dek_seal_with(dek: &[u8; 32], plaintext: &[u8], nonce: &[u8; 24]) -> Vec<u8> {
     let ct = XChaCha20Poly1305::new(dek.into())
         .encrypt(nonce.into(), plaintext)
         .expect("XChaCha20-Poly1305 encrypt");

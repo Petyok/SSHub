@@ -167,7 +167,7 @@ pub fn open_envelope_share(storage_key: &[u8; 32], aad: &[u8], sealed: &[u8]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::crypto::{dek_generate, dek_seal, shamir_split};
+    use crate::crypto::{dek_generate, dek_seal, shamir_split};
     use x25519_dalek::{PublicKey, StaticSecret};
 
     #[test]

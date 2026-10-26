@@ -31,7 +31,7 @@ pub fn bip39_decode(phrase: &str) -> Result<[u8; 32]> {
 }
 
 /// Lowercase, single-spaced form used for hashing and comparison.
-pub(crate) fn normalize(phrase: &str) -> String {
+pub fn normalize(phrase: &str) -> String {
     phrase
         .split_whitespace()
         .map(str::to_lowercase)
@@ -39,7 +39,7 @@ pub(crate) fn normalize(phrase: &str) -> String {
         .join(" ")
 }
 
-const EFF_LARGE: &str = include_str!("../../../assets/wordlists/eff_large.txt");
+const EFF_LARGE: &str = include_str!("../../assets/wordlists/eff_large.txt");
 const EFF_N: u128 = 7776;
 
 fn eff_words() -> &'static [&'static str] {

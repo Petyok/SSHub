@@ -15,7 +15,7 @@ pub enum PaperDomain {
 }
 
 impl PaperDomain {
-    pub(crate) fn context(self) -> &'static str {
+    pub fn context(self) -> &'static str {
         match self {
             PaperDomain::Unwrap => "sshub/sync/paper/unwrap/v1",
             PaperDomain::Recover => "sshub/sync/paper/recover/v1",
@@ -32,7 +32,7 @@ pub fn paper_derive(phrase: &str, domain: PaperDomain) -> Result<DeviceIdentity>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::crypto::bip39_encode;
+    use crate::crypto::bip39_encode;
 
     #[test]
     fn domains_are_independent_and_deterministic() {

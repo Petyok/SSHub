@@ -12,7 +12,7 @@ pub fn derive_key(context: &str, ikm: &[u8]) -> [u8; 32] {
 }
 
 /// Extendable output of `derive_key`: `out.len()` bytes under one context.
-pub(crate) fn derive_xof(context: &str, ikm: &[u8], out: &mut [u8]) {
+pub fn derive_xof(context: &str, ikm: &[u8], out: &mut [u8]) {
     let mut h = blake3::Hasher::new_derive_key(context);
     h.update(ikm);
     h.finalize_xof().fill(out);
