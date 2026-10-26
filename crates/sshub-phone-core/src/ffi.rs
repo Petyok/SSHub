@@ -74,6 +74,14 @@ pub fn is_word(word: String) -> bool {
     sshub_sync_proto::crypto::is_bip39_word(&word)
 }
 
+/// Whether `word` (any case) is a word the four-word enrollment check uses. The SAS words are drawn from the same
+/// English BIP39 list as the backup words (`crypto::sas`), so this is the same test as [`is_word`]; it is a separate
+/// name so the screens say what they validate.
+#[uniffi::export]
+pub fn is_sas_word(word: String) -> bool {
+    sshub_sync_proto::crypto::is_bip39_word(&word)
+}
+
 fn kind_of(frame: &[u8]) -> Option<u8> {
     (frame.len() >= 7 && frame[..4] == WIRE_MAGIC).then(|| frame[6])
 }
@@ -745,6 +753,69 @@ mod tests {
                 .ops
                 .len(),
             rows.len()
+        );
+    }
+
+    #[test]
+    fn sas_words_are_words_of_the_sas_list() {
+        let w = sshub_sync_proto::crypto::sas_words(&[0x5a; 32]);
+        for word in w.split('-') {
+            assert!(is_sas_word(word.into()), "{word}");
+        }
+        assert!(!is_sas_word("harbour2".into()) && !is_sas_word("".into()));
+    }
+
+    #[test]
+    fn a_refused_enrollment_name_leaves_the_enrollment_where_it_was() {
+        use sshub_sync_proto::wire::EnrollFrame;
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let commit = EnrollFrame::Commit {
+            role: 1,
+            commit: [7; 32],
+        }
+        .encode();
+        let Opened::Enroll { view } = c.open_frame(commit, 10).unwrap() else {
+            panic!("not an enrollment step");
+        };
+        for bad in ["", "   ", "tab\there", "line\nbreak"] {
+            let e = c
+                .decide(view.token, Decision::EnrollName { name: bad.into() }, 11)
+                .unwrap_err();
+            assert!(matches!(e, CoreError::BadInput { .. }), "{bad:?}");
+        }
+        let long = "x".repeat(65);
+        assert!(matches!(
+            c.decide(view.token, Decision::EnrollName { name: long }, 11)
+                .unwrap_err(),
+            CoreError::BadInput { .. }
+        ));
+        // the same flow still takes a good name and answers with the phone commitment (kind 6)
+        let out = c
+            .decide(
+                view.token,
+                Decision::EnrollName {
+                    name: "my phone".into(),
+                },
+                12,
+            )
+            .unwrap();
+        assert_eq!(out.kind, 6);
+        // and a SAS decision before the terminal revealed its keys is refused without ending the flow
+        let e = c
+            .decide(view.token, Decision::EnrollSas { matches: true }, 13)
+            .unwrap_err();
+        assert!(matches!(e, CoreError::BadInput { .. }));
+        assert!(
+            c.decide(
+                view.token,
+                Decision::EnrollName {
+                    name: "again".into()
+                },
+                14
+            )
+            .is_err(),
+            "the commitment step is over"
         );
     }
 
