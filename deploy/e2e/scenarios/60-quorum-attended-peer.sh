@@ -26,6 +26,8 @@ approve_all peer-b >/dev/null 2>&1 || true
 spread peer-b peer-a peer-b
 echo "peer-b op states (kind|state|reason): $(sq peer-b "SELECT kind||'|'||state||'|'||coalesce(reason,'') FROM sync_ops WHERE state<>'applied'" | tr '\n' ';')"
 
+ring_view
+
 # ---- the attended peer: peer-b asks, peer-a approves on the command line
 psh peer-b 'rm -f /tmp/e2e-resolve.out'
 $C exec -T peer-b env SSHUB_UNLOCK_WAIT=150 $SSHUB host resolve quorum1 --format json > /tmp/e2e-resolve-b.out 2>&1 &
@@ -44,6 +46,8 @@ wait $RPID; RC=$?
 echo "--- peer-b host resolve quorum1 (exit $RC):"; sed 's/^/    | /' /tmp/e2e-resolve-b.out
 check "peer-b's resolve ended with the credential open" "[ $RC -eq 0 ]"
 if grep -qF "$SECRET" /tmp/e2e-resolve-b.out; then echo "note: resolve printed the password"; else echo "note: resolve printed no password"; fi
+
+ring_view
 
 # ---- the phone: peer-a asks for the phone's share (kind 1 out, kind 2 reply in, one process)
 enr_open peer-a sync-share-request quorum1 --wait 150 --format json

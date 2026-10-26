@@ -13,12 +13,7 @@ C_ID=$(devid peer-a peer-c)
 check "peer-a can name peer-c" "test -n '$C_ID'"
 echo "holders as peer-a sees them: $(holders peer-a)"
 
-# evidence for the revoke precondition: every peer's view and the op rows that decide who is a holder in force
-spread peer-b peer-c peer-a peer-b peer-c
-for p in peer-a peer-b peer-c hub; do
-  echo "$p sees: $(peer $p $SSHUB sync-status --format json 2>&1 | pjq -c '[.devices[] | {name, role, status}]')"
-  echo "$p ops (kind|state|reason|count): $(sq $p "SELECT kind||'|'||state||'|'||coalesce(reason,'')||'|'||count(*) FROM sync_ops WHERE kind IN ('DeviceAdd','DeviceRoleChange','FactorRegister','RedPhoneSign','RedApprove','RedFactor') GROUP BY 1" | tr '\n' ';')"
-done
+ring_view
 show "peer-a sync-revoke peer-c (a holder)" peer peer-a $SSHUB sync-revoke "$C_ID" --format json
 expect "revoking a holder is a Red change with a ceremony" "$LAST_OUT" '.tier == "Red" and (.ceremony != null)'
 REV=$(opid "$LAST_OUT")

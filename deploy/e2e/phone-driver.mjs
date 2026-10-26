@@ -89,7 +89,11 @@ const targets = {
     const host = process.env.ADB_HOST || 'android';
     const port = Number(process.env.ADB_PORT || 5037);
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const devices = await android.devices({ host, port });
+    let devices = [];
+    for (let i = 0; i < 60 && devices.length !== 1; i++) {
+      devices = await android.devices({ host, port });
+      if (devices.length !== 1) await sleep(2000); // the adb server lists the emulator a moment after its boot
+    }
     if (devices.length !== 1) throw new Error(`expected 1 device on ${host}:${port}, got ${devices.length}`);
     const device = devices[0];
     const sh = async (c) => (await device.shell(c)).toString();
@@ -184,11 +188,7 @@ async function home() {
 async function setup({ words = S.words, pin = PIN } = {}) {
   // The page draws its first screen asynchronously (it reads its storage first). A flow that ended on a screen
   // without a way back (a refusal) is left by reloading the page, as a person would reopen it.
-  try {
-    await page.waitForSelector('#words-input, #unlock, #device-id', { timeout: 5000 });
-  } catch {
-    await page.reload();
-  }
+  await page.reload(); // whatever the last flow left on screen, a person reopening the page starts from its lock screen
   await page.waitForSelector('#words-input, #unlock, #device-id', { timeout: 60000 });
   if (await has('#words-input')) {
     await page.fill('#words-input', words);

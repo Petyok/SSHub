@@ -202,4 +202,14 @@ ring_with_phone() {
   show "peer-a registers the paper factor (Red)" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-a $SSHUB sync-factor-register paper --format json"
   REG=$(opid "$LAST_OUT")
   red_complete "$REG" nofactor
+  spread peer-b peer-c peer-a peer-b peer-c peer-a
+  ring_view
+}
+
+# Evidence: every peer's table and the op rows that decide who is a holder in force.
+ring_view() {
+  for p in peer-a peer-b peer-c hub; do
+    echo "$p sees: $(peer $p $SSHUB sync-status --format json 2>&1 | pjq -c '[.devices[] | {name, role, status}]')"
+    echo "$p ops (kind|state|reason|n): $(sq $p "SELECT kind||'|'||state||'|'||coalesce(reason,'')||'|'||count(*) FROM sync_ops WHERE kind IN ('DeviceAdd','DeviceRoleChange','FactorRegister','RedPhoneSign','RedApprove','RedFactor') GROUP BY kind,state,reason" | tr '\n' ';')"
+  done
 }
