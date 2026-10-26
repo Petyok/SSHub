@@ -136,6 +136,7 @@ pub enum CertStatus {
 /// A trust session this phone issued, read back from its own chain.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct IssuedCertView {
+    /// Hex of the `CertIssue` op hash.
     pub cert_id: String,
     /// The one line description (device, scope, term, budget, extensions).
     pub summary: String,
@@ -196,6 +197,7 @@ pub struct ShareRequestView {
     pub binding_hash: String,
     pub checks: Vec<Check>,
     pub expires_at: i64,
+    /// Set for a requester this phone never met: Approve needs this id typed (`ReleaseOptions.typed_id`).
     pub type_to_approve: Option<String>,
     /// The requester as this phone knows it: name (escaped), whether it is a terminal this phone enrolled with, and the
     /// Ed25519 public key (hex) it enrolled with, only when the requester's signature verified under that key (the
@@ -246,7 +248,8 @@ pub struct ReenrollNoticeView {
     pub op_hash: String,
     /// When the ring accepts the new phone unless it is cancelled.
     pub ends_at: i64,
-    /// The signed time of the `PhoneReenroll` op (the timelock counts from it) and its lamport.
+    /// The signed time and lamport of the `PhoneReenroll` op (the timelock in `ends_at` counts from the `initiated_at`
+    /// the op itself names, not from when this phone read the notice).
     pub proposed_at: i64,
     pub lamport: u64,
     pub signature_note: String,
