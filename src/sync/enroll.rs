@@ -13,7 +13,7 @@
 //! `R` is the existing device (`sshub sync-enroll`), `I` the joining one. Both persist the other
 //! as a device and the pair key `K(0)` derived from the ephemeral exchange.
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::crypto::{chain_hash, sas_words, verify, DeviceIdentity, DevicePublic};
@@ -152,6 +152,39 @@ pub struct EnrollOutcome {
 }
 
 /// Inviter side of the join anchor: the bundle in chunks, then its hash.
+/// The anchor bytes plus the labels of the inviter's device table (`{"labels": {device id: name}}`). The bundle
+/// parser ignores the extra field, so the bytes stay an ordinary anchor.
+fn with_labels(store: &LauncherStore, anchor: &[u8]) -> Result<Vec<u8>> {
+    let mut v: serde_json::Value = serde_json::from_slice(anchor).context("anchor is not JSON")?;
+    let labels: serde_json::Map<String, serde_json::Value> = store
+        .sync_devices()?
+        .into_iter()
+        .filter(|d| d.name != d.id && !d.name.is_empty())
+        .map(|d| (d.id, serde_json::Value::String(d.name)))
+        .collect();
+    v["labels"] = serde_json::Value::Object(labels);
+    Ok(serde_json::to_vec(&v)?)
+}
+
+/// The labels of an anchor, bounded and only for plausible device ids; none when absent or malformed.
+fn labels_of(anchor: &[u8]) -> Vec<(String, String)> {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(anchor) else {
+        return Vec::new();
+    };
+    v["labels"]
+        .as_object()
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| {
+                    Some((k.clone(), v.as_str()?.chars().take(60).collect::<String>()))
+                })
+                .filter(|(k, n)| k.len() <= 64 && !n.is_empty())
+                .take(256)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn send_anchor<L: SyncLink>(s: &mut Session<'_, L>, bytes: &[u8]) -> Result<()> {
     for (i, chunk) in bytes.chunks(CHECKPOINT_CHUNK_BYTES).enumerate() {
         s.send(&SyncMsg::EnrollAnchor {
@@ -404,7 +437,8 @@ fn run<L: SyncLink>(
                     })?;
             }
             if !repeat {
-                send_anchor(&mut s, &bundle_to_bytes(&store.sync_join_anchor_build(id)?))?;
+                let anchor = bundle_to_bytes(&store.sync_join_anchor_build(id)?);
+                send_anchor(&mut s, &with_labels(store, &anchor)?)?;
             }
             ring
         }
@@ -413,7 +447,9 @@ fn run<L: SyncLink>(
             let ring = peer_hello.ring.clone().unwrap_or_else(|| peer_id.clone());
             if !repeat {
                 // The ring that existed is the starting state, not something to review (contract 3c).
-                let bundle = bundle_from_bytes(&recv_anchor(&mut s, &mut ui)?)?;
+                let raw = recv_anchor(&mut s, &mut ui)?;
+                let labels = labels_of(&raw);
+                let bundle = bundle_from_bytes(&raw)?;
                 let hosts = hosts_in(&bundle.state);
                 note(&mut ui, EnrollProgress::Adopting { hosts });
                 store.sync_join_adopt(
@@ -430,6 +466,17 @@ fn run<L: SyncLink>(
                     )?;
                     Ok(())
                 })?;
+                // The state carries no labels (they must not make states differ): the inviter vouches for the
+                // names it knows, the first label this device is given for a row is the one it keeps.
+                for (dev, label) in &labels {
+                    store.with_conn(|c| {
+                        c.execute(
+                            "UPDATE sync_devices SET name = ?2 WHERE device_id = ?1 AND name = device_id",
+                            rusqlite::params![dev, label],
+                        )?;
+                        Ok(())
+                    })?;
+                }
                 // Only an adopted ring is ours: a failed adoption leaves the device free to join another.
                 set_ring_id(store, &ring)?;
                 note(&mut ui, EnrollProgress::Adopted { hosts });
