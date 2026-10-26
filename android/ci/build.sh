@@ -66,6 +66,9 @@ else
     rm -rf android/app/src/main/jniLibs android/app/build/generated/uniffi
 fi
 
+echo "== lint (colour, ellipsis, logging rules)"
+sh /work/android/ci/lint.sh
+
 echo "== gradle"
 cd android
 ./gradlew --no-daemon --console=plain assembleDebug assembleDebugAndroidTest
@@ -73,5 +76,6 @@ cp app/build/outputs/apk/debug/app-debug.apk /out/
 cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk /out/
 ls -l /out/*.apk
 sha256sum /out/*.apk
+PATH=$ANDROID_HOME/build-tools/35.0.0:$PATH sh /work/android/ci/manifest-check.sh /out/app-debug.apk
 unzip -l /out/app-debug.apk | grep -E '\.so$' || true
 
