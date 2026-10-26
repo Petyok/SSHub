@@ -189,19 +189,19 @@ private fun ReadBody(state: ChainHeadState, on: ChainHeadActions) {
     if (chain != null && state.lists == 1) {
         SshubCard {
             Text("List read, one more needed.", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.sshub.ok)
-            Note("Newest op in this list: seq ${chain.headSeq}, signed ${formatUtc(chain.newestAt)} (${chain.ops} ops read). Take a second list, from another terminal or from the same one later, before this chain head is trusted.")
+            if (chain.summary.isNotEmpty()) Note(chain.summary)
+            if (chain.note.isNotEmpty()) Note(chain.note)
         }
         Checks(state.checks)
     }
     if (chain != null && state.lists >= 2) {
         SectionHeading("Two lists agree", trailing = "both end at seq ${chain.headSeq}")
-        DiffBox(listOf(DiffEntry("This phone will continue after", null, "seq ${chain.headSeq}, signed ${formatUtc(chain.newestAt)}", mono = true)))
-        Gap(12.dp)
-        WarnBox("Compare with a terminal first.") {
-            Text(
-                "If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain, and the ring reads a fork as proof that this phone is compromised.",
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
-            )
+        if (chain.summary.isNotEmpty()) Note(chain.summary)
+        if (chain.note.isNotEmpty()) {
+            Gap(12.dp)
+            WarnBox("Compare with a terminal first.") {
+                Text(chain.note, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+            }
         }
         Checks(state.checks)
     }

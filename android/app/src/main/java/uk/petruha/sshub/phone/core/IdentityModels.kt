@@ -23,6 +23,10 @@ data class ChainAdopted(
     val ops: Int,
     /** Newest seq this phone knew before, null when it knew none. */
     val previousSeq: Long?,
+    /** The core's sentence under the title ("Newest op in this list: seq N, signed ... (n ops read)"); empty: no line. */
+    val summary: String = "",
+    /** What to do next, in the core's words (take another list, or the warning to read before adopting); empty: no line. */
+    val note: String = "",
 )
 
 /** `openFrame` of a kind 5 own-ops list that verified. Top level because `Opened` is sealed in Core.kt. */

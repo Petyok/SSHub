@@ -261,7 +261,7 @@ internal fun mapReshare(v: RsReshareView): ReshareView {
 }
 
 internal fun mapChain(v: RsChainAdopted) = OpenedChain(
-    ChainAdopted(v.token.toLong(), v.agreed, v.headSeq.toLong(), v.newestAt, v.ops.toInt(), v.previousSeq?.toLong()),
+    ChainAdopted(v.token.toLong(), v.agreed, v.headSeq.toLong(), v.newestAt, v.ops.toInt(), v.previousSeq?.toLong(), v.summary, v.note),
     emptyList<ChainCheck>(),
 )
 

@@ -128,7 +128,13 @@ object IdentitySamples {
         ChainCheck("The list continues after the newest op, seq $SEQ", null),
     )
 
-    fun chain(agreed: Boolean) = ChainAdopted(token = 7, agreed = agreed, headSeq = SEQ, newestAt = SIGNED, ops = 8, previousSeq = null)
+    /** The core's own wording, as the page shows it (assets/companion/src/app.mjs scanHead). */
+    const val SUMMARY = "Newest op in this list: seq 41, signed 2026-10-23 14:02Z (8 op(s) read)."
+    const val NOTE_NEXT = "Take a second list, from another terminal or from the same one later, before this chain head is trusted."
+    const val NOTE_AGREED = "This phone will continue after seq 41. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead."
+
+    fun chain(agreed: Boolean, summary: String = SUMMARY, note: String = if (agreed) NOTE_AGREED else NOTE_NEXT) =
+        ChainAdopted(token = 7, agreed = agreed, headSeq = SEQ, newestAt = SIGNED, ops = 8, previousSeq = null, summary = summary, note = note)
     fun chainList(agreed: Boolean): Opened = OpenedChain(chain(agreed), goodChecks)
 
     /** A refused list in the release group's value type, like the real core returns it. */

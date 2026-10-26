@@ -161,6 +161,8 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     override fun scanGray(width: Int, height: Int, luma: ByteArray): ScanEvent {
         val events = core.scanGray(width.toUInt(), height.toUInt(), luma)
         events.filterIsInstance<RsScanEvent.Document>().firstOrNull()?.let { return ScanEvent.Frame(it.bytes) }
+        // A completed document that is not one of ours: the page ignores it, the screen says so.
+        if (events.any { it is RsScanEvent.Foreign }) return ScanEvent.Foreign
         val p = events.filterIsInstance<RsScanEvent.Progress>().lastOrNull() ?: return ScanEvent.None
         return ScanEvent.Progress(p.have.toInt(), p.total.toInt())
     }
@@ -464,7 +466,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
                 seq = it.rows.value("Op seq / epoch")?.substringBefore('/')?.trim()?.toLongOrNull() ?: 0,
                 kind = it.kind,
                 time = it.rows.value("Op time").orEmpty(),
-                hash = "",
+                hash = it.hash,
                 danger = it.dangerCount > 0u,
             )
         }

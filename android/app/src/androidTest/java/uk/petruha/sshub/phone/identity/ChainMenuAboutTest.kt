@@ -60,6 +60,8 @@ class TakeChainScreenTest {
     @Test fun scan_variant_one_list_read_needs_a_second() {
         rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadOneList, ChainHeadActions()) }
         rule.onNodeWithText("List read, one more needed.").assertExists()
+        rule.onNodeWithText(IdentitySamples.SUMMARY).assertExists()
+        rule.onNodeWithText(IdentitySamples.NOTE_NEXT).assertExists()
         rule.onNodeWithText("Take the next list").assertExists()
         rule.onAllNodesWithText("Adopt", substring = true).assertCountEquals(0)
         rule.onNodeWithText("Checks on the last list").assertExists()
@@ -71,7 +73,8 @@ class TakeChainScreenTest {
         rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadAgree, ChainHeadActions(onAdopt = { adopt++ }, onHome = { home++ })) }
         rule.onNodeWithText("Two lists agree").assertExists()
         rule.onNodeWithText("Compare with a terminal first.").assertExists()
-        rule.onNodeWithContentDescription("Field This phone will continue after, new value seq 41, signed 2026-10-23 14:02Z").assertExists()
+        rule.onNodeWithText(IdentitySamples.SUMMARY).assertExists()
+        rule.onNodeWithText(IdentitySamples.NOTE_AGREED).assertExists()
         rule.onNodeWithText("Adopt: continue after seq 41").assertIsEnabled().performClick()
         rule.onNodeWithText("Not yet").performClick()
         assertEquals(1, adopt); assertEquals(1, home)
@@ -148,6 +151,22 @@ class TakeChainScreenTest {
         rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadStart.copy(typedId = "4F2A-91C7"), ChainHeadActions(onNeverSigned = { never++ })) }
         rule.onNodeWithText("This key never signed anything").assertIsEnabled().performClick()
         assertEquals(1, never)
+    }
+
+    @Test fun empty_summary_and_note_render_no_line() {
+        val bare = IdentitySamples.chainHeadOneList.copy(chain = IdentitySamples.chain(false, summary = "", note = ""))
+        rule.setScreen { TakeChainScreen(bare, ChainHeadActions()) }
+        rule.onNodeWithText("List read, one more needed.").assertExists()
+        rule.onAllNodesWithText("Newest op in this list", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("Take a second list", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun empty_note_on_agreed_lists_has_no_warning_box() {
+        val agreed = IdentitySamples.chainHeadAgree.copy(chain = IdentitySamples.chain(true, summary = "", note = ""))
+        rule.setScreen { TakeChainScreen(agreed, ChainHeadActions()) }
+        rule.onNodeWithText("Two lists agree").assertExists()
+        rule.onAllNodesWithText("Compare with a terminal first.").assertCountEquals(0)
+        rule.onAllNodesWithText("Newest op in this list", substring = true).assertCountEquals(0)
     }
 
     @Test fun a_notice_shows_for_an_ignored_frame() {
