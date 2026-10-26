@@ -945,7 +945,8 @@ mod over_the_log {
             },
         );
         w.sync();
-        let ready_at = now + RECOVERY_TIMELOCK_SECS;
+        // The clock of the lock is this device's first sight of the ack (a second or two after `now`): judge with a margin.
+        let ready_at = now + RECOVERY_TIMELOCK_SECS + 120;
         assert_eq!(
             w.verdict(&op, ready_at).unwrap(),
             ReenrollVerdict::AwaitingFactor
