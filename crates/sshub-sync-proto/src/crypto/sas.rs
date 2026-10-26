@@ -6,7 +6,7 @@
 
 use bip39::Language;
 
-use crate::sync::limits::SAS_WORDS;
+use crate::limits::SAS_WORDS;
 
 /// Four words joined by hyphens, from the first 44 bits of `transcript_hash`
 /// (11 bits per word, most significant bits first), e.g. `harbor-globe-lantern-mint`.
@@ -30,7 +30,7 @@ mod tests {
     fn extremes_and_shape() {
         assert_eq!(sas_words(&[0; 32]), "abandon-abandon-abandon-abandon");
         assert_eq!(sas_words(&[0xff; 32]), "zoo-zoo-zoo-zoo");
-        let w = sas_words(&crate::sync::crypto::chain_hash(b"x"));
+        let w = sas_words(&crate::crypto::chain_hash(b"x"));
         assert_eq!(w.split('-').count(), 4);
         assert!(w.chars().all(|c| c.is_ascii_lowercase() || c == '-'));
     }

@@ -24,7 +24,7 @@ use super::hash::derive_key;
 thread_local! {
     /// How often this thread reconstructed a secret. Resharing must never move it (per thread, so
     /// parallel tests do not see each other).
-    pub(crate) static COMBINE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub static COMBINE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 const COMMIT_CTX: &str = "sshub/sync/reshare/commit/v1";
@@ -115,7 +115,8 @@ fn check_indices(indices: &[u8], what: &str) -> Result<()> {
 // ---------------------------------------------------------------- Shamir
 
 /// Splits `secret` at explicit x coordinates; the `k - 1` random coefficient rows come from `rng`.
-pub(crate) fn split_at_indices(
+#[doc(hidden)]
+pub fn split_at_indices(
     secret: &[u8; 32],
     k: u8,
     indices: &[u8],
@@ -199,7 +200,8 @@ fn commit(from: u8, index: u8, sub_share: &[u8]) -> Vec<u8> {
     derive_key(COMMIT_CTX, &m).to_vec()
 }
 
-pub(crate) fn reshare_contribute_with(
+#[doc(hidden)]
+pub fn reshare_contribute_with(
     my: &Share,
     new_indices: &[u8],
     k: u8,
@@ -285,7 +287,7 @@ pub fn reshare_combine(my_index: u8, contributions: &[ReshareContribution]) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::crypto::{dek_open, dek_seal};
+    use crate::crypto::{dek_open, dek_seal};
     use rand_chacha::{rand_core::SeedableRng, ChaCha20Rng};
 
     fn rng(seed: u8) -> ChaCha20Rng {

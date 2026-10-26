@@ -4,7 +4,7 @@
 use anyhow::{bail, Result};
 use rand_core::{OsRng, RngCore};
 
-use crate::sync::limits::SNAPSHOT_CODE_CHARS;
+use crate::limits::SNAPSHOT_CODE_CHARS;
 
 const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 

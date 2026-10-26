@@ -401,11 +401,16 @@ says no async runtime elsewhere); macOS uses `objc2-core-bluetooth`. The default
 | Tags leak nothing (4 Crockford characters, name at most 10 bytes, random per arming) | 200 draws | PASS |
 | `bluetooth` build, clippy `-D warnings`, whole suite; with `audio,camera` together; macOS type check | green | PASS |
 
-Not run: any real radio (`ble_bluez.rs` compiled and linted only, `ble_mac.rs` type-checked only); the phone page's
-Web Bluetooth side (chooser, real Android MTU, write pacing); range, throughput and battery; macOS behaviour beyond
-the type check (a CoreBluetooth peripheral cannot disconnect a central: the terminal forgets it and advertises
-again); Windows (reports not implemented); a BlueZ virtual-controller test (needs the `hci_vhci` module loaded on a
-host, a maintainer decision).
+Real BlueZ on virtual controllers (`hci_vhci` and `btvirt`, `tests/ble-vhci/`, an `#[ignore]`d test run explicitly with
+`SSHUB_BLE_ADAPTER=hci0 SSHUB_BLE_TEST_CLIENT=hci1`): PASS. HELLO and the 244 byte message size (ATT MTU 512), a kind 1
+frame down and a kind 2 frame up at 200, 3000 and 20000 bytes byte for byte, reconnect to the same peripheral with the
+same tag, BYE on close. On the air (HCI trace): only the flags, the one 128-bit service UUID and the local name
+`SSHub-TAG`; nothing else. The virtual air has no RSSI, so the client connects by address instead of through a scan.
+
+Not run: a physical radio (`ble_mac.rs` is type-checked only); the phone page's Web Bluetooth side (chooser, real
+Android MTU, write pacing); range, throughput and battery; macOS behaviour beyond the type check (a CoreBluetooth
+peripheral cannot disconnect a central: the terminal forgets it and advertises again); Windows (reports not
+implemented).
 
 ## Op-log and checkpoints
 

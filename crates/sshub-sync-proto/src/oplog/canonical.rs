@@ -17,8 +17,8 @@ use serde_json::{Map, Value};
 use std::io::Write;
 
 use super::op::*;
-use crate::store::{uid_from_hex, uid_hex, Uid};
-use crate::sync::crypto::{AlgTag, DevicePublic};
+use crate::crypto::{AlgTag, DevicePublic};
+use crate::uid::{uid_from_hex, uid_hex, Uid};
 
 // ---------------------------------------------------------------- encoding
 
@@ -797,14 +797,14 @@ fn get_alg(m: &Map<String, Value>, k: &str) -> Result<AlgTag> {
 }
 
 /// Standard alphabet, padded (RFC 4648 section 4).
-pub(super) fn b64_encode(data: &[u8]) -> String {
+pub fn b64_encode(data: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(data)
 }
 
 /// Strict: the standard engine requires canonical padding and rejects
 /// whitespace, other alphabets and non-zero trailing bits.
-pub(super) fn b64_decode(s: &str) -> Option<Vec<u8>> {
+pub fn b64_decode(s: &str) -> Option<Vec<u8>> {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.decode(s).ok()
 }

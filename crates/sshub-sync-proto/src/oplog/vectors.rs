@@ -9,10 +9,10 @@
 //! byte for byte. Regenerate: `SSHUB_EMIT_VECTORS=1 cargo test sync::oplog::vectors`.
 
 use super::op::*;
-use crate::store::{uid_hex, Uid};
-use crate::sync::crypto::{
+use crate::crypto::{
     bip39_encode, paper_derive, DeviceIdentity, DevicePublic, PaperDomain, ALG_CURRENT,
 };
+use crate::uid::{uid_hex, Uid};
 use serde_json::{json, Map, Value};
 
 /// `Vec<u8>` fields: base64 in the canonical form, hex in the logical input.
@@ -869,7 +869,7 @@ fn hex(b: &[u8]) -> String {
 /// in the canonical form already).
 fn logical(v: Value, key: &str) -> Value {
     let unb64 = |x: &Value| {
-        Value::String(hex(&crate::sync::oplog::canonical::b64_decode(
+        Value::String(hex(&crate::oplog::canonical::b64_decode(
             x.as_str().unwrap(),
         )
         .unwrap()))
@@ -927,7 +927,7 @@ fn build() -> Value {
 }
 
 fn path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors/op/ops.json")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/vectors/op/ops.json")
 }
 
 #[test]

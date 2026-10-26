@@ -25,7 +25,7 @@ pub const BLE_RETRIES: u8 = 3;
 pub const BLE_FRAME_SECS: u64 = 120;
 pub const BLE_PING_SECS: u64 = 30;
 pub const BLE_IDLE_SECS: u64 = 90;
-pub const BLE_MAX_FRAME_BYTES: usize = crate::sync::limits::MAX_FRAME_BYTES;
+pub const BLE_MAX_FRAME_BYTES: usize = crate::limits::MAX_FRAME_BYTES;
 pub const BLE_CHUNK_DEFAULT: usize = 244;
 pub const BLE_CHUNK_MIN: usize = 20;
 pub const BLE_CHUNK_MAX: usize = 512;
@@ -279,7 +279,6 @@ pub enum Event {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
     AwaitHello,
-    #[cfg(test)]
     AwaitAck,
     Open,
     Closed,
@@ -359,8 +358,7 @@ impl Link {
         }
     }
 
-    /// The phone side, for tests: sends HELLO with `proposal` as its message size.
-    #[cfg(test)]
+    /// The phone side: sends HELLO with `proposal` as its message size.
     pub fn phone(now: Instant, proposal: usize) -> Link {
         let mut l = Link::terminal(now, BLE_CHUNK_MAX);
         l.state = State::AwaitAck;
@@ -503,7 +501,6 @@ impl Link {
             }
             // the phone side exists for tests; a second HELLO_ACK (the terminal renegotiated)
             // restarts it like the page does
-            #[cfg(test)]
             (
                 State::AwaitAck | State::Open,
                 Msg::HelloAck {
@@ -782,7 +779,6 @@ impl Link {
                 }
                 return;
             }
-            #[cfg(test)]
             State::AwaitAck => {
                 if now.duration_since(self.born) > secs(BLE_HELLO_SECS) {
                     self.close(B_TIMEOUT, true);

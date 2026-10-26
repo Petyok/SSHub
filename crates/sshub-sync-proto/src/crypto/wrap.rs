@@ -67,7 +67,8 @@ pub fn try_hybrid_wrap(recipient: &DevicePublic, plaintext: &[u8]) -> Result<Vec
 
 #[cfg(test)]
 /// Deterministic form for test vectors: ephemeral secret, nonce and ML-KEM message given.
-pub(crate) fn hybrid_wrap_with(
+#[doc(hidden)]
+pub fn hybrid_wrap_with(
     recipient: &DevicePublic,
     plaintext: &[u8],
     eph: &[u8; 32],

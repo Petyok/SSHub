@@ -166,7 +166,7 @@ export const sasWords = (transcriptHash32) => {
 
 // ---------------------------------------------------------------- EFF-7776 (Rust: stage-0 Task 12, u128 arithmetic)
 
-// words: string[7776]. Both sides use wordlists/eff_large.txt.
+// words: string[7776]. Both sides use crates/sshub-sync-proto/assets/wordlists/eff_large.txt.
 const EFF_BASE = 7776n;
 const EFF_LIMIT = EFF_BASE ** 6n; // v must be < 7776^6 (fits u128; 10 bytes BE)
 

@@ -8,7 +8,7 @@ import { replayVectors } from '../src/replay.mjs';
 const root = new URL('../../../', import.meta.url);
 const read = (p) => readFileSync(new URL(p, root), 'utf8');
 const vectorsText = read('tests/vectors/crypto/vectors.json');
-const effText = read('assets/wordlists/eff_large.txt');
+const effText = read('crates/sshub-sync-proto/assets/wordlists/eff_large.txt');
 
 const failures = (recs) => recs.filter((r) => !r.ok).map((r) => `${r.id}: ${r.error}`);
 
