@@ -13,11 +13,17 @@ check "peer-a sets up the Vault" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer
 check "peer-b imports the kit" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-b $SSHUB sync-import-kit"
 check "peer-a adds host big with a password" "printf 'pw0\n' | peer peer-a $SSHUB host add --name big --address big.internal --password-stdin"
 # Finding P1: `host edit` never appends an op, so the log cannot be grown with host
-# edits. One `import` of an ssh config with 5300 hosts appends 5300 HostUpsert ops in a single process
-# (a process per edit took far too long), which passes the 5000 op trigger.
-grow='mkdir -p "$HOME/.ssh"; i=0
-while [ $i -lt 5300 ]; do printf "Host grow%s\n  HostName grow%s.internal\n" $i $i; i=$((i+1)); done > "$HOME/.ssh/config"
-sshub --profile default import --from ssh >/dev/null 2>&1'
+# edits. An import of 5300 hosts costs about 0.4 s per host (half an hour), so the log is grown past the BYTE
+# trigger instead: about a dozen 600 KB password edits, each one CredUpdate op, with a progress line per edit.
+grow='pw=$(head -c 600000 /dev/zero | tr "\000" x); i=0
+while [ $i -lt 25 ]; do
+  printf "%s%s\n" "$pw" $i | sshub --profile default host edit --name big --set-password-stdin >/dev/null 2>&1 || { echo "edit $i failed"; exit 1; }
+  i=$((i+1))
+  db=$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)
+  b=$(sqlite3 "$db" "SELECT coalesce(sum(length(canonical)),0) FROM sync_ops")
+  echo "grow $i ops bytes $b"
+  [ "$b" -lt 8800000 ] || exit 0
+done'
 check "peer-a grows its log past the checkpoint threshold" "psh peer-a '$grow'"
 show "peer-a ops in the log" sq peer-a 'SELECT count(*), sum(length(canonical)) FROM sync_ops'
 for round in 1 2 3; do
