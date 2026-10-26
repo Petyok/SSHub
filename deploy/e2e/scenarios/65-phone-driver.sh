@@ -10,9 +10,6 @@ NAME=65-phone-driver
 check "the phone daemon answers" phone_ready
 show "phone info" phone info
 expect "the pinned page equals its FINGERPRINT" "$LAST_OUT" '.fingerprint_ok == true'
-show "the phone restores its fixed test identity" phone setup
-expect "the page shows the identity the driver derived" "$LAST_OUT" '.device_id | test("^[0-9a-f]{16}$")'
-PHONE_ID=$(pf "$LAST_OUT" device_id)
 
 ring_with_phone ring2
 

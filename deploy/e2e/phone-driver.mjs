@@ -354,7 +354,12 @@ const commands = {
     if ((await has('#opt-sound')) && (await page.locator('#opt-sound').isChecked())) await page.click('#opt-sound');
     if ((await has('#opt-snapshot')) && (await page.locator('#opt-snapshot').isChecked()) !== snapshot) await page.click('#opt-snapshot');
     await page.click('#approve');
-    await waitAny(['#send-done', '#release-error'], 120000);
+    // #release-error shows "Approving..." while the page works; only another text is a refusal.
+    await page.waitForFunction(() => {
+      if (document.querySelector('#send-done')) return true;
+      const e = document.querySelector('#release-error');
+      return !!e && e.textContent !== '' && !/^Approving/.test(e.textContent);
+    }, null, { timeout: 120000 });
     if ((await has('#release-error')) && (await text('#release-error')) && !(await has('#send-done'))) return { ok: false, error: await text('#release-error') };
     const clip = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
     const qr = b64(await readQr('#reverse-qr'));
