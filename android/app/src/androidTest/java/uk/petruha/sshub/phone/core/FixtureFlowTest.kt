@@ -56,7 +56,7 @@ class FixtureFlowTest {
             } else if (name in NEEDS_MET_REQUESTER && opened is OpenedRelease) {
                 // The page's fixtures enroll the requester first; a fresh phone has not met it, so the signature cannot be checked and the
                 // request is shown as from an unmet requester (typed id needed). The refusal itself is pinned by the Rust parity tests.
-                assertTrue("$name: unmet requester must type the id", opened.view.mustType != null && !opened.view.met)
+                assertTrue("$name: unmet requester must type the id", opened.view.mustType != null && !opened.view.requesterKnown)
             } else {
                 val r = opened as? OpenedRefused ?: error("$name: expected a refusal, got $opened")
                 val text = (r.reason.title + " " + r.reason.text + " " + r.checks.joinToString(" ") { it.text }).lowercase()
