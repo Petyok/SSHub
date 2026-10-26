@@ -191,7 +191,12 @@ fn holder_established(store: &LauncherStore, device: &DeviceId, upto: Option<u64
         OpBody::DeviceRoleChange { to, .. } => *to == DeviceRole::Holder,
         _ => false,
     };
-    if !to_holder || upto == Some(op.lamport) {
+    if !to_holder {
+        // The newest op up to this view added or kept the device as a mirror: a promotion that comes only
+        // LATER is not part of this view (the row says holder because it is read now).
+        return Ok(!upto.is_some_and(|u| promoted_after(store, device, u).unwrap_or(false)));
+    }
+    if upto == Some(op.lamport) {
         return Ok(true);
     }
     in_force(store, &op)
@@ -850,6 +855,28 @@ pub fn settle_red_ops(store: &LauncherStore, now: i64) -> Result<SettleReport> {
             store.sync_resolve_pending(&op.hash(), true)?;
             report.applied.push(op.hash());
         }
+    }
+    // An author admitted by a ceremony that just completed (the phone) may have sent ops before it was known:
+    // they waited as unverifiable, and now run through the ordinary ingest (signature, chain, tier). Without
+    // this a device that received the author's ops BEFORE its admission would never see them, and its verdicts
+    // would differ from every device that received them after.
+    let held = store.sync_pending_with_reasons()?;
+    let mut released = false;
+    let known: Vec<DeviceId> = store.sync_devices()?.into_iter().map(|d| d.id).collect();
+    let mut held: Vec<Op> = held
+        .into_iter()
+        .filter(|(_, why)| why == "unknown-author")
+        .map(|(op, _)| op)
+        .filter(|op| known.contains(&op.device_id))
+        .collect();
+    held.sort_by_key(|op| (op.device_id.clone(), op.seq));
+    for op in held {
+        released |= store.sync_resolve_pending(&op.hash(), true).is_ok();
+    }
+    if released {
+        let again = settle_red_ops(store, now)?;
+        report.applied.extend(again.applied);
+        report.rejected.extend(again.rejected);
     }
     Ok(report)
 }
