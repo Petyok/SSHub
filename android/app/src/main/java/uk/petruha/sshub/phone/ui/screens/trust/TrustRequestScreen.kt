@@ -38,7 +38,7 @@ data class TrustRequestState(
 
     /** D8: Approve only when nothing refuses, every check passes and the gate is open. */
     val approveEnabled: Boolean
-        get() = phase == TrustPhase.Review && !busy && view.refusal == null && view.epoch.checks.all { it.ok } && gateOk
+        get() = phase == TrustPhase.Review && !busy && view.refusal == null && view.epoch?.checks.orEmpty().all { it.ok } && gateOk
 }
 
 class TrustRequestActions(
@@ -98,7 +98,7 @@ private fun ReviewFrame(state: TrustRequestState, on: TrustRequestActions) {
                         disabledReason = when {
                             state.busy -> "signing"
                             !state.gateOk -> "type the id first"
-                            v.epoch.checks.any { !it.ok } -> "a check failed"
+                            v.epoch?.checks.orEmpty().any { !it.ok } -> "a check failed"
                             else -> null
                         },
                     )
@@ -114,8 +114,7 @@ private fun ReviewFrame(state: TrustRequestState, on: TrustRequestActions) {
             Gap()
         }
         TrustFieldsBox(v.fields)
-        Gap(8.dp)
-        EpochBox(v.epoch)
+        v.epoch?.let { Gap(8.dp); EpochBox(it) }
         Gap()
         if (!refused && !v.device.met) {
             WarnBox("Never met") {
@@ -123,11 +122,13 @@ private fun ReviewFrame(state: TrustRequestState, on: TrustRequestActions) {
                     "This phone has not met that device. Compare its id with the one on the terminal before you approve, then type it below.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
                 )
+                Text("Device", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(v.device.label, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurface)
                 Text("Device id", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 HexGroups(v.device.id, groups = null, label = "Device id")
-                v.fingerprint?.let {
-                    Text("Fingerprint", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    HexGroups(it, groups = null, label = "Fingerprint")
+                v.requesterKey?.let {
+                    Text("Requester key", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    HexGroups(it, groups = null, label = "Requester key")
                 }
             }
             Gap(8.dp)

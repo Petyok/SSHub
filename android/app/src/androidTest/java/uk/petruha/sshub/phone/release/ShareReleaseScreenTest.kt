@@ -69,7 +69,7 @@ class ShareReleaseScreenTest {
         outcome = ReleaseOutcome(
             ReleaseSamples.outgoing(),
             IssuedShortCode(ReleaseSamples.SHORT_CODE, ReleaseSamples.T0 + 7 * 86_400, false),
-            ShareWords(2, 3, ReleaseSamples.words24),
+            ShareWords(2, ReleaseSamples.words24),
         ),
         shortCode = true, byHand = true,
     )
@@ -217,7 +217,7 @@ class ShareReleaseScreenTest {
         rule.onNodeWithText("Sent by QR code, Clipboard, Sound (fast). Your share left this phone.").assertExists()
         rule.onNode(descStartsWith("QR code")).assertExists()
         rule.onNodeWithContentDescription("Short code, shown once: K7Q2, 9FMX, C41T, 8PWD").assertExists()
-        rule.onNodeWithText("share index 2 of 3").assertExists()
+        rule.onNodeWithText("share index 2").assertExists()
         rule.onNode(descStartsWith("Words hidden")).assertExists()
         rule.onNodeWithContentDescription("Share released, up to 120 seconds left").assertExists()
         // the only copy on the screen is the explicit one for the reply (D19); words and the short code have none

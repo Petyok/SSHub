@@ -164,7 +164,7 @@ class TrustListViewModel(
                 val out = core.revokeCert(cert.certId, platform.clock.nowSeconds())
                 handoff.current = TrustHandoff(
                     HandoffKind.Revocation,
-                    "${cert.deviceName} [${cert.deviceId}], ${cert.hosts.size} hosts, was to end ${isoDate(cert.endsAt)}",
+                    "${cert.deviceLabel}, ${cert.scope}, was to end ${isoDate(cert.endsAt)}",
                     out,
                 )
                 _state.update { it.copy(busy = false, confirming = null) }

@@ -77,7 +77,7 @@ fun TrustListScreen(state: TrustListState, on: TrustListActions) {
                     ) {
                         androidx.compose.foundation.layout.Column(Modifier.weight(1f)) {
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp), itemVerticalAlignment = Alignment.CenterVertically) {
-                                Text(c.deviceName, style = SshubText.deviceName, color = MaterialTheme.colorScheme.onSurface)
+                                Text(c.deviceName ?: c.deviceLabel, style = SshubText.deviceName, color = MaterialTheme.colorScheme.onSurface)
                                 when (c.state) {
                                     CertState.Active -> TrustStateChip("active", ChipTone.Ok)
                                     CertState.Expired -> TrustStateChip("expired", ChipTone.Neutral)
@@ -85,19 +85,22 @@ fun TrustListScreen(state: TrustListState, on: TrustListActions) {
                                 }
                             }
                             Text(
-                                "${c.hosts.size} hosts, ${c.termDays} d, ends ${isoDate(c.endsAt)}",
+                                "${c.scope}, ${c.termText}, ends ${isoDate(c.endsAt)}",
                                 style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            Text("epoch ${c.epochLo} to ${c.epochHi}", style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text("budget ${c.budgetPerDay} per day", style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Glyph(GlyphKind.Chevron, MaterialTheme.colorScheme.onSurfaceVariant, Modifier.rotate(if (open) 90f else 0f))
                     }
                     if (open) {
                         KeyValue("device id", c.deviceId)
-                        KeyValue("hosts", c.hosts.joinToString(", "))
+                        KeyValue(if (c.group != null) "group" else "hosts", c.group ?: c.hosts.joinToString(", "))
                         KeyValue("issued", isoDate(c.issuedAt))
-                        KeyValue("term", "${c.termDays} days, ends ${isoDate(c.endsAt)}")
+                        KeyValue("term", "${c.termText}, ends ${isoDate(c.endsAt)}")
+                        KeyValue("epoch range", "epoch ${c.epochLo} to ${c.epochHi}")
                         KeyValue("certificate", c.certId)
+                        c.lamport?.let { KeyValue("chain position", it.toString()) }
                         KeyValue(
                             "extensions",
                             if (c.extensions.isEmpty()) "none" else c.extensions.joinToString("\n") { "+${it.extraHosts} new hosts, ${isoMinute(it.at)}" },
@@ -116,7 +119,8 @@ fun TrustListScreen(state: TrustListState, on: TrustListActions) {
     if (asked != null) TrustConfirmSheet(
         "Revoke this trust session?", "Revoke and sign", "Keep it", on.onRevoke, on.onKeep, enabled = !state.busy,
     ) {
-        Text(asked.deviceName, style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
+        Text(asked.deviceName ?: asked.deviceLabel, style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
+        Text("${asked.scope}, ${asked.termText}, epoch ${asked.epochLo} to ${asked.epochHi}", style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Note("Peers stop honouring it on their next sync. This phone signs the revocation; you then carry it to any terminal.")
     }
 }

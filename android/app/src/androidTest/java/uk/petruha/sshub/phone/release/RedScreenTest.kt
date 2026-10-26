@@ -71,6 +71,11 @@ class RedScreenTest {
         assertEquals(listOf("approve", "decline"), log)
     }
 
+    @Test fun a_proposer_the_phone_does_not_know_reads_not_met_and_the_id() {
+        rule.show(ReleaseSamples.redState(ReleaseSamples.redUnknownProposer))
+        rule.onNodeWithText("proposed by not met 7B3E-0D15, lamport 1042, seq 57").assertExists()
+    }
+
     @Test fun d1_red_banner_is_the_first_element_under_the_header() {
         rule.show(ReleaseSamples.redState())
         val header = rule.onNodeWithText("Red operation").fetchSemanticsNode().boundsInRoot

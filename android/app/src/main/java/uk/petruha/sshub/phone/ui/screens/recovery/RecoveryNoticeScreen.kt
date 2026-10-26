@@ -124,11 +124,14 @@ fun RecoveryNoticeScreen(state: NoticeState, on: NoticeActions) {
             Gap()
         }
         Text(TITLE, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
-        Text("Someone is replacing ${v.phoneName} with another phone.", style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (v.phoneName.isNotBlank()) {
+            Text("Someone is replacing ${v.phoneName} with another phone.", style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Gap()
         DiffBox(
             listOf(
                 DiffEntry("Started by", null, v.startedBy, mono = true),
+                DiffEntry("Lamport", null, v.lamport.toString(), mono = true),
                 DiffEntry("Operation", null, v.operation, mono = true),
                 DiffEntry("Started", null, "${formatAgo(state.now - v.startedAt)}, ${v.startedUtc}", mono = true),
             ),

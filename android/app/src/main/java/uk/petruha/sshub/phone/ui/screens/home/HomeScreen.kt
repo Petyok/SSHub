@@ -16,7 +16,6 @@ import androidx.compose.ui.unit.dp
 import uk.petruha.sshub.phone.core.HomePhoneView
 import uk.petruha.sshub.phone.core.PendingItem
 import uk.petruha.sshub.phone.core.RingDevice
-import uk.petruha.sshub.phone.core.RingSync
 import uk.petruha.sshub.phone.core.RingView
 import uk.petruha.sshub.phone.ui.components.BarButtons
 import uk.petruha.sshub.phone.ui.components.ButtonKind
@@ -30,11 +29,10 @@ import uk.petruha.sshub.phone.ui.components.SquareState
 import uk.petruha.sshub.phone.ui.components.SshubButton
 import uk.petruha.sshub.phone.ui.components.SshubCard
 import uk.petruha.sshub.phone.ui.components.SshubRow
-import uk.petruha.sshub.phone.ui.components.TickScale
 import uk.petruha.sshub.phone.ui.components.WarnBox
-import uk.petruha.sshub.phone.ui.components.fontScale
 import uk.petruha.sshub.phone.ui.theme.SshubText
 
+const val NOT_MET = "not met"
 const val HEAD_PENDING_TITLE = "This phone does not sign yet."
 const val HEAD_PENDING_BODY = "A restored phone has lost its chain. Take it from a terminal first, or the ring will see a fork."
 const val TAKE_CHAIN_LABEL = "Take my chain from a terminal"
@@ -55,7 +53,7 @@ fun RingHomeScreen(state: HomeState, on: HomeActions) {
             }
         }) else null,
     ) {
-        if (ring == null) EmptyHomeBody(state.phone) else RingBody(ring, state.pending, on)
+        if (ring == null) EmptyHomeBody(state.phone) else RingBody(state.phone, ring, state.pending, on)
     }
 }
 
@@ -68,7 +66,7 @@ private fun TitleLine(title: String, trailing: String) {
 }
 
 @Composable
-private fun RingBody(ring: RingView, pending: List<PendingItem>, on: HomeActions) {
+private fun RingBody(phone: HomePhoneView, ring: RingView, pending: List<PendingItem>, on: HomeActions) {
     if (ring.headPending) {
         WarnBox(HEAD_PENDING_TITLE) {
             Note(HEAD_PENDING_BODY)
@@ -76,11 +74,7 @@ private fun RingBody(ring: RingView, pending: List<PendingItem>, on: HomeActions
         }
         Gap()
     }
-    TitleLine(ring.name, "epoch ${ring.epoch}")
-    StatsCard(ring)
-    val sync = ring.lastSync
-    Gap()
-    SyncCard(sync)
+    PhoneCard(phone, ring.epoch)
     SectionHeading("Approvals", trailing = "${pending.size} pending")
     PendingGroups(pending, on)
     SectionHeading("Devices", trailing = "${ring.devices.size} in ring")
@@ -88,50 +82,21 @@ private fun RingBody(ring: RingView, pending: List<PendingItem>, on: HomeActions
 }
 
 @Composable
-private fun StatsCard(ring: RingView) {
-    val stats = listOfNotNull(
-        ring.hosts?.let { it.toString() to "hosts" },
-        ring.credentials?.let { it.toString() to "credentials" },
-        ring.threshold?.let { it to "to unlock" },
-    )
-    val split = if (ring.quorum != null && ring.single != null) "${ring.quorum} Quorum, ${ring.single} Single credentials" else null
-    if (stats.isEmpty() && split == null) return
+private fun PhoneCard(p: HomePhoneView, epoch: Long) {
     SshubCard {
-        if (stats.isNotEmpty()) {
-            if (fontScale() >= 1.3f) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { stats.forEach { Stat(it.first, it.second) } }
-            else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) { stats.forEach { Stat(it.first, it.second, Modifier.weight(1f)) } }
-        }
-        if (split != null) Text(split, Modifier.padding(top = 10.dp), style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("this phone", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(p.id, Modifier.padding(top = 2.dp, bottom = 8.dp), style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onSurface)
+        KvRow("name", p.name)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        KvRow("ring epoch", epoch.toString())
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        KvRow("head seq", headSeqText(p))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        KvRow("live short codes", p.liveShortCodes.toString())
     }
 }
 
-@Composable
-private fun Stat(value: String, label: String, modifier: Modifier = Modifier) {
-    Column(modifier.semantics(mergeDescendants = true) { contentDescription = "$value $label" }) {
-        Text(value, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-        Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun SyncCard(sync: RingSync?) {
-    SshubCard {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("last frame taken", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(sync?.agoText ?: "never", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
-        }
-        if (sync != null && sync.windowSeconds > 0) {
-            val frac = (sync.agoSeconds.toFloat() / sync.windowSeconds.toFloat()).coerceIn(0f, 1f)
-            val minutes = sync.windowSeconds / 60
-            Gap(4.dp)
-            TickScale(
-                intervals = 60, major = 10, fraction = frac,
-                description = "Last frame taken ${sync.agoText}" + (sync.via?.let { ", via $it" } ?: "") + ", scale of $minutes minutes",
-                labels = Triple("now", sync.via?.let { "via $it" } ?: "", "$minutes min"),
-            )
-        }
-    }
-}
+private fun headSeqText(p: HomePhoneView) = p.headSeq?.toString() ?: "no ops yet"
 
 private fun groupTitle(tab: ApprovalTab) = when (tab) {
     ApprovalTab.Red -> "Red operations"
@@ -157,21 +122,16 @@ private fun PendingGroups(pending: List<PendingItem>, on: HomeActions) {
 
 @Composable
 private fun DeviceRow(d: RingDevice, first: Boolean, last: Boolean) {
-    val seen = d.seen
-    val second = listOfNotNull(d.id, d.role).joinToString(" \u00B7 ") + "\n" + when {
-        d.self -> "seen now"
-        seen != null -> "seen $seen"
-        else -> "not seen"
-    }
+    val name = d.name ?: NOT_MET
     val description = when {
-        d.self -> "${d.name}, this phone, seen now"
-        d.stale -> "${d.name}, stale, " + (seen?.let { "last seen $it" } ?: "not seen")
-        else -> "${d.name}, " + (seen?.let { "seen $it" } ?: "not seen")
+        d.self -> "$name, this phone"
+        d.name == null -> "$name, ${d.id}"
+        else -> name
     }
     ChainRow(
-        state = if (d.self) SquareState.Me else if (d.stale) SquareState.Stale else SquareState.Default,
-        title = d.name, secondary = second, first = first, last = last,
-        chip = if (d.self) "this phone" else if (d.stale) "stale" else null,
+        state = if (d.self) SquareState.Me else SquareState.Default,
+        title = name, secondary = d.id, first = first, last = last,
+        chip = if (d.self) "this phone" else null,
         description = description,
     )
 }
@@ -184,7 +144,7 @@ private fun EmptyHomeBody(p: HomePhoneView) {
         Text(p.id, Modifier.padding(top = 2.dp, bottom = 8.dp), style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onSurface)
         KvRow("name", p.name)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        KvRow("chain head", p.chainHead ?: "no ops yet")
+        KvRow("head seq", headSeqText(p))
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         KvRow("live short codes", p.liveShortCodes.toString())
     }

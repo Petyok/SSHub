@@ -31,7 +31,7 @@ object TrustSamples {
     const val NOW = 1_793_007_660L
     const val PHONE_EPOCH = 7L
     const val UNMET_ID = "E7A4-6B02"
-    const val FINGERPRINT = "5d1c0a93be47f2086a3cd9e1f4b7205c88ae6d31f09b42c7e5a1d8603bf74c92"
+    const val REQUESTER_KEY = "5d1c0a93be47f2086a3cd9e1f4b7205c88ae6d31f09b42c7e5a1d8603bf74c92"
     const val CODE = "K7Q29FMXC41T8PWD"
     val HOSTS = listOf("web-01", "web-02", "db-staging", "bastion", "nuc-lab")
     val MANY_HOSTS = (1..65).map { "web-%02d".format(it) }
@@ -58,7 +58,7 @@ object TrustSamples {
                 "Epoch range: must start at epoch $PHONE_EPOCH, at most one epoch wide", "epoch $lo to $hi",
                 listOf(TrustCheck("starts at this phone's own epoch $PHONE_EPOCH", lo == PHONE_EPOCH), TrustCheck("at most one epoch wide", hi >= lo && hi - lo <= 1)),
             ),
-            fingerprint = if (met) null else FINGERPRINT,
+            requesterKey = if (met) null else REQUESTER_KEY,
             signedSummary = "$who, ${hosts.size} hosts, $days days, ends $end",
             refusal = refusal,
         )
@@ -119,11 +119,11 @@ object TrustSamples {
         TrustAgain(17 * 3600L + 22 * 60L, 86_400L))
 
     fun certs(): List<IssuedCert> = listOf(
-        IssuedCert("3F9A-07C2", "laptop-main", "7B3E-0D15", CertState.Active, HOSTS, day(2026, 10, 12), day(2026, 11, 11), 30, 10,
-            listOf(CertExtensionInfo(day(2026, 10, 26) + 3 * 3600 + 3 * 60, 10))),
-        IssuedCert("D41E-9A07", "workstation", "9C61-E2A8", CertState.Active, listOf("web-01", "web-02", "db-staging"), day(2026, 10, 20), day(2026, 11, 3), 14, 10, emptyList()),
-        IssuedCert("8E55-1C3B", "workstation", "9C61-E2A8", CertState.Expired, listOf("web-01"), day(2026, 10, 5), day(2026, 10, 12), 7, 5, emptyList()),
-        IssuedCert("6B20-F1D5", "laptop-old", "1D88-A340", CertState.Revoked, listOf("bastion", "nuc-lab"), day(2026, 9, 28), day(2026, 11, 27), 60, 20, emptyList()),
+        IssuedCert("3F9A-07C2", "laptop-main", "7B3E-0D15", CertState.Active, HOSTS, null, day(2026, 10, 12), day(2026, 11, 11), PHONE_EPOCH, PHONE_EPOCH + 1, "30 days", 10,
+            listOf(CertExtensionInfo(day(2026, 10, 26) + 3 * 3600 + 3 * 60, 10)), 42),
+        IssuedCert("D41E-9A07", "workstation", "9C61-E2A8", CertState.Active, listOf("web-01", "web-02", "db-staging"), null, day(2026, 10, 20), day(2026, 11, 3), PHONE_EPOCH, PHONE_EPOCH + 1, "14 days", 10, emptyList(), 47),
+        IssuedCert("8E55-1C3B", null, "5A19-C0E4", CertState.Expired, listOf("web-01"), null, day(2026, 10, 5), day(2026, 10, 12), PHONE_EPOCH - 1, PHONE_EPOCH, "7 days", 5, emptyList(), null),
+        IssuedCert("6B20-F1D5", "laptop-old", "1D88-A340", CertState.Revoked, emptyList(), "prod-web", day(2026, 9, 28), day(2026, 11, 27), PHONE_EPOCH, PHONE_EPOCH, "60 days", 20, emptyList(), 31),
     )
 
     fun codes(): List<ShortCodeRow> = listOf(

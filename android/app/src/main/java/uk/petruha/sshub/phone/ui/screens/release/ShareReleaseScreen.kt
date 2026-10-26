@@ -16,6 +16,8 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import uk.petruha.sshub.phone.core.ChannelKind
+import uk.petruha.sshub.phone.core.displayName
+import uk.petruha.sshub.phone.core.nameAndId
 import uk.petruha.sshub.phone.ui.components.BarButtons
 import uk.petruha.sshub.phone.ui.components.BigWords
 import uk.petruha.sshub.phone.ui.components.ButtonKind
@@ -67,7 +69,7 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
 
         SshubCard {
             Text("requester", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(if (v.requesterKnown) v.requesterName else "not met", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
+            Text(displayName(v.requesterName), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
             Text(v.requesterId, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
             v.requesterKey?.let { HexGroups(it, Modifier.padding(top = 8.dp), groups = null, label = "Requester key") }
             KeyValue("share", "${v.shareKind}, epoch ${v.shareEpoch}, share ${v.shareIndex}", Modifier.padding(top = 8.dp))
@@ -152,7 +154,7 @@ private fun NeverMet(state: ReleaseState, on: ReleaseActions) {
             "Its signature cannot be checked. Approve only if you started this request yourself and the id printed on the terminal is $required.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
         )
-        Text("${v.requesterName} $required", style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
+        Text(nameAndId(v.requesterName, required), style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
     }
     MonoField(
         state.typed, on.onTyped, Modifier.padding(top = 12.dp), placeholder = "Type $required",
@@ -189,7 +191,7 @@ private fun ReleasedCard(state: ReleaseState, on: ReleaseActions) {
             WarnBox("Look around first.", Modifier.padding(top = 12.dp)) {
                 Text("Anyone who sees these has this share.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
             }
-            Text("share index ${hand.index} of ${hand.of}", Modifier.padding(top = 12.dp, bottom = 8.dp), style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
+            Text("share index ${hand.index}", Modifier.padding(top = 12.dp, bottom = 8.dp), style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
             HoldCover { WordGrid(hand.words) }
         }
     }

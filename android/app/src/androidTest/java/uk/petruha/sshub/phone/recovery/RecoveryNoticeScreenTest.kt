@@ -3,6 +3,7 @@ package uk.petruha.sshub.phone.recovery
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -36,9 +37,15 @@ class RecoveryNoticeScreenTest {
         rule.onNodeWithText("RECOVERY YOU DID NOT START?").assertExists()
         rule.onNodeWithText("Someone is replacing pixel-8 with another phone.").assertExists()
         rule.onNodeWithContentDescription("Field Started by, new value workstation [9C61-E2A8]").assertExists()
+        rule.onNodeWithContentDescription("Field Lamport, new value 1038").assertExists()
         rule.onNodeWithContentDescription("Field Operation, new value phone recovery: a new phone replaces pixel-8").assertExists()
         rule.onNodeWithContentDescription("Field Started, new value 21 h ago, 2026-10-25 12:41Z").assertExists()
         rule.onNodeWithText("The signature verifies", substring = true).assertExists()
+    }
+
+    @Test fun an_empty_phone_name_leaves_the_replacing_line_out() {
+        show(review.copy(view = review.view!!.copy(phoneName = "")))
+        rule.onNodeWithText("Someone is replacing", substring = true).assertDoesNotExist()
     }
 
     @Test fun d7_hash_prefix_is_three_groups_and_a_tap_shows_all_sixteen() {

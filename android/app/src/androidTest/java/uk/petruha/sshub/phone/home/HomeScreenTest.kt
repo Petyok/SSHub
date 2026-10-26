@@ -26,26 +26,27 @@ class HomeScreenTest {
 
     private fun show(s: HomeState, dark: Boolean = true, fontScale: Float = 1f) = rule.setScreen(dark, fontScale) { RingHomeScreen(s, on) }
 
-    @Test fun main_path_shows_ring_counts_sync_and_chain() {
+    @Test fun main_path_shows_this_phone_ring_and_pending() {
         show(HomeSamples.home)
-        rule.onNodeWithText("home ring").assertIsDisplayed()
-        rule.onNodeWithText("epoch 7").assertExists()
-        rule.onNodeWithContentDescription("38 hosts").assertExists()
-        rule.onNodeWithContentDescription("12 credentials").assertExists()
-        rule.onNodeWithContentDescription("2 of 3 to unlock").assertExists()
-        rule.onNodeWithText("9 Quorum, 3 Single credentials").assertExists()
-        rule.onNodeWithText("3 min ago").assertExists()
-        rule.onNodeWithContentDescription("Last frame taken 3 min ago, via laptop-main, camera, scale of 60 minutes").assertExists()
+        rule.onNodeWithText("ring epoch").assertExists()
+        rule.onNodeWithText("7").assertExists()
+        rule.onNodeWithText("head seq").assertExists()
+        rule.onNodeWithText("12").assertExists()
+        rule.onNodeWithText("live short codes").assertExists()
         rule.onNodeWithText("4 pending").assertExists()
-        rule.onNodeWithText("5 in ring").assertExists()
+        rule.onNodeWithText("4 in ring").assertExists()
     }
 
     @Test fun chain_rows_carry_the_spec_descriptions() {
         show(HomeSamples.home)
-        rule.onNodeWithContentDescription("pixel-8, this phone, seen now").assertExists()
-        rule.onNodeWithContentDescription("laptop-main, seen 3 min ago").assertExists()
-        rule.onNodeWithContentDescription("workstation, seen 14 min ago").assertExists()
-        rule.onNodeWithContentDescription("laptop-old, stale, last seen 41 days ago").assertExists()
+        rule.onNodeWithContentDescription("pixel-8, this phone").assertExists()
+        rule.onNodeWithContentDescription("laptop-main").assertExists()
+        rule.onNodeWithContentDescription("workstation").assertExists()
+    }
+
+    @Test fun an_unmet_device_shows_not_met_and_its_id() {
+        show(HomeSamples.home)
+        rule.onNodeWithContentDescription("not met, C5F0-27B9").assertExists()
     }
 
     @Test fun grouped_pending_rows_open_the_list_when_more_than_one() {
@@ -80,14 +81,6 @@ class HomeScreenTest {
         check(log == listOf("chain")) { log.toString() }
     }
 
-    @Test fun sparse_core_leaves_unknown_lines_out() {
-        show(HomeSamples.homeSparse)
-        rule.onNodeWithText("never").assertExists()
-        rule.onNodeWithContentDescription("38 hosts").assertDoesNotExist()
-        rule.onNodeWithText("9 Quorum, 3 Single credentials").assertDoesNotExist()
-        rule.onNodeWithContentDescription("laptop-main, not seen").assertExists()
-    }
-
     @Test fun empty_home_shows_the_phone_and_two_actions() {
         show(HomeSamples.homeEmpty)
         rule.onNodeWithText("no ring yet").assertIsDisplayed()
@@ -102,12 +95,12 @@ class HomeScreenTest {
 
     @Test fun dark_and_light_render() {
         show(HomeSamples.home, dark = true)
-        rule.onNodeWithText("home ring").assertIsDisplayed()
+        rule.onNodeWithText("ring epoch").assertIsDisplayed()
     }
 
     @Test fun light_renders() {
         show(HomeSamples.homeHeadPending, dark = false)
-        rule.onNodeWithText("home ring").assertIsDisplayed()
+        rule.onNodeWithText("ring epoch").assertIsDisplayed()
     }
 
     @Test fun targets_are_48() {

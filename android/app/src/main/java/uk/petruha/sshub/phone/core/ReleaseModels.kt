@@ -23,7 +23,7 @@ data class RedField(val key: String, val from: String?, val to: String, val mono
 
 /**
  * A Red notice as the core describes it. `hash` is the full 64 hex digits of the operation (D7).
- * `proposedAt` is the signed time and `lapsesAt = proposedAt + 3 days`; the UI counts down from them, never from the read time. `lamport` and `seq` (null when the core has none) order the notice.
+ * `proposerName` is null for a proposer this phone does not know; the UI shows "not met" plus the id. `lamport` and `seq` (null when the core has none) order the notice.
  * `proposedAt` and `lapsesAt` bound the 3 day validity (contract C21); the UI shows the age on a tick scale between them.
  * `checks` decide whether Approve is enabled (D8): every one must be ok.
  */
@@ -31,7 +31,7 @@ data class RedView(
     val token: Long,
     val kind: String,
     val title: String,
-    val proposerName: String,
+    val proposerName: String?,
     val proposerId: String,
     val lamport: Long,
     val seq: Long?,
@@ -58,7 +58,7 @@ data class ReleaseChannel(val kind: ChannelKind, val label: String)
  */
 data class ReleaseView(
     val token: Long,
-    val requesterName: String,
+    val requesterName: String?,
     val requesterId: String,
     val requesterKnown: Boolean,
     val requesterKey: String?,
@@ -89,7 +89,14 @@ data class RefusalReason(
     val mismatch: Boolean,
 )
 
-data class ShareWords(val index: Int, val of: Int, val words: List<String>)
+/** The words of the share and its index, as the core gives them. */
+data class ShareWords(val index: Int, val words: List<String>)
+
+/** A device name for display: the core's name, or "not met" for a device this phone does not know (never an empty name). */
+fun displayName(name: String?): String = name?.takeIf { it.isNotBlank() } ?: "not met"
+
+/** `name id`, or `not met id` for an unknown device. */
+fun nameAndId(name: String?, id: String): String = "${displayName(name)} $id"
 
 /** The 16 character short code, shown once. No copy button exists for it (D19). */
 data class IssuedShortCode(val code: String, val validUntil: Long, val weak: Boolean)

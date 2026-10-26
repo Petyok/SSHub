@@ -18,15 +18,18 @@ data class TrustDevice(
     /** `7B3E-0D15`. */
     val id: String,
     val met: Boolean,
-)
+) {
+    /** `laptop-main [7B3E-0D15]`, or `not met [7B3E-0D15]`: never an empty name. */
+    val label: String get() = "${name?.takeIf { met && it.isNotBlank() } ?: "not met"} [$id]"
+}
 
 /** One row of the diff box, rendered as is (the key may already contain a count, e.g. `Hosts (5)`). */
 data class TrustFieldView(val key: String, val value: String, val danger: Boolean = false)
 
 data class TrustCheck(val text: String, val ok: Boolean)
 
-/** The highlighted epoch range: its own box with the two checks (starts at this phone's epoch, at most one epoch wide). */
-data class TrustEpochView(val label: String, val value: String, val checks: List<TrustCheck>)
+/** The highlighted epoch range: its own box; `checks` is empty until the core supplies them, and a line is drawn only per present check. */
+data class TrustEpochView(val label: String, val value: String, val checks: List<TrustCheck> = emptyList())
 
 /** A refusal value. `code` is the refusal index of the doc table (0..8 for trust requests); the text is literal. */
 data class TrustRefusal(val code: Int, val title: String, val text: String)
@@ -38,9 +41,10 @@ data class TrustRequestView(
     val headline: String,
     /** Every field, every host, no `N more` (D5). */
     val fields: List<TrustFieldView>,
-    val epoch: TrustEpochView,
-    /** Full SHA-256 hex of the requester key, present for a requester never met. */
-    val fingerprint: String?,
+    /** Null when the core sent no epoch row. */
+    val epoch: TrustEpochView?,
+    /** The requester's public key, hex, when the core supplies it (requester never met); null: no line. */
+    val requesterKey: String?,
     /** `laptop-main [7B3E-0D15], 5 hosts, 30 days, ends 2026-11-25`, shown after signing. */
     val signedSummary: String,
     val refusal: TrustRefusal?,
@@ -71,16 +75,29 @@ data class CertExtensionInfo(val at: Long, val extraHosts: Int)
 
 data class IssuedCert(
     val certId: String,
-    val deviceName: String,
+    /** Null when this phone never met the device: shown as `not met` plus [deviceId]. */
+    val deviceName: String?,
     val deviceId: String,
     val state: CertState,
+    /** Empty for a group scope. */
     val hosts: List<String>,
+    /** The scope group name; when set it is the scope, instead of a host list. */
+    val group: String?,
     val issuedAt: Long,
     val endsAt: Long,
-    val termDays: Int,
+    val epochLo: Long,
+    val epochHi: Long,
+    /** The core's wording of the term, shown as is. */
+    val termText: String,
     val budgetPerDay: Int,
     val extensions: List<CertExtensionInfo>,
-)
+    /** Chain position of the cert op; null when the core gives none. */
+    val lamport: Long?,
+) {
+    /** The scope line: the group name, else the host count. */
+    val scope: String get() = group?.let { "group $it" } ?: "${hosts.size} hosts"
+    val deviceLabel: String get() = "${deviceName?.takeIf { it.isNotBlank() } ?: "not met"} [$deviceId]"
+}
 
 enum class ShortCodeState { Live, Expired, DeclaredDead }
 

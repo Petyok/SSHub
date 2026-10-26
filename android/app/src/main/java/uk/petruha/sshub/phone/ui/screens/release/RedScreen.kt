@@ -13,6 +13,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import uk.petruha.sshub.phone.core.ProofState
+import uk.petruha.sshub.phone.core.nameAndId
 import uk.petruha.sshub.phone.ui.components.BannerKind
 import uk.petruha.sshub.phone.ui.components.BarButtons
 import uk.petruha.sshub.phone.ui.components.ButtonKind
@@ -65,7 +66,7 @@ fun RedScreen(state: RedState, on: RedActions) {
         if (state.phase == ApprovalPhase.Review || state.phase == ApprovalPhase.Signing) WindowLine(windowLeft(state.openedAt, state.now))
         Text(v.title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         Text(
-            "proposed by ${v.proposerName} ${v.proposerId}, lamport ${v.lamport}" + (v.seq?.let { ", seq $it" } ?: ""), Modifier.padding(top = 4.dp, bottom = 12.dp),
+            "proposed by ${nameAndId(v.proposerName, v.proposerId)}, lamport ${v.lamport}" + (v.seq?.let { ", seq $it" } ?: ""), Modifier.padding(top = 4.dp, bottom = 12.dp),
             style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 

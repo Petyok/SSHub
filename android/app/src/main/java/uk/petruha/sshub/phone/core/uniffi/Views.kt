@@ -131,7 +131,7 @@ internal fun mapRelease(v: RsShareRequestView): OpenedRelease {
     return OpenedRelease(
         ReleaseView(
             token = v.token.toLong(),
-            requesterName = v.requesterName.orEmpty(),
+            requesterName = v.requesterName?.takeIf { it.isNotBlank() },
             requesterId = v.requester,
             requesterKey = v.requesterKey,
             requesterKnown = v.requesterKnown,
@@ -165,7 +165,7 @@ internal fun mapRed(v: RsRedNoticeView): OpenedRed {
             token = v.token.toLong(),
             kind = v.op.kind,
             title = v.op.headline,
-            proposerName = v.proposerName.orEmpty(),
+            proposerName = v.proposerName?.takeIf { it.isNotBlank() },
             proposerId = v.proposer,
             lamport = v.lamport.toLong(),
             seq = v.seq.toLong(),
@@ -188,6 +188,7 @@ internal fun mapNotice(v: RsReenrollNoticeView, phoneName: String) = RecoveryNot
     v.token.toLong(),
     RecoveryNoticeView(
         startedBy = v.op.rows.value("Op signed by") ?: v.op.requester.orEmpty(),
+        lamport = v.lamport.toLong(),
         phoneName = phoneName,
         operation = v.op.kind,
         startedAt = v.proposedAt,
@@ -207,7 +208,7 @@ private fun problems(list: List<String>) = list.takeIf { it.isNotEmpty() }?.let 
 
 internal fun mapTrustRequest(v: RsCertRequestView): OpenedTrustRequest {
     val who = v.rows.value("Trusted device").orEmpty()
-    val epoch = v.rows.firstOrNull { it.label == EPOCH_ROW } ?: v.rows.lastOrNull()
+    val epoch = v.rows.firstOrNull { it.label == EPOCH_ROW }
     return OpenedTrustRequest(
         TrustRequestView(
             token = v.token.toLong(),
@@ -218,8 +219,8 @@ internal fun mapTrustRequest(v: RsCertRequestView): OpenedTrustRequest {
             ),
             headline = v.headline,
             fields = v.rows.filter { it !== epoch }.map { TrustFieldView(it.label, it.value, danger = it.danger) },
-            epoch = TrustEpochView(epoch?.label.orEmpty(), epoch?.value.orEmpty(), emptyList()),
-            fingerprint = null,
+            epoch = epoch?.let { TrustEpochView(it.label, it.value) },
+            requesterKey = null,
             signedSummary = v.headline,
             refusal = problems(v.problems),
         ),
@@ -303,22 +304,26 @@ internal fun mapShortCodeRow(e: RsShortCodeEntry, now: Long) = ShortCodeRow(
     expiresAt = e.expiresAt,
 )
 
-/** Every field comes from the core's structured record. A group scope has no Kotlin field of its own: it is listed as `group <name>`. */
+/** Every field comes from the core's structured record; `lamport` is not in it. */
 internal fun mapCert(v: RsIssuedCertView) = IssuedCert(
     certId = v.certId,
-    deviceName = v.deviceName.orEmpty(),
+    deviceName = v.deviceName?.takeIf { it.isNotBlank() },
     deviceId = v.deviceId,
     state = when (v.status) {
         RsCertStatus.ACTIVE -> CertState.Active
         RsCertStatus.EXPIRED -> CertState.Expired
         RsCertStatus.REVOKED -> CertState.Revoked
     },
-    hosts = v.group?.let { listOf("group $it") } ?: v.hosts,
+    hosts = v.hosts,
+    group = v.group,
     issuedAt = v.issuedAt,
     endsAt = v.expiry,
-    termDays = (v.termSecs / 86_400L).toInt(),
+    epochLo = v.epochLo.toLong(),
+    epochHi = v.epochHi.toLong(),
+    termText = v.termText,
     budgetPerDay = v.maxNewHostsPerDay.toInt(),
     extensions = v.extensions.map { CertExtensionInfo(it.at, it.extraHosts.toInt()) },
+    lamport = null,
 )
 
 internal fun manualWords(m: RsManualEntry) = words(m.words)

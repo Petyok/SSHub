@@ -115,7 +115,7 @@ object RecoverySamples {
     val recoveryWithNotice = RecoveryState(listOf(summary), now)
 
     val noticeView = RecoveryNoticeView(
-        startedBy = "workstation [9C61-E2A8]", phoneName = "pixel-8",
+        startedBy = "workstation [9C61-E2A8]", lamport = 1038, phoneName = "pixel-8",
         operation = "phone recovery: a new phone replaces pixel-8",
         startedAt = startedAt, startedUtc = "2026-10-25 12:41Z", endsAt = endsAt, endsUtc = "2026-11-01 12:41Z",
         hash = "a3f9007c4e1b9c2d" + "5e8f0a1b3c4d5e6f" + "708192a3b4c5d6e7" + "f8091a2b3c4d5e6f",

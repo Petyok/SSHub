@@ -30,13 +30,32 @@ class TrustListTest {
     private val list = TrustListState(certs)
 
     @Test fun main_path_lists_active_expired_and_revoked_with_words() {
-        var scanned = 0
-        rule.setScreen { TrustListScreen(list, listActions(onScan = { scanned++ })) }
+        rule.setScreen { TrustListScreen(list, listActions()) }
         rule.onNodeWithText("4 certificates").assertExists()
         rule.onAllNodesWithText("active").assertCountEquals(2)
         rule.onAllNodesWithText("expired").assertCountEquals(1)
         rule.onAllNodesWithText("revoked").assertCountEquals(1)
-        rule.onNodeWithText("5 hosts, 30 d, ends 2026-11-11").assertExists()
+        rule.onNodeWithText("5 hosts, 30 days, ends 2026-11-11").assertExists()
+        rule.onNodeWithText("group prod-web, 60 days, ends 2026-11-27").assertExists()
+        rule.onAllNodesWithText("epoch 7 to 8").assertCountEquals(2)
+    }
+
+    @Test fun a_device_never_met_shows_not_met_and_its_id_never_an_empty_name() {
+        rule.setScreen { TrustListScreen(list, listActions()) }
+        rule.onNodeWithText("not met [5A19-C0E4]").assertExists()
+    }
+
+    @Test fun expanded_group_cert_shows_the_group_instead_of_a_host_entry_and_the_chain_position() {
+        rule.setScreen { TrustListScreen(list.copy(expanded = setOf("6B20-F1D5", "8E55-1C3B")), listActions()) }
+        rule.onNodeWithText("prod-web").assertExists()
+        rule.onAllNodesWithText("group").assertCountEquals(1)
+        rule.onAllNodesWithText("chain position").assertCountEquals(1)
+        rule.onAllNodesWithText("group prod-web", substring = true).assertCountEquals(1)
+    }
+
+    @Test fun scan_is_offered_and_targets_are_48() {
+        var scanned = 0
+        rule.setScreen { TrustListScreen(list, listActions(onScan = { scanned++ })) }
         rule.onNodeWithText("Scan a request").assertIsEnabled().performClick()
         assertEquals(1, scanned)
         rule.assertTargets48()

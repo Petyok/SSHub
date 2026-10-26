@@ -77,7 +77,8 @@ class TrustRequestTest {
         }
         rule.onNodeWithText("Never met").assertExists()
         rule.onNode(hasContentDescription("Device id E 7 A 4, 6 B 0 2")).assertExists()
-        rule.onNode(hasContentDescription("Fingerprint", substring = true)).assertExists()
+        rule.onNode(hasContentDescription("Requester key", substring = true)).assertExists()
+        rule.onNodeWithText("not met [E7A4-6B02]").assertExists()
         rule.onNodeWithText("Approve").assertIsNotEnabled().performClick()
         assertEquals(0, approved)
         rule.onNodeWithContentDescription("Type the device id of the requester").performTextInput("E7A4-6B0")
@@ -89,8 +90,9 @@ class TrustRequestTest {
 
     @Test fun d8_approve_enabled_iff_all_checks_pass() {
         assertTrue(ok.approveEnabled)
-        val failed = ok.view.epoch.copy(checks = listOf(TrustCheck("starts at this phone's own epoch 7", false), TrustCheck("at most one epoch wide", true)))
+        val failed = ok.view.epoch!!.copy(checks = listOf(TrustCheck("starts at this phone's own epoch 7", false), TrustCheck("at most one epoch wide", true)))
         assertFalse(ok.copy(view = ok.view.copy(epoch = failed)).approveEnabled)
+        assertTrue(ok.copy(view = ok.view.copy(epoch = null)).approveEnabled)
         assertFalse(TrustRequestState(TrustSamples.requestRefused(0)).approveEnabled)
         assertFalse(ok.copy(busy = true).approveEnabled)
         assertFalse(ok.copy(phase = TrustPhase.Declined).approveEnabled)
@@ -100,7 +102,7 @@ class TrustRequestTest {
     }
 
     @Test fun d8_a_failed_check_is_a_red_line_and_disables_approve() {
-        val failed = ok.view.epoch.copy(checks = listOf(TrustCheck("starts at this phone's own epoch 7", false), TrustCheck("at most one epoch wide", true)))
+        val failed = ok.view.epoch!!.copy(checks = listOf(TrustCheck("starts at this phone's own epoch 7", false), TrustCheck("at most one epoch wide", true)))
         rule.setScreen { TrustRequestScreen(ok.copy(view = ok.view.copy(epoch = failed)), requestActions()) }
         rule.onNode(hasContentDescription("Failed: starts at this phone's own epoch 7")).assertExists()
         rule.onNodeWithText("Approve").assertIsNotEnabled()

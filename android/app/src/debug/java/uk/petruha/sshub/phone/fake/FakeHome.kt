@@ -7,7 +7,6 @@ import uk.petruha.sshub.phone.core.Opened
 import uk.petruha.sshub.phone.core.PendingItem
 import uk.petruha.sshub.phone.core.PendingKind
 import uk.petruha.sshub.phone.core.RingDevice
-import uk.petruha.sshub.phone.core.RingSync
 import uk.petruha.sshub.phone.core.RingView
 import uk.petruha.sshub.phone.core.Routes
 import uk.petruha.sshub.phone.core.ScanApi
@@ -22,14 +21,13 @@ import uk.petruha.sshub.phone.core.ScanPurpose
 
 /** Prototype data.js sample content (fictional names only). Deterministic: ages do not move with `now`. */
 object HomeSamples {
-    val phone = HomePhoneView(id = "4F2A-91C7", name = "pixel-8", chainHead = null, liveShortCodes = 0)
+    val phone = HomePhoneView(id = "4F2A-91C7", name = "pixel-8", headSeq = null, liveShortCodes = 0)
 
     val devices = listOf(
-        RingDevice("pixel-8", "4F2A-91C7", "phone holder", null, self = true, stale = false),
-        RingDevice("laptop-main", "7B3E-0D15", "terminal holder", "3 min ago", self = false, stale = false),
-        RingDevice("workstation", "9C61-E2A8", "terminal holder", "14 min ago", self = false, stale = false),
-        RingDevice("nuc-lab", "C5F0-27B9", "machine", "3 h ago", self = false, stale = false),
-        RingDevice("laptop-old", "1D88-A340", "terminal holder", "41 days ago", self = false, stale = true),
+        RingDevice("pixel-8", "4F2A-91C7", self = true),
+        RingDevice("laptop-main", "7B3E-0D15", self = false),
+        RingDevice("workstation", "9C61-E2A8", self = false),
+        RingDevice(null, "C5F0-27B9", self = false),
     )
 
     val pending = listOf(
@@ -39,21 +37,12 @@ object HomeSamples {
         PendingItem(PendingKind.Release, "bastion", "1 min ago", Routes.Release + "/bastion"),
     )
 
-    val ring = RingView(
-        name = "home ring", epoch = 7, hosts = 38, credentials = 12, threshold = "2 of 3", quorum = 9, single = 3,
-        lastSync = RingSync(agoSeconds = 180, agoText = "3 min ago", windowSeconds = 3600, via = "laptop-main, camera"),
-        devices = devices, pendingRed = 2, pendingRelease = 2,
-    )
+    val ring = RingView(epoch = 7, devices = devices)
 
-    val home = HomeState(phone, ring, pending)
-    val homeHeadPending = HomeState(phone, ring.copy(headPending = true), pending)
-    val homeNoPending = HomeState(phone, ring.copy(pendingRed = 0, pendingRelease = 0), emptyList())
-    /** A phone that knows little: no counts, no sync, devices without seen text. */
-    val homeSparse = HomeState(
-        phone,
-        RingView("home ring", 7, null, null, null, null, null, null, listOf(devices[0], devices[1].copy(seen = null)), headPending = false),
-        emptyList(),
-    )
+    val enrolledPhone = phone.copy(headSeq = 12, liveShortCodes = 2)
+    val home = HomeState(enrolledPhone, ring, pending)
+    val homeHeadPending = HomeState(enrolledPhone, ring.copy(headPending = true), pending)
+    val homeNoPending = HomeState(enrolledPhone, ring, emptyList())
     val homeEmpty = HomeState(phone, null, emptyList())
 
     val approvals = ApprovalsState(pending, 0)

@@ -39,9 +39,13 @@ class ReshareOpened(val token: Long, val view: ReshareView) : Opened
 
 data class RecoveryNoticeSummary(val token: Long, val startedBy: String, val startedAt: Long, val endsAt: Long)
 
-/** The fields of a recovery notice. `startedBy` is "name [ID]"; `*Utc` are core-formatted UTC stamps; `hash` is 64 hex digits. */
+/**
+ * The fields of a recovery notice. `startedBy` is "name [ID]"; `*Utc` are core-formatted UTC stamps; `hash` is 64 hex digits.
+ * `phoneName` is empty when the phone has no name for itself; the screen then leaves the line out. `lamport` orders the signed op.
+ */
 data class RecoveryNoticeView(
     val startedBy: String,
+    val lamport: Long,
     val phoneName: String,
     val operation: String,
     val startedAt: Long,

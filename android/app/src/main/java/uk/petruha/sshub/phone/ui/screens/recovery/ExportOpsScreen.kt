@@ -83,7 +83,7 @@ fun ExportOpsScreen(state: ExportState, on: ExportActions) {
 private fun OpRow(r: ExportOpRow) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 8.dp).semantics(mergeDescendants = true) {
-            contentDescription = "Operation ${r.seq}, ${r.kind}, ${r.time}, hash ${spokenHex(listOf(r.hash))}"
+            contentDescription = "Operation ${r.seq}, ${r.kind}, ${r.time}" + (if (r.hash.isNotEmpty()) ", hash ${spokenHex(listOf(r.hash))}" else "")
         },
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -92,7 +92,7 @@ private fun OpRow(r: ExportOpRow) {
             Text(r.kind, style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(r.time, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(r.hash, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (r.hash.isNotEmpty()) Text(r.hash, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

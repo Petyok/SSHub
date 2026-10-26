@@ -29,7 +29,7 @@ class TrustHandoffTest {
 
     private val signed = TrustHandoffState(TrustHandoff(HandoffKind.Certificate, TrustSamples.requestOk.signedSummary, TrustSamples.outgoing("trust-1")))
     private val revoked = TrustHandoffState(
-        TrustHandoff(HandoffKind.Revocation, "laptop-old [1D88-A340], 2 hosts, was to end 2026-11-27", TrustSamples.outgoing("revoke-6B20-F1D5")),
+        TrustHandoff(HandoffKind.Revocation, "laptop-old [1D88-A340], group prod-web, was to end 2026-11-27", TrustSamples.outgoing("revoke-6B20-F1D5")),
     )
 
     @Test fun signed_main_path_qr_text_three_proofs_and_buttons() {
@@ -73,7 +73,7 @@ class TrustHandoffTest {
         var done = 0
         rule.setScreen { TrustRevokedScreen(revoked, handoffActions(onDone = { done++ })) }
         rule.onNodeWithText("REVOKED").assertExists()
-        rule.onNodeWithText("laptop-old [1D88-A340], 2 hosts, was to end 2026-11-27").assertExists()
+        rule.onNodeWithText("laptop-old [1D88-A340], group prod-web, was to end 2026-11-27").assertExists()
         rule.onNode(hasContentDescription("QR code with the signed revocation", substring = true)).assertExists()
         rule.onNodeWithText("Copy the text").assertExists()
         rule.onNodeWithText("Done").performClick()

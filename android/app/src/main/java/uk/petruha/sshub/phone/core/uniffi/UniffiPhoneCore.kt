@@ -35,6 +35,7 @@ import uk.petruha.sshub.phone.core.RingView
 import uk.petruha.sshub.phone.core.Routes
 import uk.petruha.sshub.phone.core.ScanEvent
 import uk.petruha.sshub.phone.core.ShareWords
+import uk.petruha.sshub.phone.core.nameAndId
 import uk.petruha.sshub.phone.core.ShortCodeRow
 import uk.petruha.sshub.phone.core.TrustDecision
 import uk.petruha.sshub.phone.core.TrustExtendView
@@ -257,34 +258,24 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     override fun ring(now: Long): RingView? {
         val i = guard { core.status(now) }
         if (!i.enrolled) return null
-        val devices = i.ring.map { RingDevice(it.name, it.deviceId, role = null, seen = null, self = it.deviceId == i.deviceId, stale = false) }
+        val devices = i.ring.map { RingDevice(it.name.takeIf { n -> n.isNotBlank() }, it.deviceId, self = it.deviceId == i.deviceId) }
             .let { list ->
                 if (list.any { it.self }) list
-                else listOf(RingDevice(selfName(i).ifBlank { "this phone" }, i.deviceId, role = null, seen = null, self = true, stale = false)) + list
+                else listOf(RingDevice(i.deviceName?.takeIf { n -> n.isNotBlank() }, i.deviceId, self = true)) + list
             }
-        val opened = synchronized(lock) { cache.values.map { it.opened } }
-        return RingView(
-            name = "Ring",
-            epoch = i.ringEpoch.toLong(),
-            hosts = null, credentials = null, threshold = null, quorum = null, single = null, lastSync = null,
-            devices = devices,
-            pendingRed = opened.count { it is OpenedRed },
-            pendingRelease = opened.count { it is OpenedRelease },
-            pendingTrust = opened.count { it is OpenedTrustRequest || it is OpenedTrustExtend },
-            headPending = i.headPending,
-        )
+        return RingView(epoch = i.ringEpoch.toLong(), devices = devices, headPending = i.headPending)
     }
 
     override fun thisPhone(now: Long): HomePhoneView {
         val i = guard { core.status(now) }
-        return HomePhoneView(i.deviceId, selfName(i), i.headSeq?.let { "seq $it" }, i.liveShortCodes.toInt())
+        return HomePhoneView(i.deviceId, selfName(i), i.headSeq?.toLong(), i.liveShortCodes.toInt())
     }
 
     override fun pending(now: Long): List<PendingItem> = synchronized(lock) {
         cache.entries.sortedBy { it.key }.mapNotNull { (token, e) ->
             when (val o = e.opened) {
                 is OpenedRed -> PendingItem(PendingKind.Red, o.view.title, null, Routes.Red + "/" + token)
-                is OpenedRelease -> PendingItem(PendingKind.Release, o.view.requesterName.ifBlank { o.view.requesterId }, null, Routes.Release + "/" + token)
+                is OpenedRelease -> PendingItem(PendingKind.Release, nameAndId(o.view.requesterName, o.view.requesterId), null, Routes.Release + "/" + token)
                 is OpenedTrustRequest -> PendingItem(PendingKind.Trust, o.view.headline, null, Routes.TrustRequest + "/" + token)
                 is OpenedTrustExtend -> PendingItem(PendingKind.Extend, o.view.headline, null, Routes.TrustExtend + "/" + token)
                 is RecoveryNoticeOpened -> PendingItem(PendingKind.Recovery, o.view.startedBy, null, Routes.RecoveryNotice + "/" + token)
@@ -355,8 +346,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
             ReleaseOutcome(
                 outgoing = mapWithAudio(o, c.soundFast, c.soundSlow),
                 shortCode = code?.let(::mapShortCode),
-                // The core gives the share index but not how many shares exist: `of` is 0.
-                byHand = if (decision.byHand) o.manual?.let { ShareWords(it.index.toInt(), 0, manualWords(it)) } else null,
+                byHand = if (decision.byHand) o.manual?.let { ShareWords(it.index.toInt(), manualWords(it)) } else null,
                 note = o.note,
             )
         }

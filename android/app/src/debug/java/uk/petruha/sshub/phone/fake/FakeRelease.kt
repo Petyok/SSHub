@@ -60,7 +60,7 @@ class FakeReleaseApi : ReleaseApi {
                         audioFast = if (c.soundFast) ShortArray(16) else null, audioSlow = if (c.soundSlow) ShortArray(16) else null,
                     ),
                     shortCode = if (decision.shortCode) IssuedShortCode(ReleaseSamples.SHORT_CODE, now + 7 * 86_400, weak = false) else null,
-                    byHand = if (decision.byHand) ShareWords(2, 3, ReleaseSamples.words24) else null,
+                    byHand = if (decision.byHand) ShareWords(2, ReleaseSamples.words24) else null,
                 )
             }
             else -> throw CoreException(CoreException.Code.Internal, "Not a release group token.")
@@ -147,6 +147,8 @@ object ReleaseSamples {
     /** A Red notice whose hash check fails: Approve must stay disabled and say why (D8). */
     val redFailing = redRevoke.copy(checks = okChecksRed.dropLast(1) + ReleaseCheck("Hash does not match what the terminal shows", false))
     val redLapsed = redRevoke.copy(proposedAt = T0 - THREE_DAYS - 60, lapsesAt = T0 - 60)
+    /** A proposer this phone never met: the core has no name for it. */
+    val redUnknownProposer = redRevoke.copy(proposerName = null)
 
     val releaseDbs = ReleaseView(
         token = TOKEN_DBS, requesterName = "workstation", requesterId = "9C61-E2A8", requesterKnown = true, requesterKey = "9c61e2a8" + "fedcba9876543210".repeat(3) + "01234567",
@@ -165,7 +167,7 @@ object ReleaseSamples {
     )
 
     val releaseBastion = ReleaseView(
-        token = TOKEN_BASTION, requesterName = "not met", requesterId = "E7A4-6B02", requesterKnown = false, requesterKey = null,
+        token = TOKEN_BASTION, requesterName = null, requesterId = "E7A4-6B02", requesterKnown = false, requesterKey = null,
         shareKind = "envelope", shareEpoch = 7, shareIndex = 1,
         signedAt = T0 - 89, expiresAt = T0 - 89 + 120,
         words = listOf("pursuit", "anyhow", "sanding", "exhaust"),
