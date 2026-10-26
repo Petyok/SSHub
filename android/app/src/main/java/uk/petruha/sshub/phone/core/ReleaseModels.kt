@@ -18,11 +18,12 @@ enum class ProofState { YourTurn, Signed, Waiting, Refused }
 /** One of the three proofs of a Red operation (D6). `name` and `caption` are the core's words, for example "phone" / "this phone". */
 data class RedProofView(val name: String, val caption: String, val state: ProofState)
 
-/** One changing field. `from == null` is a field with no old value (plain row with a red gutter, D2). */
-data class RedField(val key: String, val from: String?, val to: String, val mono: Boolean = false)
+/** One changing field. `from == null` is a field with no old value (plain row with a red gutter, D2). `danger` is the core's flag (all rows of a Red op are dangerous, D2); a row without it is drawn plain. */
+data class RedField(val key: String, val from: String?, val to: String, val mono: Boolean = false, val danger: Boolean = true)
 
 /**
  * A Red notice as the core describes it. `hash` is the full 64 hex digits of the operation (D7).
+ * `proposedAt` is the signed time and `lapsesAt = proposedAt + 3 days`; the UI counts down from them, never from the read time. `lamport` and `seq` (null when the core has none) order the notice.
  * `proposedAt` and `lapsesAt` bound the 3 day validity (contract C21); the UI shows the age on a tick scale between them.
  * `checks` decide whether Approve is enabled (D8): every one must be ok.
  */
@@ -33,6 +34,7 @@ data class RedView(
     val proposerName: String,
     val proposerId: String,
     val lamport: Long,
+    val seq: Long?,
     val proposedAt: Long,
     val lapsesAt: Long,
     val hash: String,
@@ -49,18 +51,20 @@ data class ReleaseChannel(val kind: ChannelKind, val label: String)
 
 /**
  * A share release request. `expiresAt - signedAt` is the challenge lifetime (120 s). `mustType` is the requester id the user has to type
- * when the requester was never met (D13); null for a requester that was met. `fingerprint` is the requester's full 64 hex digits when known.
- * `shortCodeOffer` is the line under the short code toggle, null when the core offers none.
+ * when the requester was never met (D13); null for a requester that was met. `requesterKnown` is that same fact (known == met).
+ * `requesterKey` is the hex of the requester's Ed25519 key, only when its signature was verified, else null.
+ * `shareKind` is "hybrid" or "envelope"; `shareEpoch` and `shareIndex` name the share. The host, credential and mode are not in the
+ * signed challenge and are never shown: the terminal shows which host. `shortCodeOffer` is the line under the short code toggle, null when the core offers none.
  */
 data class ReleaseView(
     val token: Long,
     val requesterName: String,
     val requesterId: String,
-    val met: Boolean,
-    val fingerprint: String?,
-    val host: String,
-    val credential: String,
-    val mode: String,
+    val requesterKnown: Boolean,
+    val requesterKey: String?,
+    val shareKind: String,
+    val shareEpoch: Long,
+    val shareIndex: Int,
     val signedAt: Long,
     val expiresAt: Long,
     val words: List<String>,

@@ -67,11 +67,10 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
 
         SshubCard {
             Text("requester", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(v.requesterName, style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
+            Text(if (v.requesterKnown) v.requesterName else "not met", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
             Text(v.requesterId, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-            KeyValue("host", v.host, Modifier.padding(top = 8.dp))
-            KeyValue("credential", v.credential)
-            KeyValue("mode", v.mode)
+            v.requesterKey?.let { HexGroups(it, Modifier.padding(top = 8.dp), groups = null, label = "Requester key") }
+            KeyValue("share", "${v.shareKind}, epoch ${v.shareEpoch}, share ${v.shareIndex}", Modifier.padding(top = 8.dp))
         }
 
         // Lifetime of the challenge, one needle step per second (spec 8): `now` is whole seconds.
@@ -100,6 +99,7 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
 
         SectionHeading("Binding words", trailing = "compare with the terminal")
         BigWords(v.words)
+        Note("The terminal shows which host. Compare the binding words.", Modifier.padding(top = 8.dp))
 
         ChecksCard(v.checks)
 
@@ -135,13 +135,13 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
         if (state.phase == ApprovalPhase.Declined) {
             SshubCard(Modifier.padding(top = 12.dp)) {
                 Text("Declined.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurface)
-                Note("Nothing was released for ${v.credential}.")
+                Note("Nothing was released.")
             }
         }
     }
 }
 
-/** D13: warn box with name, id in mono, full fingerprint; the typed id gates the primary button. No amber inside. */
+/** D13: warn box with name, id in mono, the typed id gates the primary button. No amber inside. */
 @Composable
 private fun NeverMet(state: ReleaseState, on: ReleaseActions) {
     val v = state.view
@@ -153,7 +153,6 @@ private fun NeverMet(state: ReleaseState, on: ReleaseActions) {
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
         )
         Text("${v.requesterName} $required", style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
-        if (v.fingerprint != null) HexGroups(v.fingerprint, groups = null, label = "Requester fingerprint")
     }
     MonoField(
         state.typed, on.onTyped, Modifier.padding(top = 12.dp), placeholder = "Type $required",
@@ -168,7 +167,7 @@ private fun ReleasedCard(state: ReleaseState, on: ReleaseActions) {
     val sent = v.channels.filter { it.kind in state.channelsOn }.joinToString(", ") { it.label }.ifEmpty { "no channel" }
     SshubCard(Modifier.padding(top = 12.dp)) {
         Text("Released.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.sshub.ok)
-        Note("Sent by $sent. Own share for ${v.credential} left this phone.")
+        Note("Sent by $sent. Your share left this phone.")
         val frame = out?.outgoing
         if (frame != null) {
             if (ChannelKind.Qr in state.channelsOn) QrLoop(frame.qr, QR_DESCRIPTION)

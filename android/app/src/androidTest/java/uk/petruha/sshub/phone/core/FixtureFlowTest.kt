@@ -4,6 +4,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uk.petruha.sshub.phone.core.uniffi.UniffiPhoneCore
@@ -44,6 +46,11 @@ class FixtureFlowTest {
                 val v = (opened as? OpenedRelease)?.view ?: error("$name: expected a release request, got $opened")
                 assertEquals("$name binding words", c.getString("binding_words"), v.words.joinToString("-"))
                 assertTrue("$name: every check passes or is waived by the typed id", v.checks.all { it.ok || it.needsTypedId })
+                // A fresh phone has not met the fixture's requester: unknown, nothing verified, so no key; the share itself is described.
+                assertFalse("$name: requester unknown to a fresh phone", v.requesterKnown)
+                assertNull("$name: no verified key for an unknown requester", v.requesterKey)
+                assertTrue("$name: share kind", v.shareKind == "hybrid" || v.shareKind == "envelope")
+                assertTrue("$name: share epoch", v.shareEpoch >= 0 && v.shareIndex >= 0)
             } else if (name in NEEDS_MET_REQUESTER && opened is OpenedRefused) {
                 // refused for another rule first (for example the wrapped share): still a value, still no approval
             } else if (name in NEEDS_MET_REQUESTER && opened is OpenedRelease) {
@@ -70,5 +77,19 @@ class FixtureFlowTest {
         assertTrue(o.frame.isNotEmpty())
         assertTrue(o.text.isNotEmpty())
         assertTrue(o.qr.isNotEmpty() || o.text.isNotEmpty())
+    }
+
+    @Test fun a_wrong_typed_id_keeps_the_request_pending() {
+        val core = freshCore()
+        val c = fixtures.getJSONArray("challenges").getJSONObject(0)
+        val v = ((runBlocking { core.openFrame(hex(c.getString("frame_hex")), now) }) as OpenedRelease).view
+        if (v.mustType == null) return // a met requester has no typed id to get wrong
+        val e = runCatching {
+            runBlocking { core.decide(v.token, ReleaseDecision.Approve(channels = ReleaseChannels(qr = true), typedId = "0000000000000000"), now) }
+        }.exceptionOrNull() as CoreException
+        assertEquals(CoreException.Code.Malformed, e.code)
+        assertTrue("token still valid", core.pendingView(v.token) != null)
+        runBlocking { core.decide(v.token, ReleaseDecision.Approve(channels = ReleaseChannels(qr = true), typedId = v.mustType), now) }
+        assertNull("consumed by the successful decide", core.pendingView(v.token))
     }
 }

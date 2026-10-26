@@ -147,8 +147,9 @@ rotate, never signed, short code declared dead). Blocking calls run on `Dispatch
 **Token cache.** Rust is `open_frame` -> view with a token -> `decide(token, ...)`; our interfaces fetch views by token. `openFrame` maps
 the Rust `Opened` to the group's Kotlin `Opened` subtype and keeps `token -> (Kotlin view, Rust view)` in memory. `pendingView`, `trustRequest`,
 `trustExtend`, `reshareCandidate`, `recoveryNotice(s)` and the Home `pending` list are answered from it. The core drops all pending requests
-when it opens the next frame that carries the frame magic and when a decision runs (also a failed one: a wrong typed id consumes the token);
-the cache does the same, so it holds what the core can still decide. It is never persisted.
+when it opens the next frame that carries the frame magic and when a decision runs. A decision that fails with `BadInput` (a wrong typed id)
+keeps the request pending: the core leaves it and the cache keeps the token and the view. A refusal, a success and every other error (Refused,
+Locked, Internal) consume it, in the core and in the cache, so the cache holds what the core can still decide. It is never persisted.
 
 | Rust | Kotlin |
 |---|---|
@@ -166,16 +167,15 @@ The BLE link is `CoreBleLink` over `BleSession` (started at creation, monotonic 
 
 **What the Rust core cannot fill** (null, empty or a neutral value on the Kotlin side; nothing is invented):
 
-- `PhoneStatus.deviceName`: taken from the ring list when the phone is in it, else empty. `PhoneStatus.epoch` and `RingView.epoch` are the wrap generation (`wrap_epoch`), the ring epoch is not exposed.
-- Ring: no hosts, credentials, threshold, quorum, last sync, roles, "seen" texts, age of a pending item.
-- `RedView`: no `lamport` (0), no proposal time (`proposedAt` = when the phone read it, `lapsesAt` = 3 days later; the core still refuses a lapsed one at decision), no `danger` flag per row, no typed-id field on the Red screen (a proposer never met cannot be approved there).
-- `ReleaseView`: no requester fingerprint, credential name or mode (`credential` and `mode` are empty), `signedAt` is `expiresAt - 120`. `ShareWords.of` is 0 (the core gives the share index only).
+- Ring: no hosts, credentials, threshold, quorum, last sync, roles, "seen" texts, age of a pending item. `PhoneStatus.deviceName` and `RingView` epoch come from `UnlockInfo.device_name` (empty before the first enrollment) and `ring_epoch`.
+- `RedView`: no typed-id field on the Red screen (a proposer never met cannot be approved there); `proposerName` is empty for a proposer the phone does not know. Time, lamport, seq and `lapsesAt` (proposal + 3 days) are the signed op's own values; row `danger` comes from the core.
+- `ReleaseView`: host, credential name and mode are not in the signed challenge, so there are no such fields; the screen shows requester (name, known or not, key when its signature verified), share kind, epoch and index, op age and the binding words. `requesterName` is empty for an unknown requester, `requesterKey` null unless verified. `signedAt` is `expiresAt - 120`. `ShareWords.of` is 0 (the core gives the share index only).
 - `TrustRequestView`: device id and name are read from the `Trusted device` row, no fingerprint, no per-check epoch list, `signedSummary` is the headline. `TrustExtendView`: no `again` timing (the refusal text carries it), diff is the budget row and the extra hosts row.
-- Issued certificates: one summary line per certificate; device, end of term and budget are read back from it, hosts, issue time, term days and extensions are empty or 0.
-- `ExportedOps.rows` is empty (the core gives the frame and text, not rows); `total` is the newest seq.
-- Recovery notice: no phone name unless the phone is in its ring list; `startedUtc` and `endsUtc` are formatted in Kotlin in the core's own `iso()` form; always `cancellable` (the core refuses at decision).
+- Issued certificates: all fields come from the structured record. A group scope is listed as one entry `group <name>`; the revoked flag, `epoch_lo`/`epoch_hi` and `term_text` have no Kotlin field (state carries revoked; term is shown as whole days).
+- `ExportedOps.rows`: kind, time and seq from the core's op view; `hash` is empty (the view carries no hash); `danger` is set when the op has a danger row; only the newest ops the frame carries are listed, `total` is the newest seq.
+- Recovery notice: no phone name unless the phone has one; `startedAt` is the signed time of the `PhoneReenroll` op, `startedUtc` and `endsUtc` are formatted in Kotlin in the core's own `iso()` form; lamport has no Kotlin field; always `cancellable` (the core refuses at decision).
 - Reshare: `note` is a count of verified contributors, `adoptable` is true whenever the core returned a view. The stages are Start, Rotated, Candidate (rotated and a reshare is held for review), Published (adopted and published by one call) and Empty; Start is shown until a rotation (so Rotate is reachable); the sequence is in memory and restarts as Start after a process restart. The signed ops are shown once, from the result of `decideReshare`; reopening the screen later offers Export my ops instead.
-- `ChainCheck`s: none (the core returns `agreed` and the heads, not a check list). `ScanEvent.Foreign` is never produced. `validateWord` judges only shape (a to z); the word list and checksum are checked by `restoreFromWords`. `nameProblem` is null: the name rules run in `enrollDecide(Name)`.
+- `ChainCheck`s: none (the core returns `agreed` and the heads, not a check list). `ScanEvent.Foreign` is never produced. `validateWord` is the core's `is_word` (BIP39 list; a partial word is Bad). `nameProblem` is null: the name rules run in `enrollDecide(Name)`.
 - `state_lost` of `UnlockInfo` and `damaged` of the scan progress are not carried (a lost state shows as a restored phone with `headPending`).
 
 ## 3. Extraction plan: `sshub-sync-proto`

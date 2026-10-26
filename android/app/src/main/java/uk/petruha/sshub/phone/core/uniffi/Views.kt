@@ -3,6 +3,7 @@ package uk.petruha.sshub.phone.core.uniffi
 import uk.petruha.sshub.phone.core.ChainAdopted
 import uk.petruha.sshub.phone.core.ChainCheck
 import uk.petruha.sshub.phone.core.ChannelKind
+import uk.petruha.sshub.phone.core.CertExtensionInfo
 import uk.petruha.sshub.phone.core.CertState
 import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.EnrollRefusal
@@ -74,12 +75,6 @@ import uniffi.sshub_phone_core.ShortCodeOffer as RsShortCodeOffer
 /** Lifetime of a share challenge (`CHALLENGE_EXPIRY_SECS` of sshub-sync-proto): the core gives `expires_at` only. */
 internal const val CHALLENGE_SECS = 120L
 
-/** `RED_CEREMONY_TTL_SECS`: a Red notice lapses 3 days after it was proposed. */
-internal const val RED_TTL_SECS = 3 * 86_400L
-
-/** `RECOVERY_TIMELOCK_SECS`: `ends_at` of a recovery notice is `initiated_at` plus this. */
-internal const val RECOVERY_TIMELOCK_SECS = 7 * 86_400L
-
 /** The core renders a QR animation only up to this many bytes (`MAX_QR_DOC_BYTES`). */
 internal const val QR_MAX_DOC_BYTES = 12_000
 
@@ -136,13 +131,15 @@ internal fun mapRelease(v: RsShareRequestView): OpenedRelease {
     return OpenedRelease(
         ReleaseView(
             token = v.token.toLong(),
-            requesterName = v.op.rows.value("Requesting device")?.let(::whoName).orEmpty(),
+            requesterName = v.requesterName.orEmpty(),
             requesterId = v.requester,
             met = must == null,
-            fingerprint = null,
-            host = v.hostUid,
-            credential = "",
-            mode = "",
+            requesterKey = v.requesterKey,
+            requesterKnown = v.requesterKnown,
+            shareKind = v.shareKind,
+            shareEpoch = v.shareEpoch.toLong(),
+            shareIndex = v.shareIndex.toInt(),
+            // The challenge's own lifetime: the core gives `expires_at` only.
             signedAt = v.expiresAt - CHALLENGE_SECS,
             expiresAt = v.expiresAt,
             words = words(v.bindingWords),
@@ -157,9 +154,7 @@ internal fun mapRelease(v: RsShareRequestView): OpenedRelease {
     )
 }
 
-/** `now` is when the phone read the notice: the core gives no proposal time (see docs 2.3). */
-internal fun mapRed(v: RsRedNoticeView, now: Long): OpenedRed {
-    val signer = v.op.rows.value("Op signed by")
+internal fun mapRed(v: RsRedNoticeView): OpenedRed {
     val checks = buildList {
         add(ReleaseCheck(v.signatureNote, ok = true))
         v.blocked?.let { add(ReleaseCheck(it, ok = false)) }
@@ -171,13 +166,14 @@ internal fun mapRed(v: RsRedNoticeView, now: Long): OpenedRed {
             token = v.token.toLong(),
             kind = v.op.kind,
             title = v.op.headline,
-            proposerName = signer?.let(::whoName).orEmpty(),
-            proposerId = v.op.requester.orEmpty(),
-            lamport = 0,
-            proposedAt = now,
-            lapsesAt = now + RED_TTL_SECS,
+            proposerName = v.proposerName.orEmpty(),
+            proposerId = v.proposer,
+            lamport = v.lamport.toLong(),
+            seq = v.seq.toLong(),
+            proposedAt = v.proposedAt,
+            lapsesAt = v.lapsesAt,
             hash = v.opHash,
-            fields = v.op.rows.map { RedField(it.label, null, it.value) },
+            fields = v.op.rows.map { RedField(it.label, null, it.value, danger = it.danger) },
             note = v.banner,
             proofs = listOf(
                 RedProofView("phone", "this phone", if (v.blocked != null) ProofState.Refused else ProofState.YourTurn),
@@ -195,8 +191,8 @@ internal fun mapNotice(v: RsReenrollNoticeView, phoneName: String) = RecoveryNot
         startedBy = v.op.rows.value("Op signed by") ?: v.op.requester.orEmpty(),
         phoneName = phoneName,
         operation = v.op.kind,
-        startedAt = v.endsAt - RECOVERY_TIMELOCK_SECS,
-        startedUtc = utc(v.endsAt - RECOVERY_TIMELOCK_SECS),
+        startedAt = v.proposedAt,
+        startedUtc = utc(v.proposedAt),
         endsAt = v.endsAt,
         endsUtc = utc(v.endsAt),
         hash = v.opHash,
@@ -222,7 +218,7 @@ internal fun mapTrustRequest(v: RsCertRequestView): OpenedTrustRequest {
                 met = v.delegateKnown,
             ),
             headline = v.headline,
-            fields = v.rows.filter { it !== epoch }.map { TrustFieldView(it.label, it.value) },
+            fields = v.rows.filter { it !== epoch }.map { TrustFieldView(it.label, it.value, danger = it.danger) },
             epoch = TrustEpochView(epoch?.label.orEmpty(), epoch?.value.orEmpty(), emptyList()),
             fingerprint = null,
             signedSummary = v.headline,
@@ -237,7 +233,7 @@ internal fun mapTrustExtend(v: RsCertExtendView): OpenedTrustExtend {
         TrustExtendView(
             token = v.token.toLong(),
             headline = v.headline,
-            fields = v.rows.map { TrustFieldView(it.label, it.value) },
+            fields = v.rows.map { TrustFieldView(it.label, it.value, danger = it.danger) },
             diffKey = extra?.label.orEmpty(),
             diffFrom = v.rows.value("Daily budget now").orEmpty(),
             diffTo = extra?.value.orEmpty(),
@@ -308,32 +304,23 @@ internal fun mapShortCodeRow(e: RsShortCodeEntry, now: Long) = ShortCodeRow(
     expiresAt = e.expiresAt,
 )
 
-private val CERT_SUMMARY = Regex("""^(?:(.+?) )?\[([0-9a-f]{16})\]: .*until (\S+), (\d+) new hosts per day""")
-
-/**
- * The core gives one summary line per certificate (device, scope, term, budget, extensions) and the state, not the fields.
- * Device, end of term and budget are read back from that line; hosts, issue time, term length and extension times are not
- * in it and stay empty or zero (docs 2.3).
- */
-internal fun mapCert(v: RsIssuedCertView): IssuedCert {
-    val m = CERT_SUMMARY.find(v.summary)
-    return IssuedCert(
-        certId = v.certId,
-        deviceName = m?.groupValues?.get(1)?.takeIf { it.isNotEmpty() } ?: v.summary,
-        deviceId = m?.groupValues?.get(2).orEmpty(),
-        state = when (v.status) {
-            RsCertStatus.ACTIVE -> CertState.Active
-            RsCertStatus.EXPIRED -> CertState.Expired
-            RsCertStatus.REVOKED -> CertState.Revoked
-        },
-        hosts = emptyList(),
-        issuedAt = 0,
-        endsAt = m?.groupValues?.get(3)?.let { runCatching { Instant.parse(it).epochSecond }.getOrNull() } ?: 0,
-        termDays = 0,
-        budgetPerDay = m?.groupValues?.get(4)?.toIntOrNull() ?: 0,
-        extensions = emptyList(),
-    )
-}
+/** Every field comes from the core's structured record. A group scope has no Kotlin field of its own: it is listed as `group <name>`. */
+internal fun mapCert(v: RsIssuedCertView) = IssuedCert(
+    certId = v.certId,
+    deviceName = v.deviceName.orEmpty(),
+    deviceId = v.deviceId,
+    state = when (v.status) {
+        RsCertStatus.ACTIVE -> CertState.Active
+        RsCertStatus.EXPIRED -> CertState.Expired
+        RsCertStatus.REVOKED -> CertState.Revoked
+    },
+    hosts = v.group?.let { listOf("group $it") } ?: v.hosts,
+    issuedAt = v.issuedAt,
+    endsAt = v.expiry,
+    termDays = (v.termSecs / 86_400L).toInt(),
+    budgetPerDay = v.maxNewHostsPerDay.toInt(),
+    extensions = v.extensions.map { CertExtensionInfo(it.at, it.extraHosts.toInt()) },
+)
 
 internal fun manualWords(m: RsManualEntry) = words(m.words)
 

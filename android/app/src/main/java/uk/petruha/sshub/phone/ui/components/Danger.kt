@@ -93,15 +93,15 @@ fun StopBox(title: String, modifier: Modifier = Modifier, live: Boolean = false,
     }
 }
 
-/** One changing field: key, old value (struck), new value (bold). `from == null` is a plain row with a red gutter. */
-data class DiffEntry(val key: String, val from: String?, val to: String, val mono: Boolean = false)
+/** One changing field: key, old value (struck), new value (bold). `from == null` is a plain row with a red gutter. `danger = false` draws the row plain, without red. */
+data class DiffEntry(val key: String, val from: String?, val to: String, val mono: Boolean = false, val danger: Boolean = true)
 
 /** Spec 7.3. Static, never collapsible, no ellipsis (D4/D5). One merged semantics node per field (D2). */
 @Composable
 fun DiffBox(fields: List<DiffEntry>, modifier: Modifier = Modifier) {
     val sc = MaterialTheme.sshub
     Column(
-        modifier.fillMaxWidth().clip(SshubShape.field).border(2.dp, sc.danger, SshubShape.field).semantics { isTraversalGroup = true },
+        modifier.fillMaxWidth().clip(SshubShape.field).border(2.dp, if (fields.any { it.danger }) sc.danger else MaterialTheme.colorScheme.outlineVariant, SshubShape.field).semantics { isTraversalGroup = true },
     ) {
         fields.forEachIndexed { i, f ->
             Column(
@@ -114,9 +114,11 @@ fun DiffBox(fields: List<DiffEntry>, modifier: Modifier = Modifier) {
                     f.key, Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(start = 46.dp, top = 6.dp, bottom = 3.dp, end = 12.dp),
                     style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (f.from != null) DiffLine(f.from, glyph = "-", fill = sc.diffOld, gutter = sc.diffOldGutter, glyphColor = sc.dangerText, text = MaterialTheme.colorScheme.onSurfaceVariant, strike = true, bold = false, mono = f.mono)
-                if (f.from != null) DiffLine(f.to, glyph = "+", fill = sc.diffNew, gutter = sc.diffNewGutter, glyphColor = sc.onDanger, text = MaterialTheme.colorScheme.onSurface, strike = false, bold = true, mono = f.mono)
-                else DiffLine(f.to, glyph = "", fill = MaterialTheme.colorScheme.surfaceContainerHigh, gutter = sc.danger, glyphColor = sc.onDanger, text = MaterialTheme.colorScheme.onSurface, strike = false, bold = true, mono = f.mono)
+                val cs = MaterialTheme.colorScheme
+                val plain = cs.surfaceContainerHigh
+                if (f.from != null) DiffLine(f.from, glyph = "-", fill = if (f.danger) sc.diffOld else plain, gutter = if (f.danger) sc.diffOldGutter else cs.outlineVariant, glyphColor = if (f.danger) sc.dangerText else cs.onSurfaceVariant, text = cs.onSurfaceVariant, strike = true, bold = false, mono = f.mono)
+                if (f.from != null) DiffLine(f.to, glyph = "+", fill = if (f.danger) sc.diffNew else plain, gutter = if (f.danger) sc.diffNewGutter else cs.outlineVariant, glyphColor = if (f.danger) sc.onDanger else cs.onSurface, text = cs.onSurface, strike = false, bold = true, mono = f.mono)
+                else DiffLine(f.to, glyph = "", fill = plain, gutter = if (f.danger) sc.danger else cs.outlineVariant, glyphColor = sc.onDanger, text = cs.onSurface, strike = false, bold = true, mono = f.mono)
             }
         }
     }

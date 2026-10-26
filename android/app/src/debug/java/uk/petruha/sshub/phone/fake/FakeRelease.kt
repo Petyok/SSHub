@@ -112,7 +112,7 @@ object ReleaseSamples {
 
     val redRevoke = RedView(
         token = TOKEN_REVOKE, kind = "Revoke holder", title = "Revoke device laptop-old",
-        proposerName = "laptop-main", proposerId = "7B3E-0D15", lamport = 1042,
+        proposerName = "laptop-main", proposerId = "7B3E-0D15", lamport = 1042, seq = 57,
         proposedAt = T0 - 360, lapsesAt = T0 - 360 + THREE_DAYS,
         hash = "1bf0d57ef9dd2818002634d3f9ae2a7ee505dd0696c437b74cbb61358097b930",
         fields = listOf(
@@ -129,7 +129,7 @@ object ReleaseSamples {
 
     val redMode = RedView(
         token = TOKEN_MODE, kind = "Credential mode", title = "Switch credential mode to Quorum",
-        proposerName = "workstation", proposerId = "9C61-E2A8", lamport = 1039,
+        proposerName = "workstation", proposerId = "9C61-E2A8", lamport = 1039, seq = 31,
         proposedAt = T0 - 4320, lapsesAt = T0 - 4320 + THREE_DAYS,
         hash = "37fa9efb25777ad17430fdc55addb7829cb6d4e53da61b9a4760ddbebb691daf",
         fields = listOf(
@@ -149,34 +149,33 @@ object ReleaseSamples {
     val redLapsed = redRevoke.copy(proposedAt = T0 - THREE_DAYS - 60, lapsesAt = T0 - 60)
 
     val releaseDbs = ReleaseView(
-        token = TOKEN_DBS, requesterName = "workstation", requesterId = "9C61-E2A8", met = true, fingerprint = null,
-        host = "db-staging", credential = "deploy@db-staging", mode = "Quorum, 2 of 3",
+        token = TOKEN_DBS, requesterName = "workstation", requesterId = "9C61-E2A8", requesterKnown = true, requesterKey = "9c61e2a8" + "fedcba9876543210".repeat(3) + "01234567",
+        shareKind = "hybrid", shareEpoch = 7, shareIndex = 2,
         signedAt = T0 - 38, expiresAt = T0 - 38 + 120,
         words = listOf("compile", "trash", "chop", "valley"),
         checks = listOf(
             ReleaseCheck("Not expired", true), ReleaseCheck("Request and requester agree", true),
-            ReleaseCheck("Signature of 9C61-E2A8 verifies", true), ReleaseCheck("Own share unwrapped for deploy@db-staging", true),
+            ReleaseCheck("Signature of 9C61-E2A8 verifies", true), ReleaseCheck("Own share unwrapped", true),
         ),
         channels = listOf(
             ReleaseChannel(ChannelKind.Qr, "QR code"), ReleaseChannel(ChannelKind.Clipboard, "Clipboard"),
             ReleaseChannel(ChannelKind.SoundFast, "Sound (fast)"),
         ),
-        mustType = null, shortCodeOffer = "Opens this credential later without the phone, 7 days",
+        mustType = null, shortCodeOffer = "Opens this share later without the phone, 7 days",
     )
 
     val releaseBastion = ReleaseView(
-        token = TOKEN_BASTION, requesterName = "not met", requesterId = "E7A4-6B02", met = false,
-        fingerprint = "e7a46b02" + "0123456789abcdef".repeat(3) + "89abcdef",
-        host = "bastion", credential = "ops@bastion", mode = "Quorum, 2 of 3",
+        token = TOKEN_BASTION, requesterName = "not met", requesterId = "E7A4-6B02", requesterKnown = false, requesterKey = null,
+        shareKind = "envelope", shareEpoch = 7, shareIndex = 1,
         signedAt = T0 - 89, expiresAt = T0 - 89 + 120,
         words = listOf("pursuit", "anyhow", "sanding", "exhaust"),
         checks = listOf(
             ReleaseCheck("Not expired", true), ReleaseCheck("Request and requester agree", true),
             ReleaseCheck("Signature of E7A4-6B02 cannot be checked: device never met", false, needsTypedId = true),
-            ReleaseCheck("Own share unwrapped for ops@bastion", true),
+            ReleaseCheck("Own share unwrapped", true),
         ),
         channels = listOf(ReleaseChannel(ChannelKind.Qr, "QR code")),
-        mustType = "E7A4-6B02", shortCodeOffer = "Opens this credential later without the phone, 7 days",
+        mustType = "E7A4-6B02", shortCodeOffer = "Opens this share later without the phone, 7 days",
     )
 
     fun redState(view: RedView = redRevoke, now: Long = T0, openedAt: Long = now) = RedState(view, now, openedAt)

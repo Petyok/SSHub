@@ -76,6 +76,19 @@ class UniffiCoreTest {
         assertEquals(CoreException.Code.Malformed, e.code)
     }
 
+    @Test fun validateWord_uses_the_core_word_list() {
+        val words = runBlocking { core.unlock(fixedSecret(), now); core.backupWords().map { String(it) } }
+        assertTrue(words.all { core.validateWord(it) == WordState.Ok })
+        assertEquals(WordState.Bad, core.validateWord("zzzz"))
+        assertEquals(WordState.Empty, core.validateWord("  "))
+    }
+
+    @Test fun a_fresh_phone_has_no_name_and_ring_epoch_zero() {
+        val s = core.unlock(fixedSecret(), now)
+        assertEquals("", s.deviceName)
+        assertEquals(0L, s.epoch)
+    }
+
     @Test fun garbage_is_a_value_not_an_exception() = runBlocking {
         core.unlock(fixedSecret(), now)
         val o = core.openFrame(byteArrayOf(1, 2, 3), now)

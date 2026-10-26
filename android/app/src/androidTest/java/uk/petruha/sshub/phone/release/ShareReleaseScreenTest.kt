@@ -79,9 +79,13 @@ class ShareReleaseScreenTest {
         rule.show(dbs, log = log)
         rule.onNodeWithText("workstation").assertExists()
         rule.onNodeWithText("9C61-E2A8").assertExists()
-        rule.onNodeWithText("db-staging").assertExists()
-        rule.onNodeWithText("deploy@db-staging").assertExists()
-        rule.onNodeWithText("Quorum, 2 of 3").assertExists()
+        rule.onNodeWithText("hybrid, epoch 7, share 2").assertExists()
+        rule.onNodeWithText("signed 38 s ago").assertExists()
+        rule.onNodeWithText("The terminal shows which host. Compare the binding words.").assertExists()
+        listOf("host", "credential", "mode").forEach { rule.onAllNodesWithText(it).assertCountEquals(0) }
+        val key = rule.onNode(descStartsWith("Requester key"), useUnmergedTree = true).fetchSemanticsNode()
+            .config[SemanticsProperties.ContentDescription].first()
+        assertEquals(15, key.count { it == ',' })
         rule.onNodeWithText("Approve and release").assertIsEnabled().performClick()
         rule.onNodeWithText("Decline").performClick()
         assertEquals(listOf("approve", "decline"), log)
@@ -172,12 +176,11 @@ class ShareReleaseScreenTest {
         rule.onAllNodesWithText("type the id first").assertCountEquals(0)
     }
 
-    @Test fun d13_never_met_box_shows_name_id_and_the_full_fingerprint() {
+    @Test fun d13_never_met_box_shows_name_and_id_and_no_key_for_an_unverified_requester() {
         rule.show(bastion)
         rule.onNodeWithText("not met E7A4-6B02", substring = true).assertExists()
-        val fp = rule.onNode(descStartsWith("Requester fingerprint"), useUnmergedTree = true).fetchSemanticsNode()
-            .config[SemanticsProperties.ContentDescription].first()
-        assertEquals(15, fp.count { it == ',' })
+        rule.onAllNodes(descStartsWith("Requester key"), useUnmergedTree = true).assertCountEquals(0)
+        rule.onNodeWithText("envelope, epoch 7, share 1").assertExists()
         rule.onNodeWithText("Type E7A4-6B02", substring = true).assertExists()
     }
 
@@ -195,7 +198,7 @@ class ShareReleaseScreenTest {
         rule.onNodeWithText("2 on").assertExists()
         rule.onNodeWithText("Sound (fast)").performScrollTo().performClick()
         rule.onNodeWithText("Also issue a short code").performScrollTo().performClick()
-        rule.onNodeWithText("Opens this credential later without the phone, 7 days").assertExists()
+        rule.onNodeWithText("Opens this share later without the phone, 7 days").assertExists()
         assertEquals(listOf("channel ${ChannelKind.Qr} false", "channel ${ChannelKind.SoundFast} false", "short true"), log)
     }
 
@@ -211,7 +214,7 @@ class ShareReleaseScreenTest {
         val log = mutableListOf<String>()
         rule.show(released, log = log)
         rule.onNodeWithText("Released.").assertExists()
-        rule.onNodeWithText("Sent by QR code, Clipboard, Sound (fast). Own share for deploy@db-staging left this phone.").assertExists()
+        rule.onNodeWithText("Sent by QR code, Clipboard, Sound (fast). Your share left this phone.").assertExists()
         rule.onNode(descStartsWith("QR code")).assertExists()
         rule.onNodeWithContentDescription("Short code, shown once: K7Q2, 9FMX, C41T, 8PWD").assertExists()
         rule.onNodeWithText("share index 2 of 3").assertExists()
@@ -230,7 +233,7 @@ class ShareReleaseScreenTest {
         val st = released.copy(channelsOn = setOf(ChannelKind.Clipboard))
         rule.show(st)
         rule.onAllNodes(descStartsWith("QR code")).assertCountEquals(0)
-        rule.onNodeWithText("Sent by Clipboard. Own share for deploy@db-staging left this phone.").assertExists()
+        rule.onNodeWithText("Sent by Clipboard. Your share left this phone.").assertExists()
     }
 
     @Test fun released_timer_ends_with_share_expired() {
@@ -241,7 +244,7 @@ class ShareReleaseScreenTest {
     @Test fun declined_state() {
         rule.show(dbs.copy(phase = ApprovalPhase.Declined))
         rule.onNodeWithText("Declined.").assertExists()
-        rule.onNodeWithText("Nothing was released for deploy@db-staging.").assertExists()
+        rule.onNodeWithText("Nothing was released.").assertExists()
         rule.onAllNodesWithText("Approve and release").assertCountEquals(0)
     }
 

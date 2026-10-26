@@ -65,7 +65,7 @@ fun RedScreen(state: RedState, on: RedActions) {
         if (state.phase == ApprovalPhase.Review || state.phase == ApprovalPhase.Signing) WindowLine(windowLeft(state.openedAt, state.now))
         Text(v.title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         Text(
-            "proposed by ${v.proposerName} ${v.proposerId}, lamport ${v.lamport}", Modifier.padding(top = 4.dp, bottom = 12.dp),
+            "proposed by ${v.proposerName} ${v.proposerId}, lamport ${v.lamport}" + (v.seq?.let { ", seq $it" } ?: ""), Modifier.padding(top = 4.dp, bottom = 12.dp),
             style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
@@ -95,7 +95,7 @@ fun RedScreen(state: RedState, on: RedActions) {
         }
 
         SectionHeading("Changes", trailing = "${v.fields.size} fields")
-        DiffBox(v.fields.map { DiffEntry(it.key, it.from, it.to, it.mono) })
+        DiffBox(v.fields.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
         Note(v.note, Modifier.padding(top = 8.dp))
 
         SectionHeading("Hash of the operation", trailing = if (state.showHash) "tap to fold" else "tap for all 64")

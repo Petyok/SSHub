@@ -109,7 +109,7 @@ class ReleaseViewModel(private val core: ReleaseApi, private val platform: Platf
         if (!s.gate.enabled) return
         _state.update { it?.copy(phase = ApprovalPhase.Signing, error = null) }
         viewModelScope.launch {
-            val failure = platform.confirmWithSystemLock("Approve share release", s.view.credential)
+            val failure = platform.confirmWithSystemLock("Approve share release", s.view.requesterName)
             if (failure != null) { _state.update { it?.copy(phase = ApprovalPhase.Review, error = failure) }; return@launch }
             val on = s.channelsOn
             val decision = ReleaseDecision.Approve(

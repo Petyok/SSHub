@@ -18,7 +18,7 @@ import uk.petruha.sshub.phone.core.OpenedTrustRequest
 import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.core.PendingItem
 import uk.petruha.sshub.phone.core.PendingKind
-import uk.petruha.sshub.phone.core.PhoneCoreApi
+import uk.petruha.sshub.phone.core.ExportOpRow
 import uk.petruha.sshub.phone.core.PhoneStatus
 import uk.petruha.sshub.phone.core.RecoveryNoticeOpened
 import uk.petruha.sshub.phone.core.RecoveryNoticeSummary
@@ -57,6 +57,7 @@ import uniffi.sshub_phone_core.ReshareView as RsReshareView
 import uniffi.sshub_phone_core.ScanEvent as RsScanEvent
 import uniffi.sshub_phone_core.ShortCodeOffer as RsShortCodeOffer
 import uniffi.sshub_phone_core.UnlockInfo as RsUnlockInfo
+import uniffi.sshub_phone_core.isWord
 import uniffi.sshub_phone_core.createSecret as rsCreateSecret
 
 /**
@@ -127,13 +128,21 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     private fun drop(token: Long) = synchronized(lock) { cache.remove(token); Unit }
 
-    /** The core removes a pending request when a decision runs, whatever the result; so does the cache. */
+    /**
+     * The core removes a pending request when a decision runs, except after `BadInput` (a wrong typed id): then the request stays
+     * pending, the token stays valid and the cached view stays. Success, a refusal and every other error consume it, so does the cache.
+     */
     private fun rsDecide(token: Long, decision: RsDecision, now: Long): RsOutgoing =
-        try { guard { core.decide(token.toULong(), decision, now) } } finally { drop(token) }
+        try {
+            guard { core.decide(token.toULong(), decision, now) }.also { drop(token) }
+        } catch (e: CoreException) {
+            if (e.code != CoreException.Code.Malformed) drop(token)
+            throw e
+        }
 
-    private fun selfName(i: RsUnlockInfo): String = i.ring.firstOrNull { it.deviceId == i.deviceId }?.name.orEmpty()
+    private fun selfName(i: RsUnlockInfo): String = i.deviceName.orEmpty()
 
-    private fun toStatus(i: RsUnlockInfo) = PhoneStatus(i.deviceId, selfName(i), i.enrolled, i.headPending, i.wrapEpoch.toLong())
+    private fun toStatus(i: RsUnlockInfo) = PhoneStatus(i.deviceId, selfName(i), i.enrolled, i.headPending, i.ringEpoch.toLong())
 
     /** Sound for each profile asked for, made from the share frame the core returned. */
     private fun mapWithAudio(o: RsOutgoing, fast: Boolean, slow: Boolean): Outgoing {
@@ -168,7 +177,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         val opened: Opened = when (rs) {
             is RsOpened.Refused -> mapRefused(rs.view, enrollFrame)
             is RsOpened.ShareRequest -> mapRelease(rs.view)
-            is RsOpened.RedNotice -> mapRed(rs.view, now)
+            is RsOpened.RedNotice -> mapRed(rs.view)
             is RsOpened.ReenrollNotice -> mapNotice(rs.view, selfName(me).ifBlank { "this phone" })
             is RsOpened.CertRequest -> mapTrustRequest(rs.view)
             is RsOpened.CertExtend -> mapTrustExtend(rs.view)
@@ -204,12 +213,12 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         return secret
     }
 
-    /** The word list lives in the core and is not exposed: a typed word is judged by its shape here, and `restoreFromWords` decides. */
+    /** The BIP39 list lives in the core (`isWord`): backup words, manual entry and SAS words are judged by it. */
     override fun validateWord(word: String): WordState {
         val w = word.trim()
         return when {
             w.isEmpty() -> WordState.Empty
-            w.all { it in 'a'..'z' } -> WordState.Ok
+            isWord(w) -> WordState.Ok
             else -> WordState.Bad
         }
     }
@@ -255,7 +264,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         val opened = synchronized(lock) { cache.values.map { it.opened } }
         return RingView(
             name = "Ring",
-            epoch = i.wrapEpoch.toLong(),
+            epoch = i.ringEpoch.toLong(),
             hosts = null, credentials = null, threshold = null, quorum = null, single = null, lastSync = null,
             devices = devices,
             pendingRed = opened.count { it is OpenedRed },
@@ -274,7 +283,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         cache.entries.sortedBy { it.key }.mapNotNull { (token, e) ->
             when (val o = e.opened) {
                 is OpenedRed -> PendingItem(PendingKind.Red, o.view.title, null, Routes.Red + "/" + token)
-                is OpenedRelease -> PendingItem(PendingKind.Release, o.view.host, null, Routes.Release + "/" + token)
+                is OpenedRelease -> PendingItem(PendingKind.Release, o.view.requesterName.ifBlank { o.view.requesterId }, null, Routes.Release + "/" + token)
                 is OpenedTrustRequest -> PendingItem(PendingKind.Trust, o.view.headline, null, Routes.TrustRequest + "/" + token)
                 is OpenedTrustExtend -> PendingItem(PendingKind.Extend, o.view.headline, null, Routes.TrustExtend + "/" + token)
                 is RecoveryNoticeOpened -> PendingItem(PendingKind.Recovery, o.view.startedBy, null, Routes.RecoveryNotice + "/" + token)
@@ -458,8 +467,17 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         val text = guard { core.exportOpsText() }
         val frame = guard { core.frameFromText(text) } ?: throw CoreException(CoreException.Code.Internal, "The exported ops are not valid text.")
         val qr = if (frame.size <= QR_MAX_DOC_BYTES) guard { core.qrFrames(frame, 25u) }.map(::qrMatrix) else emptyList()
-        // The core gives the frame, not its rows: the list of ops stays empty (docs 2.3). `total` is the newest seq.
-        ExportedOps(emptyList(), head.toInt(), Outgoing(frame = frame, text = text, qr = qr))
+        // The rows are the core's own rendering of the same ops (the newest ones the frame carries). `total` is the newest seq.
+        val rows = guard { core.exportOpsView() }.map {
+            ExportOpRow(
+                seq = it.rows.value("Op seq / epoch")?.substringBefore('/')?.trim()?.toLongOrNull() ?: 0,
+                kind = it.kind,
+                time = it.rows.value("Op time").orEmpty(),
+                hash = "",
+                danger = it.dangerCount > 0u,
+            )
+        }
+        ExportedOps(rows, head.toInt(), Outgoing(frame = frame, text = text, qr = qr))
     }
 
     override suspend fun recoveryNotices(now: Long): List<RecoveryNoticeSummary> = synchronized(lock) {

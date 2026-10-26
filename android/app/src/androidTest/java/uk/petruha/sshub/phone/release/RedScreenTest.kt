@@ -63,7 +63,7 @@ class RedScreenTest {
         val log = mutableListOf<String>()
         rule.show(ReleaseSamples.redState(), log = log)
         rule.onNodeWithText("Revoke device laptop-old").assertExists()
-        rule.onNodeWithText("proposed by laptop-main 7B3E-0D15, lamport 1042").assertExists()
+        rule.onNodeWithText("proposed by laptop-main 7B3E-0D15, lamport 1042, seq 57").assertExists()
         rule.onNodeWithText("6 min ago").assertExists()
         rule.onNodeWithText("lapses in 2 d 23 h").assertExists()
         rule.onNodeWithText("Approve").assertIsEnabled().performClick()
