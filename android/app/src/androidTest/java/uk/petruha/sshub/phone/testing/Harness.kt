@@ -29,7 +29,11 @@ fun ComposeContentTestRule.assertTargets48() {
     val density = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
     val min = 48f * density - 1f
     val bad = onAllNodes(androidx.compose.ui.test.hasClickAction()).fetchSemanticsNodes().filter { it.size.width < min || it.size.height < min }
-    check(bad.isEmpty()) { "clickable nodes under 48dp: " + bad.joinToString { "${it.size.width}x${it.size.height}px at ${it.positionInRoot}" } }
+    check(bad.isEmpty()) { "clickable nodes under 48dp: " + bad.joinToString { n ->
+        val t = n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.joinToString("|") { it.text }
+        val d = n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.ContentDescription)?.joinToString("|")
+        "[${t ?: d}] ${n.size.width}x${n.size.height}px"
+    } }
 }
 
 /** Spec 4.3 / D4: no text on the screen is clipped. */

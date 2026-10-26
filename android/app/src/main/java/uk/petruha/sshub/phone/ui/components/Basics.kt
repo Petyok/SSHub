@@ -167,16 +167,17 @@ fun ScreenFrame(
 fun BarButtons(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
     androidx.compose.ui.layout.Layout(content, modifier.fillMaxWidth()) { measurables, c ->
         val gap = 12.dp.roundToPx()
-        val n = measurables.size
-        val each = (c.maxWidth - gap * (n - 1)) / n.coerceAtLeast(1)
-        val side = measurables.map { it.measure(androidx.compose.ui.unit.Constraints(minWidth = each, maxWidth = each)) }
-        val fits = side.all { it.height <= 72.dp.roundToPx() } && fontScaleFor(this) < 1.3f
-        val placeables = if (fits) side else measurables.map { it.measure(androidx.compose.ui.unit.Constraints(minWidth = c.maxWidth, maxWidth = c.maxWidth)) }
-        if (fits) {
-            val h = placeables.maxOf { it.height }
+        val n = measurables.size.coerceAtLeast(1)
+        val each = (c.maxWidth - gap * (n - 1)) / n
+        // Intrinsic heights decide the mode; every child is then measured exactly once.
+        val side = fontScaleFor(this) < 1.3f && measurables.all { it.maxIntrinsicHeight(each) <= 72.dp.roundToPx() }
+        if (side) {
+            val placeables = measurables.map { it.measure(androidx.compose.ui.unit.Constraints(minWidth = each, maxWidth = each)) }
+            val h = placeables.maxOfOrNull { it.height } ?: 0
             layout(c.maxWidth, h) { var x = 0; placeables.forEach { it.place(x, 0); x += each + gap } }
         } else {
-            val h = placeables.sumOf { it.height } + gap * (n - 1)
+            val placeables = measurables.map { it.measure(androidx.compose.ui.unit.Constraints(minWidth = c.maxWidth, maxWidth = c.maxWidth)) }
+            val h = placeables.sumOf { it.height } + gap * (placeables.size - 1).coerceAtLeast(0)
             layout(c.maxWidth, h) { var y = 0; placeables.forEach { it.place(0, y); y += it.height + gap } }
         }
     }
