@@ -44,5 +44,5 @@ fun ComposeContentTestRule.assertNoVisualOverflow() {
             it.config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult)?.action?.invoke(r)
             r.any { l -> l.hasVisualOverflow }
         }
-    check(bad.isEmpty()) { "texts with visual overflow: ${bad.size}" }
+    check(bad.isEmpty()) { "texts with visual overflow: ${bad.size}: " + bad.take(6).joinToString { n -> "[" + (n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.joinToString("|") { it.text }?.take(40)) + "] ${n.size.width}x${n.size.height}" } }
 }

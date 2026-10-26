@@ -57,6 +57,8 @@ interface BleLink {
     fun sendFrame(f: ByteArray): Boolean
     fun takeFrames(): List<ByteArray>
     fun tick(nowMillis: Long)
+    /** Ends the session politely (BYE) before the disconnect. */
+    fun bye()
     val closed: Boolean
 }
 
@@ -263,7 +265,7 @@ private class GattChannel(
                     is Ev.Notify -> l.onMessage(ev.value)
                     is Ev.Send -> ev.done.complete(l.sendFrame(ev.frame))
                     Ev.Down -> { up = false; break }
-                    Ev.Close -> break
+                    Ev.Close -> { l.bye(); flush(l); break }
                     else -> {}
                 }
                 l.tick(SystemClock.elapsedRealtime())

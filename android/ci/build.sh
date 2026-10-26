@@ -7,14 +7,12 @@ set -eu
 mode=${1:-build}
 cd /work
 export CARGO_HOME=/cargo-home GRADLE_USER_HOME=/gradle-home CARGO_TARGET_DIR=/target HOME=/home/ci
-CORE=crates/sshub-phone-core/Cargo.toml
 # Reproducibility: no absolute paths or build ids in the .so; 16 KiB page alignment for Android 15+.
 RF="--remap-path-prefix=/work=/src --remap-path-prefix=/cargo-home=/cargo -C link-arg=-Wl,--build-id=none -C link-arg=-Wl,-z,max-page-size=16384"
 mkdir -p /out
 
 if [ "$mode" = bootstrap ]; then
-    # One-off generation of the committed files: Cargo.lock, Gradle wrapper (checksummed), debug keystore.
-    cargo generate-lockfile --manifest-path "$CORE"
+    # One-off generation of the committed files: Gradle wrapper (checksummed), debug keystore.
     cd android
     gradle --no-daemon --console=plain wrapper --gradle-version 8.11.1 --distribution-type bin \
         --gradle-distribution-sha256-sum f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6
@@ -36,7 +34,7 @@ if [ "$mode" = connected ]; then
     echo "== connectedDebugAndroidTest"
     cd android
     rc=0
-    ./gradlew --no-daemon --console=plain connectedDebugAndroidTest || rc=$?
+    ./gradlew --no-daemon --console=plain connectedDebugAndroidTest ${TEST_CLASS:+-Pandroid.testInstrumentationRunnerArguments.class=$TEST_CLASS} || rc=$?
     cp -r app/build/outputs/androidTest-results /out/ 2>/dev/null || true
     cp -r app/build/reports/androidTests /out/ 2>/dev/null || true
     exit "$rc"
@@ -44,27 +42,22 @@ fi
 
 echo "== versions"; cat /opt/VERSIONS.txt
 
-# The Rust core lives in crates/sshub-phone-core (owned by the phone-core branch). Until it is merged here the app
-# builds against the Kotlin fake only and this block is skipped.
-if [ -f "$CORE" ]; then
-    echo "== core unit tests (host)"
-    cargo test --locked --manifest-path "$CORE"
+# The Rust core: crates/sshub-phone-core in the root workspace (one Cargo.lock with the terminal), built with the `phone` profile
+# (release, symbols kept: uniffi library mode reads its metadata from them).
+echo "== core unit tests (host)"
+cargo test --locked -p sshub-phone-core --lib
 
-    echo "== cargo-ndk"
-    rm -rf android/app/src/main/jniLibs
-    RUSTFLAGS="$RF" cargo ndk -t arm64-v8a -t x86_64 --platform 30 -o android/app/src/main/jniLibs \
-        build --locked --release --manifest-path "$CORE"
+echo "== cargo-ndk"
+rm -rf android/app/src/main/jniLibs
+RUSTFLAGS="$RF" cargo ndk -t arm64-v8a -t x86_64 --platform 30 -o android/app/src/main/jniLibs \
+    build --locked -p sshub-phone-core --profile phone
 
-    echo "== uniffi bindings"
-    cargo build --locked --manifest-path "$CORE" --features cli --bin uniffi-bindgen
-    rm -rf android/app/build/generated/uniffi/kotlin
-    "$CARGO_TARGET_DIR/debug/uniffi-bindgen" generate \
-        --library "$CARGO_TARGET_DIR/x86_64-linux-android/release/libsshub_phone_core.so" \
-        --language kotlin --out-dir android/app/build/generated/uniffi/kotlin
-else
-    echo "== no $CORE: building the UI without the native library"
-    rm -rf android/app/src/main/jniLibs android/app/build/generated/uniffi
-fi
+echo "== uniffi bindings"
+cargo build --locked -p sshub-phone-core --features cli --bin uniffi-bindgen
+rm -rf android/app/build/generated/uniffi/kotlin
+"$CARGO_TARGET_DIR/debug/uniffi-bindgen" generate \
+    --library "$CARGO_TARGET_DIR/x86_64-linux-android/phone/libsshub_phone_core.so" \
+    --language kotlin --out-dir android/app/build/generated/uniffi/kotlin
 
 echo "== lint (colour, ellipsis, logging rules)"
 sh /work/android/ci/lint.sh

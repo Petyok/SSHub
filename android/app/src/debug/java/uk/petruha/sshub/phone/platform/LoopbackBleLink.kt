@@ -15,6 +15,7 @@ class LoopbackBleLink : BleLink {
     override fun sendFrame(f: ByteArray): Boolean { if (closed) return false; outbox += f; return true }
     override fun takeFrames(): List<ByteArray> = frames.toList().also { frames.clear() }
     override fun tick(nowMillis: Long) {}
+    override fun bye() { closed = true }
     fun close() { closed = true }
 
     companion object {

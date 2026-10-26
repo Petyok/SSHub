@@ -54,6 +54,12 @@ Rules of the split:
 `cdylib` + `lib`, `uniffi` proc-macros (library mode, no UDL), builds with `cargo-ndk` for `aarch64-linux-android` and
 `x86_64-linux-android` (arm32 and x86 are not built; `minSdk` 30 devices are all 64 bit).
 
+Android build of the core (the library the app loads; the uniffi Kotlin is generated from it in library mode):
+
+```sh
+cargo ndk -t arm64-v8a -t x86_64 --platform 30 build -p sshub-phone-core --profile phone
+```
+
 Modules (all new code is a port of the page; sources of truth listed):
 
 | module | content | port of |
@@ -129,6 +135,48 @@ is taken back from a terminal (section 5).
   (no screenshots, no recents thumbnail), screen kept on and brightness raised on the QR output screen only.
 - No R8 in phase 1; release minify stays off until the uniffi/JNA keep rules are tested (open item, no security impact:
   the app has no secrets in code).
+
+### 2.3 Kotlin adapter
+
+`UniffiPhoneCore` (`android/app/src/main/java/uk/petruha/sshub/phone/core/uniffi/`) is the one implementation of `PhoneCoreApi` the release app
+uses: a thin adapter over the generated `uniffi.sshub_phone_core.PhoneCore` (errors are aliased on import: the generated `CoreException`
+and `Opened` share names with ours). One `PhoneCore` per process; it reads the sealed state from `SealedStateStore` (`noBackupFilesDir/core/state.bin`)
+at construction and writes `sealed_state()` after every call that changes it (unlock, `openFrame` of anything but a refusal, every decision,
+rotate, never signed, short code declared dead). Blocking calls run on `Dispatchers.Default` where the Kotlin method is `suspend`.
+
+**Token cache.** Rust is `open_frame` -> view with a token -> `decide(token, ...)`; our interfaces fetch views by token. `openFrame` maps
+the Rust `Opened` to the group's Kotlin `Opened` subtype and keeps `token -> (Kotlin view, Rust view)` in memory. `pendingView`, `trustRequest`,
+`trustExtend`, `reshareCandidate`, `recoveryNotice(s)` and the Home `pending` list are answered from it. The core drops all pending requests
+when it opens the next frame that carries the frame magic and when a decision runs (also a failed one: a wrong typed id consumes the token);
+the cache does the same, so it holds what the core can still decide. It is never persisted.
+
+| Rust | Kotlin |
+|---|---|
+| `Opened::Refused` | `OpenedRefused` (reason as title, checks as `ReleaseCheck`); for kinds 6 to 8 `EnrollRefusal` |
+| `ShareRequest` / `RedNotice` | `OpenedRelease` / `OpenedRed`; `Row` -> `RedField(from = null)`; `typeToApprove` -> `mustType`, the "never introduced" `warn` check -> `needsTypedId` |
+| `CertRequest` / `CertExtend` | `OpenedTrustRequest` / `OpenedTrustExtend`; `problems` -> `refusal` (no Approve) |
+| `Reshare` | `ReshareOpened`; `decide(Approve)` is adopt and sign in one step, so `decideReshare` signs and holds the ops, `publishNewShares` hands them out |
+| `ReenrollNotice` | `RecoveryNoticeOpened`; cancel = `decide(Approve)` |
+| `Chain` | `OpenedChain`; `adoptChain` = `decide(Approve)` |
+| `Enroll` / `Enrolled` | `OpenedEnroll` / `OpenedEnrolled`; `EnrollName` / `EnrollSas` decisions |
+| `Outgoing` | `Outgoing`: `QrFrame` -> `QrMatrix`, `audioBurst(frame, profile)` for each sound profile asked for (48 kHz, `fsk::RATE`) |
+| `CoreError` | `CoreException`: `BadInput` Malformed, `Refused` Refused (HeadPending while `head_pending`, Expired for a release past its expiry), `Locked` Refused, `Internal` Internal |
+
+The BLE link is `CoreBleLink` over `BleSession` (started at creation, monotonic `elapsedRealtime` milliseconds); `CoreBleLinkFactory` makes one per connection.
+
+**What the Rust core cannot fill** (null, empty or a neutral value on the Kotlin side; nothing is invented):
+
+- `PhoneStatus.deviceName`: taken from the ring list when the phone is in it, else empty. `PhoneStatus.epoch` and `RingView.epoch` are the wrap generation (`wrap_epoch`), the ring epoch is not exposed.
+- Ring: no hosts, credentials, threshold, quorum, last sync, roles, "seen" texts, age of a pending item.
+- `RedView`: no `lamport` (0), no proposal time (`proposedAt` = when the phone read it, `lapsesAt` = 3 days later; the core still refuses a lapsed one at decision), no `danger` flag per row, no typed-id field on the Red screen (a proposer never met cannot be approved there).
+- `ReleaseView`: no requester fingerprint, credential name or mode (`credential` and `mode` are empty), `signedAt` is `expiresAt - 120`. `ShareWords.of` is 0 (the core gives the share index only).
+- `TrustRequestView`: device id and name are read from the `Trusted device` row, no fingerprint, no per-check epoch list, `signedSummary` is the headline. `TrustExtendView`: no `again` timing (the refusal text carries it), diff is the budget row and the extra hosts row.
+- Issued certificates: one summary line per certificate; device, end of term and budget are read back from it, hosts, issue time, term days and extensions are empty or 0.
+- `ExportedOps.rows` is empty (the core gives the frame and text, not rows); `total` is the newest seq.
+- Recovery notice: no phone name unless the phone is in its ring list; `startedUtc` and `endsUtc` are formatted in Kotlin in the core's own `iso()` form; always `cancellable` (the core refuses at decision).
+- Reshare: `note` is a count of verified contributors, `adoptable` is true whenever the core returned a view. Stage Start is shown until a rotation or adoption (so Rotate is reachable); the sequence is in memory and restarts as Start after a process restart.
+- `ChainCheck`s: none (the core returns `agreed` and the heads, not a check list). `ScanEvent.Foreign` is never produced. `validateWord` judges only shape (a to z); the word list and checksum are checked by `restoreFromWords`. `nameProblem` is null: the name rules run in `enrollDecide(Name)`.
+- `state_lost` of `UnlockInfo` and `damaged` of the scan progress are not carried (a lost state shows as a restored phone with `headPending`).
 
 ## 3. Extraction plan: `sshub-sync-proto`
 

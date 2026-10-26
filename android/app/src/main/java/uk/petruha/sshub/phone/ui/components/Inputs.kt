@@ -103,7 +103,6 @@ fun MonoField(
             value, onValueChange,
             Modifier.fillMaxWidth().heightIn(min = 56.dp)
                 .background(cs.background, SshubShape.field).border(2.dp, if (error != null) sc.danger else cs.onSurface, SshubShape.field)
-                .padding(horizontal = 14.dp, vertical = 12.dp)
                 .semantics { contentDescription = label; if (error != null) error(error) },
             textStyle = SshubText.input.merge(TextStyle(color = cs.onSurface)),
             cursorBrush = SolidColor(cs.onSurface),
@@ -115,7 +114,7 @@ fun MonoField(
                 imeAction = ImeAction.Done,
             ),
             decorationBox = { inner ->
-                Box(contentAlignment = Alignment.CenterStart) {
+                Box(Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(horizontal = 14.dp, vertical = 12.dp), contentAlignment = Alignment.CenterStart) {
                     if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, style = SshubText.input.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal), color = cs.onSurfaceVariant)
                     inner()
                 }

@@ -118,7 +118,7 @@ fun HexGroups(hex: String, modifier: Modifier = Modifier, groups: Int? = 3, onCl
         contentDescription = "$label ${spokenHex(shown)}"
     }
     FlowRow(
-        if (onClick != null) m.clickable(role = Role.Button, onClick = onClick) else m,
+        if (onClick != null) m.heightIn(min = 48.dp).clickable(role = Role.Button, onClick = onClick) else m,
         horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp),
         maxItemsInEachRow = if (fontScale() >= 1.3f) 2 else 4,
     ) {
