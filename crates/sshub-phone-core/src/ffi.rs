@@ -68,17 +68,9 @@ pub fn create_secret() -> Vec<u8> {
 }
 
 /// Whether `word` (any case) is a word of the BIP39 list the 24 backup words and the manual entry use: input
-/// validation while the person types. Not a check of the phrase (the checksum is checked by `restore_from_words`).
+/// validation while the person types (the four enrollment SAS words come from the same list). Not a check of the phrase (the checksum is checked by `restore_from_words`).
 #[uniffi::export]
 pub fn is_word(word: String) -> bool {
-    sshub_sync_proto::crypto::is_bip39_word(&word)
-}
-
-/// Whether `word` (any case) is a word the four-word enrollment check uses. The SAS words are drawn from the same
-/// English BIP39 list as the backup words (`crypto::sas`), so this is the same test as [`is_word`]; it is a separate
-/// name so the screens say what they validate.
-#[uniffi::export]
-pub fn is_sas_word(word: String) -> bool {
     sshub_sync_proto::crypto::is_bip39_word(&word)
 }
 
@@ -757,12 +749,12 @@ mod tests {
     }
 
     #[test]
-    fn sas_words_are_words_of_the_sas_list() {
+    fn sas_words_pass_is_word() {
         let w = sshub_sync_proto::crypto::sas_words(&[0x5a; 32]);
         for word in w.split('-') {
-            assert!(is_sas_word(word.into()), "{word}");
+            assert!(is_word(word.into()), "{word}");
         }
-        assert!(!is_sas_word("harbour2".into()) && !is_sas_word("".into()));
+        assert!(!is_word("harbour2".into()) && !is_word("".into()));
     }
 
     #[test]
