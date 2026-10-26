@@ -276,6 +276,9 @@ pub struct PrivateAgent {
     dir: PathBuf,
     sock: PathBuf,
     next: usize,
+    /// Keys already added in this agent, by a hash of their text: the same identity used by several hops
+    /// of one connection is added once.
+    added: Vec<([u8; 32], AgentKey)>,
 }
 
 impl PrivateAgent {
@@ -321,6 +324,7 @@ impl PrivateAgent {
             dir,
             sock,
             next: 0,
+            added: Vec::new(),
         };
         for _ in 0..100 {
             if agent.sock.exists() {
@@ -388,6 +392,10 @@ impl PrivateAgent {
         ttl_secs: u32,
         askpass: Option<&AskpassEnv>,
     ) -> Result<AgentKey> {
+        let digest = crate::sync::crypto::chain_hash(private_key.as_bytes());
+        if let Some((_, k)) = self.added.iter().find(|(d, _)| *d == digest) {
+            return Ok(k.clone());
+        }
         let before = self.listed()?;
         let mut pem = zeroize::Zeroizing::new(private_key.as_bytes().to_vec());
         if !pem.ends_with(b"\n") {
@@ -407,10 +415,12 @@ impl PrivateAgent {
         self.next += 1;
         let public_file = self.dir.join(format!("k{}.pub", self.next));
         fs::write(&public_file, format!("{line}\n"))?;
-        Ok(AgentKey {
+        let key = AgentKey {
             public_file,
             public_line: line,
-        })
+        };
+        self.added.push((digest, key.clone()));
+        Ok(key)
     }
 
     /// The `ssh` arguments that use only this agent and this key.
@@ -510,6 +520,8 @@ mod agent_tests {
             let want: Vec<&str> = public.split_whitespace().take(2).collect();
             let got: Vec<&str> = k.public_line.split_whitespace().take(2).collect();
             assert_eq!(got, want, "the agent lists the key's public half");
+            // The same identity on several hops of one connection is added once, not refused as a duplicate.
+            assert_eq!(agent.add_key(&pem, 600, None).unwrap(), k);
             let args = agent.ssh_args(&k);
             assert_eq!(
                 &args[..4],
