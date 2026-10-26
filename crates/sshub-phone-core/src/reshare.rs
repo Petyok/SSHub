@@ -26,7 +26,9 @@ use chacha20poly1305::{
     XChaCha20Poly1305,
 };
 use rand_core::RngCore;
-use sshub_sync_proto::crypto::{aead_open, hybrid_wrap, reshare_combine, reshare_verify, verify, ReshareContribution};
+use sshub_sync_proto::crypto::{
+    aead_open, hybrid_wrap, reshare_combine, reshare_verify, verify, ReshareContribution,
+};
 use sshub_sync_proto::oplog::{canonical::decode_op, ConfirmItem, Op, OpBody, ReshareItem};
 use sshub_sync_proto::wire::SignedOpBytes;
 use zeroize::Zeroizing;
@@ -84,7 +86,10 @@ struct Fail {
 
 impl From<String> for Fail {
     fn from(error: String) -> Self {
-        Self { error, contributors: Vec::new() }
+        Self {
+            error,
+            contributors: Vec::new(),
+        }
     }
 }
 
@@ -100,7 +105,13 @@ fn u64be(n: u64) -> [u8; 8] {
 
 /// Associated data of a contributor's sub-share for this phone.
 fn sub_aad(host: &[u8; 16], epoch: u64, author: &str, to: &str) -> Vec<u8> {
-    [host.as_slice(), u64be(epoch).as_slice(), author.as_bytes(), to.as_bytes()].concat()
+    [
+        host.as_slice(),
+        u64be(epoch).as_slice(),
+        author.as_bytes(),
+        to.as_bytes(),
+    ]
+    .concat()
 }
 
 /// Associated data of a confirm item (`envelopeAad` of the page).
@@ -119,7 +130,9 @@ fn seal(rng: &mut dyn RngCore, key: &[u8; 32], aad: &[u8], plain: &[u8]) -> Vec<
 }
 
 fn is_device_id(s: &str) -> bool {
-    s.len() == 16 && s.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
+    s.len() == 16
+        && s.bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
 }
 
 fn name_of(aliases: &BTreeMap<String, String>, id: &str) -> String {
@@ -133,14 +146,22 @@ fn name_of(aliases: &BTreeMap<String, String>, id: &str) -> String {
 /// is damaged), `None` the author is not in the ring (nothing is proven either way).
 fn ring_verify(state: &PhoneState, op: &Op, raw: &SignedOpBytes) -> Option<bool> {
     let known = state.ring.get(&op.device_id)?;
-    let key = hex::decode(&known.ed25519_pub).ok().and_then(|b| <[u8; 32]>::try_from(b).ok());
+    let key = hex::decode(&known.ed25519_pub)
+        .ok()
+        .and_then(|b| <[u8; 32]>::try_from(b).ok());
     Some(key.is_some_and(|k| verify(&k, &raw.0, &raw.1)))
 }
 
 /// The storage key this phone already published for `epoch`, opened from its own chain, or `None`.
-pub fn own_storage_key(id: &mut PhoneIdentity, chain: &[ChainEntry], epoch: u64) -> Option<Zeroizing<[u8; 32]>> {
+pub fn own_storage_key(
+    id: &mut PhoneIdentity,
+    chain: &[ChainEntry],
+    epoch: u64,
+) -> Option<Zeroizing<[u8; 32]>> {
     for e in chain {
-        let Ok(op) = decode_op(&e.canonical, e.signature64()) else { continue };
+        let Ok(op) = decode_op(&e.canonical, e.signature64()) else {
+            continue;
+        };
         if let OpBody::ShareStorageKey { epoch: ep, sealed } = &op.body {
             if *ep != epoch {
                 continue;
@@ -172,24 +193,44 @@ fn plan(
     epoch: u64,
 ) -> std::result::Result<Plan, Fail> {
     let me = id.device_id().to_string();
-    let sigs: Vec<Option<bool>> = parsed.iter().zip(ops).map(|(op, raw)| ring_verify(state, op, raw)).collect();
+    let sigs: Vec<Option<bool>> = parsed
+        .iter()
+        .zip(ops)
+        .map(|(op, raw)| ring_verify(state, op, raw))
+        .collect();
 
     // (index in the list, new_holders, items)
     let mut batches: Vec<(usize, &[String], &[ReshareItem])> = Vec::new();
     let mut sessions: Vec<(usize, &[u8])> = Vec::new();
     for (i, op) in parsed.iter().enumerate() {
         match &op.body {
-            OpBody::ShareReshareBatch { epoch: e, new_holders, items } if *e == epoch => batches.push((i, new_holders.as_slice(), items.as_slice())),
-            OpBody::ShareReshareSession { epoch: e, to, sealed } if *e == epoch && *to == me => sessions.push((i, sealed.as_slice())),
+            OpBody::ShareReshareBatch {
+                epoch: e,
+                new_holders,
+                items,
+            } if *e == epoch => batches.push((i, new_holders.as_slice(), items.as_slice())),
+            OpBody::ShareReshareSession {
+                epoch: e,
+                to,
+                sealed,
+            } if *e == epoch && *to == me => sessions.push((i, sealed.as_slice())),
             _ => {}
         }
     }
     if batches.is_empty() {
         return Err(format!("no reshare batches for epoch {epoch} in these ops").into());
     }
-    for i in batches.iter().map(|b| b.0).chain(sessions.iter().map(|s| s.0)) {
+    for i in batches
+        .iter()
+        .map(|b| b.0)
+        .chain(sessions.iter().map(|s| s.0))
+    {
         if sigs[i] == Some(false) {
-            return Err(format!("the signature of {} does not verify over its reshare op", parsed[i].device_id).into());
+            return Err(format!(
+                "the signature of {} does not verify over its reshare op",
+                parsed[i].device_id
+            )
+            .into());
         }
     }
     // A holder id is the 16 lower-case hex characters of a device id; anything else never reaches a screen (PF5).
@@ -207,7 +248,9 @@ fn plan(
     }
     // An index is a u8 and a holder is named once: a repeated id would shift every index after it.
     if holders.len() > 255 || holders.windows(2).any(|w| w[0] == w[1]) {
-        return Err("the new holder set is not a list of distinct holders this phone can index".into());
+        return Err(
+            "the new holder set is not a list of distinct holders this phone can index".into(),
+        );
     }
     let Some(at) = holders.iter().position(|h| *h == me) else {
         return Err("this phone is not a holder at that epoch".into());
@@ -233,7 +276,11 @@ fn plan(
     let contributors: Vec<Contributor> = authors
         .iter()
         .map(|a| {
-            let first = batches.iter().find(|b| parsed[b.0].device_id == *a).expect("an author wrote a batch").0;
+            let first = batches
+                .iter()
+                .find(|b| parsed[b.0].device_id == *a)
+                .expect("an author wrote a batch")
+                .0;
             Contributor {
                 id: (*a).to_string(),
                 session: keys.contains_key(*a),
@@ -252,7 +299,10 @@ fn plan(
         });
     }
 
-    let hosts: BTreeSet<[u8; 16]> = batches.iter().flat_map(|b| b.2.iter().map(|i| i.host_uid)).collect();
+    let hosts: BTreeSet<[u8; 16]> = batches
+        .iter()
+        .flat_map(|b| b.2.iter().map(|i| i.host_uid))
+        .collect();
     let mut skipped = 0usize;
     let mut planned: Vec<([u8; 16], Zeroizing<Vec<u8>>)> = Vec::new();
     for host in &hosts {
@@ -260,15 +310,29 @@ fn plan(
         let mut groups: BTreeMap<u64, Vec<(u8, &str, ReshareContribution)>> = BTreeMap::new();
         for (bi, _, items) in &batches {
             let author = parsed[*bi].device_id.as_str();
-            let Some(key) = keys.get(author) else { continue };
-            let Some(item) = items.iter().find(|i| i.host_uid == *host) else { continue };
+            let Some(key) = keys.get(author) else {
+                continue;
+            };
+            let Some(item) = items.iter().find(|i| i.host_uid == *host) else {
+                continue;
+            };
             // Only a contribution of an author this phone verified is combined: the k check counts these very entries.
             if sigs[*bi] != Some(true) {
                 continue;
             }
-            let Some(pos) = item.sub_shares.iter().position(|(to, _)| *to == me) else { continue };
-            let Some(commitment) = item.commitments.get(pos) else { continue };
-            let Ok(plain) = aead_open(key, &sub_aad(host, epoch, author, &me), &item.sub_shares[pos].1) else { continue };
+            let Some(pos) = item.sub_shares.iter().position(|(to, _)| *to == me) else {
+                continue;
+            };
+            let Some(commitment) = item.commitments.get(pos) else {
+                continue;
+            };
+            let Ok(plain) = aead_open(
+                key,
+                &sub_aad(host, epoch, author, &me),
+                &item.sub_shares[pos].1,
+            ) else {
+                continue;
+            };
             let plain = Zeroizing::new(plain);
             if plain.len() != 41 {
                 continue;
@@ -300,7 +364,10 @@ fn plan(
         }
     }
     if planned.is_empty() {
-        return Err(Fail { error: "no credential has two readable contributions yet".into(), contributors });
+        return Err(Fail {
+            error: "no credential has two readable contributions yet".into(),
+            contributors,
+        });
     }
 
     let (storage, storage_sealed) = match own_storage_key(id, &state.chain, epoch) {
@@ -316,7 +383,12 @@ fn plan(
         .iter()
         .map(|(host, share)| ConfirmItem {
             host_uid: *host,
-            sealed_share: seal(rng, &storage, &envelope_aad(host, epoch, my_index), &[[my_index].as_slice(), share.as_slice()].concat()),
+            sealed_share: seal(
+                rng,
+                &storage,
+                &envelope_aad(host, epoch, my_index),
+                &[[my_index].as_slice(), share.as_slice()].concat(),
+            ),
         })
         .collect();
 
@@ -328,7 +400,18 @@ fn plan(
             seen.epoch = seen.epoch.max(op.epoch);
         }
     }
-    Ok(Plan { pending: PendingReshare { epoch, items, storage_sealed, seen }, holders, my_index, contributors, skipped })
+    Ok(Plan {
+        pending: PendingReshare {
+            epoch,
+            items,
+            storage_sealed,
+            seen,
+        },
+        holders,
+        my_index,
+        contributors,
+        skipped,
+    })
 }
 
 /// One line per contributor of a refused delivery (the page's contributor summary).
@@ -337,19 +420,43 @@ fn contributor_line(aliases: &BTreeMap<String, String>, c: &Contributor) -> Stri
         "{} [{}] ({}{}{})",
         name_of(aliases, &c.id),
         c.id,
-        if c.verified { "signature verified" } else { "signature not checked" },
-        if c.known { "" } else { ", not known to this phone" },
-        if c.session { "" } else { ", no session key for this phone" }
+        if c.verified {
+            "signature verified"
+        } else {
+            "signature not checked"
+        },
+        if c.known {
+            ""
+        } else {
+            ", not known to this phone"
+        },
+        if c.session {
+            ""
+        } else {
+            ", no session key for this phone"
+        }
     )
 }
 
 fn refuse(reason: impl Into<String>) -> (Opened, Option<PendingReshare>) {
-    (Opened::Refused { view: RefusalView { reason: reason.into(), checks: Vec::new() } }, None)
+    (
+        Opened::Refused {
+            view: RefusalView {
+                reason: reason.into(),
+                checks: Vec::new(),
+            },
+        },
+        None,
+    )
 }
 
 /// A kind 5 list that carries `ShareReshareBatch` ops: the summary the person approves, or a refusal. Remote ops of any
 /// shape end on a refusal (`reshareLoad`).
-pub fn open_reshare(ops: Vec<SignedOpBytes>, ctx: &mut Ctx, token: u64) -> (Opened, Option<PendingReshare>) {
+pub fn open_reshare(
+    ops: Vec<SignedOpBytes>,
+    ctx: &mut Ctx,
+    token: u64,
+) -> (Opened, Option<PendingReshare>) {
     let parsed = match parse_ops(&ops) {
         Ok(p) => p,
         Err(e) => return refuse(e),
@@ -361,17 +468,38 @@ pub fn open_reshare(ops: Vec<SignedOpBytes>, ctx: &mut Ctx, token: u64) -> (Open
             _ => None,
         })
         .max();
-    let Some(epoch) = epoch else { return refuse("These ops carry no reshare batch.") };
-    let p = match plan(&mut *ctx.id, &*ctx.state, &mut *ctx.rng, &ops, &parsed, epoch) {
+    let Some(epoch) = epoch else {
+        return refuse("These ops carry no reshare batch.");
+    };
+    let p = match plan(
+        &mut *ctx.id,
+        &*ctx.state,
+        &mut *ctx.rng,
+        &ops,
+        &parsed,
+        epoch,
+    ) {
         Ok(p) => p,
         Err(f) => {
             let aliases = ctx.aliases();
             let checks = f
                 .contributors
                 .iter()
-                .map(|c| Check { text: contributor_line(&aliases, c), warn: !c.verified, ok: true })
+                .map(|c| Check {
+                    text: contributor_line(&aliases, c),
+                    warn: !c.verified,
+                    ok: true,
+                })
                 .collect();
-            return (Opened::Refused { view: RefusalView { reason: f.error, checks } }, None);
+            return (
+                Opened::Refused {
+                    view: RefusalView {
+                        reason: f.error,
+                        checks,
+                    },
+                },
+                None,
+            );
         }
     };
     let aliases = ctx.aliases();
@@ -399,7 +527,11 @@ pub fn open_reshare(ops: Vec<SignedOpBytes>, ctx: &mut Ctx, token: u64) -> (Open
             .iter()
             .map(|h| HolderView {
                 device_id: h.clone(),
-                name: if *h == me { "this phone".to_string() } else { name_of(&aliases, h) },
+                name: if *h == me {
+                    "this phone".to_string()
+                } else {
+                    name_of(&aliases, h)
+                },
                 is_this_phone: *h == me,
             })
             .collect(),
@@ -412,7 +544,8 @@ pub fn open_reshare(ops: Vec<SignedOpBytes>, ctx: &mut Ctx, token: u64) -> (Open
 /// `RESHARE_ITEMS_PER_OP` items) and returns the list a terminal must take. A delivery carries at most `COURIER_TAIL`
 /// ops: a bigger plan is refused before anything is signed.
 pub fn publish_reshare(p: PendingReshare, ctx: &mut Ctx) -> Result<crate::views::Outgoing> {
-    let count = p.items.chunks(RESHARE_ITEMS_PER_OP).count() + usize::from(p.storage_sealed.is_some());
+    let count =
+        p.items.chunks(RESHARE_ITEMS_PER_OP).count() + usize::from(p.storage_sealed.is_some());
     if count > COURIER_TAIL {
         return Err(CoreError::refused(format!(
             "{} credentials need {count} ops; a delivery carries {COURIER_TAIL}. Ask the terminal to send them in parts.",
@@ -438,7 +571,9 @@ pub fn rotate_wrap_keys(ctx: &mut Ctx) -> Result<crate::views::Outgoing> {
     let base = ctx.state.wrap_epoch.max(ctx.id.seen_wrap_epoch());
     let next_epoch = base + 1;
     if next_epoch > WRAP_GEN_MAX {
-        return Err(CoreError::refused(format!("this phone cannot open wrap key generations above {WRAP_GEN_MAX}")));
+        return Err(CoreError::refused(format!(
+            "this phone cannot open wrap key generations above {WRAP_GEN_MAX}"
+        )));
     }
     ctx.state.wrap_epoch = base;
     let next = ctx.id.at_generation(next_epoch)?;

@@ -56,7 +56,9 @@ impl PhoneIdentity {
     /// The identity at wrap generation `wrap_epoch` (the newest the chain announced).
     pub fn new(secret: &[u8; 32], wrap_epoch: u32) -> Result<Self> {
         if wrap_epoch > WRAP_GEN_MAX {
-            return Err(CoreError::bad(format!("wrap key generation {wrap_epoch} is above {WRAP_GEN_MAX}")));
+            return Err(CoreError::bad(format!(
+                "wrap key generation {wrap_epoch} is above {WRAP_GEN_MAX}"
+            )));
         }
         let id = identity_at(secret, wrap_epoch);
         let device_id = id.public().device_id();
@@ -71,7 +73,9 @@ impl PhoneIdentity {
     }
 
     pub fn from_slice(secret: &[u8], wrap_epoch: u32) -> Result<Self> {
-        let s: [u8; 32] = secret.try_into().map_err(|_| CoreError::bad("the phone secret must be 32 bytes"))?;
+        let s: [u8; 32] = secret
+            .try_into()
+            .map_err(|_| CoreError::bad("the phone secret must be 32 bytes"))?;
         Self::new(&s, wrap_epoch)
     }
 

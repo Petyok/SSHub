@@ -14,7 +14,9 @@ use sshub_sync_proto::limits::{CHALLENGE_EXPIRY_SECS, TIMESTAMP_SKEW_GRACE_SECS}
 use sshub_sync_proto::oplog::canonical::body_name;
 use sshub_sync_proto::oplog::{Op, OpBody};
 use sshub_sync_proto::share_release::ReplyExt;
-use sshub_sync_proto::wire::{binding_preimage, ChallengeWire, PhoneMaterial, ShareKind, ShareResponseWire};
+use sshub_sync_proto::wire::{
+    binding_preimage, ChallengeWire, PhoneMaterial, ShareKind, ShareResponseWire,
+};
 use zeroize::Zeroizing;
 
 use crate::chain::{self, Seen};
@@ -25,7 +27,10 @@ use crate::identity::PhoneIdentity;
 use crate::outgoing;
 use crate::state::COURIER_TAIL;
 use crate::text::safe_text;
-use crate::views::{Check, IssuedCode, ManualEntry, Outgoing, RefusalView, ReleaseOptions, ShareRequestView, ShortCodeOffer};
+use crate::views::{
+    Check, IssuedCode, ManualEntry, Outgoing, RefusalView, ReleaseOptions, ShareRequestView,
+    ShortCodeOffer,
+};
 
 /// The longest a signed request may precede its challenge, and the longest a challenge may live (120 s plus the skew
 /// grace a terminal with a slow clock needs).
@@ -66,14 +71,22 @@ pub(crate) fn ring_pub(hex_text: &str) -> Option<[u8; 32]> {
 }
 
 fn pass(text: impl Into<String>) -> Check {
-    Check { text: text.into(), warn: false, ok: true }
+    Check {
+        text: text.into(),
+        warn: false,
+        ok: true,
+    }
 }
 
 fn refuse(checks: &[Check], reason: impl Into<String>) -> RefusalView {
     // like the page: the failing rule is the last line of the list, marked bad
     let reason = reason.into();
     let mut checks = checks.to_vec();
-    checks.push(Check { text: reason.clone(), warn: false, ok: false });
+    checks.push(Check {
+        text: reason.clone(),
+        warn: false,
+        ok: false,
+    });
     RefusalView { reason, checks }
 }
 
@@ -81,16 +94,25 @@ fn refuse(checks: &[Check], reason: impl Into<String>) -> RefusalView {
 /// Envelope (kind 1): the storage key from the hybrid blob, then an AEAD envelope whose associated data names host_uid,
 /// epoch and the holder's own index; the index is not known to the phone beforehand, so every index is tried and the
 /// plaintext must name the index that opened it. (`unwrapPhoneShare` of the page.)
-fn unwrap_phone_share(id: &mut PhoneIdentity, m: &PhoneMaterial, host: &[u8; 16]) -> std::result::Result<Zeroizing<[u8; 33]>, String> {
+fn unwrap_phone_share(
+    id: &mut PhoneIdentity,
+    m: &PhoneMaterial,
+    host: &[u8; 16],
+) -> std::result::Result<Zeroizing<[u8; 33]>, String> {
     let mut out = Zeroizing::new([0u8; 33]);
     match m.kind {
         ShareKind::Hybrid => {
-            let plain = Zeroizing::new(id.unwrap(&m.share_blob).map_err(|e| e.reason().to_string())?);
+            let plain = Zeroizing::new(
+                id.unwrap(&m.share_blob)
+                    .map_err(|e| e.reason().to_string())?,
+            );
             if plain.len() != 16 + 33 {
                 return Err("wrapped share has the wrong length".to_string());
             }
             if plain[..16] != host[..] {
-                return Err("the share inside the material belongs to a different credential".to_string());
+                return Err(
+                    "the share inside the material belongs to a different credential".to_string(),
+                );
             }
             if plain[16] == 0 {
                 return Err("share index is zero".to_string());
@@ -99,8 +121,14 @@ fn unwrap_phone_share(id: &mut PhoneIdentity, m: &PhoneMaterial, host: &[u8; 16]
             Ok(out)
         }
         ShareKind::Envelope => {
-            let key = Zeroizing::new(id.unwrap(&m.storage_blob).map_err(|e| e.reason().to_string())?);
-            let key: &[u8; 32] = key.as_slice().try_into().map_err(|_| "storage key has the wrong length".to_string())?;
+            let key = Zeroizing::new(
+                id.unwrap(&m.storage_blob)
+                    .map_err(|e| e.reason().to_string())?,
+            );
+            let key: &[u8; 32] = key
+                .as_slice()
+                .try_into()
+                .map_err(|_| "storage key has the wrong length".to_string())?;
             if m.share_blob.len() < 24 + 16 {
                 return Err("envelope share is too short".to_string());
             }
@@ -109,7 +137,9 @@ fn unwrap_phone_share(id: &mut PhoneIdentity, m: &PhoneMaterial, host: &[u8; 16]
                 aad.extend_from_slice(host);
                 aad.extend_from_slice(&m.epoch.to_be_bytes());
                 aad.push(index);
-                let Ok(plain) = aead_open(key, &aad, &m.share_blob) else { continue };
+                let Ok(plain) = aead_open(key, &aad, &m.share_blob) else {
+                    continue;
+                };
                 let plain = Zeroizing::new(plain);
                 if plain.len() != 33 || plain[0] != index {
                     return Err("envelope share names a different index".to_string());
@@ -124,16 +154,24 @@ fn unwrap_phone_share(id: &mut PhoneIdentity, m: &PhoneMaterial, host: &[u8; 16]
 
 /// `evaluateChallenge`: every rule, in the page's order, each refusal with the page's sentence. On success the view for
 /// the screen and the pending request; a refusal is a value, never an error.
-pub fn open_challenge(frame: &[u8], ctx: &mut Ctx, token: u64) -> std::result::Result<(ShareRequestView, PendingRelease), RefusalView> {
+pub fn open_challenge(
+    frame: &[u8],
+    ctx: &mut Ctx,
+    token: u64,
+) -> std::result::Result<(ShareRequestView, PendingRelease), RefusalView> {
     let mut checks: Vec<Check> = Vec::new();
     let now = ctx.now;
 
-    let ch = ChallengeWire::decode(frame).map_err(|e| refuse(&checks, format!("challenge is malformed: {e:#}")))?;
+    let ch = ChallengeWire::decode(frame)
+        .map_err(|e| refuse(&checks, format!("challenge is malformed: {e:#}")))?;
     checks.push(pass("challenge frame is well formed"));
 
     let left = i128::from(ch.expiry) - i128::from(now);
     if left <= 0 {
-        return Err(refuse(&checks, format!("challenge expired {} s ago", -left)));
+        return Err(refuse(
+            &checks,
+            format!("challenge expired {} s ago", -left),
+        ));
     }
     if left > i128::from(MAX_AGE) {
         return Err(refuse(
@@ -143,11 +181,21 @@ pub fn open_challenge(frame: &[u8], ctx: &mut Ctx, token: u64) -> std::result::R
     }
     checks.push(pass(format!("valid for another {left} s")));
 
-    let op = parse_op(&ch.op_canonical, ch.op_signature).map_err(|e| refuse(&checks, format!("operation is malformed: {e}")))?;
-    let OpBody::ShareRelease { host_uid, request_id, requester, eph_x25519_pub } = &op.body else {
+    let op = parse_op(&ch.op_canonical, ch.op_signature)
+        .map_err(|e| refuse(&checks, format!("operation is malformed: {e}")))?;
+    let OpBody::ShareRelease {
+        host_uid,
+        request_id,
+        requester,
+        eph_x25519_pub,
+    } = &op.body
+    else {
         return Err(refuse(
             &checks,
-            format!("this is a {} operation, not a share release; this phone releases shares only", body_name(&op.body)),
+            format!(
+                "this is a {} operation, not a share release; this phone releases shares only",
+                body_name(&op.body)
+            ),
         ));
     };
     checks.push(pass("operation is a share release"));
@@ -182,12 +230,18 @@ pub fn open_challenge(frame: &[u8], ctx: &mut Ctx, token: u64) -> std::result::R
         return Err(refuse(&checks, "share release fields are malformed"));
     }
     if *request_id != ch.request_id {
-        return Err(refuse(&checks, "the operation asks for a different request id than the challenge carries"));
+        return Err(refuse(
+            &checks,
+            "the operation asks for a different request id than the challenge carries",
+        ));
     }
     if *requester != op.device_id {
         return Err(refuse(
             &checks,
-            format!("the operation is signed by {} but names {} as the requester", op.device_id, requester),
+            format!(
+                "the operation is signed by {} but names {} as the requester",
+                op.device_id, requester
+            ),
         ));
     }
     // The signed op names the ephemeral key the share is sealed to: a challenge frame with another key than the signed
@@ -198,40 +252,78 @@ pub fn open_challenge(frame: &[u8], ctx: &mut Ctx, token: u64) -> std::result::R
             "the signed operation names another ephemeral key than the challenge carries: the reply would not go to the device that asked",
         ));
     }
-    checks.push(pass("request id, requester and ephemeral key agree between the operation and the challenge"));
+    checks.push(pass(
+        "request id, requester and ephemeral key agree between the operation and the challenge",
+    ));
 
     let known = ctx.state.ring.get(&op.device_id).cloned();
     let signature_verified = known.is_some();
     match &known {
         Some(k) => {
-            let ok = ring_pub(&k.ed25519_pub).is_some_and(|p| verify(&p, &ch.op_canonical, &ch.op_signature));
+            let ok = ring_pub(&k.ed25519_pub)
+                .is_some_and(|p| verify(&p, &ch.op_canonical, &ch.op_signature));
             if !ok {
-                return Err(refuse(&checks, format!("the signature of {} does not verify over these operation bytes", op.device_id)));
+                return Err(refuse(
+                    &checks,
+                    format!(
+                        "the signature of {} does not verify over these operation bytes",
+                        op.device_id
+                    ),
+                ));
             }
-            checks.push(pass(format!("signature of {} ({}) verifies", safe_text(&k.name), op.device_id)));
+            checks.push(pass(format!(
+                "signature of {} ({}) verifies",
+                safe_text(&k.name),
+                op.device_id
+            )));
         }
         None => checks.push(Check {
-            text: format!("this phone has never been introduced to {}; its signature cannot be checked here", op.device_id),
+            text: format!(
+                "this phone has never been introduced to {}; its signature cannot be checked here",
+                op.device_id
+            ),
             warn: true,
             ok: true,
         }),
     }
 
-    let share = unwrap_phone_share(&mut *ctx.id, &ch.phone_material, host_uid)
-        .map_err(|e| refuse(&checks, format!("this phone cannot release for this request: {e}")))?;
+    let share = unwrap_phone_share(&mut *ctx.id, &ch.phone_material, host_uid).map_err(|e| {
+        refuse(
+            &checks,
+            format!("this phone cannot release for this request: {e}"),
+        )
+    })?;
     let kind = match ch.phone_material.kind {
         ShareKind::Hybrid => "hybrid",
         ShareKind::Envelope => "envelope",
     };
-    checks.push(pass(format!("own share unwrapped, credential id matches ({kind}, epoch {})", ch.phone_material.epoch)));
+    checks.push(pass(format!(
+        "own share unwrapped, credential id matches ({kind}, epoch {})",
+        ch.phone_material.epoch
+    )));
 
     let host_hex = hex::encode(host_uid);
     let bhash = ch.binding_hash();
-    let preimage = binding_preimage(&ch.op_canonical, &ch.nonce, ch.expiry, &ch.eph_x25519_pub, ch.request_id, &ch.phone_material.hash());
-    let op_view = describe_op(&op, &ch.op_canonical, &ctx.aliases(), Some(now), CHALLENGE_EXPIRY_SECS);
+    let preimage = binding_preimage(
+        &ch.op_canonical,
+        &ch.nonce,
+        ch.expiry,
+        &ch.eph_x25519_pub,
+        ch.request_id,
+        &ch.phone_material.hash(),
+    );
+    let op_view = describe_op(
+        &op,
+        &ch.op_canonical,
+        &ctx.aliases(),
+        Some(now),
+        CHALLENGE_EXPIRY_SECS,
+    );
     let type_to_approve = (!signature_verified).then(|| requester.clone());
     let short_code = match ctx.state.live_snapshot(&host_hex, now) {
-        Some(s) => ShortCodeOffer::LiveUntil { expires_at: s.expires_at },
+        Some(s) => ShortCodeOffer::LiveUntil {
+            expires_at: s.expires_at,
+        },
         None => ShortCodeOffer::Available,
     };
     let view = ShareRequestView {
@@ -269,9 +361,16 @@ pub fn approve(p: PendingRelease, opts: &ReleaseOptions, ctx: &mut Ctx) -> Resul
 }
 
 /// [`approve`] with the Argon2 profiles to try for the short code (tests pass a cheap one).
-pub(crate) fn approve_with(p: PendingRelease, opts: &ReleaseOptions, ctx: &mut Ctx, profiles: &[Argon2Profile]) -> Result<Outgoing> {
+pub(crate) fn approve_with(
+    p: PendingRelease,
+    opts: &ReleaseOptions,
+    ctx: &mut Ctx,
+    profiles: &[Argon2Profile],
+) -> Result<Outgoing> {
     if ctx.now >= p.ch.expiry {
-        return Err(CoreError::refused("The challenge expired: ask the terminal for a new request."));
+        return Err(CoreError::refused(
+            "The challenge expired: ask the terminal for a new request.",
+        ));
     }
     if let Some(want) = &p.type_to_approve {
         let typed = opts.typed_id.as_deref().unwrap_or("").trim().to_lowercase();
@@ -283,14 +382,24 @@ pub(crate) fn approve_with(p: PendingRelease, opts: &ReleaseOptions, ctx: &mut C
     }
 
     // One live short code per credential, enforced HERE (the phone), not by the peer.
-    let issued = if opts.issue_short_code && ctx.state.live_snapshot(&p.host_hex, ctx.now).is_none() {
-        Some(snapshot_issue::issue(&p.share, &p.host, ctx.now, &mut *ctx.rng, profiles)?)
+    let issued = if opts.issue_short_code && ctx.state.live_snapshot(&p.host_hex, ctx.now).is_none()
+    {
+        Some(snapshot_issue::issue(
+            &p.share,
+            &p.host,
+            ctx.now,
+            &mut *ctx.rng,
+            profiles,
+        )?)
     } else {
         None
     };
 
     // lamport and epoch are adopted only from an op whose signature this phone verified.
-    let seen = p.signature_verified.then_some(Seen { lamport: p.op.lamport, epoch: p.op.epoch });
+    let seen = p.signature_verified.then_some(Seen {
+        lamport: p.op.lamport,
+        epoch: p.op.epoch,
+    });
     chain::head_attest(&mut *ctx.state, &*ctx.id, ctx.now, seen)?;
     if let Some(i) = &issued {
         ctx.state.record_snapshot(&p.host_hex, i.record.clone());
@@ -307,12 +416,17 @@ pub(crate) fn approve_with(p: PendingRelease, opts: &ReleaseOptions, ctx: &mut C
     let full = seal_reply(&p.ch, &full_plain, &mut *ctx.rng);
     let short = seal_reply(&p.ch, &p.share[..], &mut *ctx.rng);
 
-    let note = format!("Approved. Sent to {}. The terminal takes the first channel that arrives.", safe_text(&p.requester));
+    let note = format!(
+        "Approved. Sent to {}. The terminal takes the first channel that arrives.",
+        safe_text(&p.requester)
+    );
     let mut out = outgoing::render(full, opts.qr, &note)?;
     out.audio_frame = opts.sound.then_some(short);
     out.manual = Some(ManualEntry {
         index: u32::from(p.share[0]),
-        words: sshub_sync_proto::crypto::bip39_encode(<&[u8; 32]>::try_from(&p.share[1..]).expect("32 bytes")),
+        words: sshub_sync_proto::crypto::bip39_encode(
+            <&[u8; 32]>::try_from(&p.share[1..]).expect("32 bytes"),
+        ),
     });
     out.short_code = issued.map(|i| IssuedCode {
         code: i.code,
@@ -331,7 +445,11 @@ fn seal_reply(ch: &ChallengeWire, plain: &[u8], rng: &mut dyn RngCore) -> Vec<u8
     rng.fill_bytes(&mut eph_secret[..]);
     rng.fill_bytes(&mut nonce);
     let ciphertext = DeviceIdentity::seal_to_with(&ch.eph_x25519_pub, plain, &eph_secret, &nonce);
-    ShareResponseWire { request_id: ch.request_id, ciphertext }.encode()
+    ShareResponseWire {
+        request_id: ch.request_id,
+        ciphertext,
+    }
+    .encode()
 }
 
 #[cfg(test)]

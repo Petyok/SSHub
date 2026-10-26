@@ -39,7 +39,9 @@ pub struct Probe {
 
 #[uniffi::export]
 pub fn probe(secret: Vec<u8>) -> Result<Probe, CoreError> {
-    let secret: [u8; 32] = secret.try_into().map_err(|_| CoreError::bad("the phone secret must be 32 bytes"))?;
+    let secret: [u8; 32] = secret
+        .try_into()
+        .map_err(|_| CoreError::bad("the phone secret must be 32 bytes"))?;
     let id = DeviceIdentity::from_seed(&secret, identity::PHONE_CONTEXT);
     let public = id.public();
     let sig = id.sign(b"sshub android probe");
@@ -59,7 +61,10 @@ mod tests {
     fn probe_matches_the_terminal_fixture() {
         let p = probe(vec![0x42; 32]).unwrap();
         assert_eq!(p.device_id, "ee8a1d5cf97016a7");
-        assert_eq!(p.blake3_empty, "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262");
+        assert_eq!(
+            p.blake3_empty,
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"
+        );
         assert!(p.signature_ok);
         assert!(probe(vec![0; 31]).is_err());
     }

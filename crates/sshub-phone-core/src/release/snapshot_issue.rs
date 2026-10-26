@@ -13,7 +13,10 @@ use crate::state::SnapshotRecord;
 
 /// Used only when the floor profile cannot run on this device; the blob records it and the terminal flags it
 /// (`SNAPSHOT_PROFILE_WEAK` of the page).
-pub const SNAPSHOT_PROFILE_WEAK: Argon2Profile = Argon2Profile { mem_kib: 64 * 1024, iters: 8 };
+pub const SNAPSHOT_PROFILE_WEAK: Argon2Profile = Argon2Profile {
+    mem_kib: 64 * 1024,
+    iters: 8,
+};
 
 /// Floor first, then the weak fallback.
 pub const PROFILES: [Argon2Profile; 2] = [SNAPSHOT_ARGON2_FLOOR, SNAPSHOT_PROFILE_WEAK];
@@ -28,7 +31,13 @@ pub struct Issued {
 
 /// Seals `share` (33 bytes, index first) for `host`. The first profile that works is used; `weak` is set when it was
 /// not the first. The caller records `record` only after the reply that carries the blob was built.
-pub fn issue(share: &[u8; 33], host: &[u8; 16], now: i64, rng: &mut dyn RngCore, profiles: &[Argon2Profile]) -> Result<Issued> {
+pub fn issue(
+    share: &[u8; 33],
+    host: &[u8; 16],
+    now: i64,
+    rng: &mut dyn RngCore,
+    profiles: &[Argon2Profile],
+) -> Result<Issued> {
     let mut code_bytes = [0u8; 10];
     let mut salt = [0u8; 16];
     let mut nonce = [0u8; 24];
@@ -36,7 +45,10 @@ pub fn issue(share: &[u8; 33], host: &[u8; 16], now: i64, rng: &mut dyn RngCore,
     rng.fill_bytes(&mut salt);
     rng.fill_bytes(&mut nonce);
     let code = format_groups(&crockford_encode(&code_bytes), 4);
-    let share = Share { index: share[0], bytes: share[1..].to_vec() };
+    let share = Share {
+        index: share[0],
+        bytes: share[1..].to_vec(),
+    };
     let mut last = None;
     for (i, p) in profiles.iter().enumerate() {
         match seal_with(&share, &code, now, *p, salt, nonce, Some(*host)) {
@@ -48,7 +60,11 @@ pub fn issue(share: &[u8; 33], host: &[u8; 16], now: i64, rng: &mut dyn RngCore,
                     iters: p.iters,
                     weak: i > 0,
                 };
-                return Ok(Issued { code, blob: blob.to_bytes(), record });
+                return Ok(Issued {
+                    code,
+                    blob: blob.to_bytes(),
+                    record,
+                });
             }
             Err(e) => last = Some(e),
         }

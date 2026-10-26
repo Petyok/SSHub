@@ -152,7 +152,9 @@ pub struct RefusalView {
 pub enum ShortCodeOffer {
     Available,
     /// A short code for this credential is already live: a second one is refused by the phone.
-    LiveUntil { expires_at: i64 },
+    LiveUntil {
+        expires_at: i64,
+    },
 }
 
 /// Kind 1: a terminal asks for this phone's share of a credential.
@@ -345,7 +347,13 @@ pub enum Decision {
 /// What `scan_gray` saw in a camera frame.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]
 pub enum ScanEvent {
-    Progress { have: u32, total: u32, damaged: u32 },
+    Progress {
+        have: u32,
+        total: u32,
+        damaged: u32,
+    },
     /// A completed document (a whole frame of kinds 1 to 10): hand it to `open_frame`.
-    Document { bytes: Vec<u8> },
+    Document {
+        bytes: Vec<u8>,
+    },
 }

@@ -60,7 +60,12 @@ pub fn iso(t: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3_600, rem % 3_600 / 60, rem % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z",
+        rem / 3_600,
+        rem % 3_600 / 60,
+        rem % 60
+    )
 }
 
 /// Base64 (standard alphabet, padded) of bytes: the text form of every frame.
@@ -72,7 +77,9 @@ pub fn to_base64(b: &[u8]) -> String {
 /// Strict base64 of pasted text: surrounding whitespace is trimmed, anything else outside the alphabet is refused.
 pub fn from_base64(s: &str) -> Option<Vec<u8>> {
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD.decode(s.trim()).ok()
+    base64::engine::general_purpose::STANDARD
+        .decode(s.trim())
+        .ok()
 }
 
 #[cfg(test)]
@@ -84,12 +91,19 @@ mod tests {
         assert_eq!(safe_text("plain host-01 ok"), "plain host-01 ok");
         assert_eq!(safe_text("a\u{202e}b"), "a\\u202eb");
         assert_eq!(safe_text("a\nb\u{7f}"), "a\\u000ab\\u007f");
-        for c in ['\u{2800}', '\u{ffa0}', '\u{17b4}', '\u{17b5}', '\u{3000}', '\u{a0}', '\u{2009}', '\u{2003}', '\u{200b}', '\u{feff}', '\u{ad}', '\u{2028}', '\u{fe0f}'] {
+        for c in [
+            '\u{2800}', '\u{ffa0}', '\u{17b4}', '\u{17b5}', '\u{3000}', '\u{a0}', '\u{2009}',
+            '\u{2003}', '\u{200b}', '\u{feff}', '\u{ad}', '\u{2028}', '\u{fe0f}',
+        ] {
             let s = format!("a{c}b");
             assert_ne!(safe_text(&s), s, "U+{:04x} passes unchanged", c as u32);
         }
         assert_eq!(safe_text("\u{e0100}"), "\\u{e0100}");
-        assert_eq!(safe_text("\u{e0041}"), "\\u{e0041}", "tag characters are format characters");
+        assert_eq!(
+            safe_text("\u{e0041}"),
+            "\\u{e0041}",
+            "tag characters are format characters"
+        );
         assert_eq!(safe_text("\u{e0020}"), "\\u{e0020}");
         assert_eq!(safe_text("naïve 名前"), "naïve 名前");
     }

@@ -18,19 +18,27 @@ pub enum CoreError {
 
 impl CoreError {
     pub fn bad(reason: impl Into<String>) -> Self {
-        Self::BadInput { reason: reason.into() }
+        Self::BadInput {
+            reason: reason.into(),
+        }
     }
     pub fn refused(reason: impl Into<String>) -> Self {
-        Self::Refused { reason: reason.into() }
+        Self::Refused {
+            reason: reason.into(),
+        }
     }
     pub fn internal(reason: impl Into<String>) -> Self {
-        Self::Internal { reason: reason.into() }
+        Self::Internal {
+            reason: reason.into(),
+        }
     }
     /// The sentence for a screen.
     pub fn reason(&self) -> &str {
         match self {
             Self::Locked => "This phone is locked.",
-            Self::BadInput { reason } | Self::Refused { reason } | Self::Internal { reason } => reason,
+            Self::BadInput { reason } | Self::Refused { reason } | Self::Internal { reason } => {
+                reason
+            }
         }
     }
 }
@@ -45,7 +53,9 @@ impl std::error::Error for CoreError {}
 
 impl From<anyhow::Error> for CoreError {
     fn from(e: anyhow::Error) -> Self {
-        Self::BadInput { reason: format!("{e:#}") }
+        Self::BadInput {
+            reason: format!("{e:#}"),
+        }
     }
 }
 

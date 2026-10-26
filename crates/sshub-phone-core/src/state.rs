@@ -146,7 +146,10 @@ impl PhoneState {
     /// which the ring treats as proof of compromise). Until the chain head comes back from a terminal or the user
     /// confirms that the key never signed anything, nothing may be authored.
     pub fn restored() -> Self {
-        Self { head_pending: true, ..Self::default() }
+        Self {
+            head_pending: true,
+            ..Self::default()
+        }
     }
 
     pub fn head(&self) -> Option<&ChainEntry> {
@@ -183,7 +186,13 @@ impl PhoneState {
         header.push(1);
         let json = Zeroizing::new(serde_json::to_vec(self).expect("state serialises"));
         let ct = XChaCha20Poly1305::new((&*key).into())
-            .encrypt(nonce.into(), Payload { msg: &json, aad: &header })
+            .encrypt(
+                nonce.into(),
+                Payload {
+                    msg: &json,
+                    aad: &header,
+                },
+            )
             .expect("XChaCha20-Poly1305 encrypt");
         [header.as_slice(), nonce.as_slice(), ct.as_slice()].concat()
     }
@@ -198,10 +207,17 @@ impl PhoneState {
         let nonce: [u8; 24] = blob[SEAL_HEADER..SEAL_HEADER + 24].try_into().unwrap();
         let plain = Zeroizing::new(
             XChaCha20Poly1305::new((&*key).into())
-                .decrypt((&nonce).into(), Payload { msg: &blob[SEAL_HEADER + 24..], aad: &blob[..SEAL_HEADER] })
+                .decrypt(
+                    (&nonce).into(),
+                    Payload {
+                        msg: &blob[SEAL_HEADER + 24..],
+                        aad: &blob[..SEAL_HEADER],
+                    },
+                )
                 .map_err(|_| CoreError::bad("the stored state does not open with this key"))?,
         );
-        let s: PhoneState = serde_json::from_slice(&plain).map_err(|e| CoreError::bad(format!("the stored state is damaged: {e}")))?;
+        let s: PhoneState = serde_json::from_slice(&plain)
+            .map_err(|e| CoreError::bad(format!("the stored state is damaged: {e}")))?;
         if s.v != STATE_VERSION {
             return Err(CoreError::bad("the stored state has an unknown version"));
         }
@@ -226,8 +242,24 @@ mod tests {
     #[test]
     fn sealed_state_round_trips_and_needs_its_secret() {
         let mut s = PhoneState::default();
-        s.ring.insert("aaaaaaaaaaaaaaaa".into(), RingDevice { name: "laptop".into(), ed25519_pub: "00".repeat(32), enrolled_at: 5 });
-        s.snapshots.insert("0a".repeat(16), SnapshotRecord { issued_at: 1, expires_at: 2, mem_kib: 3, iters: 4, weak: false });
+        s.ring.insert(
+            "aaaaaaaaaaaaaaaa".into(),
+            RingDevice {
+                name: "laptop".into(),
+                ed25519_pub: "00".repeat(32),
+                enrolled_at: 5,
+            },
+        );
+        s.snapshots.insert(
+            "0a".repeat(16),
+            SnapshotRecord {
+                issued_at: 1,
+                expires_at: 2,
+                mem_kib: 3,
+                iters: 4,
+                weak: false,
+            },
+        );
         let blob = s.seal_with(&[1; 32], &[9; 24]);
         let back = PhoneState::open(&blob, &[1; 32]).unwrap();
         assert_eq!(back, s);
@@ -255,7 +287,16 @@ mod tests {
     #[test]
     fn live_snapshot_expires() {
         let mut s = PhoneState::default();
-        s.record_snapshot("h", SnapshotRecord { issued_at: 0, expires_at: 100, mem_kib: 1, iters: 1, weak: false });
+        s.record_snapshot(
+            "h",
+            SnapshotRecord {
+                issued_at: 0,
+                expires_at: 100,
+                mem_kib: 1,
+                iters: 1,
+                weak: false,
+            },
+        );
         assert!(s.live_snapshot("h", 99).is_some());
         assert!(s.live_snapshot("h", 100).is_none());
         s.invalidate_snapshot("h");

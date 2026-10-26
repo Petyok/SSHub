@@ -26,9 +26,9 @@ pub use argon::{
     argon2_derive, try_argon2_derive, Argon2Profile, ARGON2_EMAIL, ARGON2_MASTER, ARGON2_SNAPSHOT,
 };
 pub use dek::{aead_open, aead_seal, dek_generate, dek_open, dek_seal};
-pub use hash::{chain_hash, derive_key};
 #[doc(hidden)]
 pub use hash::derive_xof;
+pub use hash::{chain_hash, derive_key};
 pub use identity::{device_id_of, open_sealed_with_secret, verify, DeviceIdentity, DevicePublic};
 pub use paper::{paper_derive, PaperDomain};
 pub use sas::sas_words;

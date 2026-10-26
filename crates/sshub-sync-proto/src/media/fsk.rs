@@ -466,15 +466,25 @@ mod tests {
             let mut pcm = vec![0.0f32; RATE / 4];
             pcm.extend(encode(&payload(), profile));
             pcm.extend(vec![0.0f32; RATE / 4]);
-            assert_eq!(decode_all(&pcm, RATE as u32), vec![payload()], "{profile:?}");
+            assert_eq!(
+                decode_all(&pcm, RATE as u32),
+                vec![payload()],
+                "{profile:?}"
+            );
         }
     }
 
     #[test]
     fn lengths_follow_the_page() {
         // 300 ms preamble + (1 + 128 + 2) bytes * 2 symbols * 30 ms (fast) or 60 ms (slow)
-        assert_eq!(encode(&payload(), Profile::Fast).len(), 14_400 + 131 * 2 * 1_440);
-        assert_eq!(encode(&payload(), Profile::Slow).len(), 14_400 + 131 * 2 * 2_880);
+        assert_eq!(
+            encode(&payload(), Profile::Fast).len(),
+            14_400 + 131 * 2 * 1_440
+        );
+        assert_eq!(
+            encode(&payload(), Profile::Slow).len(),
+            14_400 + 131 * 2 * 2_880
+        );
         let pcm = encode(&[], Profile::Fast);
         assert_eq!(pcm.len(), 14_400 + 3 * 2 * 1_440);
         assert!(pcm.iter().all(|v| v.abs() <= 0.5));

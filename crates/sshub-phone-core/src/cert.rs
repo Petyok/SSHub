@@ -17,7 +17,9 @@ use crate::identity::PhoneIdentity;
 use crate::outgoing::ops_out;
 use crate::state::{PhoneState, COURIER_TAIL};
 use crate::text::{iso, safe_text};
-use crate::views::{CertExtendView, CertRequestView, CertStatus, IssuedCertView, Opened, RefusalView, Row};
+use crate::views::{
+    CertExtendView, CertRequestView, CertStatus, IssuedCertView, Opened, RefusalView, Row,
+};
 
 /// A terminal asks for the phone's current epoch plus this much slack (`src/app/sync_trust.rs` passes 1): a certificate
 /// then ends with the next reshare that revokes someone. A wider range would outlive it.
@@ -43,9 +45,24 @@ pub fn describe_term(secs: i64) -> String {
     let hours = (s % 86_400).div_euclid(3_600);
     let mins = (s % 3_600).div_euclid(60);
     if d != 0 {
-        format!("{d} day{}{}", if d == 1 { "" } else { "s" }, if hours != 0 { format!(" {hours} h") } else { String::new() })
+        format!(
+            "{d} day{}{}",
+            if d == 1 { "" } else { "s" },
+            if hours != 0 {
+                format!(" {hours} h")
+            } else {
+                String::new()
+            }
+        )
     } else if hours != 0 {
-        format!("{hours} h{}", if mins != 0 { format!(" {mins} min") } else { String::new() })
+        format!(
+            "{hours} h{}",
+            if mins != 0 {
+                format!(" {mins} min")
+            } else {
+                String::new()
+            }
+        )
     } else if mins != 0 {
         format!("{mins} min")
     } else {
@@ -63,7 +80,10 @@ fn plural(n: usize) -> &'static str {
 
 /// Name of a device the person gave or the ring knows; `None` for an empty name (falsy on the page).
 fn alias<'a>(aliases: &'a BTreeMap<String, String>, id: &str) -> Option<&'a str> {
-    aliases.get(id).map(String::as_str).filter(|n| !n.is_empty())
+    aliases
+        .get(id)
+        .map(String::as_str)
+        .filter(|n| !n.is_empty())
 }
 
 fn scope_hosts_count(scope: &CertScope) -> Option<usize> {
@@ -74,7 +94,11 @@ fn scope_hosts_count(scope: &CertScope) -> Option<usize> {
 }
 
 /// What the screen shows for a kind 9 request, every row from the decoded bytes: (headline, rows, delegate known).
-pub fn describe_cert_request(req: &CertRequestWire, now: i64, aliases: &BTreeMap<String, String>) -> (String, Vec<Row>, bool) {
+pub fn describe_cert_request(
+    req: &CertRequestWire,
+    now: i64,
+    aliases: &BTreeMap<String, String>,
+) -> (String, Vec<Row>, bool) {
     let dev = hex::encode(req.device_id);
     let who = match alias(aliases, &dev) {
         Some(n) => format!("{} [{dev}]", safe_text(n)),
@@ -82,7 +106,11 @@ pub fn describe_cert_request(req: &CertRequestWire, now: i64, aliases: &BTreeMap
     };
     let term = req.expiry.saturating_sub(now);
     let scope_row = match &req.scope {
-        CertScope::Group(g) => Row { label: "Scope: every host of group".into(), value: uid_hex(g), danger: true },
+        CertScope::Group(g) => Row {
+            label: "Scope: every host of group".into(),
+            value: uid_hex(g),
+            danger: true,
+        },
         CertScope::Hosts(h) => Row {
             label: format!("Scope: {} host{} only", h.len(), plural(h.len())),
             value: h.iter().map(uid_hex).collect::<Vec<_>>().join("\n"),
@@ -94,18 +122,43 @@ pub fn describe_cert_request(req: &CertRequestWire, now: i64, aliases: &BTreeMap
         Some(n) => format!("{n} listed host{}", plural(n)),
     };
     let rows = vec![
-        Row { label: "Trusted device".into(), value: who.clone(), danger: true },
+        Row {
+            label: "Trusted device".into(),
+            value: who.clone(),
+            danger: true,
+        },
         scope_row,
-        Row { label: "Term".into(), value: format!("{} (until {})", describe_term(term), iso(req.expiry)), danger: true },
-        Row { label: "New hosts per day".into(), value: req.max_new_hosts_per_day.to_string(), danger: true },
-        Row { label: "Phone epochs it holds for".into(), value: format!("{} to {}", req.epoch_lo, req.epoch_hi), danger: true },
+        Row {
+            label: "Term".into(),
+            value: format!("{} (until {})", describe_term(term), iso(req.expiry)),
+            danger: true,
+        },
+        Row {
+            label: "New hosts per day".into(),
+            value: req.max_new_hosts_per_day.to_string(),
+            danger: true,
+        },
+        Row {
+            label: "Phone epochs it holds for".into(),
+            value: format!("{} to {}", req.epoch_lo, req.epoch_hi),
+            danger: true,
+        },
     ];
-    (format!("Let {who} open {what} without asking this phone again"), rows, alias(aliases, &dev).is_some())
+    (
+        format!("Let {who} open {what} without asking this phone again"),
+        rows,
+        alias(aliases, &dev).is_some(),
+    )
 }
 
 /// The refusals, each a sentence a person can act on. Empty when the phone may sign. `own_epoch` is this phone's epoch:
 /// the range must start there (F7).
-pub fn cert_request_problems(req: &CertRequestWire, now: i64, own_id: &str, own_epoch: u64) -> Vec<String> {
+pub fn cert_request_problems(
+    req: &CertRequestWire,
+    now: i64,
+    own_id: &str,
+    own_epoch: u64,
+) -> Vec<String> {
     let mut out = Vec::new();
     let term = i128::from(req.expiry) - i128::from(now);
     if term < 1 {
@@ -124,7 +177,9 @@ pub fn cert_request_problems(req: &CertRequestWire, now: i64, own_id: &str, own_
     }
     if let CertScope::Hosts(h) = &req.scope {
         if h.is_empty() || h.len() > MAX_CERT_REQUEST_HOSTS {
-            out.push(format!("A list names 1 to {MAX_CERT_REQUEST_HOSTS} hosts; use a group for more."));
+            out.push(format!(
+                "A list names 1 to {MAX_CERT_REQUEST_HOSTS} hosts; use a group for more."
+            ));
         }
     }
     if req.epoch_lo > req.epoch_hi {
@@ -172,9 +227,17 @@ impl IssuedCert {
 pub fn issued_cert_records(state: &PhoneState) -> Vec<IssuedCert> {
     let mut certs: Vec<IssuedCert> = Vec::new();
     for e in &state.chain {
-        let Ok(op) = decode_op(&e.canonical, e.signature64()) else { continue };
+        let Ok(op) = decode_op(&e.canonical, e.signature64()) else {
+            continue;
+        };
         match op.body {
-            OpBody::CertIssue { device_id, scope, expiry, max_new_hosts_per_day, .. } => certs.push(IssuedCert {
+            OpBody::CertIssue {
+                device_id,
+                scope,
+                expiry,
+                max_new_hosts_per_day,
+                ..
+            } => certs.push(IssuedCert {
                 id: e.hash32(),
                 device_id,
                 scope,
@@ -188,7 +251,10 @@ pub fn issued_cert_records(state: &PhoneState) -> Vec<IssuedCert> {
                     c.revoked = true;
                 }
             }
-            OpBody::CertExtend { cert_id, extra_hosts } => {
+            OpBody::CertExtend {
+                cert_id,
+                extra_hosts,
+            } => {
                 if let Some(c) = certs.iter_mut().find(|c| c.id == cert_id) {
                     c.extensions.push((op.timestamp, extra_hosts));
                 }
@@ -200,8 +266,15 @@ pub fn issued_cert_records(state: &PhoneState) -> Vec<IssuedCert> {
 }
 
 /// A kind 10 request against what this phone issued: the refusals (empty = the phone may sign) and the certificate.
-pub fn extend_problems(state: &PhoneState, req: &CertExtendRequestWire, now: i64) -> (Vec<String>, Option<IssuedCert>) {
-    let Some(cert) = issued_cert_records(state).into_iter().find(|c| c.id == req.cert_id) else {
+pub fn extend_problems(
+    state: &PhoneState,
+    req: &CertExtendRequestWire,
+    now: i64,
+) -> (Vec<String>, Option<IssuedCert>) {
+    let Some(cert) = issued_cert_records(state)
+        .into_iter()
+        .find(|c| c.id == req.cert_id)
+    else {
         return (
             vec!["This phone did not issue that certificate (or it was issued by an earlier phone). Only the issuing phone extends it.".to_string()],
             None,
@@ -215,7 +288,9 @@ pub fn extend_problems(state: &PhoneState, req: &CertExtendRequestWire, now: i64
         out.push("That certificate has expired; an extension never revives it.".to_string());
     }
     if req.extra_hosts < 1 || req.extra_hosts > CERT_NEW_HOSTS_PER_DAY {
-        out.push(format!("An extension adds 1 to {CERT_NEW_HOSTS_PER_DAY} hosts."));
+        out.push(format!(
+            "An extension adds 1 to {CERT_NEW_HOSTS_PER_DAY} hosts."
+        ));
     }
     let last = cert.extensions.iter().map(|x| x.0).max().unwrap_or(0);
     if last != 0 && now.saturating_sub(last) < EXTEND_WINDOW_SECS {
@@ -242,13 +317,21 @@ pub fn describe_cert(c: &IssuedCert, aliases: &BTreeMap<String, String>) -> Stri
         "{who}: {scope}, until {}, {} new hosts per day{}{}",
         iso(c.expiry),
         c.max_new_hosts_per_day,
-        if c.extensions.is_empty() { String::new() } else { format!(", extended {}x", c.extensions.len()) },
+        if c.extensions.is_empty() {
+            String::new()
+        } else {
+            format!(", extended {}x", c.extensions.len())
+        },
         if c.revoked { ", REVOKED" } else { "" }
     )
 }
 
 /// The trust screen's list: what this phone issued, with status and whether Revoke is offered.
-pub fn issued_certs(state: &PhoneState, aliases: &BTreeMap<String, String>, now: i64) -> Vec<IssuedCertView> {
+pub fn issued_certs(
+    state: &PhoneState,
+    aliases: &BTreeMap<String, String>,
+    now: i64,
+) -> Vec<IssuedCertView> {
     issued_cert_records(state)
         .iter()
         .map(|c| IssuedCertView {
@@ -267,7 +350,12 @@ pub fn issued_certs(state: &PhoneState, aliases: &BTreeMap<String, String>, now:
 }
 
 fn refused(reason: String) -> Opened {
-    Opened::Refused { view: RefusalView { reason, checks: Vec::new() } }
+    Opened::Refused {
+        view: RefusalView {
+            reason,
+            checks: Vec::new(),
+        },
+    }
 }
 
 const REQUEST_NOTE: &str = "The certificate takes effect only after a second terminal and a third factor approve it. This signature is the phone's part: it authors the certificate.";
@@ -292,29 +380,65 @@ pub fn open_cert_request(frame: &[u8], ctx: &Ctx, token: u64) -> (Opened, Option
     };
     // A delegate this phone has never met cannot be authenticated here: approving needs its device id typed in.
     let type_to_approve = (clean && !delegate_known).then(|| hex::encode(req.device_id));
-    let view = CertRequestView { token, headline, rows, delegate_known, problems, note, type_to_approve };
-    (Opened::CertRequest { view }, clean.then_some(PendingCert::Request(req)))
+    let view = CertRequestView {
+        token,
+        headline,
+        rows,
+        delegate_known,
+        problems,
+        note,
+        type_to_approve,
+    };
+    (
+        Opened::CertRequest { view },
+        clean.then_some(PendingCert::Request(req)),
+    )
 }
 
 /// Kind 10: a terminal asks for more new hosts on a certificate this phone issued.
 pub fn open_cert_extend(frame: &[u8], ctx: &Ctx, token: u64) -> (Opened, Option<PendingCert>) {
     let req = match CertExtendRequestWire::decode(frame) {
         Ok(r) => r,
-        Err(e) => return (refused(format!("Not a budget extension request: {e:#}")), None),
+        Err(e) => {
+            return (
+                refused(format!("Not a budget extension request: {e:#}")),
+                None,
+            )
+        }
     };
     let (problems, cert) = extend_problems(&*ctx.state, &req, ctx.now);
     let aliases = ctx.aliases();
-    let mut rows = vec![Row { label: "Certificate".into(), value: hex::encode(req.cert_id), danger: true }];
+    let mut rows = vec![Row {
+        label: "Certificate".into(),
+        value: hex::encode(req.cert_id),
+        danger: true,
+    }];
     if let Some(c) = &cert {
-        rows.push(Row { label: "Trusted device".into(), value: describe_cert(c, &aliases), danger: false });
         rows.push(Row {
-            label: "Remaining term".into(),
-            value: if c.expiry > ctx.now { describe_term(c.expiry.saturating_sub(ctx.now)) } else { "expired".into() },
+            label: "Trusted device".into(),
+            value: describe_cert(c, &aliases),
             danger: false,
         });
-        rows.push(Row { label: "Daily budget now".into(), value: c.max_new_hosts_per_day.to_string(), danger: false });
+        rows.push(Row {
+            label: "Remaining term".into(),
+            value: if c.expiry > ctx.now {
+                describe_term(c.expiry.saturating_sub(ctx.now))
+            } else {
+                "expired".into()
+            },
+            danger: false,
+        });
+        rows.push(Row {
+            label: "Daily budget now".into(),
+            value: c.max_new_hosts_per_day.to_string(),
+            danger: false,
+        });
     }
-    rows.push(Row { label: "Extra new hosts for today".into(), value: req.extra_hosts.to_string(), danger: true });
+    rows.push(Row {
+        label: "Extra new hosts for today".into(),
+        value: req.extra_hosts.to_string(),
+        danger: true,
+    });
     let clean = problems.is_empty();
     let view = CertExtendView {
         token,
@@ -331,16 +455,25 @@ pub fn open_cert_extend(frame: &[u8], ctx: &Ctx, token: u64) -> (Opened, Option<
             String::new()
         },
     };
-    (Opened::CertExtend { view }, clean.then_some(PendingCert::Extend(req)))
+    (
+        Opened::CertExtend { view },
+        clean.then_some(PendingCert::Extend(req)),
+    )
 }
 
 /// Signs what the person approved, re-checking every limit at the moment of signing (the clock moved, the chain may
 /// have). A delegate this phone never met needs its device id typed in (`typed_id`).
-pub fn approve_cert(p: PendingCert, typed_id: Option<&str>, ctx: &mut Ctx) -> Result<crate::views::Outgoing> {
+pub fn approve_cert(
+    p: PendingCert,
+    typed_id: Option<&str>,
+    ctx: &mut Ctx,
+) -> Result<crate::views::Outgoing> {
     match p {
         PendingCert::Request(req) => {
             let dev = hex::encode(req.device_id);
-            if alias(&ctx.aliases(), &dev).is_none() && typed_id.map(|t| t.trim().to_lowercase()).as_deref() != Some(dev.as_str()) {
+            if alias(&ctx.aliases(), &dev).is_none()
+                && typed_id.map(|t| t.trim().to_lowercase()).as_deref() != Some(dev.as_str())
+            {
                 return Err(CoreError::bad(format!("Type the device id of the trusted device ({dev}) to approve: this phone has not met it.")));
             }
             issue_cert(ctx.state, ctx.id, &req, ctx.now)?;
@@ -351,12 +484,20 @@ pub fn approve_cert(p: PendingCert, typed_id: Option<&str>, ctx: &mut Ctx) -> Re
         }
         PendingCert::Extend(req) => {
             extend_cert(ctx.state, ctx.id, &req, ctx.now)?;
-            ops_out(&chain::courier_ops(ctx.state, COURIER_TAIL), "Carry this to the terminal that asked.")
+            ops_out(
+                &chain::courier_ops(ctx.state, COURIER_TAIL),
+                "Carry this to the terminal that asked.",
+            )
         }
     }
 }
 
-fn issue_cert(state: &mut PhoneState, id: &PhoneIdentity, req: &CertRequestWire, now: i64) -> Result<()> {
+fn issue_cert(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    req: &CertRequestWire,
+    now: i64,
+) -> Result<()> {
     let problems = cert_request_problems(req, now, id.device_id(), state.epoch);
     if !problems.is_empty() {
         return Err(CoreError::refused(problems.join(" ")));
@@ -376,7 +517,12 @@ fn issue_cert(state: &mut PhoneState, id: &PhoneIdentity, req: &CertRequestWire,
     Ok(())
 }
 
-fn extend_cert(state: &mut PhoneState, id: &PhoneIdentity, req: &CertExtendRequestWire, now: i64) -> Result<()> {
+fn extend_cert(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    req: &CertExtendRequestWire,
+    now: i64,
+) -> Result<()> {
     let (problems, _) = extend_problems(state, req, now);
     if !problems.is_empty() {
         return Err(CoreError::refused(problems.join(" ")));
@@ -392,8 +538,13 @@ pub fn revoke_cert(cert_id_hex: &str, ctx: &mut Ctx) -> Result<crate::views::Out
         .ok()
         .and_then(|b| b.try_into().ok())
         .ok_or_else(|| CoreError::bad("A certificate id is 64 hex characters."))?;
-    let Some(c) = issued_cert_records(&*ctx.state).into_iter().find(|c| c.id == id) else {
-        return Err(CoreError::refused("This phone did not issue that certificate."));
+    let Some(c) = issued_cert_records(&*ctx.state)
+        .into_iter()
+        .find(|c| c.id == id)
+    else {
+        return Err(CoreError::refused(
+            "This phone did not issue that certificate.",
+        ));
     };
     if c.revoked {
         return Err(CoreError::refused("That certificate is already revoked."));

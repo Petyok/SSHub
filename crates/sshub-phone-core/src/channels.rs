@@ -19,16 +19,25 @@ pub const QR_PARITY_PERCENT: u32 = 25;
 
 /// One QR code (byte mode, error correction M, smallest version that fits) as a module matrix.
 pub fn qr_matrix(bytes: &[u8]) -> Result<QrFrame> {
-    let code = QrCode::with_error_correction_level(bytes, EcLevel::M).map_err(|e| CoreError::internal(format!("qr: {e}")))?;
+    let code = QrCode::with_error_correction_level(bytes, EcLevel::M)
+        .map_err(|e| CoreError::internal(format!("qr: {e}")))?;
     let size = code.width();
-    let modules = code.to_colors().into_iter().map(|c| u8::from(c == Color::Dark)).collect();
-    Ok(QrFrame { size: size as u32, modules })
+    let modules = code
+        .to_colors()
+        .into_iter()
+        .map(|c| u8::from(c == Color::Dark))
+        .collect();
+    Ok(QrFrame {
+        size: size as u32,
+        modules,
+    })
 }
 
 /// The frames of one lap of a document (fountain format, same as the terminal's challenge) as QR matrices: all data
 /// frames, then the parity frames.
 pub fn qr_frames(payload: &[u8], parity_percent: u32) -> Result<Vec<QrFrame>> {
-    let frames = fountain_encode(payload, QR_FRAME_BYTES, parity_percent).map_err(|e| CoreError::bad(format!("{e:#}")))?;
+    let frames = fountain_encode(payload, QR_FRAME_BYTES, parity_percent)
+        .map_err(|e| CoreError::bad(format!("{e:#}")))?;
     frames.iter().map(|f| qr_matrix(f)).collect()
 }
 
@@ -44,7 +53,10 @@ pub fn audio_burst(frame: &[u8], profile: AudioProfile) -> Result<Vec<i16>> {
         AudioProfile::Fast => fsk::Profile::Fast,
         AudioProfile::Slow => fsk::Profile::Slow,
     };
-    Ok(fsk::encode(frame, profile).into_iter().map(|v| (v * 32767.0).round() as i16).collect())
+    Ok(fsk::encode(frame, profile)
+        .into_iter()
+        .map(|v| (v * 32767.0).round() as i16)
+        .collect())
 }
 
 // ---------------------------------------------------------------- camera
@@ -71,7 +83,12 @@ struct Collector {
 
 impl Collector {
     fn new() -> Self {
-        Self { dec: FountainDecoder::new(), errors: 0, other: None, finished: None }
+        Self {
+            dec: FountainDecoder::new(),
+            errors: 0,
+            other: None,
+            finished: None,
+        }
     }
 
     /// The document bytes once complete.
@@ -130,7 +147,9 @@ impl Collector {
     }
 
     fn progress(&self) -> (u32, u32) {
-        self.dec.progress().map_or((0, 0), |(h, t)| (h as u32, t as u32))
+        self.dec
+            .progress()
+            .map_or((0, 0), |(h, t)| (h as u32, t as u32))
     }
 }
 
@@ -148,7 +167,10 @@ impl Default for Scanner {
 
 impl Scanner {
     pub fn new() -> Self {
-        Self { reader: QrReader::default(), collector: Collector::new() }
+        Self {
+            reader: QrReader::default(),
+            collector: Collector::new(),
+        }
     }
 
     /// Starts a new scan (also forgets the document delivered last, so it can be scanned again).
@@ -164,7 +186,11 @@ impl Scanner {
             return Vec::new();
         }
         let mut events = Vec::new();
-        for payload in self.reader.read(Gray { width, height, pixels: luma }) {
+        for payload in self.reader.read(Gray {
+            width,
+            height,
+            pixels: luma,
+        }) {
             if payload.len() <= FRAME_HEADER {
                 continue;
             }
@@ -173,8 +199,16 @@ impl Scanner {
             }
         }
         let (have, total) = self.collector.progress();
-        if total > 0 && !events.iter().any(|e| matches!(e, ScanEvent::Document { .. })) {
-            events.push(ScanEvent::Progress { have, total, damaged: self.collector.errors });
+        if total > 0
+            && !events
+                .iter()
+                .any(|e| matches!(e, ScanEvent::Document { .. }))
+        {
+            events.push(ScanEvent::Progress {
+                have,
+                total,
+                damaged: self.collector.errors,
+            });
         }
         events
     }
@@ -236,7 +270,9 @@ mod tests {
     }
 
     fn doc(seed: u8, len: usize) -> Vec<u8> {
-        (0..len).map(|i| (i as u8).wrapping_mul(13).wrapping_add(seed)).collect()
+        (0..len)
+            .map(|i| (i as u8).wrapping_mul(13).wrapping_add(seed))
+            .collect()
     }
 
     fn feed(s: &mut Scanner, f: &QrFrame) -> Vec<ScanEvent> {
@@ -257,7 +293,11 @@ mod tests {
             for e in feed(&mut s, f) {
                 match e {
                     ScanEvent::Document { bytes } => got = Some(bytes),
-                    ScanEvent::Progress { have, total, damaged } => {
+                    ScanEvent::Progress {
+                        have,
+                        total,
+                        damaged,
+                    } => {
                         assert!(have <= total && total > 0 && damaged == 0);
                     }
                 }
@@ -274,7 +314,10 @@ mod tests {
         // the screen keeps looping the same document: it is not delivered twice, until reset
         assert!(feed(&mut s, &frames[0]).is_empty());
         s.reset();
-        assert!(matches!(feed(&mut s, &frames[0]).as_slice(), [ScanEvent::Progress { .. }]));
+        assert!(matches!(
+            feed(&mut s, &frames[0]).as_slice(),
+            [ScanEvent::Progress { .. }]
+        ));
         // an empty or blank image says nothing while no document is being collected
         s.reset();
         assert!(s.push_gray(0, 0, &[]).is_empty());
@@ -309,7 +352,11 @@ mod tests {
             }
             assert!(round == 0);
         }
-        assert_eq!(got.unwrap(), bdoc, "the collector followed B after six consecutive frames");
+        assert_eq!(
+            got.unwrap(),
+            bdoc,
+            "the collector followed B after six consecutive frames"
+        );
     }
 
     #[test]
@@ -321,14 +368,22 @@ mod tests {
         for f in &b[..5] {
             assert!(c.push(f).is_none());
         }
-        assert_eq!(c.progress().1, 8, "still collecting A (700 / 98 = 8 blocks)");
+        assert_eq!(
+            c.progress().1,
+            8,
+            "still collecting A (700 / 98 = 8 blocks)"
+        );
         c.push(&a[1]); // a frame of the current document breaks the run
         for f in &b[..5] {
             assert!(c.push(f).is_none());
         }
         assert_eq!(c.progress().1, 8);
         c.push(&b[5]);
-        assert_eq!(c.progress().1, 6, "the sixth consecutive frame switched to B (500 / 98 = 6 blocks)");
+        assert_eq!(
+            c.progress().1,
+            6,
+            "the sixth consecutive frame switched to B (500 / 98 = 6 blocks)"
+        );
         // a document of one frame is a lap shorter than six: one frame switches
         let tiny = fountain_encode(&doc(3, 40), QR_FRAME_BYTES, 25).unwrap();
         let mut c = Collector::new();

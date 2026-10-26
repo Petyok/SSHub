@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use sshub_sync_proto::media::ble_link::{
-    chunk_count, Event, Link, Msg, A_BUSY, A_CRC, A_ORDER, A_TIMEOUT, A_TOO_LARGE, A_VERSION, BLE_CHUNK_MAX, BLE_CHUNK_MIN, BLE_MAX_FRAME_BYTES,
-    B_BUSY, B_DONE, B_ERROR, B_TIMEOUT, B_USER,
+    chunk_count, Event, Link, Msg, A_BUSY, A_CRC, A_ORDER, A_TIMEOUT, A_TOO_LARGE, A_VERSION,
+    BLE_CHUNK_MAX, BLE_CHUNK_MIN, BLE_MAX_FRAME_BYTES, B_BUSY, B_DONE, B_ERROR, B_TIMEOUT, B_USER,
 };
 
 use crate::error::{CoreError, Result};
@@ -49,7 +49,9 @@ impl Inner {
 
     /// Moves what the link reported into the fields Kotlin reads.
     fn drain(&mut self) {
-        let Some(link) = self.link.as_mut() else { return };
+        let Some(link) = self.link.as_mut() else {
+            return;
+        };
         for ev in link.take_events() {
             match ev {
                 Event::Opened { chunk } => self.chunk = chunk,
@@ -101,7 +103,9 @@ impl BleSession {
     /// `mtu` is the negotiated ATT MTU: the HELLO proposes `min(mtu - 3, 512)` bytes per message, at least 20.
     #[uniffi::constructor]
     pub fn new(mtu: u32) -> Arc<Self> {
-        let proposal = (mtu as usize).saturating_sub(3).clamp(BLE_CHUNK_MIN, BLE_CHUNK_MAX);
+        let proposal = (mtu as usize)
+            .saturating_sub(3)
+            .clamp(BLE_CHUNK_MIN, BLE_CHUNK_MAX);
         Arc::new(Self {
             inner: Mutex::new(Inner {
                 base: Instant::now(),
@@ -146,7 +150,11 @@ impl BleSession {
 
     /// Messages to write to the RX characteristic, in order.
     pub fn take_outbox(&self) -> Vec<Vec<u8>> {
-        self.lock().link.as_mut().map(Link::take_outbox).unwrap_or_default()
+        self.lock()
+            .link
+            .as_mut()
+            .map(Link::take_outbox)
+            .unwrap_or_default()
     }
 
     /// Timers: handshake, acknowledgement retries, frame deadline, idle, keep-alive.
@@ -171,7 +179,9 @@ impl BleSession {
             return Err(CoreError::bad("the Bluetooth session is not open"));
         }
         if frame.len() > BLE_MAX_FRAME_BYTES {
-            return Err(CoreError::bad("the frame is larger than the terminal accepts"));
+            return Err(CoreError::bad(
+                "the frame is larger than the terminal accepts",
+            ));
         }
         let count = chunk_count(frame.len(), chunk);
         if count > usize::from(u16::MAX) {
@@ -179,7 +189,9 @@ impl BleSession {
                 "the frame needs {count} chunks of {chunk} bytes, more than the 65535 a frame may have"
             )));
         }
-        let Some(link) = s.link.as_mut() else { return Err(CoreError::bad("the Bluetooth session is not open")) };
+        let Some(link) = s.link.as_mut() else {
+            return Err(CoreError::bad("the Bluetooth session is not open"));
+        };
         link.send_frame(now, frame).map_err(CoreError::bad)?;
         s.drain();
         Ok(())
@@ -198,11 +210,15 @@ impl BleSession {
     pub fn state(&self) -> BleState {
         let s = self.lock();
         if let Some(reason) = &s.closed {
-            return BleState::Closed { reason: reason.clone() };
+            return BleState::Closed {
+                reason: reason.clone(),
+            };
         }
         match &s.link {
             Some(l) if l.is_open() => BleState::Open,
-            Some(l) if l.is_closed() => BleState::Closed { reason: bye_text(B_ERROR).to_string() },
+            Some(l) if l.is_closed() => BleState::Closed {
+                reason: bye_text(B_ERROR).to_string(),
+            },
             _ => BleState::Hello,
         }
     }
@@ -241,7 +257,12 @@ mod tests {
     impl Rig {
         fn new(mtu: u32) -> Rig {
             let t0 = Instant::now();
-            Rig { s: BleSession::new(mtu), t: Link::terminal(t0, 512), t0, t_frames: Vec::new() }
+            Rig {
+                s: BleSession::new(mtu),
+                t: Link::terminal(t0, 512),
+                t0,
+                t_frames: Vec::new(),
+            }
         }
         fn at(&self, ms: u64) -> Instant {
             self.t0 + Duration::from_millis(ms)
@@ -282,14 +303,37 @@ mod tests {
     fn manual(chunk: u16) -> Arc<BleSession> {
         let s = BleSession::new(247);
         s.start(0);
-        assert_eq!(s.take_outbox(), vec![Msg::Hello { version: 1, chunk: 244 }.encode()]);
-        s.on_message(Msg::HelloAck { version: 1, chunk, window: 8 }.encode(), 10);
+        assert_eq!(
+            s.take_outbox(),
+            vec![Msg::Hello {
+                version: 1,
+                chunk: 244
+            }
+            .encode()]
+        );
+        s.on_message(
+            Msg::HelloAck {
+                version: 1,
+                chunk,
+                window: 8,
+            }
+            .encode(),
+            10,
+        );
         assert_eq!(s.state(), BleState::Open);
         s
     }
 
     fn data_ids(msgs: &[Vec<u8>]) -> Vec<(u16, u16)> {
-        msgs.iter().filter(|m| m[0] == 0x10).map(|m| (u16::from_be_bytes([m[1], m[2]]), u16::from_be_bytes([m[3], m[4]]))).collect()
+        msgs.iter()
+            .filter(|m| m[0] == 0x10)
+            .map(|m| {
+                (
+                    u16::from_be_bytes([m[1], m[2]]),
+                    u16::from_be_bytes([m[3], m[4]]),
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -316,13 +360,34 @@ mod tests {
     fn the_proposal_follows_the_mtu() {
         let s = BleSession::new(23);
         s.start(0);
-        assert_eq!(s.take_outbox(), vec![Msg::Hello { version: 1, chunk: 20 }.encode()]);
+        assert_eq!(
+            s.take_outbox(),
+            vec![Msg::Hello {
+                version: 1,
+                chunk: 20
+            }
+            .encode()]
+        );
         let s = BleSession::new(517);
         s.start(0);
-        assert_eq!(s.take_outbox(), vec![Msg::Hello { version: 1, chunk: 512 }.encode()]);
+        assert_eq!(
+            s.take_outbox(),
+            vec![Msg::Hello {
+                version: 1,
+                chunk: 512
+            }
+            .encode()]
+        );
         let s = BleSession::new(0);
         s.start(0);
-        assert_eq!(s.take_outbox(), vec![Msg::Hello { version: 1, chunk: 20 }.encode()]);
+        assert_eq!(
+            s.take_outbox(),
+            vec![Msg::Hello {
+                version: 1,
+                chunk: 20
+            }
+            .encode()]
+        );
         // start twice: one HELLO
         s.start(5);
         assert!(s.take_outbox().is_empty());
@@ -338,7 +403,10 @@ mod tests {
         s.tick(2);
         s.start(0);
         assert_eq!(s.state(), BleState::Hello);
-        assert!(s.send_frame(frame(100, 6, 0), 0).is_err(), "HELLO sent, no HELLO_ACK yet");
+        assert!(
+            s.send_frame(frame(100, 6, 0), 0).is_err(),
+            "HELLO sent, no HELLO_ACK yet"
+        );
     }
 
     #[test]
@@ -372,7 +440,10 @@ mod tests {
         assert_eq!(r.t_frames.len(), 1);
         // a frame that is not a protocol frame, and one over the size limit
         assert!(r.s.send_frame(b"hello world".to_vec(), 7).is_err());
-        assert!(r.s.send_frame(frame(BLE_MAX_FRAME_BYTES + 1, 6, 0), 7).is_err());
+        assert!(r
+            .s
+            .send_frame(frame(BLE_MAX_FRAME_BYTES + 1, 6, 0), 7)
+            .is_err());
     }
 
     #[test]
@@ -384,11 +455,25 @@ mod tests {
         let count = u16::from_be_bytes([sent[0][5], sent[0][6]]);
         assert_eq!(count, 9);
         // the terminal claims the whole frame, which never left this phone
-        s.on_message(Msg::Ack { frame_id: 1, next: 9 }.encode(), 30);
+        s.on_message(
+            Msg::Ack {
+                frame_id: 1,
+                next: 9,
+            }
+            .encode(),
+            30,
+        );
         assert!(s.take_outbox().is_empty());
         assert!(s.take_send_failure().is_none());
         // the honest ACK of the window lets the last chunk go
-        s.on_message(Msg::Ack { frame_id: 1, next: 8 }.encode(), 40);
+        s.on_message(
+            Msg::Ack {
+                frame_id: 1,
+                next: 8,
+            }
+            .encode(),
+            40,
+        );
         assert_eq!(data_ids(&s.take_outbox()), vec![(1, 8)]);
     }
 
@@ -398,14 +483,35 @@ mod tests {
         s.send_frame(frame(2000, 6, 1), 20).unwrap();
         s.take_outbox();
         // the receiver saw a gap: ACK(0) while eight chunks are out
-        s.on_message(Msg::Ack { frame_id: 1, next: 0 }.encode(), 30);
+        s.on_message(
+            Msg::Ack {
+                frame_id: 1,
+                next: 0,
+            }
+            .encode(),
+            30,
+        );
         let again = data_ids(&s.take_outbox());
         assert_eq!(again, (0..8).map(|i| (1, i)).collect::<Vec<_>>());
         // a second duplicate waits for progress
-        s.on_message(Msg::Ack { frame_id: 1, next: 0 }.encode(), 31);
+        s.on_message(
+            Msg::Ack {
+                frame_id: 1,
+                next: 0,
+            }
+            .encode(),
+            31,
+        );
         assert!(s.take_outbox().is_empty());
         // an ACK for another frame id counts for nothing
-        s.on_message(Msg::Ack { frame_id: 9, next: 3 }.encode(), 32);
+        s.on_message(
+            Msg::Ack {
+                frame_id: 9,
+                next: 3,
+            }
+            .encode(),
+            32,
+        );
         assert!(s.take_outbox().is_empty());
     }
 
@@ -414,12 +520,23 @@ mod tests {
         let s = manual(244);
         s.send_frame(frame(2000, 6, 1), 20).unwrap();
         s.take_outbox();
-        s.on_message(Msg::HelloAck { version: 1, chunk: 100, window: 4 }.encode(), 30);
+        s.on_message(
+            Msg::HelloAck {
+                version: 1,
+                chunk: 100,
+                window: 4,
+            }
+            .encode(),
+            30,
+        );
         assert_eq!(s.state(), BleState::Open);
         let out = s.take_outbox();
         let ids = data_ids(&out);
         assert_eq!(ids.len(), 4, "the new window");
-        assert!(ids.iter().all(|(id, _)| *id == 2), "queued again under a new frame id");
+        assert!(
+            ids.iter().all(|(id, _)| *id == 2),
+            "queued again under a new frame id"
+        );
         assert_eq!(ids[0].1, 0);
         for m in out.iter().filter(|m| m[0] == 0x10) {
             assert!(m.len() <= 100);
@@ -431,7 +548,15 @@ mod tests {
         let s = BleSession::new(100); // proposal 97
         s.start(0);
         s.take_outbox();
-        s.on_message(Msg::HelloAck { version: 1, chunk: 98, window: 8 }.encode(), 5);
+        s.on_message(
+            Msg::HelloAck {
+                version: 1,
+                chunk: 98,
+                window: 8,
+            }
+            .encode(),
+            5,
+        );
         assert!(matches!(s.state(), BleState::Closed { .. }));
         let out = s.take_outbox();
         assert_eq!(out.last().unwrap(), &Msg::Bye { reason: B_ERROR }.encode());
@@ -439,16 +564,40 @@ mod tests {
         let s = BleSession::new(247);
         s.start(0);
         s.take_outbox();
-        s.on_message(Msg::HelloAck { version: 1, chunk: 10, window: 8 }.encode(), 5);
+        s.on_message(
+            Msg::HelloAck {
+                version: 1,
+                chunk: 10,
+                window: 8,
+            }
+            .encode(),
+            5,
+        );
         assert!(matches!(s.state(), BleState::Closed { .. }));
         let s = BleSession::new(247);
         s.start(0);
-        s.on_message(Msg::HelloAck { version: 2, chunk: 100, window: 8 }.encode(), 5);
+        s.on_message(
+            Msg::HelloAck {
+                version: 2,
+                chunk: 100,
+                window: 8,
+            }
+            .encode(),
+            5,
+        );
         assert!(matches!(s.state(), BleState::Closed { .. }));
         // a smaller size is fine
         let s = BleSession::new(247);
         s.start(0);
-        s.on_message(Msg::HelloAck { version: 1, chunk: 120, window: 8 }.encode(), 5);
+        s.on_message(
+            Msg::HelloAck {
+                version: 1,
+                chunk: 120,
+                window: 8,
+            }
+            .encode(),
+            5,
+        );
         assert_eq!(s.state(), BleState::Open);
     }
 
@@ -468,7 +617,10 @@ mod tests {
             r.s.take_outbox();
         }
         r.s.tick(120_500);
-        assert!(!r.s.take_outbox().iter().any(|m| m[0] == 0x12), "not yet: 119.5 s after the first chunk");
+        assert!(
+            !r.s.take_outbox().iter().any(|m| m[0] == 0x12),
+            "not yet: 119.5 s after the first chunk"
+        );
         r.s.tick(121_100);
         let out = r.s.take_outbox();
         let abort = out.iter().find(|m| m[0] == 0x12).expect("an ABORT");
@@ -487,7 +639,12 @@ mod tests {
         let mut r = Rig::open(247);
         r.t.bye(r.at(5), B_BUSY);
         r.run(5, &mut |_| false);
-        assert_eq!(r.s.state(), BleState::Closed { reason: bye_text(B_BUSY).to_string() });
+        assert_eq!(
+            r.s.state(),
+            BleState::Closed {
+                reason: bye_text(B_BUSY).to_string()
+            }
+        );
     }
 
     #[test]
@@ -497,9 +654,17 @@ mod tests {
         s.tick(500); // backwards: held at 1000, no panic
         assert_eq!(s.state(), BleState::Hello);
         s.tick(1_000 + 10_001); // HELLO unanswered for over 10 s
-        assert_eq!(s.state(), BleState::Closed { reason: bye_text(B_TIMEOUT).to_string() });
+        assert_eq!(
+            s.state(),
+            BleState::Closed {
+                reason: bye_text(B_TIMEOUT).to_string()
+            }
+        );
         let out = s.take_outbox();
-        assert_eq!(out.last().unwrap(), &Msg::Bye { reason: B_TIMEOUT }.encode());
+        assert_eq!(
+            out.last().unwrap(),
+            &Msg::Bye { reason: B_TIMEOUT }.encode()
+        );
         // an open session with no traffic for 90 s
         let s = manual(244);
         s.tick(10 + 91_000);
@@ -511,8 +676,18 @@ mod tests {
         let s = manual(244);
         s.send_frame(frame(300, 6, 1), 20).unwrap();
         s.take_outbox();
-        s.on_message(Msg::Abort { frame_id: 1, reason: A_TOO_LARGE }.encode(), 30);
-        assert_eq!(s.take_send_failure().as_deref(), Some(abort_text(A_TOO_LARGE)));
+        s.on_message(
+            Msg::Abort {
+                frame_id: 1,
+                reason: A_TOO_LARGE,
+            }
+            .encode(),
+            30,
+        );
+        assert_eq!(
+            s.take_send_failure().as_deref(),
+            Some(abort_text(A_TOO_LARGE))
+        );
         assert!(s.take_send_failure().is_none());
     }
 }

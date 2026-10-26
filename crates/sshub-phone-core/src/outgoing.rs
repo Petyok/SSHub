@@ -15,7 +15,11 @@ pub const MAX_QR_DOC_BYTES: usize = 12_000;
 pub fn render(frame: Vec<u8>, with_qr: bool, note: &str) -> Result<Outgoing> {
     let kind = frame.get(6).copied().unwrap_or(0);
     let too_big = frame.len() > MAX_QR_DOC_BYTES;
-    let qr = if with_qr && !too_big { qr_frames(&frame, QR_PARITY_PERCENT)? } else { Vec::new() };
+    let qr = if with_qr && !too_big {
+        qr_frames(&frame, QR_PARITY_PERCENT)?
+    } else {
+        Vec::new()
+    };
     Ok(Outgoing {
         kind,
         text: to_base64(&frame),

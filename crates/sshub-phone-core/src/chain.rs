@@ -43,7 +43,13 @@ impl Authored {
 
 /// Appends one op to the chain: the header continues the chain (seq + 1, lamport above everything seen, the highest
 /// epoch seen), the body is whatever the caller built. Refuses while the head is pending, and past u64.
-pub fn append(state: &mut PhoneState, id: &PhoneIdentity, now: i64, seen: Option<Seen>, body: OpBody) -> Result<Authored> {
+pub fn append(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    now: i64,
+    seen: Option<Seen>,
+    body: OpBody,
+) -> Result<Authored> {
     if state.head_pending {
         return Err(CoreError::refused(HEAD_PENDING_MESSAGE));
     }
@@ -56,7 +62,9 @@ pub fn append(state: &mut PhoneState, id: &PhoneIdentity, now: i64, seen: Option
         .checked_add(1);
     let seq = last.map_or(0, |e| e.seq).checked_add(1);
     let (Some(lamport), Some(seq)) = (lamport, seq) else {
-        return Err(CoreError::refused("a counter of this phone chain would leave the u64 range: refusing to sign"));
+        return Err(CoreError::refused(
+            "a counter of this phone chain would leave the u64 range: refusing to sign",
+        ));
     };
     let epoch = state.epoch.max(seen.epoch);
     let mut op = Op {
@@ -72,7 +80,9 @@ pub fn append(state: &mut PhoneState, id: &PhoneIdentity, now: i64, seen: Option
     };
     let canonical = op.canonical_bytes();
     if canonical.len() > MAX_OP_BYTES {
-        return Err(CoreError::refused(format!("op is larger than {MAX_OP_BYTES} bytes")));
+        return Err(CoreError::refused(format!(
+            "op is larger than {MAX_OP_BYTES} bytes"
+        )));
     }
     op.signature = id.sign(&canonical);
     let hash = chain_hash(&canonical);
@@ -86,32 +96,85 @@ pub fn append(state: &mut PhoneState, id: &PhoneIdentity, now: i64, seen: Option
     });
     state.lamport = lamport;
     state.epoch = epoch;
-    Ok(Authored { signature: op.signature, op, canonical, hash })
+    Ok(Authored {
+        signature: op.signature,
+        op,
+        canonical,
+        hash,
+    })
 }
 
 /// Self head attestation: "my head before this op was (seq, hash)" with a fresh timestamp. The phone's proof of recent
 /// contact (`PHONE_FRESH_SECS`) that rides every response.
-pub fn head_attest(state: &mut PhoneState, id: &PhoneIdentity, now: i64, seen: Option<Seen>) -> Result<Authored> {
-    let (seq, chain_hash) = state.chain.last().map_or((0, [0; 32]), |e| (e.seq, e.hash32()));
-    append(state, id, now, seen, OpBody::HeadAttest { device_id: id.device_id().to_string(), seq, chain_hash })
+pub fn head_attest(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    now: i64,
+    seen: Option<Seen>,
+) -> Result<Authored> {
+    let (seq, chain_hash) = state
+        .chain
+        .last()
+        .map_or((0, [0; 32]), |e| (e.seq, e.hash32()));
+    append(
+        state,
+        id,
+        now,
+        seen,
+        OpBody::HeadAttest {
+            device_id: id.device_id().to_string(),
+            seq,
+            chain_hash,
+        },
+    )
 }
 
 /// `PhoneReenrollCancel { reenroll_hash, by_phone: true, third_factor: null }`.
-pub fn reenroll_cancel(state: &mut PhoneState, id: &PhoneIdentity, reenroll_hash: [u8; 32], now: i64, seen: Option<Seen>) -> Result<Authored> {
-    append(state, id, now, seen, OpBody::PhoneReenrollCancel { reenroll_hash, by_phone: true, third_factor: None })
+pub fn reenroll_cancel(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    reenroll_hash: [u8; 32],
+    now: i64,
+    seen: Option<Seen>,
+) -> Result<Authored> {
+    append(
+        state,
+        id,
+        now,
+        seen,
+        OpBody::PhoneReenrollCancel {
+            reenroll_hash,
+            by_phone: true,
+            third_factor: None,
+        },
+    )
 }
 
 /// `RedPhoneSign { op_hash }`: the phone's proof that it saw the Red op with this hash.
-pub fn red_phone_sign(state: &mut PhoneState, id: &PhoneIdentity, op_hash: [u8; 32], now: i64, seen: Option<Seen>) -> Result<Authored> {
+pub fn red_phone_sign(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    op_hash: [u8; 32],
+    now: i64,
+    seen: Option<Seen>,
+) -> Result<Authored> {
     append(state, id, now, seen, OpBody::RedPhoneSign { op_hash })
 }
 
 /// Announces the next wrap key generation (C14 step 1). `new_gen` is the identity at the new generation; the caller
 /// then keeps using it. Blobs wrapped to older generations stay readable.
-pub fn wrap_key_rotate(state: &mut PhoneState, id: &PhoneIdentity, new_gen: &PhoneIdentity, now: i64, seen: Option<Seen>) -> Result<Authored> {
+pub fn wrap_key_rotate(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    new_gen: &PhoneIdentity,
+    now: i64,
+    seen: Option<Seen>,
+) -> Result<Authored> {
     let wrap_epoch = state.wrap_epoch + 1;
     if wrap_epoch > WRAP_GEN_MAX {
-        return Err(CoreError::refused(format!("this phone cannot open wrap key generations above {WRAP_GEN_MAX}")));
+        return Err(CoreError::refused(format!(
+            "this phone cannot open wrap key generations above {WRAP_GEN_MAX}"
+        )));
     }
     let public = new_gen.public();
     let out = append(
@@ -130,12 +193,38 @@ pub fn wrap_key_rotate(state: &mut PhoneState, id: &PhoneIdentity, new_gen: &Pho
     Ok(out)
 }
 
-pub fn share_storage_key(state: &mut PhoneState, id: &PhoneIdentity, epoch: u64, sealed: Vec<u8>, now: i64, seen: Option<Seen>) -> Result<Authored> {
-    append(state, id, now, seen, OpBody::ShareStorageKey { epoch, sealed })
+pub fn share_storage_key(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    epoch: u64,
+    sealed: Vec<u8>,
+    now: i64,
+    seen: Option<Seen>,
+) -> Result<Authored> {
+    append(
+        state,
+        id,
+        now,
+        seen,
+        OpBody::ShareStorageKey { epoch, sealed },
+    )
 }
 
-pub fn confirm_batch(state: &mut PhoneState, id: &PhoneIdentity, epoch: u64, items: Vec<ConfirmItem>, now: i64, seen: Option<Seen>) -> Result<Authored> {
-    append(state, id, now, seen, OpBody::ShareReshareConfirmBatch { epoch, items })
+pub fn confirm_batch(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    epoch: u64,
+    items: Vec<ConfirmItem>,
+    now: i64,
+    seen: Option<Seen>,
+) -> Result<Authored> {
+    append(
+        state,
+        id,
+        now,
+        seen,
+        OpBody::ShareReshareConfirmBatch { epoch, items },
+    )
 }
 
 /// The fields of a kind 9 request UNCHANGED (`CertRequestWire::to_body`).
@@ -157,23 +246,55 @@ pub fn cert_issue(
         id,
         now,
         seen,
-        OpBody::CertIssue { device_id: delegate, scope, expiry, max_new_hosts_per_day, epoch_lo, epoch_hi },
+        OpBody::CertIssue {
+            device_id: delegate,
+            scope,
+            expiry,
+            max_new_hosts_per_day,
+            epoch_lo,
+            epoch_hi,
+        },
     )
 }
 
-pub fn cert_revoke(state: &mut PhoneState, id: &PhoneIdentity, cert_id: [u8; 32], now: i64, seen: Option<Seen>) -> Result<Authored> {
+pub fn cert_revoke(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    cert_id: [u8; 32],
+    now: i64,
+    seen: Option<Seen>,
+) -> Result<Authored> {
     append(state, id, now, seen, OpBody::CertRevoke { cert_id })
 }
 
-pub fn cert_extend(state: &mut PhoneState, id: &PhoneIdentity, cert_id: [u8; 32], extra_hosts: u32, now: i64, seen: Option<Seen>) -> Result<Authored> {
-    append(state, id, now, seen, OpBody::CertExtend { cert_id, extra_hosts })
+pub fn cert_extend(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    cert_id: [u8; 32],
+    extra_hosts: u32,
+    now: i64,
+    seen: Option<Seen>,
+) -> Result<Authored> {
+    append(
+        state,
+        id,
+        now,
+        seen,
+        OpBody::CertExtend {
+            cert_id,
+            extra_hosts,
+        },
+    )
 }
 
 /// Newest ops of the chain as signed bytes for the courier lists.
 pub fn courier_ops(state: &PhoneState, count: usize) -> Vec<SignedOpBytes> {
     let n = count.min(COURIER_TAIL);
     let from = state.chain.len().saturating_sub(n);
-    state.chain[from..].iter().map(|e| (e.canonical.clone(), e.signature64())).collect()
+    state.chain[from..]
+        .iter()
+        .map(|e| (e.canonical.clone(), e.signature64()))
+        .collect()
 }
 
 // ------------------------------------------------------------ head adoption
@@ -195,7 +316,8 @@ fn read_own_chain(id: &PhoneIdentity, ops: &[SignedOpBytes]) -> Result<OwnChain>
     }
     let mut parsed: Vec<(Op, &SignedOpBytes)> = Vec::with_capacity(ops.len());
     for o in ops {
-        let op = decode_op(&o.0, o.1).map_err(|e| CoreError::bad(format!("op is not canonical: {e:#}")))?;
+        let op = decode_op(&o.0, o.1)
+            .map_err(|e| CoreError::bad(format!("op is not canonical: {e:#}")))?;
         parsed.push((op, o));
     }
     parsed.sort_by_key(|(op, _)| op.seq);
@@ -205,20 +327,30 @@ fn read_own_chain(id: &PhoneIdentity, ops: &[SignedOpBytes]) -> Result<OwnChain>
     let mut epoch = 0u64;
     for (op, raw) in &parsed {
         if op.device_id != id.device_id() {
-            return Err(CoreError::bad(format!("An op in the list is not by this phone ({}).", op.device_id)));
+            return Err(CoreError::bad(format!(
+                "An op in the list is not by this phone ({}).",
+                op.device_id
+            )));
         }
         if !verify(&own_pub, &raw.0, &raw.1) {
-            return Err(CoreError::bad(format!("The signature of seq {} does not verify under this phone's key.", op.seq)));
+            return Err(CoreError::bad(format!(
+                "The signature of seq {} does not verify under this phone's key.",
+                op.seq
+            )));
         }
         let hash = chain_hash(&raw.0);
         match chain.last() {
             Some(prev) => {
-                if prev.seq.checked_add(1) != Some(op.seq) || op.prev_hash.as_slice() != prev.hash.as_slice() {
+                if prev.seq.checked_add(1) != Some(op.seq)
+                    || op.prev_hash.as_slice() != prev.hash.as_slice()
+                {
                     return Err(CoreError::bad("The ops in the list do not form one chain."));
                 }
             }
             None if op.seq == 1 && op.prev_hash != [0; 32] => {
-                return Err(CoreError::bad("The first op of a chain starts from nothing."));
+                return Err(CoreError::bad(
+                    "The first op of a chain starts from nothing.",
+                ));
             }
             None => {}
         }
@@ -236,7 +368,11 @@ fn read_own_chain(id: &PhoneIdentity, ops: &[SignedOpBytes]) -> Result<OwnChain>
             signature: raw.1.to_vec(),
         });
     }
-    Ok(OwnChain { chain, epoch, wrap_epoch })
+    Ok(OwnChain {
+        chain,
+        epoch,
+        wrap_epoch,
+    })
 }
 
 /// What `take_chain` tells the screen about the list it just read.
@@ -254,13 +390,31 @@ pub struct AdoptInfo {
 /// A single list cannot show that it is the newest (a courier or a terminal behind on sync hands over an old tail, and
 /// signing on top of it forks the chain). So a head is adopted in two steps: two lists must name the same newest op
 /// (`agreed`), and the user then confirms what they see (`accept_head`). A terminal-signed head would be stronger.
-pub fn adopt_own_chain(state: &mut PhoneState, id: &PhoneIdentity, ops: &[SignedOpBytes]) -> Result<AdoptInfo> {
+pub fn adopt_own_chain(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    ops: &[SignedOpBytes],
+) -> Result<AdoptInfo> {
     let r = read_own_chain(id, ops)?;
-    let head = r.chain.last().expect("a chain read has at least one op").clone();
-    let mut info = AdoptInfo { head_seq: head.seq, newest_at: head.timestamp, ops: r.chain.len() as u32, agreed: false, previous_seq: None };
+    let head = r
+        .chain
+        .last()
+        .expect("a chain read has at least one op")
+        .clone();
+    let mut info = AdoptInfo {
+        head_seq: head.seq,
+        newest_at: head.timestamp,
+        ops: r.chain.len() as u32,
+        agreed: false,
+        previous_seq: None,
+    };
     if let Some(c) = &state.head_candidate {
         if c.seq == head.seq && c.hash == head.hash {
-            state.head_proposal = Some(HeadProposal { chain: r.chain, epoch: r.epoch, wrap_epoch: r.wrap_epoch });
+            state.head_proposal = Some(HeadProposal {
+                chain: r.chain,
+                epoch: r.epoch,
+                wrap_epoch: r.wrap_epoch,
+            });
             state.head_candidate = None;
             info.agreed = true;
             return Ok(info);
@@ -268,18 +422,25 @@ pub fn adopt_own_chain(state: &mut PhoneState, id: &PhoneIdentity, ops: &[Signed
         info.previous_seq = Some(c.seq);
     }
     state.head_proposal = None;
-    state.head_candidate = Some(HeadCandidate { seq: head.seq, hash: head.hash });
+    state.head_candidate = Some(HeadCandidate {
+        seq: head.seq,
+        hash: head.hash,
+    });
     Ok(info)
 }
 
 /// The user looked at the agreed head (seq, newest op time) and accepted it. Returns (head seq, ops read).
 pub fn accept_head(state: &mut PhoneState) -> Result<(u64, u32)> {
     let Some(p) = state.head_proposal.take() else {
-        return Err(CoreError::refused("No chain head was agreed by two lists yet."));
+        return Err(CoreError::refused(
+            "No chain head was agreed by two lists yet.",
+        ));
     };
     let head_seq = p.chain.last().map_or(0, |e| e.seq);
     let n = p.chain.len() as u32;
-    state.lamport = state.lamport.max(p.chain.iter().map(|e| e.lamport).max().unwrap_or(0));
+    state.lamport = state
+        .lamport
+        .max(p.chain.iter().map(|e| e.lamport).max().unwrap_or(0));
     state.epoch = state.epoch.max(p.epoch);
     state.wrap_epoch = state.wrap_epoch.max(p.wrap_epoch);
     state.chain = p.chain;
@@ -303,6 +464,7 @@ pub fn confirm_no_chain(state: &mut PhoneState, id: &PhoneIdentity, typed: &str)
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use sshub_sync_proto::oplog::canonical::decode_op;
@@ -326,7 +488,7 @@ mod tests {
         let me = id(11);
         let s = live(&me, 3);
         assert_eq!(s.chain.iter().map(|e| e.seq).collect::<Vec<_>>(), [1, 2, 3]);
-        assert_eq!(s.chain[0].canonical.len() > 0, true);
+        assert!(!s.chain[0].canonical.is_empty());
         let mut prev = [0u8; 32];
         for e in &s.chain {
             let op = decode_op(&e.canonical, e.signature64()).unwrap();
@@ -336,9 +498,13 @@ mod tests {
         }
         // the HeadAttest names the previous head (seq 0 and zeros before the first op)
         let op1 = decode_op(&s.chain[0].canonical, s.chain[0].signature64()).unwrap();
-        assert!(matches!(op1.body, OpBody::HeadAttest { seq: 0, chain_hash, .. } if chain_hash == [0; 32]));
+        assert!(
+            matches!(op1.body, OpBody::HeadAttest { seq: 0, chain_hash, .. } if chain_hash == [0; 32])
+        );
         let op3 = decode_op(&s.chain[2].canonical, s.chain[2].signature64()).unwrap();
-        assert!(matches!(op3.body, OpBody::HeadAttest { seq: 2, chain_hash, .. } if chain_hash == s.chain[1].hash32()));
+        assert!(
+            matches!(op3.body, OpBody::HeadAttest { seq: 2, chain_hash, .. } if chain_hash == s.chain[1].hash32())
+        );
         assert_eq!(courier_ops(&s, 8).len(), 3);
         assert_eq!(courier_ops(&s, 2).len(), 2);
     }
@@ -350,7 +516,16 @@ mod tests {
         s.lamport = u64::MAX;
         assert!(head_attest(&mut s, &me, NOW, None).is_err());
         let mut s = PhoneState::default();
-        let a = head_attest(&mut s, &me, NOW, Some(Seen { lamport: 500, epoch: 7 })).unwrap();
+        let a = head_attest(
+            &mut s,
+            &me,
+            NOW,
+            Some(Seen {
+                lamport: 500,
+                epoch: 7,
+            }),
+        )
+        .unwrap();
         assert_eq!((a.op.lamport, a.op.epoch), (501, 7));
         let b = head_attest(&mut s, &me, NOW + 1, None).unwrap();
         assert_eq!((b.op.lamport, b.op.epoch), (502, 7));
@@ -373,12 +548,19 @@ mod tests {
         let mut fresh = PhoneState::restored();
         let first = adopt_own_chain(&mut fresh, &me, &stale).unwrap();
         assert!(!first.agreed);
-        assert!(head_attest(&mut fresh, &me, NOW + 100, None).is_err(), "one list adopts nothing");
+        assert!(
+            head_attest(&mut fresh, &me, NOW + 100, None).is_err(),
+            "one list adopts nothing"
+        );
         let newer = adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8)).unwrap();
         assert!(!newer.agreed);
         assert_eq!(newer.previous_seq, Some(2));
         assert!(accept_head(&mut fresh).is_err());
-        assert!(adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8)).unwrap().agreed);
+        assert!(
+            adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8))
+                .unwrap()
+                .agreed
+        );
         assert_eq!(accept_head(&mut fresh).unwrap(), (3, 3));
         let next = head_attest(&mut fresh, &me, NOW + 100, None).unwrap();
         assert_eq!(next.op.seq, 4);
@@ -391,13 +573,28 @@ mod tests {
         let other = id(12);
         let ops = courier_ops(&live(&me, 2), 8);
         let mut s = PhoneState::restored();
-        assert!(adopt_own_chain(&mut s, &me, &[]).unwrap_err().reason().contains("holds no op"));
-        assert!(adopt_own_chain(&mut s, &other, &ops).unwrap_err().reason().contains("not by this phone"));
+        assert!(adopt_own_chain(&mut s, &me, &[])
+            .unwrap_err()
+            .reason()
+            .contains("holds no op"));
+        assert!(adopt_own_chain(&mut s, &other, &ops)
+            .unwrap_err()
+            .reason()
+            .contains("not by this phone"));
         let forged: Vec<_> = ops.iter().map(|(c, _)| (c.clone(), [0u8; 64])).collect();
-        assert!(adopt_own_chain(&mut s, &me, &forged).unwrap_err().reason().contains("does not verify"));
+        assert!(adopt_own_chain(&mut s, &me, &forged)
+            .unwrap_err()
+            .reason()
+            .contains("does not verify"));
         let dup = vec![ops[1].clone(), ops[1].clone()];
-        assert!(adopt_own_chain(&mut s, &me, &dup).unwrap_err().reason().contains("one chain"));
-        assert!(s.head_candidate.is_none(), "a refused list leaves no candidate");
+        assert!(adopt_own_chain(&mut s, &me, &dup)
+            .unwrap_err()
+            .reason()
+            .contains("one chain"));
+        assert!(
+            s.head_candidate.is_none(),
+            "a refused list leaves no candidate"
+        );
     }
 
     #[test]
@@ -431,7 +628,12 @@ mod tests {
         // a rotation op announces the keys of that generation
         let op = decode_op(&live.chain[1].canonical, live.chain[1].signature64()).unwrap();
         match op.body {
-            OpBody::WrapKeyRotate { wrap_epoch, x25519_pub, mlkem_pub, .. } => {
+            OpBody::WrapKeyRotate {
+                wrap_epoch,
+                x25519_pub,
+                mlkem_pub,
+                ..
+            } => {
                 assert_eq!(wrap_epoch, 2);
                 assert_eq!(x25519_pub, g2.public().x25519_pub);
                 assert_eq!(mlkem_pub, g2.public().mlkem_pub);

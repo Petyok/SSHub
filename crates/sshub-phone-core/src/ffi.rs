@@ -5,7 +5,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use rand_core::{OsRng, RngCore};
-use sshub_sync_proto::wire::{PhoneOpsWire, SignedOpBytes, KIND_CERT_EXTEND_REQUEST, KIND_CERT_REQUEST, KIND_CHALLENGE, KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_OPS, KIND_RECOVERY_NOTICE, WIRE_MAGIC};
+use sshub_sync_proto::wire::{
+    PhoneOpsWire, SignedOpBytes, KIND_CERT_EXTEND_REQUEST, KIND_CERT_REQUEST, KIND_CHALLENGE,
+    KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_OPS,
+    KIND_RECOVERY_NOTICE, WIRE_MAGIC,
+};
 use zeroize::Zeroizing;
 
 use crate::ble::BleSession;
@@ -24,7 +28,7 @@ use crate::text::{from_base64, to_base64};
 use crate::views::*;
 
 enum Pending {
-    Release(PendingRelease),
+    Release(Box<PendingRelease>),
     Notice(PendingNotice),
     Cert(PendingCert),
     Reshare(PendingReshare),
@@ -68,7 +72,12 @@ fn kind_of(frame: &[u8]) -> Option<u8> {
 }
 
 fn refused(reason: impl Into<String>) -> Opened {
-    Opened::Refused { view: RefusalView { reason: reason.into(), checks: Vec::new() } }
+    Opened::Refused {
+        view: RefusalView {
+            reason: reason.into(),
+            checks: Vec::new(),
+        },
+    }
 }
 
 fn info(u: &Unlocked, now: i64) -> UnlockInfo {
@@ -79,8 +88,21 @@ fn info(u: &Unlocked, now: i64) -> UnlockInfo {
         state_lost: u.state_lost,
         head_seq: u.state.head().map(|e| e.seq),
         wrap_epoch: u.state.wrap_epoch,
-        live_short_codes: u.state.snapshots.keys().filter(|k| u.state.live_snapshot(k, now).is_some()).count() as u32,
-        ring: u.state.ring.iter().map(|(id, d)| RingEntry { device_id: id.clone(), name: d.name.clone() }).collect(),
+        live_short_codes: u
+            .state
+            .snapshots
+            .keys()
+            .filter(|k| u.state.live_snapshot(k, now).is_some())
+            .count() as u32,
+        ring: u
+            .state
+            .ring
+            .iter()
+            .map(|(id, d)| RingEntry {
+                device_id: id.clone(),
+                name: d.name.clone(),
+            })
+            .collect(),
     }
 }
 
@@ -121,7 +143,12 @@ impl Inner {
     /// Splits the borrow: the unlocked identity and state, the RNG and the clock as the flows' context.
     fn ctx(&mut self, now: i64) -> Result<Ctx<'_>> {
         let u = self.unlocked.as_mut().ok_or(CoreError::Locked)?;
-        Ok(Ctx { id: &mut u.id, state: &mut u.state, rng: &mut *self.rng, now })
+        Ok(Ctx {
+            id: &mut u.id,
+            state: &mut u.state,
+            rng: &mut *self.rng,
+            now,
+        })
     }
 
     fn open_chain(&mut self, ops: &[SignedOpBytes]) -> Result<Opened> {
@@ -138,7 +165,14 @@ impl Inner {
             self.pending.insert(t, Pending::Chain);
         }
         Ok(Opened::Chain {
-            view: ChainAdopted { token: t, agreed: r.agreed, head_seq: r.head_seq, newest_at: r.newest_at, ops: r.ops, previous_seq: r.previous_seq },
+            view: ChainAdopted {
+                token: t,
+                agreed: r.agreed,
+                head_seq: r.head_seq,
+                newest_at: r.newest_at,
+                ops: r.ops,
+                previous_seq: r.previous_seq,
+            },
         })
     }
 
@@ -147,7 +181,9 @@ impl Inner {
             return Err(CoreError::Locked);
         }
         let Some(kind) = kind_of(frame) else {
-            return Ok(refused("Not a SSHub document: it does not start with the frame magic."));
+            return Ok(refused(
+                "Not a SSHub document: it does not start with the frame magic.",
+            ));
         };
         if frame.len() > sshub_sync_proto::limits::MAX_FRAME_BYTES {
             return Ok(refused("This document is larger than any SSHub frame."));
@@ -159,7 +195,7 @@ impl Inner {
                 let mut ctx = self.ctx(now)?;
                 match release::open_challenge(frame, &mut ctx, t) {
                     Ok((view, p)) => {
-                        self.pending.insert(t, Pending::Release(p));
+                        self.pending.insert(t, Pending::Release(Box::new(p)));
                         Ok(Opened::ShareRequest { view })
                     }
                     Err(view) => Ok(Opened::Refused { view }),
@@ -175,7 +211,11 @@ impl Inner {
             }
             KIND_CERT_REQUEST | KIND_CERT_EXTEND_REQUEST => {
                 let ctx = self.ctx(now)?;
-                let (o, p) = if kind == KIND_CERT_REQUEST { cert::open_cert_request(frame, &ctx, t) } else { cert::open_cert_extend(frame, &ctx, t) };
+                let (o, p) = if kind == KIND_CERT_REQUEST {
+                    cert::open_cert_request(frame, &ctx, t)
+                } else {
+                    cert::open_cert_extend(frame, &ctx, t)
+                };
                 if let Some(p) = p {
                     self.pending.insert(t, Pending::Cert(p));
                 }
@@ -186,8 +226,16 @@ impl Inner {
                     Ok(w) => w.ops,
                     Err(e) => return Ok(refused(format!("Not a list of ops: {e:#}"))),
                 };
-                let own = self.unlocked.as_ref().map(|u| u.id.device_id().to_string()).unwrap_or_default();
-                if ops.iter().all(|(c, _)| op_author(c).as_deref() == Some(own.as_str())) && !ops.is_empty() {
+                let own = self
+                    .unlocked
+                    .as_ref()
+                    .map(|u| u.id.device_id().to_string())
+                    .unwrap_or_default();
+                if ops
+                    .iter()
+                    .all(|(c, _)| op_author(c).as_deref() == Some(own.as_str()))
+                    && !ops.is_empty()
+                {
                     return self.open_chain(&ops);
                 }
                 let mut ctx = self.ctx(now)?;
@@ -200,14 +248,21 @@ impl Inner {
             KIND_ENROLL_COMMIT | KIND_ENROLL_REVEAL | KIND_ENROLL_CONFIRM => {
                 let flow = self.enroll.get_or_insert_with(EnrollFlow::new);
                 let u = self.unlocked.as_mut().ok_or(CoreError::Locked)?;
-                let mut ctx = Ctx { id: &mut u.id, state: &mut u.state, rng: &mut *self.rng, now };
+                let mut ctx = Ctx {
+                    id: &mut u.id,
+                    state: &mut u.state,
+                    rng: &mut *self.rng,
+                    now,
+                };
                 let o = flow.on_frame(frame, &mut ctx, t);
                 if matches!(o, Opened::Refused { .. } | Opened::Enrolled { .. }) {
                     self.enroll = None;
                 }
                 Ok(o)
             }
-            other => Ok(refused(format!("This document (kind {other}) is not something a phone answers."))),
+            other => Ok(refused(format!(
+                "This document (kind {other}) is not something a phone answers."
+            ))),
         }
     }
 }
@@ -219,7 +274,17 @@ fn op_author(canonical: &[u8]) -> Option<String> {
 }
 
 fn none_outgoing(note: &str) -> Outgoing {
-    Outgoing { kind: 0, frame: Vec::new(), text: String::new(), qr: Vec::new(), qr_too_big: false, audio_frame: None, manual: None, short_code: None, note: note.to_string() }
+    Outgoing {
+        kind: 0,
+        frame: Vec::new(),
+        text: String::new(),
+        qr: Vec::new(),
+        qr_too_big: false,
+        audio_frame: None,
+        manual: None,
+        short_code: None,
+        note: note.to_string(),
+    }
 }
 
 #[uniffi::export]
@@ -233,7 +298,11 @@ impl PhoneCore {
     /// Opens the stored state with the secret and derives the identity. A state that does not open (damaged, or
     /// sealed under another key) starts as a restored phone: it must take its chain from a terminal.
     pub fn unlock(&self, secret: Vec<u8>) -> Result<UnlockInfo> {
-        let s: Zeroizing<[u8; 32]> = Zeroizing::new(secret.try_into().map_err(|_| CoreError::bad("the phone secret must be 32 bytes"))?);
+        let s: Zeroizing<[u8; 32]> = Zeroizing::new(
+            secret
+                .try_into()
+                .map_err(|_| CoreError::bad("the phone secret must be 32 bytes"))?,
+        );
         let mut g = self.lock_inner();
         let (state, lost) = if g.restored {
             (PhoneState::restored(), false)
@@ -251,7 +320,11 @@ impl PhoneCore {
         g.sealed = None;
         g.pending.clear();
         g.enroll = None;
-        g.unlocked = Some(Unlocked { id, state, state_lost: lost });
+        g.unlocked = Some(Unlocked {
+            id,
+            state,
+            state_lost: lost,
+        });
         Ok(info(g.unlocked.as_ref().unwrap(), 0))
     }
 
@@ -295,8 +368,16 @@ impl PhoneCore {
         // enrollment decisions belong to the flow, not to the pending map
         if let Decision::EnrollName { .. } | Decision::EnrollSas { .. } = decision {
             let u = g.unlocked.as_mut().ok_or(CoreError::Locked)?;
-            let mut flow = g.enroll.take().ok_or_else(|| CoreError::bad("no enrollment is running"))?;
-            let mut ctx = Ctx { id: &mut u.id, state: &mut u.state, rng: &mut *g.rng, now };
+            let mut flow = g
+                .enroll
+                .take()
+                .ok_or_else(|| CoreError::bad("no enrollment is running"))?;
+            let mut ctx = Ctx {
+                id: &mut u.id,
+                state: &mut u.state,
+                rng: &mut *g.rng,
+                now,
+            };
             let r = flow.decide(&decision, &mut ctx);
             let ended = matches!(&decision, Decision::EnrollSas { matches: false });
             if r.is_ok() && !ended {
@@ -304,19 +385,32 @@ impl PhoneCore {
             }
             return r;
         }
-        let p = g.pending.remove(&token).ok_or_else(|| CoreError::bad("this request is no longer pending"))?;
+        let p = g
+            .pending
+            .remove(&token)
+            .ok_or_else(|| CoreError::bad("this request is no longer pending"))?;
         if matches!(decision, Decision::Refuse) {
             return Ok(none_outgoing("Refused."));
         }
         let mut ctx = g.ctx(now)?;
         match (p, decision) {
-            (Pending::Release(p), Decision::Release { options }) => release::approve(p, &options, &mut ctx),
-            (Pending::Notice(p), Decision::Approve { typed_id }) => notices::approve_notice(p, typed_id.as_deref(), &mut ctx),
-            (Pending::Cert(p), Decision::Approve { typed_id }) => cert::approve_cert(p, typed_id.as_deref(), &mut ctx),
-            (Pending::Reshare(p), Decision::Approve { .. }) => reshare::publish_reshare(p, &mut ctx),
+            (Pending::Release(p), Decision::Release { options }) => {
+                release::approve(*p, &options, &mut ctx)
+            }
+            (Pending::Notice(p), Decision::Approve { typed_id }) => {
+                notices::approve_notice(p, typed_id.as_deref(), &mut ctx)
+            }
+            (Pending::Cert(p), Decision::Approve { typed_id }) => {
+                cert::approve_cert(p, typed_id.as_deref(), &mut ctx)
+            }
+            (Pending::Reshare(p), Decision::Approve { .. }) => {
+                reshare::publish_reshare(p, &mut ctx)
+            }
             (Pending::Chain, Decision::Approve { .. }) => {
                 let (seq, n) = chain::accept_head(ctx.state)?;
-                Ok(none_outgoing(&format!("Chain taken: continuing after seq {seq} ({n} op(s) read).")))
+                Ok(none_outgoing(&format!(
+                    "Chain taken: continuing after seq {seq} ({n} op(s) read)."
+                )))
             }
             _ => Err(CoreError::bad("that decision does not fit this request")),
         }
@@ -325,7 +419,9 @@ impl PhoneCore {
     /// The head adoption step 1 for a list given directly (the same as `open_frame` on a kind 5 list of own ops).
     pub fn take_chain(&self, ops_frame: Vec<u8>) -> Result<ChainAdopted> {
         let mut g = self.lock_inner();
-        let ops = PhoneOpsWire::decode(&ops_frame).map_err(|e| CoreError::bad(format!("Not a list of ops: {e:#}")))?.ops;
+        let ops = PhoneOpsWire::decode(&ops_frame)
+            .map_err(|e| CoreError::bad(format!("Not a list of ops: {e:#}")))?
+            .ops;
         match g.open_chain(&ops)? {
             Opened::Chain { view } => Ok(view),
             Opened::Refused { view } => Err(CoreError::bad(view.reason)),
@@ -347,7 +443,12 @@ impl PhoneCore {
         if u.state.chain.is_empty() {
             return Err(CoreError::bad("This phone has not written anything yet."));
         }
-        Ok(to_base64(&PhoneOpsWire { ops: chain::courier_ops(&u.state, COURIER_TAIL) }.encode()))
+        Ok(to_base64(
+            &PhoneOpsWire {
+                ops: chain::courier_ops(&u.state, COURIER_TAIL),
+            }
+            .encode(),
+        ))
     }
 
     /// The state encrypted under the secret. Call after every mutation; Kotlin writes it atomically.
@@ -385,7 +486,11 @@ impl PhoneCore {
     /// The person declares the old code dead (never delivered, or the credential was reissued).
     pub fn declare_short_code_dead(&self, host_uid: String) -> Result<()> {
         let mut g = self.lock_inner();
-        g.unlocked.as_mut().ok_or(CoreError::Locked)?.state.invalidate_snapshot(&host_uid);
+        g.unlocked
+            .as_mut()
+            .ok_or(CoreError::Locked)?
+            .state
+            .invalidate_snapshot(&host_uid);
         Ok(())
     }
 
