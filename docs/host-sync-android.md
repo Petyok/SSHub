@@ -441,6 +441,29 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
   `chrome_devtools_remote` with `device.open` and attaches with `chromium.connectOverCDP`. A `data:` page is not a secure context: the page target will serve
   the companion page on `http://localhost` through an adb reverse (still to do, needs `reverse:` over the adb server).
 
+## 11b. Phase 2 result: the Kotlin side
+
+- Code: `android/app/src/main/java/uk/petruha/sshub/phone/`: `ui/theme` (spec-A tokens dark and light, bundled fonts, reduced motion), `ui/components`
+  (about 30 components, Canvas glyphs, no icon font), `ui/screens/{identity,home,release,trust,recovery,enroll}` (all 35 screens of spec 12, stateless
+  `XScreen(state, actions)` plus a ViewModel and a nav builder per group), `core/` (the Kotlin `PhoneCoreApi`, ports in `Platform.kt`, and
+  `core/uniffi/UniffiPhoneCore`, the adapter over the Rust core), `platform/` (Keystore AES-GCM vault with StrongBox and BiometricPrompt, atomic sealed-state
+  file in `noBackupFilesDir`, CameraX luma frames, BLE GATT central for C20 driving the Rust `BleSession`, AudioTrack FSK playback, sensitive clipboard with
+  the 60 s clear, FLAG_SECURE helper), `app/AppRoot` (nav host, bottom bar, lock on stop and screen off, theme choice).
+- Debug builds run the REAL core (the debug APK, signed with the committed public debug key, is what is installed for a device session); the Kotlin
+  `FakePhoneCore` (src/debug) is a demo: `adb shell am start -n uk.petruha.sshub.phone/.MainActivity --es core fake`. Release builds always use the Rust core.
+- CI (`android/ci/build.sh`): host tests of the core, `cargo ndk` with `--profile phone`, uniffi bindings, `lint.sh` (no `Color(0x` outside the theme, no
+  `Ellipsis` or `maxLines` in ui, no `Log.` in platform and core), `manifest-check.sh` (permissions exactly CAMERA, BLUETOOTH_SCAN neverForLocation,
+  BLUETOOTH_CONNECT, USE_BIOMETRIC; no INTERNET; backup and cleartext off), debug APK and test APK.
+- Tests on the emulator (`gpu-verify/android.sh <checkout> <name> test`, optional `TEST_CLASS=a.B,c.D`): 563 instrumented tests: every screen's main path and
+  variants, dark and light, font scale 1.3 and 2.0 with a real-clipping check, 48 dp targets, the dangerous-field rules (D1 to D20 where they apply), the
+  platform adapters, the real native core (public vectors: device id, words round trip) and every challenge fixture of the page through the adapter
+  (`FixtureFlowTest`), and the app shell over the fakes. Each tested state leaves a screenshot (`gpu-verify/logs/android-<name>-out/shots`).
+- Known limits of what the Rust core reports (the UI hides what it cannot fill, see 2.3): no device name or ring epoch in `UnlockInfo`, no per-row
+  danger flag, no requester fingerprint, issued certificates arrive as one summary line, the export has no per-op rows. Suggested Rust additions are in the
+  adapter notes of 2.3.
+- Not done: Gradle dependency verification, a reproducibility check of the APK, R8, and screens for scenes that need a second device (BLE against a real terminal,
+  camera against a real screen): covered by fakes and by the e2e target, not by this run.
+
 ## 12. Plan after phase 1
 
 1. Maintainer picks the visual direction.
