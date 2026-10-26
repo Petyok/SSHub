@@ -187,7 +187,6 @@ ring_with_phone() {
   "$1"
   enroll_phone peer-a
   phone_signs peer-a "$ADD"
-  show "peer-a: the phone's admission after its own proof" peer peer-a $SSHUB sync-approve "$ADD" --format json
   st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
   expect "the phone is a holder in force on peer-a" "$st" '[.devices[] | select(.name=="my phone") | .role] == ["holder"]'
   for t in peer-b $( [ "$1" = ring3 ] && echo peer-c ); do

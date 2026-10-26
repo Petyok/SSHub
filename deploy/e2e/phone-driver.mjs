@@ -203,7 +203,10 @@ async function setup({ words = S.words, pin = PIN } = {}) {
     }, null, { timeout: 60000 });
     if (!(await has('#device-id'))) throw new Error(`restore refused: ${await text('#setup-error')}`);
     // A restored key does not author until it knows where its chain ended; this key has never signed.
-    if (await has('#head-new')) await page.click('#head-new');
+    if (await has('#head-new')) {
+      await page.fill('#head-confirm', S.identity.deviceId); // the page asks for the device id before it trusts a fresh chain
+      await page.click('#head-new');
+    }
   }
   await home();
   const id = await text('#device-id');
