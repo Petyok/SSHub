@@ -27,12 +27,12 @@ if [ "$PHONE_TARGET" = android ]; then
   echo "$(date -u +%H:%M:%S) compose up --build android (the emulator boots first, the phone driver attaches to it)"
   $C up --build -d android || { echo "compose up android failed"; exit 1; }
   i=0
-  until [ "$($C ps --format '{{.Health}}' android 2>/dev/null)" = healthy ]; do
+  until [ "$($C exec -T android adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do
     i=$((i + 1))
-    [ "$i" -le 120 ] || { echo "emulator not healthy after 10 min"; $C logs --no-color android | tail -n 40; exit 1; }
+    [ "$i" -le 120 ] || { echo "emulator not booted after 10 min"; $C logs --no-color android | tail -n 40; exit 1; }
     sleep 5
   done
-  echo "$(date -u +%H:%M:%S) emulator healthy"
+  echo "$(date -u +%H:%M:%S) emulator booted"
 fi
 echo "$(date -u +%H:%M:%S) compose up --build"
 $C up --build -d || { echo "compose up failed"; exit 1; }
