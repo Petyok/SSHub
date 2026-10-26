@@ -10,6 +10,9 @@ import uk.petruha.sshub.phone.platform.BleLinkFactory
 object CoreFactoryImpl : CoreFactory {
     lateinit var appContext: Context
 
+    /** Release builds have no demo mode. */
+    fun configure(intent: android.content.Intent?) {}
+
     private val core by lazy { UniffiPhoneCore(appContext) }
 
     override fun create(): PhoneCoreApi = core

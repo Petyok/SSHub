@@ -43,6 +43,8 @@ android {
 
     // android/ci/build.sh builds libsshub_phone_core.so into jniLibs (cargo-ndk) and writes the
     // uniffi Kotlin bindings here.
+    // The terminal-built fixtures of the page (assets/companion/test/fixtures) are the shared vectors of the instrumented core tests.
+    sourceSets.getByName("androidTest").assets.srcDir(rootProject.file("../assets/companion/test/fixtures"))
     sourceSets.getByName("main").java.srcDir(layout.buildDirectory.dir("generated/uniffi/kotlin"))
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
 }

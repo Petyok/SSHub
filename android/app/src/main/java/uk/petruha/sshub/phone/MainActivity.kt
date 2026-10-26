@@ -17,6 +17,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CoreFactoryImpl.appContext = applicationContext
+        CoreFactoryImpl.configure(intent)
         enableEdgeToEdge()
         platform.attach(this) // before setContent: permission launchers must be registered before STARTED
         // Screen off locks the app at once (spec 11).

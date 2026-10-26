@@ -1,13 +1,23 @@
 package uk.petruha.sshub.phone.app
 
 import android.content.Context
+import android.content.Intent
 import uk.petruha.sshub.phone.core.PhoneCoreApi
+import uk.petruha.sshub.phone.core.uniffi.CoreBleLinkFactory
+import uk.petruha.sshub.phone.core.uniffi.UniffiPhoneCore
 import uk.petruha.sshub.phone.fake.FakePhoneCore
 import uk.petruha.sshub.phone.platform.BleLinkFactory
 
-/** Debug builds run the Kotlin fake; release builds run the Rust core (src/release). Same surface so MainActivity is shared. */
+/**
+ * Debug builds run the REAL Rust core (the debug APK is what is installed for a device session). The Kotlin fake of the screen
+ * groups is available for demos: `adb shell am start -n uk.petruha.sshub.phone/.MainActivity --es core fake`.
+ */
 object CoreFactoryImpl : CoreFactory {
     lateinit var appContext: Context
-    override fun create(): PhoneCoreApi = FakePhoneCore()
-    val bleLinks: BleLinkFactory? = null
+    private var fake = false
+    private val real by lazy { UniffiPhoneCore(appContext) }
+
+    fun configure(intent: Intent?) { fake = intent?.getStringExtra("core") == "fake" }
+    override fun create(): PhoneCoreApi = if (fake) FakePhoneCore() else real
+    val bleLinks: BleLinkFactory? get() = if (fake) null else CoreBleLinkFactory(real)
 }
