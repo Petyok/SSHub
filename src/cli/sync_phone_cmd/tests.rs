@@ -144,7 +144,10 @@ fn sync_phone_ops_takes_the_phones_signature_in_and_it_counts_in_red_status() {
 fn ops_text(ops: &[&crate::sync::oplog::Op]) -> String {
     B64.encode(
         crate::sync::wire::PhoneOpsWire {
-            ops: ops.iter().map(|o| (o.canonical_bytes(), o.signature)).collect(),
+            ops: ops
+                .iter()
+                .map(|o| (o.canonical_bytes(), o.signature))
+                .collect(),
         }
         .encode(),
     )
@@ -181,7 +184,10 @@ fn sync_phone_ops_says_why_ops_were_skipped() {
     assert!(skipped_ops(&d[1].store, &s).unwrap().is_empty());
     let (s, _) = phone_ops(&d[1].store, &ops_text(&[&a, &b, &c])).unwrap();
     let k = skipped_ops(&d[1].store, &s).unwrap();
-    assert_eq!((k[0]["reason"].as_str(), k[0]["count"].as_u64()), (Some("already-known"), Some(3)));
+    assert_eq!(
+        (k[0]["reason"].as_str(), k[0]["count"].as_u64()),
+        (Some("already-known"), Some(3))
+    );
 }
 
 fn lines(out: &[u8]) -> Vec<String> {

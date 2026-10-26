@@ -280,7 +280,8 @@ pub fn skipped_ops(
     for (dev, first, count) in &s.gaps {
         let have = heads.iter().find(|h| &h.0 == dev).map_or(0, |h| h.1);
         let note = if have == 0 {
-            "this ring has none of that device's earlier ops; export the device's full chain".to_string()
+            "this ring has none of that device's earlier ops; export the device's full chain"
+                .to_string()
         } else {
             format!(
                 "this ring has that device's chain only up to seq {have}; export its full chain"
