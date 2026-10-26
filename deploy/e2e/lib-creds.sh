@@ -49,7 +49,7 @@ gap() {
 }
 
 # Id of the op a JSON admin verb just proposed.
-opid() { printf '%s' "$1" | pjq -r '.op'; }
+opid() { printf '%s' "$1" | pjq -r '.op // empty'; }
 
 # Sync every attended peer with the others once, quietly.
 spread() {
@@ -102,7 +102,7 @@ enr_send() { printf '%s\n' "$1" >&9; }
 enr_get() {
   i=0
   while :; do
-    l=$(sed -n "${1}p" "$ENR_DIR/out")
+    l=$(grep -v '"event":"companion"' "$ENR_DIR/out" | sed -n "${1}p")
     if [ -n "$l" ]; then printf '%s\n' "$l"; return 0; fi
     i=$((i + 1)); [ "$i" -le 240 ] || { echo "no event $1 from the verb; so far:"; cat "$ENR_DIR/out" "$ENR_DIR/err"; return 1; }
     sleep 0.25
@@ -117,7 +117,8 @@ enr_close() {
   return $rc
 }
 # pf JSON KEY: one field of a JSON line, raw.
-pf() { printf '%s' "$1" | pjq -r ".$2"; }
+# (the phone verbs print a first {"event":"companion"} line; // empty drops the null it gives for other keys)
+pf() { printf '%s' "$1" | pjq -r ".$2 // empty"; }
 
 # Id (full hash, hex) of the newest op of kind $2 that peer $1 stores. Read only.
 lastop() { sq "$1" "SELECT lower(hex(op_hash)) FROM sync_ops WHERE kind='$2' ORDER BY lamport DESC, rowid DESC LIMIT 1"; }
