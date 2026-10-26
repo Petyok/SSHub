@@ -766,6 +766,17 @@ shares are **reshared** (not reassembled), and snapshots are cleared. While ther
 is no phone, the second share comes from the machines (if there are >=2) or from
 paper.
 
+## Ring setup (no deadlock on a fresh ring)
+
+A new ring has one holder; joiners are mirrors. Every Red step normally needs a phone, a second holder and a factor
+that do not exist yet. The ring is therefore in an explicit SETUP state until it has had a phone and two terminal holders
+(never re-entered, derived from ops): the "two other live holders" rule applies only when a Quorum credential must be
+reshared; promoting a terminal needs the proposer plus the promoted device's own attended signature (plus the phone's
+proof once a phone exists and a factor proof once a factor is registered); the first phone is admitted on its own proof for
+its own admission. What is waived is printed with the ceremony ("ring setup: not required yet: ..."). Rejected
+alternatives: a hidden "first run" flag (not derivable from ops), and waiving the rule forever (a compromised single
+terminal could then grow the ring alone).
+
 ## The third factor
 
 Paper by default. Email is an option, not a requirement.
