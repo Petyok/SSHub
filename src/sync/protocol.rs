@@ -352,6 +352,8 @@ pub struct RoundSummary {
     pub duplicates: usize,
     /// The first few reasons ops were refused, for logs.
     pub reject_reasons: Vec<String>,
+    /// Chains whose ops stayed refused for order: (author, first seq refused, ops refused).
+    pub gaps: Vec<(DeviceId, u64, usize)>,
     pub received: usize,
     pub sent: usize,
     /// Devices proven to have equivocated this round.
@@ -858,6 +860,12 @@ pub(crate) fn ingest_ops(
         any |= progress;
         if retry.is_empty() || !progress {
             sum.rejected += retry.len();
+            for op in &retry {
+                match sum.gaps.iter_mut().find(|g| g.0 == op.device_id) {
+                    Some(g) => g.2 += 1,
+                    None => sum.gaps.push((op.device_id.clone(), op.seq, 1)),
+                }
+            }
             break;
         }
         queue = retry;
