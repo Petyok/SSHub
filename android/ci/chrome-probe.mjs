@@ -37,9 +37,9 @@ async function startChrome() {
   await sh('am start -n com.android.chrome/com.google.android.apps.chrome.Main');
   for (let i = 0; i < 20; i++) {
     await sleep(2500);
-    const top = await sh('dumpsys activity activities | grep -m1 topResumedActivity');
-    if (/ChromeTabbedActivity/.test(top) && !(await tapOnce())) return;
-    if (!/ChromeTabbedActivity/.test(top)) await tapOnce();
+    const tapped = await tapOnce();
+    const socket = Number((await sh('cat /proc/net/unix | grep -c chrome_devtools_remote')).trim()) > 0;
+    if (!tapped && socket && i >= 2) return;
   }
   throw new Error('Chrome did not reach its tab switcher');
 }
