@@ -406,3 +406,86 @@ pub fn decode_all(pcm: &[f32], input_rate: u32) -> Vec<Vec<u8>> {
     let mut d = FskDecoder::new(input_rate);
     d.push(pcm)
 }
+
+/// The burst the page plays (`channels.mjs` `fskEncode` over `audioFrame`): a 300 ms 1000 Hz sync tone, then
+/// `LEN(1) || payload || CRC16(2)` as 4-bit symbols, high nibble first, on the 16 tones, at 48 kHz mono, amplitude 0.5.
+/// Every symbol restarts its phase at zero and has raised-cosine edges of 3 ms (fast) or 5 ms (slow), the preamble
+/// uses the same edge. Samples are computed in f64 and stored as f32 like the page's `Float32Array`.
+///
+/// # Panics
+/// When `payload` is longer than 255 bytes (the length byte); callers check first.
+pub fn encode(payload: &[u8], profile: Profile) -> Vec<f32> {
+    assert!(payload.len() <= 255, "audio frame: payload over 255 bytes");
+    let n = profile.symbol();
+    let ramp = match profile {
+        Profile::Fast => RATE * 3 / 1000,
+        Profile::Slow => RATE * 5 / 1000,
+    };
+    let mut framed = Vec::with_capacity(payload.len() + 3);
+    framed.push(payload.len() as u8);
+    framed.extend_from_slice(payload);
+    let crc = crc16(&framed);
+    framed.extend_from_slice(&crc.to_be_bytes());
+
+    let mut out = Vec::with_capacity(PREAMBLE + framed.len() * 2 * n);
+    tone(&mut out, SYNC_HZ, PREAMBLE, ramp);
+    for b in &framed {
+        for nibble in [b >> 4, b & 0x0f] {
+            tone(&mut out, BASE_HZ + STEP_HZ * f64::from(nibble), n, ramp);
+        }
+    }
+    out
+}
+
+/// One tone of `len` samples with raised-cosine edges of `ramp` samples (`toneInto` of the page).
+fn tone(out: &mut Vec<f32>, hz: f64, len: usize, ramp: usize) {
+    let w = 2.0 * PI * hz / RATE as f64;
+    for i in 0..len {
+        let env = if i < ramp {
+            0.5 * (1.0 - (PI * i as f64 / ramp as f64).cos())
+        } else if i >= len - ramp {
+            0.5 * (1.0 - (PI * (len - 1 - i) as f64 / ramp as f64).cos())
+        } else {
+            1.0
+        };
+        out.push((0.5 * env * (w * i as f64).sin()) as f32);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn payload() -> Vec<u8> {
+        (0..128u32).map(|i| (i * 37 + 11) as u8).collect()
+    }
+
+    #[test]
+    fn the_decoder_reads_what_encode_makes_at_both_profiles() {
+        for profile in [Profile::Fast, Profile::Slow] {
+            let mut pcm = vec![0.0f32; RATE / 4];
+            pcm.extend(encode(&payload(), profile));
+            pcm.extend(vec![0.0f32; RATE / 4]);
+            assert_eq!(decode_all(&pcm, RATE as u32), vec![payload()], "{profile:?}");
+        }
+    }
+
+    #[test]
+    fn lengths_follow_the_page() {
+        // 300 ms preamble + (1 + 128 + 2) bytes * 2 symbols * 30 ms (fast) or 60 ms (slow)
+        assert_eq!(encode(&payload(), Profile::Fast).len(), 14_400 + 131 * 2 * 1_440);
+        assert_eq!(encode(&payload(), Profile::Slow).len(), 14_400 + 131 * 2 * 2_880);
+        let pcm = encode(&[], Profile::Fast);
+        assert_eq!(pcm.len(), 14_400 + 3 * 2 * 1_440);
+        assert!(pcm.iter().all(|v| v.abs() <= 0.5));
+        // the first sample of every symbol is silent (the ramp starts at zero)
+        assert_eq!(pcm[0], 0.0);
+        assert_eq!(pcm[14_400], 0.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "over 255")]
+    fn a_long_payload_is_refused() {
+        encode(&[0; 256], Profile::Fast);
+    }
+}
