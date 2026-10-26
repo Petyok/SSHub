@@ -37,7 +37,7 @@ class CoreBleLink(private val session: RsBleSession, private val clock: () -> Lo
     fun sendFailure(): String? = session.takeSendFailure()
 
     /** The page after its last step: BYE and done. The BYE is in the next `takeOutbox`. `BleLink` has no `bye` yet (docs 2.3). */
-    fun bye() = session.bye(clock().toULong())
+    override fun bye() = session.bye(clock().toULong())
 }
 
 /** The links of the one core of this process (`AndroidPlatform(context, CoreBleLinkFactory(core))`). */
