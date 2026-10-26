@@ -1,0 +1,384 @@
+package uk.petruha.sshub.phone.identity
+
+import android.view.WindowManager
+import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertHasNoClickAction
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import uk.petruha.sshub.phone.core.ThemeChoice
+import uk.petruha.sshub.phone.fake.IdentitySamples
+import uk.petruha.sshub.phone.testing.assertNoVisualOverflow
+import uk.petruha.sshub.phone.testing.assertTargets48
+import uk.petruha.sshub.phone.testing.setScreen
+import uk.petruha.sshub.phone.ui.screens.identity.AboutActions
+import uk.petruha.sshub.phone.ui.screens.identity.AboutSecurityScreen
+import uk.petruha.sshub.phone.ui.screens.identity.ChainHeadActions
+import uk.petruha.sshub.phone.ui.screens.identity.ChainHeadPhase
+import uk.petruha.sshub.phone.ui.screens.identity.ChainHeadState
+import uk.petruha.sshub.phone.ui.screens.identity.FingerprintCompare
+import uk.petruha.sshub.phone.ui.screens.identity.SecurityMenuActions
+import uk.petruha.sshub.phone.ui.screens.identity.SecurityMenuScreen
+import uk.petruha.sshub.phone.ui.screens.identity.TakeChainScreen
+import uk.petruha.sshub.phone.ui.screens.identity.compareFingerprint
+import uk.petruha.sshub.phone.ui.screens.identity.normalizeFingerprint
+
+class TakeChainScreenTest {
+    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
+
+    @Test fun main_path_scan_the_list_then_paste_text() {
+        var scan = 0; var paste = 0
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadStart, ChainHeadActions(onScan = { scan++ }, onOpenPaste = { paste++ })) }
+        rule.onNodeWithText("This phone does not sign yet.").assertExists()
+        rule.onNodeWithText("One list is not enough.").assertExists()
+        rule.onNodeWithText("Scan the list").performClick()
+        rule.onNodeWithText("Paste text").performClick()
+        assertEquals(1, scan); assertEquals(1, paste)
+        rule.assertTargets48()
+    }
+
+    @Test fun scan_variant_one_list_read_needs_a_second() {
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadOneList, ChainHeadActions()) }
+        rule.onNodeWithText("List read, one more needed.").assertExists()
+        rule.onNodeWithText("Take the next list").assertExists()
+        rule.onAllNodesWithText("Adopt", substring = true).assertCountEquals(0)
+        rule.onNodeWithText("Checks on the last list").assertExists()
+        rule.onNodeWithText("4 of 4 pass").assertExists()
+    }
+
+    @Test fun agree_variant_adopts_with_the_seq_in_the_label() {
+        var adopt = 0; var home = 0
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadAgree, ChainHeadActions(onAdopt = { adopt++ }, onHome = { home++ })) }
+        rule.onNodeWithText("Two lists agree").assertExists()
+        rule.onNodeWithText("Compare with a terminal first.").assertExists()
+        rule.onNodeWithContentDescription("Field This phone will continue after, new value seq 41, signed 2026-10-23 14:02Z").assertExists()
+        rule.onNodeWithText("Adopt: continue after seq 41").assertIsEnabled().performClick()
+        rule.onNodeWithText("Not yet").performClick()
+        assertEquals(1, adopt); assertEquals(1, home)
+        rule.assertTargets48()
+    }
+
+    @Test fun paste_variant_check_needs_a_long_enough_text() {
+        var typed = ""; var check = 0
+        rule.setScreen {
+            var text by remember { mutableStateOf("") }
+            TakeChainScreen(
+                IdentitySamples.chainHeadPaste.copy(pasteText = text),
+                ChainHeadActions(onPasteText = { text = it; typed = it }, onCheckPaste = { check++ }),
+            )
+        }
+        rule.onNodeWithText("Check the list").assertIsNotEnabled()
+        rule.onNodeWithContentDescription("Pasted ops list").performTextInput("LIST 0123456789abcdef")
+        assertEquals("LIST 0123456789abcdef", typed)
+        rule.onNodeWithText("Check the list").assertIsEnabled().performClick()
+        assertEquals(1, check)
+    }
+
+    @Test fun ok_variant_taken_shows_the_banner_and_the_page_warning() {
+        var home = 0
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadTaken, ChainHeadActions(onHome = { home++ })) }
+        rule.onNodeWithText("CHAIN TAKEN").assertExists()
+        rule.onNodeWithText("Chain taken. Continuing after seq 41").assertExists()
+        rule.onNodeWithText("One copy only").assertExists()
+        rule.onNodeWithText("Go to Home").performClick()
+        assertEquals(1, home)
+    }
+
+    @Test fun ok_variant_never_signed_text() {
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadNeverSigned, ChainHeadActions()) }
+        rule.onNodeWithText("Confirmed. This key never signed anything.").assertExists()
+        rule.onNodeWithText("no seq", substring = true).assertDoesNotExist()
+    }
+
+    @Test fun fail_variant_is_a_stop_box_without_any_adopt_action() {
+        var again = 0
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadRefused, ChainHeadActions(onTryAnother = { again++ })) }
+        rule.onNodeWithText("This list was refused").assertExists()
+        rule.onAllNodesWithText("Adopt", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("Approve", substring = true).assertCountEquals(0)
+        rule.onNodeWithText("1 of 4 pass").assertExists()
+        rule.onNodeWithText("The ops form one chain: not checked").assertExists()
+        rule.onNodeWithText("Try another list").performClick()
+        assertEquals(1, again)
+    }
+
+    @Test fun d13_never_signed_is_disabled_until_the_typed_id_matches() {
+        var never = 0
+        rule.setScreen {
+            var typed by remember { mutableStateOf("") }
+            TakeChainScreen(IdentitySamples.chainHeadStart.copy(typedId = typed), ChainHeadActions(onTypedId = { typed = it }, onNeverSigned = { never++ }))
+        }
+        rule.onNodeWithText("This key never signed anything").assertIsNotEnabled()
+        rule.onNodeWithContentDescription("Type the device id to confirm").performTextInput("4F2A-91C0")
+        rule.onNodeWithText("This key never signed anything").assertIsNotEnabled()
+        assertEquals(0, never)
+    }
+
+    @Test fun d13_the_gate_in_the_state_is_exact_and_case_blind() {
+        val s = IdentitySamples.chainHeadStart
+        assertFalse(s.copy(typedId = "").canNeverSigned)
+        assertFalse(s.copy(typedId = "4F2A-91C0").canNeverSigned)
+        assertTrue(s.copy(typedId = "4f2a-91c7").canNeverSigned)
+        assertTrue(s.copy(typedId = " 4F2A-91C7 ").canNeverSigned)
+        assertFalse(ChainHeadState(typedId = "").canNeverSigned)
+    }
+
+    @Test fun never_signed_button_enables_with_the_right_id() {
+        var never = 0
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadStart.copy(typedId = "4F2A-91C7"), ChainHeadActions(onNeverSigned = { never++ })) }
+        rule.onNodeWithText("This key never signed anything").assertIsEnabled().performClick()
+        assertEquals(1, never)
+    }
+
+    @Test fun a_notice_shows_for_an_ignored_frame() {
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadStart.copy(notice = "Ignored: not an ops list"), ChainHeadActions()) }
+        rule.onNodeWithText("Ignored: not an ops list").assertExists()
+    }
+
+    @Test fun light_theme_renders() {
+        rule.setScreen(dark = false) { TakeChainScreen(IdentitySamples.chainHeadAgree, ChainHeadActions()) }
+        rule.onNodeWithText("Two lists agree").assertExists()
+    }
+
+    @Test fun font_scale_2_has_no_visual_overflow_in_every_variant() {
+        val all = listOf(
+            IdentitySamples.chainHeadStart, IdentitySamples.chainHeadOneList, IdentitySamples.chainHeadAgree,
+            IdentitySamples.chainHeadPaste, IdentitySamples.chainHeadTaken, IdentitySamples.chainHeadRefused,
+        )
+        var i by mutableStateOf(0)
+        rule.setScreen(fontScale = 2f) { TakeChainScreen(all[i], ChainHeadActions()) }
+        for (n in all.indices) {
+            i = n
+            rule.waitForIdle()
+            rule.assertNoVisualOverflow()
+            rule.assertTargets48()
+        }
+    }
+}
+
+class SecurityMenuScreenTest {
+    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
+
+    @Test fun main_path_every_row_calls_back() {
+        val hit = mutableListOf<String>()
+        rule.setScreen {
+            SecurityMenuScreen(
+                IdentitySamples.menu,
+                SecurityMenuActions(
+                    onTrustList = { hit += "trust" }, onCodes = { hit += "codes" }, onReshare = { hit += "reshare" }, onRecovery = { hit += "recovery" },
+                    onBackup = { hit += "backup" }, onExport = { hit += "export" }, onAbout = { hit += "about" }, onLock = { hit += "lock" },
+                ),
+            )
+        }
+        for (t in listOf("Trust sessions", "Short codes I issued", "Reshare and wrap keys", "Recovery and a new phone", "Recovery words", "Export my ops as text", "About and security", "Lock now")) {
+            rule.onNodeWithText(t).performClick()
+        }
+        assertEquals(listOf("trust", "codes", "reshare", "recovery", "backup", "export", "about", "lock"), hit)
+        rule.assertTargets48()
+    }
+
+    @Test fun theme_choice_marks_the_current_one_and_calls_back() {
+        var chosen: ThemeChoice? = null
+        rule.setScreen { SecurityMenuScreen(IdentitySamples.menu, SecurityMenuActions(onTheme = { chosen = it })) }
+        rule.onNodeWithText("Dark").assertIsSelected()
+        rule.onNodeWithText("Light").performClick()
+        assertEquals(ThemeChoice.Light, chosen)
+        rule.onNodeWithText("System").performClick()
+        assertEquals(ThemeChoice.System, chosen)
+    }
+
+    @Test fun auto_lock_choice_offers_30_seconds_to_5_minutes() {
+        var chosen = 0
+        rule.setScreen { SecurityMenuScreen(IdentitySamples.menu, SecurityMenuActions(onAutoLock = { chosen = it })) }
+        rule.onNodeWithText("1 min").assertIsSelected()
+        rule.onNodeWithText("30 s").performClick()
+        assertEquals(30, chosen)
+        rule.onNodeWithText("5 min").performClick()
+        assertEquals(300, chosen)
+    }
+
+    @Test fun backup_row_says_when_the_paper_copy_is_confirmed() {
+        rule.setScreen { SecurityMenuScreen(IdentitySamples.menu.copy(backupConfirmed = true), SecurityMenuActions()) }
+        rule.onNodeWithText("24 words, confirmed on paper. Shown after a fresh unlock.").assertExists()
+    }
+
+    @Test fun d17_blocked_shows_a_stop_box_and_closes_every_flow_but_about_and_lock() {
+        var trust = 0; var about = 0; var lock = 0
+        rule.setScreen {
+            SecurityMenuScreen(IdentitySamples.menuBlocked, SecurityMenuActions(onTrustList = { trust++ }, onAbout = { about++ }, onLock = { lock++ }))
+        }
+        rule.onNodeWithText("Signing fingerprint differs").assertExists()
+        for (t in listOf("Trust sessions", "Short codes I issued", "Reshare and wrap keys", "Recovery and a new phone", "Recovery words", "Export my ops as text")) {
+            rule.onNodeWithText(t).assertHasNoClickAction()
+        }
+        rule.onNodeWithText("About and security").assertHasClickAction().performClick()
+        rule.onNodeWithText("Lock now").performClick()
+        assertEquals(0, trust); assertEquals(1, about); assertEquals(1, lock)
+    }
+
+    @Test fun light_theme_renders() {
+        rule.setScreen(dark = false) { SecurityMenuScreen(IdentitySamples.menu, SecurityMenuActions()) }
+        rule.onNodeWithText("Security").assertExists()
+    }
+
+    @Test fun font_scale_2_has_no_visual_overflow() {
+        rule.setScreen(fontScale = 2f) { SecurityMenuScreen(IdentitySamples.menuBlocked, SecurityMenuActions()) }
+        rule.assertNoVisualOverflow()
+        rule.assertTargets48()
+    }
+
+    @Test fun font_scale_2_choices_stack_as_rows() {
+        var chosen: ThemeChoice? = null
+        rule.setScreen(fontScale = 2f) { SecurityMenuScreen(IdentitySamples.menu, SecurityMenuActions(onTheme = { chosen = it })) }
+        rule.onNodeWithText("Light").performClick()
+        assertEquals(ThemeChoice.Light, chosen)
+    }
+}
+
+class AboutSecurityScreenTest {
+    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
+
+    @Test fun main_path_shows_the_version_and_16_groups_and_compare_toggles() {
+        var toggled = 0
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.about, AboutActions(onToggleCompare = { toggled++ })) }
+        rule.onNodeWithText("0.1.0 (build 1)", substring = true).assertExists()
+        rule.onNodeWithContentDescription("Group 1 of 16, E 3 2 8").assertExists()
+        rule.onNodeWithContentDescription("Group 16 of 16, 9 D 7 C").assertExists()
+        rule.onNodeWithText("Compare with terminal").performClick()
+        assertEquals(1, toggled)
+        rule.assertTargets48()
+    }
+
+    @Test fun marking_a_group_calls_back() {
+        var marked = -1
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.aboutComparingEqual, AboutActions(onToggleGroup = { marked = it })) }
+        rule.onNodeWithContentDescription("Group 5 of 16, 7 8 C 8").performClick()
+        assertEquals(4, marked)
+        rule.onNodeWithText("3 of 16 groups marked", substring = true).assertExists()
+    }
+
+    @Test fun equal_value_reads_matches_terminal_with_a_check_line() {
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.aboutComparingEqual, AboutActions()) }
+        rule.onNodeWithText("matches terminal").assertExists()
+        rule.onNodeWithText("All 16 groups equal the value of the terminal.").assertExists()
+        rule.onAllNodesWithText("Signing fingerprint mismatch").assertCountEquals(0)
+        rule.onNodeWithText("Stop comparing").assertExists()
+    }
+
+    @Test fun incomplete_value_counts_digits_and_decides_nothing() {
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.aboutComparingPartial, AboutActions()) }
+        rule.onNodeWithText("20 of 64 digits typed.").assertExists()
+        rule.onAllNodesWithText("Signing fingerprint mismatch").assertCountEquals(0)
+        rule.onAllNodesWithText("matches terminal").assertCountEquals(0)
+    }
+
+    @Test fun reference_input_calls_back() {
+        var got = ""
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.about.copy(comparing = true), AboutActions(onReference = { got = it })) }
+        rule.onNodeWithContentDescription("Fingerprint printed by the terminal").performTextInput("e328 9279")
+        assertEquals("e328 9279", got)
+    }
+
+    @Test fun d17_a_mismatching_fingerprint_is_a_stop_box_with_both_values_and_no_way_forward() {
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.aboutComparingDiffer, AboutActions()) }
+        rule.onNodeWithText("Signing fingerprint mismatch").assertExists()
+        rule.onNodeWithText("DIFFERS from terminal").assertExists()
+        rule.onNodeWithText("Groups that differ: 4").assertExists()
+        rule.onNodeWithContentDescription("App fingerprint", substring = true).assertExists()
+        rule.onNodeWithContentDescription("Terminal fingerprint", substring = true).assertExists()
+        // no "continue anyway", and the compare toggle that could hide the stop box is gone
+        rule.onAllNodesWithText("Stop comparing").assertCountEquals(0)
+        rule.onAllNodesWithText("Compare with terminal").assertCountEquals(0)
+        rule.onAllNodesWithText("continue", substring = true, ignoreCase = true).assertCountEquals(0)
+    }
+
+    @Test fun d17_compare_logic() {
+        val app = IdentitySamples.FINGERPRINT
+        assertEquals(FingerprintCompare.None, compareFingerprint(app, ""))
+        assertEquals(FingerprintCompare.Incomplete, compareFingerprint(app, app.take(10)))
+        assertEquals(FingerprintCompare.Invalid, compareFingerprint(app, "zz" + app.drop(2)))
+        assertEquals(FingerprintCompare.Equal, compareFingerprint(app, app.uppercase()))
+        assertEquals(FingerprintCompare.Equal, compareFingerprint(app, app.chunked(4).joinToString(" ")))
+        assertEquals(FingerprintCompare.Equal, compareFingerprint(app, app.chunked(2).joinToString(":")))
+        assertEquals(FingerprintCompare.Differ, compareFingerprint(app, IdentitySamples.OTHER_FINGERPRINT))
+        assertEquals(FingerprintCompare.Differ, compareFingerprint(app, app + "0"))
+        assertEquals(app, normalizeFingerprint(app.chunked(4).joinToString(" ").uppercase()))
+    }
+
+    @Test fun licences_row_shows_both_bundled_texts() {
+        var toggled = 0
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.about, AboutActions(onToggleLicences = { toggled++ })) }
+        rule.onAllNodesWithText("licence text of", substring = true).assertCountEquals(0)
+        rule.onNodeWithText("Licences").performClick()
+        assertEquals(1, toggled)
+    }
+
+    @Test fun open_licences_list_both_texts_with_copyright_and_source() {
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.aboutLicences, AboutActions()) }
+        rule.onNodeWithText("licence text of JetBrainsMono-OFL.txt").assertExists()
+        rule.onNodeWithText("licence text of Inter-LICENSE.txt").assertExists()
+        rule.onNodeWithText("Copyright 2020 The JetBrains Mono Project Authors").assertExists()
+        rule.onNodeWithText("https://github.com/rsms/inter").assertExists()
+    }
+
+    @Test fun strongbox_state_is_stated_both_ways() {
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.about.copy(strongBox = true), AboutActions()) }
+        rule.onNodeWithText("StrongBox, a separate security chip").assertExists()
+    }
+
+    @Test fun no_strongbox_is_stated() {
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.about.copy(strongBox = false), AboutActions()) }
+        rule.onNodeWithText("Trusted execution environment, no StrongBox chip on this phone").assertExists()
+    }
+
+    @Test fun states_what_the_app_is_not() {
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.about, AboutActions()) }
+        rule.onNodeWithText("What this app is not").assertExists()
+        rule.onNodeWithText("Not a password manager.", substring = true).assertExists()
+    }
+
+    @Test fun recovery_row_opens_the_words() {
+        var backup = 0
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.about, AboutActions(onBackup = { backup++ })) }
+        rule.onNodeWithText("Recovery words").performClick()
+        assertEquals(1, backup)
+    }
+
+    @Test fun d18_the_window_is_secure_because_a_full_hash_is_shown() {
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.about, AboutActions()) }
+        rule.waitForIdle()
+        var flags = 0
+        rule.runOnUiThread { flags = rule.activity.window.attributes.flags }
+        assertTrue("FLAG_SECURE", flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+    }
+
+    @Test fun light_theme_renders_the_mismatch() {
+        rule.setScreen(dark = false) { AboutSecurityScreen(IdentitySamples.aboutComparingDiffer, AboutActions()) }
+        rule.onNodeWithText("Signing fingerprint mismatch").assertExists()
+    }
+
+    @Test fun font_scale_2_has_no_visual_overflow_with_the_mismatch_and_the_licences() {
+        rule.setScreen(fontScale = 2f) { AboutSecurityScreen(IdentitySamples.aboutComparingDiffer.copy(licencesOpen = true, licences = IdentitySamples.licences), AboutActions()) }
+        rule.assertNoVisualOverflow()
+        rule.assertTargets48()
+    }
+}

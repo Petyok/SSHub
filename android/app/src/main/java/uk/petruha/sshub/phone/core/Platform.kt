@@ -40,6 +40,8 @@ interface KeyVault {
     /** Shows the system prompt (title = action, subtitle = short hash prefix) and returns the secret; the caller zeroes it. */
     suspend fun unlock(title: String, subtitle: String): VaultResult
     suspend fun erase()
+    /** Forgets the unlocked state (ON_STOP, screen off, auto-lock). */
+    fun lock()
     /** `strongBox` is shown on About. */
     val strongBox: Boolean
 }

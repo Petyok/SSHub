@@ -44,6 +44,7 @@ class FakeKeys : KeyVault {
     override suspend fun store(secret: ByteArray): VaultResult { this.secret = secret.copyOf(); st.value = VaultState.Locked; return nextResult ?: VaultResult.Stored }
     override suspend fun unlock(title: String, subtitle: String): VaultResult = nextResult ?: secret?.let { st.value = VaultState.Unlocked; VaultResult.Secret(it.copyOf()) } ?: VaultResult.Failed("no key")
     override suspend fun erase() { secret = null; st.value = VaultState.NoKey }
+    override fun lock() { if (st.value == VaultState.Unlocked) st.value = VaultState.Locked }
     override val strongBox = true
 }
 
@@ -88,7 +89,7 @@ class FakeAudio : AudioPort {
 }
 
 class FakeSystem : SystemPort {
-    override var apkCertSha256 = "a3f9007c4e1b" + "0123456789abcdef".repeat(3) + "0123456789ab"   // 64 hex digits, fixed for screenshots
+    override var apkCertSha256 = "a3f9007c4e1b9d2e" + "0123456789abcdef".repeat(3)   // 64 hex digits, fixed for screenshots
     override val versionName = "0.1.0-debug"
     override fun licenceText(name: String) = "licence text of $name"
     override var reducedMotion = false
