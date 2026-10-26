@@ -13,15 +13,36 @@ export const PHONE_CONTEXT = 'sshub/sync/phone/v1';
 // the profile only prices an offline guess against a stolen browser profile.
 export const PIN_PROFILE = { mem_kib: 65536, iters: 3 };
 export const PIN_MIN_CHARS = 10;
-// All one character, or an ascending or descending run (1234567890, 9876543210, abcdefghij): refused as a PIN. No list of
-// common PINs on purpose; the length floor and the Argon2id profile are the real price.
+// Refused as a PIN: fewer than 5 different characters (1111111112, 1212121212), a short block repeated (1234512345), a run
+// of 7 or more consecutive characters up or down (1234567890, 1234567891, abcdefghij; digits wrap 9 to 0) and a few
+// worst-known substrings (password, qwerty). Not a big list on purpose: the length floor and the Argon2id profile are the
+// real price, and the setup screen says to use a passphrase.
+const WEAK_PARTS = ['password', 'passw0rd', 'qwerty', 'asdfgh', 'zxcvbn', 'letmein', 'iloveyou', 'admin', 'welcome', 'abc123', '123abc'];
 export function pinProblem(pin) {
   const cps = Array.from(pin, (c) => c.codePointAt(0));
   if (cps.length < PIN_MIN_CHARS) return `The PIN needs at least ${PIN_MIN_CHARS} characters.`;
-  // All digits: the run wraps around (1234567890, 0987654321), so steps count modulo 10.
-  const mod = cps.every((c) => c >= 48 && c <= 57) ? 10 : 0;
-  const steps = new Set(cps.slice(1).map((c, i) => (mod ? (c - cps[i] + mod) % mod : c - cps[i])));
-  if (steps.size === 1 && (mod ? [0, 1, 9] : [0, 1, -1]).includes([...steps][0])) return 'That PIN is too easy to guess (one repeated character, or a run such as 1234567890). Choose another.';
+  const weak = 'That PIN is too easy to guess. Use a passphrase of several unrelated words instead.';
+  if (new Set(cps).size < 5) return weak;
+  for (let p = 1; p <= 5; p++) if (cps.every((c, i) => i < p || c === cps[i - p])) return weak;
+  const digits = cps.every((c) => c >= 48 && c <= 57);
+  const step = (a, b) => (digits ? (b - a + 10) % 10 : b - a);
+  const up = digits ? 1 : 1;
+  const down = digits ? 9 : -1;
+  let run = 1;
+  let dir = 0;
+  for (let i = 1; i < cps.length; i++) {
+    const s = step(cps[i - 1], cps[i]);
+    if (s === up || s === down) {
+      run = s === dir ? run + 1 : 2;
+      dir = s;
+    } else {
+      run = 1;
+      dir = 0;
+    }
+    if (run >= 7) return weak;
+  }
+  const lower = pin.toLowerCase();
+  if (WEAK_PARTS.some((w) => lower.includes(w))) return weak;
   return null;
 }
 // Seconds to wait after the n-th wrong PIN in a row: none for two, then 5 s doubling up to an hour.

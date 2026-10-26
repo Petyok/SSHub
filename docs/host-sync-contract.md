@@ -68,7 +68,7 @@ Rust paths are under `crate::sync` (`src/sync/`), declared in `src/lib.rs` as
   base64 strings (standard alphabet, padded) in the canonical form. Residuals:
   a key file copied before retirement, holders that cannot rotate (paper,
   a phone that has not contacted since), backups of deleted keys,
-  a lying contributor (denial of service). See `poc/results/B-reshare-cost.md`.
+  a lying contributor (denial of service). See `docs/host-sync-poc-results.md` (PoC B).
 - **Device key storage (C8).** `load_or_init_identity(&ProfilePaths, &dyn
   PasswordStore) -> Result<DeviceIdentity>`; file `<profile root>/sync/device.key`
   mode 0600, content encrypted with a random key held in the OS keyring, plain
@@ -277,7 +277,10 @@ pub enum OpBody {                              // canonical form: section 0 (C2)
     DeviceRevoke  { device_id: DeviceId },
     // requester is in the body as well as the header: a holder that checks only
     // the body must still see WHO asks.
-    ShareRelease  { host_uid: HostUid, request_id: u64, requester: DeviceId },
+    // The signed body is exactly {host_uid, request_id, requester, eph_x25519_pub}: the ephemeral key
+    // the grant is sealed to is part of what the requester signed. A phone MUST refuse a challenge whose
+    // frame ephemeral key differs from the signed one.
+    ShareRelease  { host_uid: HostUid, request_id: u64, requester: DeviceId, eph_x25519_pub: [u8; 32] },
     // Forward-secure resharing (C14, PoC B). The contributor is the op's device.
     // One per (contributor, recipient) per epoch: hybrid_wrap(to.pub, 32 byte session key).
     ShareReshareSession { epoch: u64, to: DeviceId, sealed: Vec<u8> },
@@ -1158,7 +1161,7 @@ but valid phrase fails the credential's AEAD at `assemble_dek`.
 `deploy/hub/docker-compose.yml`. There is NO `hub-serve` verb and no daemon: the Hub is an ordinary ring
 device reached with `ssh hub sshub sync-serve` behind the container's sshd. What makes it a Hub is
 enforced in `src/sync/hub.rs`, `quorum::release_share_for` and the recovery state machine (see
-`poc/results/hub.md`): unattended devices neither approve nor acknowledge a recovery, an unattended holder
+`docs/host-sync-poc-results.md`, Stage 3.5): unattended devices neither approve nor acknowledge a recovery, an unattended holder
 releases only under a valid certificate, and `hub::run_sync_serve_notify` announces recovery ops (once per
 op, never with a code). Role in the ring: mirror, optionally unattended holder. Hard
 boundaries: no accounts, no authoritative copy, no Red-level vote; the ring

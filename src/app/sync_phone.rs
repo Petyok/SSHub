@@ -329,6 +329,25 @@ fn qr_prompt(
     app.sync_prompt_qr(TITLE, lines, frames, label, on_submit);
 }
 
+/// Is a Bluetooth channel running for this enrollment (its tag is on the screen)?
+pub(crate) fn ble_active(app: &App) -> bool {
+    app.phone_flow
+        .as_ref()
+        .and_then(|f| f.camera.as_ref())
+        .is_some_and(|(h, _)| h.ble_tag().is_some())
+}
+
+/// The drop-phone key: disconnect the connected phone; the terminal advertises again with the
+/// same tag. Nothing happens without a Bluetooth channel.
+pub(crate) fn drop_central(app: &mut App) {
+    if let Some((h, _)) = app.phone_flow.as_ref().and_then(|f| f.camera.as_ref()) {
+        if h.ble_tag().is_some() {
+            h.drop_central();
+            app.host_notice = Some("phone dropped, advertising again".into());
+        }
+    }
+}
+
 /// Menu entry: the ops list the phone copied (kind 5), through the courier ingest.
 pub(crate) fn paste_ops(app: &mut App) {
     app.sync_prompt(

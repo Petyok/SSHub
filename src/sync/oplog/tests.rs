@@ -3530,6 +3530,65 @@ fn a_batch_ingest_gives_the_outcomes_and_state_of_one_op_at_a_time() {
     assert_eq!(b.pending(), c.pending());
 }
 
+// ---- review round 3, app R3-F1: no Safe rename may re-bind a reviewed hop
+
+fn raw_hop_ring() -> (Vec<Peer>, impl Fn(&Peer) -> Option<String>) {
+    let r = ring(2);
+    let (a, b) = (&r[0], &r[1]);
+    a.append(upsert(1, hf("bastion", "10.0.0.1")));
+    a.append(upsert(3, hf("evil", "203.0.113.9")));
+    let mut web = hf("web", "10.0.0.2");
+    web.proxy_jump = Some(Some("ops@bastion".into())); // a raw hop that names the saved host
+    a.append(upsert(2, web));
+    pull(b, a);
+    b.approve_all();
+    let jump = |p: &Peer| {
+        let h = p.host(&uid(2)).unwrap();
+        p.store.resolve_connection(&h).unwrap().jump_argv
+    };
+    assert!(jump(b).as_deref().unwrap().contains("10.0.0.1"));
+    (r, jump)
+}
+
+#[test]
+fn two_safe_renames_cannot_redirect_a_reviewed_raw_hop_to_another_address() {
+    let (r, jump) = raw_hop_ring();
+    let (a, b) = (&r[0], &r[1]);
+    let before = jump(b);
+    a.append(upsert(
+        1,
+        HostFields {
+            name: Some("bastion-old".into()),
+            ..Default::default()
+        },
+    ));
+    a.append(upsert(
+        3,
+        HostFields {
+            name: Some("bastion".into()),
+            ..Default::default()
+        },
+    ));
+    pull(b, a);
+    assert_eq!(b.pending(), 2, "both renames wait for a human");
+    assert_eq!(jump(b), before, "nothing moved before review");
+}
+
+#[test]
+fn a_rename_that_touches_no_hop_stays_safe() {
+    let (r, _) = raw_hop_ring();
+    let (a, b) = (&r[0], &r[1]);
+    a.append(upsert(
+        3,
+        HostFields {
+            name: Some("evil-renamed".into()),
+            ..Default::default()
+        },
+    ));
+    pull(b, a);
+    assert_eq!(b.pending(), 0);
+}
+
 // e2e: after a repeat ceremony and a state rebuild, sync-now showed a peer's device id where its name was.
 #[test]
 fn a_rebuild_of_the_caches_keeps_the_local_label_of_an_anchor_device() {

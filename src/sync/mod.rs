@@ -5,19 +5,15 @@ pub mod ceremony;
 pub mod cert;
 pub mod checkpoint_driver;
 pub mod client;
-pub mod codes;
 pub mod companion;
 pub mod cred_ops;
-pub mod crypto;
 pub mod email;
 pub mod enroll;
 pub mod entity_capture;
 pub mod exemption;
 pub mod export;
-pub mod fountain;
 pub mod hub;
 pub mod identity_store;
-pub mod limits;
 pub mod media;
 pub mod modes;
 pub mod notify;
@@ -33,11 +29,11 @@ pub mod reshare;
 pub mod revocation;
 pub mod runtime;
 pub mod screen;
-pub mod share_release;
-pub mod snapshot;
 pub mod transport;
 pub mod ui_shares;
 pub mod unlock_paths;
 #[cfg(test)]
 mod vectors;
-pub mod wire;
+
+// The pure protocol core lives in `crates/sshub-sync-proto`; every path below keeps working.
+pub use sshub_sync_proto::{codes, crypto, fountain, limits, share_release, snapshot, wire};

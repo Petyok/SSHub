@@ -300,12 +300,14 @@ fn rendered(conn: &Connection, field: &str, cur: &Value) -> Result<Value> {
     })
 }
 
-/// A field the view does not name is "inherit" for the row too: a host the projection created
-/// carries the row defaults (port 22, transport ssh), which is not an edit.
-fn is_inherit(field: &str, v: &Value) -> bool {
+/// A field the view does not name is "inherit" for the row too. The projection stores NULL for
+/// a port or transport the ring did not give, so on an entity the ring knows a value that is
+/// there (even 22 or ssh) is the user's explicit choice and is published. A host the ring has
+/// not seen yet is created by the form with the row defaults (22, ssh): those are not a choice.
+fn is_inherit(field: &str, v: &Value, alive: bool) -> bool {
     match field {
-        "port" => v == &Value::from(22),
-        "transport" => v == &Value::from("ssh"),
+        "port" if !alive => v == &Value::from(22),
+        "transport" if !alive => v == &Value::from("ssh"),
         _ => is_default(v),
     }
 }
@@ -321,7 +323,7 @@ fn differing(
     for (k, v) in fields {
         let differs = match view.fields.get(k) {
             Some(cur) => rendered(conn, k, cur)? != v,
-            None => (!view.alive && required.contains(&k)) || !is_inherit(k, &v),
+            None => (!view.alive && required.contains(&k)) || !is_inherit(k, &v, view.alive),
         };
         if differs {
             out.insert(k);
@@ -523,7 +525,8 @@ impl EntityCapture {
         if diff.is_empty() {
             return Ok(());
         }
-        self.append_valid(conn, diff, |keep| {
+        let was_new = !view.alive;
+        let published = self.append_valid(conn, diff, |keep| {
             macro_rules! pick {
                 ($f:ident) => {
                     if keep.contains(stringify!($f)) {
@@ -556,7 +559,20 @@ impl EntityCapture {
                     identity_uid: pick!(identity_uid),
                 },
             }
-        })
+        });
+        if was_new {
+            // The form's defaults (22, ssh) were not a choice and were not published: the row
+            // now inherits them like a host the ring gave, so a later explicit choice shows.
+            conn.execute(
+                "UPDATE hosts SET port = NULL WHERE id = ?1 AND port = 22",
+                params![id],
+            )?;
+            conn.execute(
+                "UPDATE hosts SET transport = NULL WHERE id = ?1 AND transport = 'ssh'",
+                params![id],
+            )?;
+        }
+        published
     }
 }
 

@@ -7,9 +7,9 @@ use super::sync::{DeviceStatusView, DeviceView};
 use super::sync_ui::MenuFn;
 use super::*;
 use crate::cli::sync_admin as admin;
-use crate::sync::crypto::{bip39_encode, paper_derive, PaperDomain};
+use crate::sync::crypto::bip39_encode;
 use crate::sync::identity_store::load_or_init_identity;
-use crate::sync::oplog::{CredMode, DeviceRole, ThirdFactor};
+use crate::sync::oplog::{CredMode, DeviceRole};
 use crate::sync::runtime::{JobEnv, RING_SECRET_KEY};
 
 pub(super) fn now() -> i64 {
@@ -258,16 +258,13 @@ pub(crate) fn recovery(app: &mut App) {
 
 fn recovery_status(app: &mut App) {
     app.run_sync_job(|env| {
-        let ops = crate::sync::quorum::ops_of(&env.store, "PhoneReenroll", None)?;
+        let ops = admin::all_recoveries(&env.store)?;
         if ops.is_empty() {
             return Ok("no recovery in the log".into());
         }
         let mut lines = Vec::new();
         for op in &ops {
-            let verdict = crate::sync::recovery::validate_phone_reenroll(&env.store, op, now())
-                .map(|v| format!("{v:?}"))
-                .unwrap_or_else(|e| format!("invalid: {e:#}"));
-            lines.push(format!("recovery {}: {verdict}", hex8(&op.hash())));
+            lines.extend(admin::recovery_lines(&env.store, op, now()));
         }
         Ok(lines.join("\n"))
     });
@@ -315,16 +312,34 @@ fn recovery_by_id(app: &mut App, step: RecoveryStep) {
                 Ok(format!("approved recovery {}", hex8(&op.hash())))
             }),
             RecoveryStep::Cancel => {
-                let pick = |factor: ThirdFactor, prefix: String| -> MenuFn {
+                let pick = |kind: admin::FactorKind, prefix: String| -> MenuFn {
                     Box::new(move |app: &mut App| {
-                        app.run_sync_job(move |env| {
-                            let op = admin::find_op(&env.store, prefix.trim())?;
-                            env.store.sync_append_local(
-                                &env.identity,
-                                crate::sync::recovery::cancel_body(&op, false, Some(factor))?,
-                            )?;
-                            Ok(format!("cancelled recovery {}", hex8(&op.hash())))
-                        });
+                        app.sync_prompt(
+                            "Cancel a recovery",
+                            match kind {
+                                admin::FactorKind::Paper => {
+                                    "Type the 24 words of the paper phrase (nothing is shown)"
+                                }
+                                admin::FactorKind::Email => {
+                                    "Type the emailed code (nothing is shown)"
+                                }
+                            },
+                            true,
+                            move |app, secret| {
+                                app.run_sync_job(move |env| {
+                                    Ok(admin::recovery_cancel(
+                                        &env.store,
+                                        &env.identity,
+                                        prefix.trim(),
+                                        kind,
+                                        &secret,
+                                        now(),
+                                    )?
+                                    .lines
+                                    .join("\n"))
+                                });
+                            },
+                        );
                     })
                 };
                 app.sync_menu(
@@ -332,11 +347,11 @@ fn recovery_by_id(app: &mut App, step: RecoveryStep) {
                     vec![
                         (
                             "Paper phrase".to_string(),
-                            pick(ThirdFactor::Paper, prefix.clone()),
+                            pick(admin::FactorKind::Paper, prefix.clone()),
                         ),
                         (
                             "Emailed code".to_string(),
-                            pick(ThirdFactor::EmailCode, prefix),
+                            pick(admin::FactorKind::Email, prefix),
                         ),
                     ],
                 );
@@ -348,32 +363,36 @@ fn recovery_by_id(app: &mut App, step: RecoveryStep) {
 fn recovery_start(app: &mut App) {
     app.sync_prompt(
         "Start a recovery",
-        "Type the 24 words of the paper phrase to start with the paper, or leave empty to start with the emailed code (nothing is shown)",
+        "Type the 24 words of the paper phrase to start with the paper, or leave empty to start with two other devices' approval (nothing is shown)",
         true,
         |app, words| {
-            app.run_sync_job(move |env| {
-                let words = words.trim();
-                let (recover, third) = if words.is_empty() {
-                    (None, ThirdFactor::Paper)
+            let words = words.trim().to_string();
+            let paper = !words.is_empty();
+            // The third factor is proven over the new op: the emailed code when the paper
+            // authorized it, the paper words otherwise. Empty leaves it awaiting the factor.
+            app.sync_prompt(
+                "Start a recovery: third factor",
+                if paper {
+                    "Type the emailed code (empty: prove it later; nothing is shown)"
                 } else {
-                    (
-                        Some(paper_derive(words, PaperDomain::Recover)?),
-                        ThirdFactor::EmailCode,
-                    )
-                };
-                let body = crate::sync::recovery::start_body(
-                    &env.store,
-                    &env.identity,
-                    now(),
-                    recover.as_ref(),
-                    third,
-                )?;
-                let op = env.store.sync_append_local(&env.identity, body)?;
-                Ok(format!(
-                    "recovery started (op {}); the timelock runs once another device has seen it",
-                    hex8(&op.hash())
-                ))
-            });
+                    "Type the 24 words of the paper phrase as the third factor (empty: prove it later; nothing is shown)"
+                },
+                true,
+                move |app, third| {
+                    app.run_sync_job(move |env| {
+                        let third = third.trim().to_string();
+                        Ok(admin::recovery_start(
+                            &env.store,
+                            &env.identity,
+                            now(),
+                            paper.then_some(words.as_str()),
+                            (!third.is_empty()).then_some(third.as_str()),
+                        )?
+                        .lines
+                        .join("\n"))
+                    });
+                },
+            );
         },
     );
 }

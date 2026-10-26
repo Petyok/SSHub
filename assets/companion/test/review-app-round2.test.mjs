@@ -236,7 +236,7 @@ test('PF7 blank-looking characters do not survive safeText', () => {
 
 test('SU3 trivially weak PINs are refused: one character repeated, ascending and descending runs, too short', () => {
   for (const bad of ['1111111111', '1234567890', '0987654321', '9876543210', 'abcdefghij', 'aaaaaaaaaaaa', '123456789']) assert.ok(pinProblem(bad), bad);
-  for (const good of ['1234567891', 'correct-pin-17', '1212121212', '1357924680']) assert.equal(pinProblem(good), null, good);
+  for (const good of ['correct-pin-17', '1357924680', 'blue-tiger-ladder-9']) assert.equal(pinProblem(good), null, good);
 });
 
 // ---------------------------------------------------------------- sound checks (must stay green)
