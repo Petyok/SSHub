@@ -19,6 +19,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -200,9 +201,9 @@ class SecurityMenuScreenTest {
         var chosen: ThemeChoice? = null
         rule.setScreen { SecurityMenuScreen(IdentitySamples.menu, SecurityMenuActions(onTheme = { chosen = it })) }
         rule.onNodeWithText("Dark").assertIsSelected()
-        rule.onNodeWithText("Light").performClick()
+        rule.onNodeWithText("Light").performScrollTo().performClick()
         assertEquals(ThemeChoice.Light, chosen)
-        rule.onNodeWithText("System").performClick()
+        rule.onNodeWithText("System").performScrollTo().performClick()
         assertEquals(ThemeChoice.System, chosen)
     }
 
@@ -210,9 +211,9 @@ class SecurityMenuScreenTest {
         var chosen = 0
         rule.setScreen { SecurityMenuScreen(IdentitySamples.menu, SecurityMenuActions(onAutoLock = { chosen = it })) }
         rule.onNodeWithText("1 min").assertIsSelected()
-        rule.onNodeWithText("30 s").performClick()
+        rule.onNodeWithText("30 s").performScrollTo().performClick()
         assertEquals(30, chosen)
-        rule.onNodeWithText("5 min").performClick()
+        rule.onNodeWithText("5 min").performScrollTo().performClick()
         assertEquals(300, chosen)
     }
 
@@ -230,8 +231,8 @@ class SecurityMenuScreenTest {
         for (t in listOf("Trust sessions", "Short codes I issued", "Reshare and wrap keys", "Recovery and a new phone", "Recovery words", "Export my ops as text")) {
             rule.onNodeWithText(t).assertHasNoClickAction()
         }
-        rule.onNodeWithText("About and security").assertHasClickAction().performClick()
-        rule.onNodeWithText("Lock now").performClick()
+        rule.onNodeWithText("About and security").performScrollTo().assertHasClickAction().performClick()
+        rule.onNodeWithText("Lock now").performScrollTo().performClick()
         assertEquals(0, trust); assertEquals(1, about); assertEquals(1, lock)
     }
 
@@ -249,7 +250,7 @@ class SecurityMenuScreenTest {
     @Test fun font_scale_2_choices_stack_as_rows() {
         var chosen: ThemeChoice? = null
         rule.setScreen(fontScale = 2f) { SecurityMenuScreen(IdentitySamples.menu, SecurityMenuActions(onTheme = { chosen = it })) }
-        rule.onNodeWithText("Light").performClick()
+        rule.onNodeWithText("Light").performScrollTo().performClick()
         assertEquals(ThemeChoice.Light, chosen)
     }
 }
@@ -263,7 +264,7 @@ class AboutSecurityScreenTest {
         rule.onNodeWithText("0.1.0 (build 1)", substring = true).assertExists()
         rule.onNodeWithContentDescription("Group 1 of 16, E 3 2 8").assertExists()
         rule.onNodeWithContentDescription("Group 16 of 16, 9 D 7 C").assertExists()
-        rule.onNodeWithText("Compare with terminal").performClick()
+        rule.onNodeWithText("Compare with terminal").performScrollTo().performClick()
         assertEquals(1, toggled)
         rule.assertTargets48()
     }
@@ -328,7 +329,7 @@ class AboutSecurityScreenTest {
         var toggled = 0
         rule.setScreen { AboutSecurityScreen(IdentitySamples.about, AboutActions(onToggleLicences = { toggled++ })) }
         rule.onAllNodesWithText("licence text of", substring = true).assertCountEquals(0)
-        rule.onNodeWithText("Licences").performClick()
+        rule.onNodeWithText("Licences").performScrollTo().performClick()
         assertEquals(1, toggled)
     }
 
@@ -359,7 +360,7 @@ class AboutSecurityScreenTest {
     @Test fun recovery_row_opens_the_words() {
         var backup = 0
         rule.setScreen { AboutSecurityScreen(IdentitySamples.about, AboutActions(onBackup = { backup++ })) }
-        rule.onNodeWithText("Recovery words").performClick()
+        rule.onNodeWithText("Recovery words").performScrollTo().performClick()
         assertEquals(1, backup)
     }
 

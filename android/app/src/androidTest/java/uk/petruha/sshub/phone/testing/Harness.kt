@@ -43,10 +43,23 @@ fun ComposeContentTestRule.assertNoVisualOverflow() {
         .fetchSemanticsNodes().forEach { n ->
             val r = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
             n.config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult)?.action?.invoke(r)
-            r.filter { it.hasVisualOverflow }.forEach { l ->
+            r.filter { it.reallyClipped() }.forEach { l ->
                 val t = n.config.getOrNull(androidx.compose.ui.semantics.SemanticsProperties.Text)?.joinToString("|") { it.text }?.take(30)
                 bad += "[$t] w=${l.didOverflowWidth} h=${l.didOverflowHeight} lines=${l.lineCount} size=${l.size} max=${l.layoutInput.constraints.maxWidth}x${l.layoutInput.constraints.maxHeight} ml=${l.layoutInput.maxLines}"
             }
         }
     check(bad.isEmpty()) { "texts with visual overflow: ${bad.size}: " + bad.take(4).joinToString(" ; ") }
+}
+
+/**
+ * `hasVisualOverflow` also fires when the laid-out size is narrower than the paragraph even though the text fits its constraints
+ * (seen with a density override at fontScale 2.0: a 266px label in a 996px slot). Real clipping is: the text is wider or taller than its
+ * slot, or a line is ellipsized.
+ */
+private fun androidx.compose.ui.text.TextLayoutResult.reallyClipped(): Boolean {
+    val c = layoutInput.constraints
+    val tooWide = multiParagraph.width > c.maxWidth + 1 || size.width > c.maxWidth + 1
+    val tooTall = c.hasBoundedHeight && size.height > c.maxHeight + 1
+    val ellipsized = (0 until lineCount).any { isLineEllipsized(it) }
+    return tooWide || tooTall || ellipsized
 }

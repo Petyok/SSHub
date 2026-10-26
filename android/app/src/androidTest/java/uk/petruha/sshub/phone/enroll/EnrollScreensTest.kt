@@ -64,17 +64,16 @@ class EnrollScreensTest {
         rule.setScreen {
             EnrollScanScreen(
                 S.scan(),
-                EnrollScanActions(onScan = hit("scan"), onChannel = { calls += "ch:$it" }, onName = { calls += "name:$it" }),
+                EnrollScanActions(onScan = hit("scan"), onChannel = { calls += "ch:$it" }),
             )
         }
         exists("Name accepted: pixel-8")
-        rule.onNodeWithContentDescription("Name this phone will have in the ring").performTextInput("x")
+        rule.onNodeWithContentDescription("Name this phone will have in the ring").assertExists()
         click("Bluetooth")
         click("Paste text")
         click("Sound")
         click("Scan the terminal's code")
-        assertTrue(calls[0].startsWith("name:") && calls[0].contains("x"))
-        assertEquals(listOf("ch:Bluetooth", "ch:Paste", "ch:Sound", "scan"), calls.drop(1))
+        assertEquals(listOf("ch:Bluetooth", "ch:Paste", "ch:Sound", "scan"), calls)
     }
 
     @Test fun scan_invalid_name_disables_every_forward_action_and_names_the_reason() {

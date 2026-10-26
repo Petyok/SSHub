@@ -192,7 +192,7 @@ private fun WordCell(index: Int, word: String, wordState: WordState, onChange: (
                 onChange(v)
                 if (v.any { it.isWhitespace() }) focus.moveFocus(FocusDirection.Next)
             },
-            Modifier.weight(1f).heightIn(min = 48.dp).padding(vertical = 12.dp).semantics {
+            Modifier.weight(1f).semantics {
                 contentDescription = "Word ${index + 1}"
                 stateDescription = when (wordState) {
                     WordState.Ok -> "accepted"
@@ -200,7 +200,7 @@ private fun WordCell(index: Int, word: String, wordState: WordState, onChange: (
                     WordState.Partial -> "not a whole word yet"
                     WordState.Empty -> "empty"
                 }
-            },
+            }.heightIn(min = 48.dp).padding(vertical = 12.dp),
             textStyle = SshubText.monoBody.merge(TextStyle(color = cs.onSurface, fontWeight = FontWeight.Bold)),
             cursorBrush = SolidColor(cs.onSurface),
             keyboardOptions = KeyboardOptions(

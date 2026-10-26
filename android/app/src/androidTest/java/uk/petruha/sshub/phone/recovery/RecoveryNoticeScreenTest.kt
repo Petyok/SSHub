@@ -161,7 +161,7 @@ class RecoveryNoticeScreenTest {
 
     @Test fun dark_theme_review() {
         show(review, dark = true)
-        rule.onNodeWithText("Phone recovery in progress", substring = true).assertExists()
+        rule.onNodeWithText("RECOVERY YOU DID NOT START?").assertExists()
         rule.assertTargets48()
     }
 

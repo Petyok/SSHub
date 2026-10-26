@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -51,7 +52,7 @@ class FirstRunScreenTest {
         var opened = 0
         rule.setScreen { FirstRunScreen(IdentitySamples.firstRunNoLock, FirstRunActions(onOpenSecuritySettings = { opened++ })) }
         rule.onNodeWithText("No screen lock on this phone").assertExists()
-        rule.onNodeWithText("Open security settings").performClick()
+        rule.onNodeWithText("Open security settings").performScrollTo().performClick()
         assertEquals(1, opened)
         rule.assertTargets48()
     }
@@ -116,7 +117,7 @@ class RestoreScreenTest {
         var cleared: Boolean? = null
         rule.setScreen { RestoreScreen(IdentitySamples.restoreFullNotCleared, RestoreActions(onSiteDataCleared = { cleared = it })) }
         rule.onNodeWithText("Restore this phone").assertIsNotEnabled()
-        rule.onNodeWithText("I cleared the site data of the companion page").performClick()
+        rule.onNodeWithText("I cleared the site data of the companion page").performScrollTo().performClick()
         assertEquals(true, cleared)
     }
 
@@ -156,7 +157,7 @@ class RestoreScreenTest {
     @Test fun no_secure_lock_phase_offers_settings() {
         var opened = 0
         rule.setScreen { RestoreScreen(IdentitySamples.restoreFull.copy(phase = RestorePhase.NoSecureLock), RestoreActions(onOpenSecuritySettings = { opened++ })) }
-        rule.onNodeWithText("Open security settings").performClick()
+        rule.onNodeWithText("Open security settings").performScrollTo().performClick()
         assertEquals(1, opened)
     }
 
