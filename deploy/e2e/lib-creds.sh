@@ -14,7 +14,7 @@ ring2() {
   reset_peers
   check "peer-a founds the ring with hub" "enroll_peer peer-a hub || enroll_peer peer-a hub"
   check "peer-b joins via hub" "enroll_peer peer-b hub"
-  check "peer-a approves peer-b's admission" "approve_all peer-a"
+  check "peer-a approves peer-b's admission" "snow peer-a >/dev/null; approve_all peer-a"
   check "peer-b records peer-a directly" "enroll_peer peer-b peer-a"
 }
 
@@ -22,7 +22,7 @@ ring2() {
 ring3() {
   ring2
   check "peer-c joins via hub" "enroll_peer peer-c hub"
-  check "peer-a approves peer-c's admission" "approve_all peer-a"
+  check "peer-a approves peer-c's admission" "snow peer-a >/dev/null; approve_all peer-a"
   check "peer-c records peer-a directly" "enroll_peer peer-c peer-a"
   check "peer-b records peer-c directly" "enroll_peer peer-b peer-c"
 }

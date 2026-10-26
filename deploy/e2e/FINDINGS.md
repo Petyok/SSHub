@@ -173,3 +173,44 @@ cause is peer-b's pending CredUpdates blocking the verification (`pending below 
 
 `device_name()` makes the founder show up as "this device" (not a product contract); `host edit` takes `--name`;
 roles come from the observed table.
+
+## The phone in the e2e ring (feature/host-sync d49e4e0 and 6726118, page poc/phone 7fb1091)
+
+The ring's phone is the committed companion page driven through the real CLI verbs (`sync-phone-enroll`,
+`sync-notice`, `sync-phone-ops`, `sync-share-request`); no shim remains. Logs: `hs-e2e-phone3f-20261025T202759.log`
+(65 green on d49e4e0), `hs-e2e-phone3l-20261025T221224.log` (95 green on d49e4e0), `hs-e2e-phone4b-20261026T001102.log`
+and `hs-e2e-phone4e-20261026T014026.log` (6726118).
+
+### Q1. A ring built with the CLI cannot reach "two terminal holders plus the phone" (product, blocks 60, 65, 70, 95 on 6726118)
+
+On 6726118 `sync-join` leaves every joiner a mirror, and the earlier "everyone is a holder" views are gone (they were the
+P3 bug). A second holder and the phone both need a Red change that the ceremony blocks for want of the other:
+
+```
+$ sshub sync-role peer-b holder          (ring: peer-a holder; peer-b, peer-c, hub mirrors)
+proposed: ee6751cd becomes Holder (op f6ad5408496bbb36)
+ceremony: have [], missing [phone, second device, third factor]
+blocked: adding or promoting a holder needs two other live holders for the reshare
+```
+
+The same `blocked` line is on the phone's own admission (`DeviceAdd` Holder/Phone, printed by `sync-phone-enroll`:
+`ceremony: have [], missing [phone, second device, third factor]`, then `blocked: adding or promoting a holder needs two
+other live holders`). `live_terminals` (src/sync/ceremony.rs, `live_terminals < 2`) counts terminal holders only, and a
+CLI ring has exactly one. So the phone cannot be admitted, no Red op ever has a phone proof, and promoting a second holder
+needs that phone. Everything the phone-completed ceremonies need (60 mode change, 70 revoke of a holder, 95 export) is
+unreachable. On d49e4e0 the same ring "worked" only because the two joiners showed up as holders in peer-a's table.
+
+### Q2. The earlier `sync-revoke`: "the ring has 1" (explained)
+
+On d49e4e0 peer-a listed 3 holders but the revoke counted 1 remaining terminal holder. On 6726118 peer-b and peer-c are
+mirrors in every peer's table and `sync-revoke peer-c` is a Yellow change (`{"op":"cde093dd...","steps":[],"tier":"Red"}`
+printed, status `revoked` on peer-a only, `Pending changes: 1`). The message is gone with the demotion bug; the Red revoke
+of a holder needs Q1 solved first. peer-b and peer-c do not see the revocation until peer-a's op reaches them.
+
+### Q3. Test-side notes
+
+* The phone verbs print a first `{"event":"companion","fingerprint":...}` line; helpers skip it (`enr_get`, `pf`).
+* A ring set up with `sync-join` needs `sync-now` on peer-a before `sync-review --approve`, or peer-a has nothing to approve.
+* `sync-join` between peer-b and peer-c ("records peer-c directly") ends in `Broken pipe` on 6726118; peer-b still lists peer-c.
+* Order on d49e4e0: paper registration proposed first, then the phone, then phone and peer-b complete both. On 6726118 the
+  factor-free first phone makes the phone first; neither order gets past Q1.
