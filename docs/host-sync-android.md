@@ -331,9 +331,10 @@ Everything runs in a pinned container on gpu-serv; nothing is built on the lapto
   `cargo-ndk =4.1.2` (`--locked`). The resolved versions are written to `/opt/VERSIONS.txt` and printed in every log.
 - Rust: `Cargo.lock` committed, `--locked` everywhere; `RUSTFLAGS="--remap-path-prefix=/work=/src --remap-path-prefix=/cargo-home=/cargo -C link-arg=-Wl,--build-id=none -C link-arg=-Wl,-z,max-page-size=16384"`
   (no absolute paths, no build id, 16 KiB page alignment as Android 15 and the Play requirement need).
-- Gradle: plugin versions pinned in `build.gradle.kts`, dependency versions pinned inline, and Gradle dependency verification
-  (`gradle/verification-metadata.xml`, sha256 of every artifact) so a changed artifact fails the build.
-- Driver: `gpu-verify/android.sh <checkout> <name> bootstrap|build|test` syncs the checkout, builds the image, runs
+- Gradle: plugin versions pinned in `build.gradle.kts`, dependency versions pinned inline. Gradle dependency verification
+  (`gradle/verification-metadata.xml`, sha256 of every artifact) is NOT done in phase 1: it must be written by a run that also resolves the
+  instrumented-test runner artifacts, i.e. a connected run (phase 2 item).
+- Driver: `gpu-verify/android.sh <checkout> <name> bootstrap|build|test|chrome` syncs the checkout, builds the image, runs
   `android/ci/build.sh` as uid 10001 with a target dir and caches under `/root/sshub-ci/android-app/`, logs to
   `gpu-verify/logs/android-<name>-<UTC>.log`, registered in `/agents/host-sync-sshub.md`.
 - Check "reproducible": build twice in different target dirs and compare `classes*.dex` and `lib/*/*.so` (and the unsigned APK entry hashes
@@ -380,8 +381,17 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
   `src/sync/limits` (device id, BIP39 words, BLAKE3 known answer, strict Ed25519 verify), with host unit tests pinned to the `challenges.json` vector.
 - `android/`: Gradle 8.11.1 wrapper, AGP 8.10.1, Kotlin 2.1.21, Compose BOM 2025.05.01, `minSdk 30`, `compileSdk 35`, one unstyled screen and a
   Compose test; `android/docker/Dockerfile`, `android/ci/build.sh`; driver `gpu-verify/android.sh`.
-- Numbers (toolchain versions, APK size, emulator test result) are in the report of the run that produced this commit; the logs are
-  `gpu-verify/logs/android-*.log`.
+- Measured (logs `gpu-verify/logs/android-*.log`, gpu-serv under load average about 19):
+  JDK Temurin 17.0.21+9, Gradle 8.11.1, AGP 8.10.1, Kotlin 2.1.21, Compose BOM 2025.05.01, NDK 27.2.12479018 (r27c), build-tools 35.0.0, platform 35,
+  platform-tools 37.0.1, Rust 1.99.1 with the two Android targets, cargo-ndk 4.1.2, uniffi =0.32.2, JNA 5.17.0. Host unit tests of the core: 42 passed
+  (the committed crypto vectors included). Debug APK `app-debug.apk` 25.6 MB (unminified Compose, debug; the Rust `.so` is 0.6 MB arm64 and
+  0.7 MB x86_64), test APK 2.3 MB. Emulator: Android 15 (API 35) Google Play x86_64, emulator 37.2.12, boot to healthy 25 to 91 s, Chrome 124.0.6367.219.
+  Instrumented test: 3 tests on `emulator-5560 - 15`, all passed (device id vector, BLAKE3 known answer, strict Ed25519 verify). `android.sh ... chrome`:
+  Playwright 1.64.1 reaches Chrome through the emulator's adb server and loads a page (see section 9).
+- Playwright and Chrome on the emulator: `device.launchBrowser()` does not work on this image (Chrome ignores the command-line file on a user build, so the
+  `--remote-debugging-socket-name` socket never appears); `android/ci/chrome-probe.mjs` answers Chrome's first run through uiautomator, relays
+  `chrome_devtools_remote` with `device.open` and attaches with `chromium.connectOverCDP`. A `data:` page is not a secure context: the page target will serve
+  the companion page on `http://localhost` through an adb reverse (still to do, needs `reverse:` over the adb server).
 
 ## 12. Plan after phase 1
 
