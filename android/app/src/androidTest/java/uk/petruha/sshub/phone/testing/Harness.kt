@@ -69,7 +69,7 @@ private fun androidx.compose.ui.text.TextLayoutResult.reallyClipped(): Boolean {
 }
 
 /**
- * Writes a PNG of the whole screen to <app files>/shots/<TestClass>.<method>.png (pulled by android/ci/build.sh after the run).
+ * Writes a PNG of the whole screen to <additionalTestOutputDir>/shots/<TestClass>.<method>.png (AGP pulls it; android/ci/build.sh copies it to /out).
  * Called by assertTargets48, which every screen test ends with, so each tested state leaves a picture to compare with the
  * prototype screenshots. A failure to capture never fails a test.
  */
@@ -78,7 +78,9 @@ fun ComposeContentTestRule.snapshot() {
         val frame = Throwable().stackTrace.firstOrNull { it.className.startsWith("uk.petruha.sshub.phone.") && !it.className.contains(".testing.") }
             ?: return
         val name = frame.className.substringAfterLast('.') + "." + frame.methodName
-        val dir = java.io.File(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.filesDir, "shots").apply { mkdirs() }
+        // AGP pulls additionalTestOutputDir into app/build/outputs/connected_android_test_additional_output after the run.
+        val out = androidx.test.platform.app.InstrumentationRegistry.getArguments().getString("additionalTestOutputDir")
+        val dir = java.io.File(out ?: return).resolve("shots").apply { mkdirs() }
         val bmp = onRoot().captureToImage().asAndroidBitmap()
         java.io.File(dir, "$name.png").outputStream().use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 90, it) }
     }
