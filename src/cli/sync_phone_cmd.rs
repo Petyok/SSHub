@@ -269,6 +269,48 @@ pub fn phone_ops(
     Ok((summary, ceremony))
 }
 
+/// Why ops of a pasted list were not applied, one entry per reason the ingest distinguishes:
+/// `chain-gap` (per author: first refused seq), `already-known`, `invalid` (the first reasons).
+pub fn skipped_ops(
+    store: &LauncherStore,
+    s: &crate::sync::protocol::RoundSummary,
+) -> Result<Vec<Value>> {
+    let heads = store.sync_chain_heads()?;
+    let mut out = Vec::new();
+    for (dev, first, count) in &s.gaps {
+        let have = heads.iter().find(|h| &h.0 == dev).map_or(0, |h| h.1);
+        let note = if have == 0 {
+            "this ring has none of that device's earlier ops; export the device's full chain".to_string()
+        } else {
+            format!(
+                "this ring has that device's chain only up to seq {have}; export its full chain"
+            )
+        };
+        out.push(json!({"reason": "chain-gap", "device": dev, "first_seq": first, "count": count, "have_seq": have, "note": note}));
+    }
+    if s.duplicates > 0 {
+        out.push(json!({"reason": "already-known", "count": s.duplicates, "note": "this ring already has these ops"}));
+    }
+    let gap_ops: usize = s.gaps.iter().map(|g| g.2).sum();
+    if s.rejected > gap_ops {
+        out.push(json!({"reason": "invalid", "count": s.rejected - gap_ops, "details": s.reject_reasons.iter().filter(|r| !r.starts_with("gap:")).collect::<Vec<_>>(), "note": "the ingest refused these ops"}));
+    }
+    Ok(out)
+}
+
+fn skipped_line(k: &Value) -> String {
+    let reason = k["reason"].as_str().unwrap_or("");
+    let mut line = format!("skipped {} {reason}", k["count"]);
+    if let Some(f) = k["first_seq"].as_u64() {
+        line.push_str(&format!(" (first seq {f})"));
+    }
+    if let Some(d) = k["details"].as_array().filter(|d| !d.is_empty()) {
+        let d: Vec<&str> = d.iter().filter_map(Value::as_str).collect();
+        line.push_str(&format!(": {}", d.join("; ")));
+    }
+    format!("{line}: {}", k["note"].as_str().unwrap_or(""))
+}
+
 // ------------------------------------------------------------ share reply
 
 /// The challenge for `host` as text, plus what is needed to open the phone's reply.
@@ -534,6 +576,7 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
                 text
             };
             let (s, ceremony) = phone_ops(&store, &text)?;
+            let skipped = skipped_ops(&store, &s)?;
             emit(
                 &mut out,
                 a.json,
@@ -542,9 +585,12 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
                     "{} received, {} applied, {} waiting for approval",
                     s.received, s.applied, s.pending_arrived
                 ),
-                json!({"received": s.received, "applied": s.applied, "pending": s.pending_arrived, "red": ceremony}),
+                json!({"received": s.received, "applied": s.applied, "pending": s.pending_arrived, "skipped": skipped, "red": ceremony}),
             );
             if !a.json {
+                for k in &skipped {
+                    emit(&mut out, false, "skipped", skipped_line(k), json!({}));
+                }
                 for c in &ceremony {
                     emit(&mut out, false, "red", c.clone(), json!({}));
                 }
@@ -682,7 +728,7 @@ pub fn print_help(cmd: &str) {
     let (synopsis, text) = match cmd {
         "sync-phone-enroll" => ("sync-phone-enroll [--ble] [--format plain|json]", "Enroll a phone from this terminal, as text. Prints the terminal's first frame (`frame:`); read each of the phone's frames (kind 6, 7, 8, base64) from stdin, one per line, and print the next frame to show. After the phone's reveal it prints the four words (`words:`): answer `y` or `n` on stdin. On a verified phone it registers it and proposes its admission (a Red change) and prints the last frame for the phone. Needs a ring. Exit 0 verified, 1 stopped or input ended. With --ble (a build with the `bluetooth` feature) the frames also travel over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone page's device list`, sends each frame it prints to the phone page and takes the phone's frames from Bluetooth or stdin; the four words are still answered on stdin."),
         "sync-notice" => ("sync-notice <op-id> [--wait <seconds>] [--ble] [--format plain|json]", "Print the kind 3 notice (base64) of a Red op, for the phone to read: the op as signed, so the phone can show what it is asked to approve. <op-id> is a unique prefix (4+ hex characters) of the op's hash. With --ble (a build with the `bluetooth` feature) the notice is also handed to the phone page over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone page's device list` and waits up to --wait seconds until the phone has the frame (`sent:`)."),
-        "sync-phone-ops" => ("sync-phone-ops [--wait <seconds>] [--ble] [--format plain|json]", "Take in the ops the phone copied (kind 5, base64) from stdin, chain them into the log and print what applied and the ceremony of every pending Red op. A malformed text changes nothing. With --ble (a build with the `bluetooth` feature) the ops frame is received from the phone page over Bluetooth instead of stdin (`bluetooth: pick SSHub-XXXX in the phone page's device list`, up to --wait seconds)."),
+        "sync-phone-ops" => ("sync-phone-ops [--wait <seconds>] [--ble] [--format plain|json]", "Take in the ops the phone copied (kind 5, base64) from stdin, chain them into the log and print what applied, why the others were skipped (`skipped` in JSON: `chain-gap` with the first refused seq when the list starts past what the ring knows, `already-known`, `invalid`) and the ceremony of every pending Red op. A malformed text changes nothing. With --ble (a build with the `bluetooth` feature) the ops frame is received from the phone page over Bluetooth instead of stdin (`bluetooth: pick SSHub-XXXX in the phone page's device list`, up to --wait seconds)."),
         "sync-share-request" => ("sync-share-request <host> [--wait <seconds>] [--ble] [--format plain|json]", "Ask the phone for its share of <host>'s credential: prints the kind 1 challenge (base64), then reads the phone's kind 2 reply from stdin (up to --wait seconds; default and maximum 120, the challenge's life), opens it, takes in its courier ops and opens the credential with this device's share. The credential is open in this process only: run it to prove the path and to take in the phone's ops; `host connect` does its own unlock. With --ble (a build with the `bluetooth` feature) the challenge is also sent to the phone page over Bluetooth (`bluetooth: pick SSHub-XXXX in the phone page's device list`) and the reply is taken from Bluetooth or stdin, whichever comes first."),
         "sync-cert-request" => ("sync-cert-request (--group NAME | --host NAME...) [--days N] [--budget N] [--ble] [--format plain|json]", "Print the kind 9 trust-session request (base64) for the phone to approve: a group or listed hosts (at most 64, never everything), a term in days (default 30) and a budget of new hosts a day (default 10). The phone's answer goes in with sync-phone-ops. The kind 10 extension is TUI-only. With --ble (a build with the `bluetooth` feature) the request is also handed to the phone page over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone page's device list` and waits up to --wait seconds until the phone has the frame (`sent:`)."),
         _ => return,
