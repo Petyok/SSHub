@@ -3566,7 +3566,6 @@ dependencies = [
  "portable-pty",
  "predicates",
  "qrcode",
- "quircs",
  "rand_chacha",
  "rand_core",
  "ratatui",
@@ -3575,6 +3574,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "ssh2",
+ "sshub-sync-proto",
  "strsim",
  "tempfile",
  "tokio",
@@ -3583,6 +3583,30 @@ dependencies = [
  "tui-term",
  "unicode-width",
  "vt100",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
+name = "sshub-sync-proto"
+version = "0.20.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "base64",
+ "bip39",
+ "blake3",
+ "chacha20poly1305",
+ "ed25519-dalek",
+ "hex",
+ "ml-kem",
+ "qrcode",
+ "quircs",
+ "rand_chacha",
+ "rand_core",
+ "serde",
+ "serde_json",
+ "sha2",
  "x25519-dalek",
  "zeroize",
 ]

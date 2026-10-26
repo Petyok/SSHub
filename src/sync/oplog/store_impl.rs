@@ -92,6 +92,14 @@ fn register(
             now
         ],
     )?;
+    // A row that arrived through an anchor has no label (its name is the device id): the first time this
+    // device meets it with a name, that name becomes the local label. A real label is never overwritten.
+    if !name.is_empty() {
+        conn.execute(
+            "UPDATE sync_devices SET name = ?2 WHERE device_id = ?1 AND name = device_id",
+            params![id, name],
+        )?;
+    }
     super::checkpoint::record_anchor_device(
         conn,
         public,

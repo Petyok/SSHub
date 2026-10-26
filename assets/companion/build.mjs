@@ -22,7 +22,7 @@ const ZERO = '0'.repeat(64);
 const entry = selftest
   ? `import { start } from './src/selftest.mjs';
 globalThis.__VECTORS__ = ${JSON.stringify(read('../../tests/vectors/crypto/vectors.json'))};
-globalThis.__EFF__ = ${JSON.stringify(read('../wordlists/eff_large.txt'))};
+globalThis.__EFF__ = ${JSON.stringify(read('../../crates/sshub-sync-proto/assets/wordlists/eff_large.txt'))};
 start();
 `
   : `import { start } from './src/page.mjs';

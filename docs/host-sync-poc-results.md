@@ -1,7 +1,7 @@
 # Host sync: PoC and stage results
 
 This document consolidates every proof-of-concept and stage result of epic #13 (P2P encrypted sync of hosts and
-credentials). It replaces the per-branch `poc/results/*` files. Design: `docs/host-sync-design.md`; byte formats:
+credentials). It replaces the per-branch `poc/results/*` files and the `poc/` directory (the reshare bench, whose numbers are under PoC B). Design: `docs/host-sync-design.md`; byte formats:
 `docs/host-sync-contract.md`; phone page: `docs/host-sync-companion.md`.
 
 Environment names are generic. "Container" means the Linux x86_64 build and test container (rustc 1.99.1, node
@@ -24,6 +24,8 @@ Chrome 155, connected over USB; no serial numbers or personal data appear in the
 | Stage 2 | Protocol, ratchet, SAS enrollment | tests pass |
 | Stage 3 | Credential quorum, recovery, certificates, modes | tests pass |
 | Stage 3.5 | Hub | tests pass, no daemon needed |
+| Terminal receivers | Do the sound and reverse-QR decoders read the page's own output? | PASS for the decoders and builds; microphone and webcam capture never ran on hardware |
+| Bluetooth channel | Does the BLE frame link hold under loss and limits? | PASS for contract, link, driver, build matrix; no real radio ran |
 | Stage 5 | Phone page end to end | PASS in headless Chromium; page flows 23 of 23 on a real Android phone (no camera, sound or clipboard); trust sessions PASS in the container |
 
 ## PoC A: Rust and browser crypto interoperability
@@ -336,6 +338,79 @@ attended devices), holds no shares, releases a share only under a valid certific
 band at most once per op and never with a code, and relays phone courier ops without being able to alter them (strict
 decode, at most 8 ops). It never signs checkpoints (belongs to the op-log). 230 tests pass. Not run: a real mail
 command, an end to end run with sshd and the container.
+
+## Terminal receivers: audio FSK and reverse QR (`src/sync/media/`)
+
+Verdict: PASS for the decoders and the build matrix; BLOCKED for everything that needs a real microphone, camera
+or phone (`mic.rs` and `cam.rs` never ran against hardware). Code: `fsk.rs` and `qrscan.rs` always compiled,
+`mic.rs` behind feature `audio`, `cam.rs` behind `camera`, fixtures in `tests/fixtures/media/`, hardware check
+`examples/media-probe.rs`. A channel ends itself after its first valid reply; capture runs only while the unlock
+or enrollment dialog is open and nothing is written to disk.
+
+| Claim | Measured | Result |
+|---|---|---|
+| FSK decoder reads the page's own audio (fast profile, 128 B share-only reply, request id 4242) and the slow profile (60 ms, 48 B) | exact bytes both; the page's two encoders are sample-identical | PASS |
+| Streaming at chunk sizes 441, 1024, 4096, 48000 with silence before and after; three bursts back to back | 4 of 4 sizes, 3 of 3 bursts in order | PASS |
+| Silence, noise only, cut-off burst, two symbols wiped | nothing decoded, no panic, CRC refuses the wiped one | PASS |
+| White noise, 12 seeds per cell, SNR against burst power (fast / slow) | 12/12 and 12/12 down to -3 dB; -6 dB 6/12 and 12/12; -9 dB 5/12 and 6/12 (the JS Goertzel of PoC H had 42/50 and 33/50 at 0 dB) | PASS, margin to -3 dB |
+| Input rates 8 to 192 kHz | exact at every rate | PASS |
+| Sound card clock off by 100 to 2000 ppm | exact to 1000 ppm, fails at 2000 ppm (no drift tracking; real cards are within 100 ppm) | PASS |
+| QR: the page's canvas frames of the 711 B full reply (v11, 5 px/module) decode and reassemble exactly; out of order, duplicated, missing until the loop repeats | completes on the 8th push; synthetic 3000 B loop completes in lap 3 after 35 frames | PASS |
+| Robustness (3 frames per row): 2 to 5 px/module, blur sigma 0.5 and 1, sensor noise to 24, rotation 3 to 90 degrees | 3/3 each; blur 1.5 and above 0/3; 3 px/module with rotation, blur and noise 0/3 | PASS |
+
+QR decoder choice, 144 camera-like variants of the page's frames at 1280x720: rqrr 44 plain (70 with a 2x retry),
+quircs 52 (73), rxing 86, zxing-cpp oracle 117, OpenCV oracle 45; per frame rqrr 8 ms, quircs 3 ms, rxing 2 ms.
+Chosen `quircs` (MIT, pure Rust, 3 ms) with a 2x bilinear retry when a grid is found but not decoded (+40% frames for
+2 ms). rxing decodes more hard variants but pulls the `image` crate; frames loop, so a missed frame returns next lap.
+Blur above sigma 1.5 at 4 px/module is lost by every pure-Rust decoder: keep the phone 25 to 40 cm away and in focus.
+
+Dependencies per feature: `quircs` always. `audio`: `cpal` 0.18, needs `libasound2-dev` and `pkg-config` on Linux
+(`apt install libasound2-dev pkg-config`), CoreAudio on macOS (microphone permission prompt on first use).
+`camera`: Linux `linuxvideo` 0.3.5 (raw V4L2 ioctls, nothing to install, `/dev/video*` readable by the user,
+asks 1280x720 then 640x480 in `YUYV` or `GREY`); macOS `nokhwa` 0.10.11 with only AVFoundation (camera permission
+prompt). Rejected on Linux: `nokhwa` input-v4l, `v4l`, `v4l2r` (all need libclang at build time through bindgen).
+MJPEG-only webcams report "no camera offers raw YUYV or GREY video". Windows: both features build, the camera
+reports not implemented. macOS backends type-check only.
+
+Not run: capture against real hardware (cpal stream setup, sample formats, V4L2 negotiation, permission flows);
+over-the-air room acoustics and a real phone screen seen by a real webcam (the noise and blur tables are
+simulations); a test run with the features on (they were built and linted); MJPEG-only webcams.
+
+## Bluetooth Low Energy channel (`src/sync/media/ble*.rs`, feature `bluetooth`)
+
+Verdict: PASS for the contract (C20), the link layer, the driver, the integration and the build matrix; BLOCKED for
+everything that needs a radio. The terminal is the GATT peripheral (one service, RX written by the phone, TX
+notified by the terminal, INFO read); the phone page is the Web Bluetooth central. The link carries whole frames
+of kinds 1 to 10 unchanged and adds no security. Advertising: the service UUID and `SSHub-<4 random Crockford
+characters>`, shown on screen, nothing about host or user, at most 300 s per arming.
+
+Crate: `bluer` 0.17.4 pinned, tokio confined to one dedicated thread with a `current_thread` runtime (the contract
+says no async runtime elsewhere); macOS uses `objc2-core-bluetooth`. The default dependency tree is unchanged
+(`cargo tree` 447 lines before and after). The feature needs `libdbus-1-dev` on Linux.
+
+| Claim | Measured | Result |
+|---|---|---|
+| Byte layout of every message and INFO; CRC-32 IEEE (0xCBF43926) | exact, 12 malformed shapes rejected | PASS |
+| Chunk arithmetic and full exchange at proposals 20, 185, 244, 512 and lengths 7 to 100 000 B, both directions | 72 combinations exact; 1 MiB needs 4400 chunks at 244 | PASS |
+| Lossy link: 2% loss of DATA, ACK and PING, 10% duplicates, 20 000 B up and 9 000 B down | exactly once and exact in 12 seeds | PASS |
+| Limits enforced before buffering (length over 1 MiB, count or first payload not matching, oversized message) | all refused, nothing kept | PASS |
+| A frame without `SWR1` or with a kind outside 1 to 10 never reaches the application | refused | PASS |
+| Corrupted chunk retried under a new frame id; persistent corruption given up; version mismatch aborts | exact | PASS |
+| Timers: HELLO 10 s, ack timeout 5 s x 3, frame deadline 120 s, ping 30 s, idle 90 s | virtual clock | PASS |
+| Driver with a fake transport: unlock exchange, 100 KB reply, enrollment across a reconnect (same tag), drop-central, dead radio, advertising window, newest queued frame wins | 9 tests with the real thread | PASS |
+| Tags leak nothing (4 Crockford characters, name at most 10 bytes, random per arming) | 200 draws | PASS |
+| `bluetooth` build, clippy `-D warnings`, whole suite; with `audio,camera` together; macOS type check | green | PASS |
+
+Real BlueZ on virtual controllers (`hci_vhci` and `btvirt`, `tests/ble-vhci/`, an `#[ignore]`d test run explicitly with
+`SSHUB_BLE_ADAPTER=hci0 SSHUB_BLE_TEST_CLIENT=hci1`): PASS. HELLO and the 244 byte message size (ATT MTU 512), a kind 1
+frame down and a kind 2 frame up at 200, 3000 and 20000 bytes byte for byte, reconnect to the same peripheral with the
+same tag, BYE on close. On the air (HCI trace): only the flags, the one 128-bit service UUID and the local name
+`SSHub-TAG`; nothing else. The virtual air has no RSSI, so the client connects by address instead of through a scan.
+
+Not run: a physical radio (`ble_mac.rs` is type-checked only); the phone page's Web Bluetooth side (chooser, real
+Android MTU, write pacing); range, throughput and battery; macOS behaviour beyond the type check (a CoreBluetooth
+peripheral cannot disconnect a central: the terminal forgets it and advertises again); Windows (reports not
+implemented).
 
 ## Op-log and checkpoints
 

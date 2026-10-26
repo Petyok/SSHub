@@ -809,6 +809,11 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
                         &hash[..],
                     ],
                 )?;
+                // The row may exist from an anchor, labelled with its id: the op names it.
+                conn.execute(
+                    "UPDATE sync_devices SET name = ?2 WHERE device_id = ?1 AND name = device_id",
+                    params![device.device_id(), name],
+                )?;
             }
         }
         OpBody::ExemptionSet { device_id, slot } => {
