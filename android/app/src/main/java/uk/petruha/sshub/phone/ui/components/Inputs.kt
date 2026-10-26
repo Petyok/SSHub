@@ -159,7 +159,7 @@ fun SegmentedHeader(options: List<Pair<String, Int?>>, selected: Int, onSelect: 
                     .selectable(on, role = Role.Tab) { onSelect(i) },
                 horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (on) Glyph(GlyphKind.Check, cs.onSurface, size = 16.dp, Modifier.padding(end = 6.dp))
+                if (on) Glyph(GlyphKind.Check, cs.onSurface, Modifier.padding(end = 6.dp), size = 16.dp)
                 Text(label, style = SshubText.monoBody, color = cs.onSurface)
                 if (count != null) CountBadge(count, Modifier.padding(start = 6.dp), muted = count == 0)
             }
