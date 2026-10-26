@@ -44,6 +44,8 @@ class FixtureFlowTest {
                 val v = (opened as? OpenedRelease)?.view ?: error("$name: expected a release request, got $opened")
                 assertEquals("$name binding words", c.getString("binding_words"), v.words.joinToString("-"))
                 assertTrue("$name: every check passes or is waived by the typed id", v.checks.all { it.ok || it.needsTypedId })
+            } else if (name in NEEDS_MET_REQUESTER && opened is OpenedRefused) {
+                // refused for another rule first (for example the wrapped share): still a value, still no approval
             } else if (name in NEEDS_MET_REQUESTER && opened is OpenedRelease) {
                 // The page's fixtures enroll the requester first; a fresh phone has not met it, so the signature cannot be checked and the
                 // request is shown as from an unmet requester (typed id needed). The refusal itself is pinned by the Rust parity tests.

@@ -1,5 +1,10 @@
 package uk.petruha.sshub.phone.app
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.and
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -18,20 +23,22 @@ import uk.petruha.sshub.phone.fake.FakePlatform
 class AppRootTest {
     @get:Rule val rule = createComposeRule()
 
+    private fun tab(label: String) = rule.onNode(hasText(label) and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab))
+
     private fun start(platform: FakePlatform = FakePlatform()) = rule.setContent { AppRoot(FakePhoneCore(), platform) }
 
     @Test fun an_unlocked_vault_starts_on_home_with_the_four_tabs() {
         start()
-        for (t in listOf("Ring", "Approvals", "Enroll", "Security")) rule.onNodeWithText(t).assertExists()
+        for (t in listOf("Ring", "Approvals", "Enroll", "Security")) tab(t).assertExists()
     }
 
     @Test fun tabs_navigate_to_their_roots() {
         start()
-        rule.onNodeWithText("Approvals").performClick()
+        tab("Approvals").performClick()
         rule.onNodeWithText("Scan a request").assertExists()
-        rule.onNodeWithText("Security").performClick()
+        tab("Security").performClick()
         rule.onNodeWithText("Lock now").performScrollTo().assertExists()
-        rule.onNodeWithText("Enroll").performClick()
+        tab("Enroll").performClick()
         rule.onNodeWithText("Scan the terminal's code").assertExists()
     }
 
@@ -39,6 +46,6 @@ class AppRootTest {
         val p = FakePlatform()
         p.keys.st.value = uk.petruha.sshub.phone.core.VaultState.NoKey
         start(p)
-        rule.onAllNodesWithText("Approvals").assertCountEquals(0)
+        rule.onAllNodes(hasText("Approvals") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)).assertCountEquals(0)
     }
 }
