@@ -386,7 +386,7 @@ Everything runs in a pinned container on gpu-serv; nothing is built on the lapto
   `GRADLE_EXTRA="--write-verification-metadata sha256" TEST_CLASS=uk.petruha.sshub.phone.app.AppRootTest gpu-verify/android.sh <checkout> <name> test`
   (it covers assembleDebug, assembleRelease and connectedDebugAndroidTest), review the diff of the XML and commit it. Signature verification is not used (sha256 only).
 - Reproducibility (checked 2026-10-26): `app-release-unsigned.apk` built twice in two clean containers (separate source copy, cargo target and Gradle project
-  dirs; only the download caches are shared) is byte for byte identical: 541 entries, whole file sha256 75b128a7...f4a3 (`android/ci/apk-diff.py A B` lists differing
+  dirs; only the download caches are shared) is byte for byte identical: 541 entries; first check (49dd4cc) sha256 75b128a71af436f9dc62e8680683483a19156c23148c48524fe3f807eb36f4a3, re-check after the core additions (runs rc and rd) sha256 6d060ba07f781685b8d6335775c59c7e9e83c6b4f77b65f04551e187d221fef5 (`android/ci/apk-diff.py A B` lists differing
   entries). Signing adds only META-INF. The inputs that make it so: pinned image, `--locked`, `--remap-path-prefix`, no build id, `-z max-page-size=16384`, AGP's fixed zip timestamps.
 - R8 / minify is off. It is a later option to shrink the APK (about 31 MB unsigned release today); it needs keep rules for uniffi and JNA and a re-run of the reproducibility check.
 - Driver: `gpu-verify/android.sh <checkout> <name> bootstrap|build|test|chrome` syncs the checkout, builds the image, runs
