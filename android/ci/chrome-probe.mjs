@@ -30,27 +30,22 @@ async function diagnose(tag) {
 // Chrome's first run (terms, sign-in, notifications) blocks everything until it is answered; the guest is a user
 // build, so no command-line flag can skip it. Tap through it with uiautomator text matching, bounded.
 const FRE_TEXTS = [/^use without an account$/i, /^no,? thanks$/i, /^don.t turn on$/i, /^accept (&|and) continue$/i, /^no thanks$/i, /^skip$/i, /^got it$/i, /^continue$/i, /^next$/i, /^not now$/i, /^don.t allow$/i];
-async function firstRun() {
-  await device.shell('am start -n com.android.chrome/com.google.android.apps.chrome.Main');
-  for (let i = 0; i < 12; i++) {
-    await new Promise((r) => setTimeout(r, 2500));
-    const top = (await device.shell('dumpsys activity activities | grep -m1 topResumedActivity')).toString();
-    if (!/firstrun|signin|FirstRun|Permission/i.test(top) && i > 0) { console.log('first run done:', top.trim()); return; }
-    const xml = (await device.shell('uiautomator dump /dev/tty')).toString();
-    const nodes = [...xml.matchAll(/<node [^>]*?text="([^"]*)"[^>]*?clickable="true"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g)];
-    const hit = FRE_TEXTS.map((re) => nodes.find((n) => re.test(n[1]))).find(Boolean);
-    if (!hit) { console.log('first run step', i, 'no known button; texts:', nodes.map((n) => n[1]).filter(Boolean).join(' | ')); continue; }
-    const [x, y] = [(+hit[2] + +hit[4]) / 2, (+hit[3] + +hit[5]) / 2];
-    console.log('first run tap:', JSON.stringify(hit[1]));
-    await device.shell(`input tap ${x} ${y}`);
-  }
-  throw new Error('first run did not finish');
+async function tapOnce() {
+  const xml = (await device.shell('uiautomator dump /dev/tty')).toString();
+  const nodes = [...xml.matchAll(/<node [^>]*?text="([^"]*)"[^>]*?clickable="true"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g)];
+  const hit = FRE_TEXTS.map((re) => nodes.find((n) => re.test(n[1]))).find(Boolean);
+  if (!hit) return;
+  console.log('first run tap:', JSON.stringify(hit[1]));
+  await device.shell(`input tap ${(+hit[2] + +hit[4]) / 2} ${(+hit[3] + +hit[5]) / 2}`);
 }
 
 let context;
 try {
-  await within(60_000, 'first run', firstRun());
-  context = await within(90_000, 'launchBrowser', device.launchBrowser());
+  // launchBrowser force-stops Chrome and clears its data, so the first run appears AFTER it starts: answer it meanwhile.
+  let launched = false;
+  const launch = device.launchBrowser().then((c) => ((launched = true), c));
+  (async () => { while (!launched) { await new Promise((r) => setTimeout(r, 2500)); await tapOnce().catch(() => {}); } })();
+  context = await within(120_000, 'launchBrowser', launch);
   const page = await within(30_000, 'newPage', context.newPage());
   await within(30_000, 'goto', page.goto('data:text/html,<title>sshub-probe</title><h1 id=x>probe-ok</h1>'));
   console.log('title:', await page.title());
