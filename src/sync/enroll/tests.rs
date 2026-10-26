@@ -775,6 +775,18 @@ fn two_members_who_joined_through_the_hub_can_meet_each_other() {
         let (r1, r2) = enroll_raw(&hub, x, Some(&mut y1), Some(&mut y2));
         assert!(r1.is_ok() && r2.is_ok());
     }
+    // c never met a, yet it knows a by name, not by id: the inviter's anchor carried the labels.
+    let label_of_a_on_c = c
+        .store
+        .sync_devices()
+        .unwrap()
+        .into_iter()
+        .find(|d| d.id == a.did)
+        .map(|d| d.name);
+    assert!(
+        label_of_a_on_c.as_deref().is_some_and(|n| n != a.did),
+        "{label_of_a_on_c:?}"
+    );
     let (mut y1, mut y2) = (yes(), yes());
     let (rb, rc) = enroll_raw(&c, &b, Some(&mut y1), Some(&mut y2));
     assert!(
