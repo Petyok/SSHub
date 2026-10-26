@@ -43,8 +43,6 @@ data class TrustRequestView(
     val fields: List<TrustFieldView>,
     /** Null when the core sent no epoch row. */
     val epoch: TrustEpochView?,
-    /** The requester's public key, hex, when the core supplies it (requester never met); null: no line. */
-    val requesterKey: String?,
     /** `laptop-main [7B3E-0D15], 5 hosts, 30 days, ends 2026-11-25`, shown after signing. */
     val signedSummary: String,
     val refusal: TrustRefusal?,

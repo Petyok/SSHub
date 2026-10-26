@@ -31,7 +31,6 @@ object TrustSamples {
     const val NOW = 1_793_007_660L
     const val PHONE_EPOCH = 7L
     const val UNMET_ID = "E7A4-6B02"
-    const val REQUESTER_KEY = "5d1c0a93be47f2086a3cd9e1f4b7205c88ae6d31f09b42c7e5a1d8603bf74c92"
     const val CODE = "K7Q29FMXC41T8PWD"
     val HOSTS = listOf("web-01", "web-02", "db-staging", "bastion", "nuc-lab")
     val MANY_HOSTS = (1..65).map { "web-%02d".format(it) }
@@ -58,7 +57,6 @@ object TrustSamples {
                 "Epoch range: must start at epoch $PHONE_EPOCH, at most one epoch wide", "epoch $lo to $hi",
                 listOf(TrustCheck("starts at this phone's own epoch $PHONE_EPOCH", lo == PHONE_EPOCH), TrustCheck("at most one epoch wide", hi >= lo && hi - lo <= 1)),
             ),
-            requesterKey = if (met) null else REQUESTER_KEY,
             signedSummary = "$who, ${hosts.size} hosts, $days days, ends $end",
             refusal = refusal,
         )

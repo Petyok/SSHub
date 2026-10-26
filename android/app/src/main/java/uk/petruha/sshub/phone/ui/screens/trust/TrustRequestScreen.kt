@@ -126,10 +126,6 @@ private fun ReviewFrame(state: TrustRequestState, on: TrustRequestActions) {
                 Text(v.device.label, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurface)
                 Text("Device id", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 HexGroups(v.device.id, groups = null, label = "Device id")
-                v.requesterKey?.let {
-                    Text("Requester key", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    HexGroups(it, groups = null, label = "Requester key")
-                }
             }
             Gap(8.dp)
             MonoField(

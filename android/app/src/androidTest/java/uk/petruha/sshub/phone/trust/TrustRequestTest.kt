@@ -11,6 +11,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -77,8 +78,7 @@ class TrustRequestTest {
         }
         rule.onNodeWithText("Never met").assertExists()
         rule.onNode(hasContentDescription("Device id E 7 A 4, 6 B 0 2")).assertExists()
-        rule.onNode(hasContentDescription("Requester key", substring = true)).assertExists()
-        rule.onNodeWithText("not met [E7A4-6B02]").assertExists()
+        rule.onAllNodesWithText("not met [E7A4-6B02]", substring = true).onFirst().assertExists()
         rule.onNodeWithText("Approve").assertIsNotEnabled().performClick()
         assertEquals(0, approved)
         rule.onNodeWithContentDescription("Type the device id of the requester").performTextInput("E7A4-6B0")

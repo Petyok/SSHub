@@ -220,7 +220,6 @@ internal fun mapTrustRequest(v: RsCertRequestView): OpenedTrustRequest {
             headline = v.headline,
             fields = v.rows.filter { it !== epoch }.map { TrustFieldView(it.label, it.value, danger = it.danger) },
             epoch = epoch?.let { TrustEpochView(it.label, it.value) },
-            requesterKey = null,
             signedSummary = v.headline,
             refusal = problems(v.problems),
         ),
