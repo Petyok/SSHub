@@ -11,6 +11,11 @@ P=sshub-hostsync-e2e
 # A file next to this script picks it, because the runner passes no environment (gpu-verify/e2e.sh).
 PHONE_TARGET=$(cat "$HERE/phone-target" 2>/dev/null || echo desktop)
 export PHONE_TARGET
+# The emulator is one shared machine: a run that boots it holds android.lock too (always taken after e2e.lock, which
+# gpu-verify/e2e.sh already holds), so it never overlaps the emulator-only runs of the Android app.
+if [ "$PHONE_TARGET" = android ] && [ -z "${E2E_ANDROID_LOCKED:-}" ]; then
+  E2E_ANDROID_LOCKED=1 exec flock /root/sshub-ci/android.lock sh "$0" "$@"
+fi
 C="docker compose -p $P -f docker-compose.yml"
 [ "$PHONE_TARGET" = android ] && C="$C --profile android"
 PEERS="peer-a peer-b peer-c hub"
