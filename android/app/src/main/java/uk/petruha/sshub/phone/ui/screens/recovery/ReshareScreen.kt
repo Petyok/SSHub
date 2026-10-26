@@ -9,6 +9,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.core.ReshareStage
 import uk.petruha.sshub.phone.core.ReshareView
 import uk.petruha.sshub.phone.ui.components.BarButtons
