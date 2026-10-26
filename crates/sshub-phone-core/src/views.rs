@@ -14,11 +14,13 @@ pub struct Row {
     pub danger: bool,
 }
 
-/// A line of a checks list: a rule that passed (`warn` = passed with a warning to read).
+/// A line of a checks list: a rule that passed (`warn`: passed with a warning to read) or, with `ok == false`, the rule
+/// that refused (always the last line of a refusal).
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct Check {
     pub text: String,
     pub warn: bool,
+    pub ok: bool,
 }
 
 /// A signed op rendered from its bytes: `headline`, then every leaf of the body as a row (nothing summarised away

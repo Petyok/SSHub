@@ -15,6 +15,7 @@ pub mod ctx;
 pub mod describe;
 pub mod enroll;
 pub mod error;
+pub mod ffi;
 pub mod identity;
 pub mod notices;
 pub mod outgoing;

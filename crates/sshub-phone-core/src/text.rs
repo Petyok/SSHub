@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn iso_matches_the_js_form() {
         assert_eq!(iso(0), "1970-01-01T00:00:00Z");
-        assert_eq!(iso(1_893_452_400), "2030-01-01T00:00:00Z");
+        assert_eq!(iso(1_893_452_400), "2029-12-31T23:00:00Z");
         assert_eq!(iso(1_900_000_000), "2030-03-17T17:46:40Z");
         assert_eq!(iso(951_782_400), "2000-02-29T00:00:00Z");
         assert_eq!(iso(-1), "1969-12-31T23:59:59Z");
