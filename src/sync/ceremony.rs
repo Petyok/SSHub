@@ -96,6 +96,46 @@ pub(crate) fn test_force(store: &LauncherStore, on: bool) {
     meta_set(store, "test_all_in_force", if on { b"1" } else { b"" }).unwrap();
 }
 
+/// Is the first op that made `device` a holder newer than lamport `l` (the row says holder, the view predates it)?
+fn promoted_after(store: &LauncherStore, device: &DeviceId, l: u64) -> Result<bool> {
+    Ok(ops_of(store, "DeviceRoleChange", None)?.iter().any(|op| {
+        op.lamport > l
+            && matches!(&op.body, OpBody::DeviceRoleChange { device_id, to: DeviceRole::Holder } if device_id == device)
+    }))
+}
+
+/// Does any credential hold Quorum shares (so a new holder means a reshare)? The mode alone is not enough: a
+/// ring switched to Quorum with no credential yet has nothing to reshare.
+fn quorum_credentials_exist(store: &LauncherStore) -> Result<bool> {
+    // The projected mode, not `effective_cred_mode`: that judges the newest ModeChange through `red_status`,
+    // which is what may be calling us. A mode change not yet in force counts as Quorum here, the safe side.
+    if store.sync_cred_mode()? != CredMode::Quorum {
+        return Ok(false);
+    }
+    store.with_conn(|c| {
+        Ok(c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sync_cred_state WHERE wrapped_shares NOT IN ('', '[]'))",
+            [],
+            |r| r.get::<_, bool>(0),
+        )?)
+    })
+}
+
+/// Ring setup is over for good once the ring has had a phone and two terminal holders (revoked rows still
+/// count: setup is never re-entered). The op's own subject is left out: it is what is being decided.
+fn setup_ended(devices: &[DeviceRow], op: &Op, promoted: Option<&DeviceId>) -> bool {
+    let subject = match &op.body {
+        OpBody::DeviceAdd { device, .. } => Some(device.device_id()),
+        _ => promoted.cloned(),
+    };
+    let others = || devices.iter().filter(|d| Some(&d.id) != subject.as_ref());
+    let phone = others().any(|d| d.kind == DeviceKind::Phone && d.role == DeviceRole::Holder);
+    let terminals = others()
+        .filter(|d| d.kind == DeviceKind::Terminal && d.role == DeviceRole::Holder)
+        .count();
+    phone && terminals >= 2
+}
+
 /// Did `device` join the ring (its first `DeviceAdd`) after lamport `l`? A founder or a device adopted with an
 /// anchor has no `DeviceAdd` of its own: false.
 pub(crate) fn joined_after(store: &LauncherStore, device: &DeviceId, l: u64) -> Result<bool> {
@@ -141,7 +181,10 @@ fn holder_established(store: &LauncherStore, device: &DeviceId, upto: Option<u64
     let Some(op) = establishing_op(store, device, upto)? else {
         // A founder, or a holder adopted with an anchor; but not a device whose admission is LATER than the
         // view (its row exists, it was not part of the ring yet).
-        return Ok(!upto.is_some_and(|u| joined_after(store, device, u).unwrap_or(false)));
+        return Ok(!upto.is_some_and(|u| {
+            joined_after(store, device, u).unwrap_or(false)
+                || promoted_after(store, device, u).unwrap_or(false)
+        }));
     };
     let to_holder = match &op.body {
         OpBody::DeviceAdd { role, .. } => *role == DeviceRole::Holder,
@@ -389,6 +432,28 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     let mut blocked = phone_verdict;
     let mut rule_violation: Option<String> = None;
 
+    // RING SETUP (contract 4h): a ring built from a fresh install cannot have a phone and two holders to prove
+    // the step that creates them. While no Quorum credential exists (nothing to reshare) and the ring has not
+    // yet had a phone and two terminal holders, promoting a terminal needs what can exist: the proposer and the
+    // promoted device's own signature (the phone's proof once a phone exists, a factor once one is registered).
+    let promoted: Option<DeviceId> = match &op.body {
+        OpBody::DeviceRoleChange {
+            device_id,
+            to: DeviceRole::Holder,
+        } => Some(device_id.clone()),
+        OpBody::DeviceAdd {
+            device,
+            role: DeviceRole::Holder,
+            kind: DeviceKind::Terminal,
+            ..
+        } => Some(device.device_id()),
+        _ => None,
+    };
+    let quorum_credentials = quorum_credentials_exist(store)?;
+    let setup = !quorum_credentials && !setup_ended(&devices, op, promoted.as_ref());
+    let setup_promotion = setup && promoted.is_some();
+    let mut setup_waived: Vec<&str> = Vec::new();
+
     // Counting rules that make an op impossible.
     let live_terminals = devices
         .iter()
@@ -416,7 +481,8 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
             to: DeviceRole::Holder,
             ..
         } => {
-            if live_terminals < 2 {
+            // The rule follows from the reshare: with no Quorum credential there is nothing to reshare.
+            if live_terminals < 2 && quorum_credentials {
                 blocked = Some(
                     "adding or promoting a holder needs two other live holders for the reshare"
                         .to_string(),
@@ -529,6 +595,8 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         } else {
             missing.push(RedProof::Phone);
         }
+    } else if setup_promotion {
+        setup_waived.push("the phone's proof (the ring has no phone yet)");
     } else {
         missing.push(RedProof::Phone);
     }
@@ -554,6 +622,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         .count();
     let single_machine_ring = others == 0 && !authored_by_phone;
     let mut approved = false;
+    let mut approved_own = false;
     let mut second_at: Option<i64> = None;
     let mut approvers: Vec<DeviceId> = Vec::new();
     for p in ops_of(store, "RedApprove", None)? {
@@ -565,7 +634,15 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         let Some(row) = devices.iter().find(|d| d.id == p.device_id) else {
             continue;
         };
-        if !terminal_holder(row)
+        // At ring setup the promoted device's own attended signature stands in for the second holder.
+        let own = setup_promotion
+            && promoted.as_ref() == Some(&p.device_id)
+            && row.attendance == Attendance::Attended
+            && !matches!(
+                row.status,
+                DeviceStatus::Revoked | DeviceStatus::Compromised
+            );
+        if (!own && !terminal_holder(row))
             || p.device_id == *proposer
             || delegate.as_ref() == Some(&p.device_id)
         {
@@ -574,14 +651,21 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         if cosigner.as_ref().is_some_and(|c| *c != p.device_id) {
             continue;
         }
+        if own {
+            approved_own = true;
+        }
         approved = true;
         second_at = Some(second_at.map_or(heard(&p), |t: i64| t.min(heard(&p))));
         approvers.push(p.device_id.clone());
     }
+    if setup_promotion {
+        // Other holders' votes do not replace the promoted device's own signature at setup.
+        approved = approved_own;
+    }
     if approved {
         complete_at = complete_at.max(second_at.unwrap_or(0));
         have.push(RedProof::SecondDevice);
-    } else if !single_machine_ring {
+    } else if !single_machine_ring || setup_promotion {
         missing.push(RedProof::SecondDevice);
     }
 
@@ -602,7 +686,11 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
             d.kind == DeviceKind::Phone && d.role == DeviceRole::Holder && d.id != dev.device_id()
         })
     });
-    let bootstrap = (replacing.is_some() || first_phone_ever) && !any_registered;
+    let setup_factor = setup_promotion && !any_registered;
+    if setup_factor {
+        setup_waived.push("the third factor (none is registered yet)");
+    }
+    let bootstrap = (replacing.is_some() || first_phone_ever || setup_factor) && !any_registered;
     let mut factor_ok = false;
     let mut factor_named: Option<ThirdFactor> = None;
     let mut factor_at: Option<i64> = None;
@@ -709,6 +797,12 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         && !missing.iter().any(|m| matches!(m, RedProof::Factor(_)))
     {
         missing.push(RedProof::Factor(Some(ThirdFactor::Paper)));
+    }
+    if note.is_none() && !setup_waived.is_empty() {
+        note = Some(format!(
+            "ring setup: not required yet: {}; setup ends for good once the ring has a phone and two terminal holders",
+            setup_waived.join(", ")
+        ));
     }
     let complete = missing.is_empty() && blocked.is_none() && !expired;
     Ok(RedStatus {

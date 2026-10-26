@@ -1436,3 +1436,111 @@ fn the_factor_free_first_phone_is_ring_setup_only() {
         "a revoked phone does not reopen the bootstrap: {st:?}"
     );
 }
+
+// ----------------------------------------------------------------- ring setup (contract 4h)
+
+fn setup_register(on: &Dev, who: &Dev, role: DeviceRole, kind: DeviceKind) {
+    on.store
+        .sync_register_device(
+            &who.id.public(),
+            "peer",
+            role,
+            Attendance::Attended,
+            kind,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+}
+
+/// A ring from a fresh install, step by step as the CLI builds it: one founder holder, joiners that are
+/// mirrors, no factor, no credential. The phone and the second terminal holder are each other's missing proof
+/// unless the ring is in setup; once the ring has a phone and two terminal holders, setup is over for good.
+#[test]
+fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_ends() {
+    let (a, b, c, ph) = (Dev::new(), Dev::new(), Dev::new(), Dev::new());
+    for x in [&a, &b, &c, &ph] {
+        crate::sync::ceremony::test_force(&x.store, false);
+    }
+    // a is the founder and the only holder; b and c joined as mirrors.
+    setup_register(&a, &b, DeviceRole::Mirror, DeviceKind::Terminal);
+    setup_register(&a, &c, DeviceRole::Mirror, DeviceKind::Terminal);
+    for x in [&b, &c, &ph] {
+        setup_register(x, &a, DeviceRole::Holder, DeviceKind::Terminal);
+    }
+    // The phone is enrolled on a (what `sync-phone-enroll` does) and a proposes its admission.
+    setup_register(&a, &ph, DeviceRole::Holder, DeviceKind::Phone);
+    let add = append(
+        &a,
+        OpBody::DeviceAdd {
+            device: ph.id.public(),
+            name: "phone".into(),
+            role: DeviceRole::Holder,
+            attendance: Attendance::Attended,
+            kind: DeviceKind::Phone,
+            verified_by: VerifiedBy::Sas,
+        },
+    );
+    pull(&a, &ph);
+    append(&ph, red_phone_sign_body(&add));
+    pull(&ph, &a);
+    let now = add.timestamp + 60;
+    let st = red_status(&a.store, &add, now).unwrap();
+    assert!(st.complete, "the first phone of a ring: {st:?}");
+
+    // `sync-role b holder`: the phone exists now, so its proof is needed; b signs for itself; no factor exists.
+    let role = append(
+        &a,
+        OpBody::DeviceRoleChange {
+            device_id: b.did.clone(),
+            to: DeviceRole::Holder,
+        },
+    );
+    let st = red_status(&a.store, &role, now).unwrap();
+    assert!(
+        st.blocked.is_none(),
+        "no reshare is needed without a Quorum credential: {st:?}"
+    );
+    assert!(
+        st.missing.contains(&RedProof::Phone) && st.missing.contains(&RedProof::SecondDevice),
+        "{st:?}"
+    );
+    assert!(
+        !st.missing.iter().any(|m| matches!(m, RedProof::Factor(_))),
+        "no factor can exist at setup: {st:?}"
+    );
+    pull(&a, &b);
+    append(&b, red_approve_body(&role));
+    pull(&b, &a);
+    pull(&a, &ph);
+    append(&ph, red_phone_sign_body(&role));
+    pull(&ph, &a);
+    let st = red_status(&a.store, &role, now).unwrap();
+    assert!(st.complete, "{st:?}");
+    assert!(
+        st.note.as_deref().is_some_and(|n| n.contains("ring setup")),
+        "what was waived is said, not silent: {st:?}"
+    );
+
+    // The ring has a phone and two terminal holders in force: setup is over, for good.
+    let third = append(
+        &a,
+        OpBody::DeviceRoleChange {
+            device_id: c.did.clone(),
+            to: DeviceRole::Holder,
+        },
+    );
+    pull(&a, &c);
+    append(&c, red_approve_body(&third));
+    pull(&c, &a);
+    let st = red_status(&a.store, &third, now).unwrap();
+    assert!(
+        !st.complete,
+        "the setup exemption is refused after setup: {st:?}"
+    );
+    assert!(st.missing.contains(&RedProof::Phone), "{st:?}");
+    assert!(
+        st.missing.iter().any(|m| matches!(m, RedProof::Factor(_))),
+        "{st:?}"
+    );
+    assert!(st.note.is_none(), "{st:?}");
+}

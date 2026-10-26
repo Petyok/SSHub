@@ -1456,6 +1456,33 @@ leave two holders. A reshare also runs when the holders differ from those the cr
 (a promoted holder, an enabled or disabled exemption): `revocation::next_actions` returns `Contribute` and
 `Receive` without a rotation step.
 
+### 4h. Recovery completion and ring setup (review rounds 2 and 3, director decision)
+
+**Recovery completion.** A `PhoneReenroll` that reached `Ready` stands in for the three proofs of exactly two ops
+by its requester: the `DeviceRevoke` of the holder phone and the `DeviceAdd` of the new phone (`recovery::ready_recovery_for`,
+read by `ceremony::red_status`). `Ready` means the recovery machine's own rules held: two distinct attended devices other than
+the requester or the paper phrase, a third factor from another artifact that is PROVEN (a `RedFactor` over the recovery hash,
+signed by the registered paper or email key; the mailbox sender is neither requester nor voter), a third-party acknowledgement,
+the 7 day lock on the local receipt clock, and no cancellation. The recovery lapses `RECOVERY_READY_WINDOW_SECS` (3 days)
+after the lock ended, and one recovery admits exactly one new phone. A completion op is judged at `min(its stamp, its local
+receipt)`, so a stamp cannot pull the lock forward.
+
+**Ring setup.** A ring built from a fresh install has one holder, mirrors, no phone, no factor and no credential, so the
+phone and the second holder would each be the other's missing proof. The ring is in SETUP while no credential holds Quorum
+shares and the ring has not yet had a phone and two terminal holders (rows that are revoked still count, so setup is never
+re-entered; derived from ops, identical on every device). In setup:
+
+* "adding or promoting a holder needs two other live holders for the reshare" applies only when a Quorum credential exists
+  (nothing to reshare otherwise, in Vault mode or before the first credential);
+* promoting a terminal (`DeviceRoleChange` to holder, `DeviceAdd` holder terminal) needs the proposer, the promoted device's
+  OWN attended `RedApprove` (other holders' votes do not replace it), the phone's proof once a phone exists, and a factor proof
+  once a factor is registered; the phone's proof while there is no phone and the factor while none is registered are not
+  required, and the review output says so (`RedStatus.note`: "ring setup: not required yet: ...");
+* the first phone's admission needs its own proof for its own admission and, when it is the ring's first phone and no factor
+  exists, no third factor (`first_phone_ever`, closed once any phone was ever a holder).
+
+After setup none of this applies. Test: `ceremony::tests::a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_ends`.
+
 ### 4g. The ceremony-complete rule for Red consumers (audit)
 
 A proposer applies its own op at once (`sync_append_local` approves by definition); peers hold a Red op pending

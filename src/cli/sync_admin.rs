@@ -519,13 +519,23 @@ pub(crate) fn op_report(
     now: i64,
 ) -> Result<Report> {
     let mut lines = vec![headline];
-    let mut json = json!({ "op": hex(&op.hash()), "tier": format!("{:?}", op.tier()) });
-    if ceremony::is_gated(store, op)? {
+    // A Red kind this ring does not gate (revoking a mirror: it holds no shares) is reviewed like a Yellow change,
+    // and is reported as one: the tier shown is the tier that decides.
+    let gated = ceremony::is_gated(store, op)?;
+    let shown = if !gated && op.tier() == OpTier::Red {
+        OpTier::Yellow
+    } else {
+        op.tier()
+    };
+    let mut json = json!({ "op": hex(&op.hash()), "tier": format!("{shown:?}") });
+    if gated {
         let st = ceremony::red_status(store, op, now)?;
         lines.extend(ceremony_lines(&st));
         json["ceremony"] = status_json(&st);
     } else if op.tier() == OpTier::Red {
-        lines.push("Red change without a ceremony gate here".into());
+        lines.push(
+            "this revokes a device that holds no shares: Yellow here, peers apply it after their review".into(),
+        );
     } else {
         lines.push("peers apply this change after their review".into());
     }
