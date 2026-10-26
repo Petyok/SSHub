@@ -45,7 +45,7 @@ try {
   let launched = false;
   const launch = device.launchBrowser().then((c) => ((launched = true), c));
   (async () => { while (!launched) { await new Promise((r) => setTimeout(r, 2500)); await tapOnce().catch(() => {}); } })();
-  context = await within(120_000, 'launchBrowser', launch);
+  context = await within(60_000, 'launchBrowser', launch);
   const page = await within(30_000, 'newPage', context.newPage());
   await within(30_000, 'goto', page.goto('data:text/html,<title>sshub-probe</title><h1 id=x>probe-ok</h1>'));
   console.log('title:', await page.title());
