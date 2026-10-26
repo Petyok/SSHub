@@ -35,7 +35,7 @@ class HomeScreenTest {
         rule.onNodeWithContentDescription("2 of 3 to unlock").assertExists()
         rule.onNodeWithText("9 Quorum, 3 Single credentials").assertExists()
         rule.onNodeWithText("3 min ago").assertExists()
-        rule.onNodeWithContentDescription("Last sync 3 min ago, via laptop-main, ssh, scale of 60 minutes").assertExists()
+        rule.onNodeWithContentDescription("Last frame taken 3 min ago, via laptop-main, camera, scale of 60 minutes").assertExists()
         rule.onNodeWithText("4 pending").assertExists()
         rule.onNodeWithText("5 in ring").assertExists()
     }

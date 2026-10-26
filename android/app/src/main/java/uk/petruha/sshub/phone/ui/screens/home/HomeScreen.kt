@@ -117,7 +117,7 @@ private fun Stat(value: String, label: String, modifier: Modifier = Modifier) {
 private fun SyncCard(sync: RingSync?) {
     SshubCard {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-            Text("last sync", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("last frame taken", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(sync?.agoText ?: "never", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
         }
         if (sync != null && sync.windowSeconds > 0) {
@@ -126,7 +126,7 @@ private fun SyncCard(sync: RingSync?) {
             Gap(4.dp)
             TickScale(
                 intervals = 60, major = 10, fraction = frac,
-                description = "Last sync ${sync.agoText}" + (sync.via?.let { ", via $it" } ?: "") + ", scale of $minutes minutes",
+                description = "Last frame taken ${sync.agoText}" + (sync.via?.let { ", via $it" } ?: "") + ", scale of $minutes minutes",
                 labels = Triple("now", sync.via?.let { "via $it" } ?: "", "$minutes min"),
             )
         }

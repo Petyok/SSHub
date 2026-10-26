@@ -21,6 +21,8 @@ class FixtureFlowTest {
     private val fixtures = JSONObject(InstrumentationRegistry.getInstrumentation().context.assets.open("challenges.json").bufferedReader().readText())
     private val now = fixtures.getLong("now")
 
+    private val NEEDS_MET_REQUESTER = setOf("bad-signature", "tampered-op")
+
     private fun hex(s: String) = ByteArray(s.length / 2) { s.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
 
     private fun freshCore(): UniffiPhoneCore {
@@ -42,6 +44,10 @@ class FixtureFlowTest {
                 val v = (opened as? OpenedRelease)?.view ?: error("$name: expected a release request, got $opened")
                 assertEquals("$name binding words", c.getString("binding_words"), v.words.joinToString("-"))
                 assertTrue("$name: every check passes or is waived by the typed id", v.checks.all { it.ok || it.needsTypedId })
+            } else if (name in NEEDS_MET_REQUESTER && opened is OpenedRelease) {
+                // The page's fixtures enroll the requester first; a fresh phone has not met it, so the signature cannot be checked and the
+                // request is shown as from an unmet requester (typed id needed). The refusal itself is pinned by the Rust parity tests.
+                assertTrue("$name: unmet requester must type the id", opened.view.mustType != null && !opened.view.met)
             } else {
                 val r = opened as? OpenedRefused ?: error("$name: expected a refusal, got $opened")
                 val text = (r.reason.title + " " + r.reason.text + " " + r.checks.joinToString(" ") { it.text }).lowercase()

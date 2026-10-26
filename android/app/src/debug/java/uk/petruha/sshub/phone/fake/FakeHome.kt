@@ -41,7 +41,7 @@ object HomeSamples {
 
     val ring = RingView(
         name = "home ring", epoch = 7, hosts = 38, credentials = 12, threshold = "2 of 3", quorum = 9, single = 3,
-        lastSync = RingSync(agoSeconds = 180, agoText = "3 min ago", windowSeconds = 3600, via = "laptop-main, ssh"),
+        lastSync = RingSync(agoSeconds = 180, agoText = "3 min ago", windowSeconds = 3600, via = "laptop-main, camera"),
         devices = devices, pendingRed = 2, pendingRelease = 2,
     )
 
