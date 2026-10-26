@@ -134,6 +134,10 @@ phone_signs() {
   [ "$LAST_RC" -eq 0 ] || return 1
   PHONE_OPS=$(pf "$LAST_OUT" ops)
   show "$1 sync-phone-ops takes the phone's ops in" sh -c "printf '%s\n' '$PHONE_OPS' | $C exec -T $1 $SSHUB sync-phone-ops --format json"
+  keep=$LAST_OUT; rc=$LAST_RC
+  snow "$1" >/dev/null  # a device settles what it ingested in its next sync round, not at ingest
+  LAST_OUT=$keep; LAST_RC=$rc
+  [ "$rc" -eq 0 ]
 }
 
 # The whole phone enrollment to PEER as text, with its checks. Sets ADD (the phone's admission op).
@@ -169,6 +173,7 @@ red_complete() {
   phone_signs peer-a "$1" || return 1
   spread peer-b peer-a peer-b
   show "peer-b is given the phone's ops text too" sh -c "printf '%s\n' '$PHONE_OPS' | $C exec -T peer-b $SSHUB sync-phone-ops --format json"
+  snow peer-b >/dev/null
   show "peer-b sync-approve $1" peer peer-b $SSHUB sync-approve "$1" --format json
   spread peer-a peer-b peer-a
   if [ "${2:-}" != nofactor ]; then
