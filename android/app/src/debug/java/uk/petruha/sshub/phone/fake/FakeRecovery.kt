@@ -11,6 +11,7 @@ import uk.petruha.sshub.phone.core.RecoveryApi
 import uk.petruha.sshub.phone.core.RecoveryNoticeSummary
 import uk.petruha.sshub.phone.core.RecoveryNoticeView
 import uk.petruha.sshub.phone.core.ReshareContributor
+import uk.petruha.sshub.phone.core.ReshareOutcome
 import uk.petruha.sshub.phone.core.ReshareStage
 import uk.petruha.sshub.phone.core.ReshareView
 import uk.petruha.sshub.phone.core.WrapKeyState
@@ -34,6 +35,7 @@ import uk.petruha.sshub.phone.ui.theme.SshubTheme
 class FakeRecoveryApi(stage: ReshareStage = ReshareStage.Start) : RecoveryApi {
     private var wrap = RecoverySamples.wrapKeyState(stage)
     var rotateCalls = 0
+    /** Calls of `decideReshare`: adopt and publish is one call. */
     var publishCalls = 0
     val adopted = mutableListOf<Long>()
     val cancelled = mutableListOf<Long>()
@@ -49,16 +51,11 @@ class FakeRecoveryApi(stage: ReshareStage = ReshareStage.Start) : RecoveryApi {
 
     override suspend fun reshareCandidate(token: Long, now: Long): ReshareView? = if (token == RecoverySamples.TOKEN) RecoverySamples.candidate else null
 
-    override suspend fun decideReshare(token: Long, now: Long): WrapKeyState {
+    override suspend fun decideReshare(token: Long, now: Long): ReshareOutcome {
         adopted += token
-        if (wrap.stage == ReshareStage.Rotated) wrap = RecoverySamples.wrapKeyState(ReshareStage.Adopted)
-        return wrap
-    }
-
-    override suspend fun publishNewShares(now: Long): Outgoing {
         publishCalls++
-        if (wrap.stage == ReshareStage.Adopted) wrap = RecoverySamples.wrapKeyState(ReshareStage.Published)
-        return RecoverySamples.outgoing(2)
+        if (wrap.stage < ReshareStage.Published) wrap = RecoverySamples.wrapKeyState(ReshareStage.Published)
+        return ReshareOutcome(wrap, RecoverySamples.outgoing(2))
     }
 
     override suspend fun exportOps(now: Long) = ExportedOps(RecoverySamples.exportRows, 41, RecoverySamples.outgoing(3))
@@ -100,7 +97,7 @@ object RecoverySamples {
         ReshareStage.Empty -> WrapKeyState(3, 7, 3, 9, 9, stage, null)
         ReshareStage.Start -> WrapKeyState(3, 7, 3, 0, 9, stage, null)
         ReshareStage.Rotated -> WrapKeyState(4, 7, 3, 0, 9, stage, null)
-        ReshareStage.Adopted -> WrapKeyState(4, 7, 3, 9, 9, stage, candidate)
+        ReshareStage.Candidate -> WrapKeyState(4, 7, 3, 0, 9, stage, null)
         ReshareStage.Published -> WrapKeyState(4, 8, 3, 9, 9, stage, candidate)
     }
 
@@ -108,7 +105,8 @@ object RecoverySamples {
         val w = wrapKeyState(stage)
         return ReshareState(
             loaded = true, stage = stage, generation = w.generation, epoch = w.epoch, holderNumber = w.holderNumber,
-            ready = w.credentialsReady, total = w.credentialsTotal, adopted = w.reshare,
+            ready = w.credentialsReady, total = w.credentialsTotal, reshare = w.reshare,
+            candidate = if (stage == ReshareStage.Candidate) candidate else null,
         )
     }
 

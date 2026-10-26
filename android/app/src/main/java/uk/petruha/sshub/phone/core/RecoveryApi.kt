@@ -14,11 +14,8 @@ interface RecoveryApi {
     /** The reshare that `openFrame` returned as [ReshareOpened] under `token`, for review before it is adopted. Null when unknown. */
     suspend fun reshareCandidate(token: Long, now: Long): ReshareView?
 
-    /** The user accepts the reshare shown under `token`. Returns the state after adoption. */
-    suspend fun decideReshare(token: Long, now: Long): WrapKeyState
-
-    /** Adds this phone's new shares, sealed, to its chain. */
-    suspend fun publishNewShares(now: Long): Outgoing
+    /** The user accepts the reshare shown under `token`: the core adopts it and signs the new shares in ONE call. */
+    suspend fun decideReshare(token: Long, now: Long): ReshareOutcome
 
     /** The newest 8 signed ops of this phone chain as rows, and as text and QR. */
     suspend fun exportOps(now: Long): ExportedOps

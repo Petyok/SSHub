@@ -11,6 +11,8 @@ import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.Platform
 import uk.petruha.sshub.phone.core.RecoveryApi
 import uk.petruha.sshub.phone.core.ReshareStage
+import uk.petruha.sshub.phone.core.ReshareView
+import uk.petruha.sshub.phone.core.WrapKeyState
 
 private fun CoreException.text() = message?.takeIf { it.isNotBlank() } ?: code.name
 
@@ -19,18 +21,22 @@ class ReshareViewModel(private val core: RecoveryApi, private val platform: Plat
     private val _state = MutableStateFlow(ReshareState())
     val state: StateFlow<ReshareState> = _state.asStateFlow()
 
-    init { guarded { load() } }
+    init {
+        guarded { load() }
+        viewModelScope.launch { platform.clipboard.clearsInSeconds.collect { c -> _state.update { it.copy(clearsIn = c) } } }
+    }
+
+    private fun apply(w: WrapKeyState, cand: ReshareView?) = _state.update {
+        it.copy(
+            loaded = true, stage = w.stage, generation = w.generation, epoch = w.epoch, holderNumber = w.holderNumber,
+            ready = w.credentialsReady, total = w.credentialsTotal, reshare = w.reshare, candidate = cand,
+        )
+    }
 
     private suspend fun load() {
         val now = platform.clock.nowSeconds()
         val w = core.wrapKeyState(now)
-        val cand = if (w.stage >= ReshareStage.Adopted) null else token?.let { core.reshareCandidate(it, now) }
-        _state.update {
-            it.copy(
-                loaded = true, stage = w.stage, generation = w.generation, epoch = w.epoch, holderNumber = w.holderNumber,
-                ready = w.credentialsReady, total = w.credentialsTotal, adopted = w.reshare, candidate = cand,
-            )
-        }
+        apply(w, if (w.stage == ReshareStage.Published) null else token?.let { core.reshareCandidate(it, now) })
     }
 
     private fun guarded(block: suspend () -> Unit) {
@@ -42,8 +48,22 @@ class ReshareViewModel(private val core: RecoveryApi, private val platform: Plat
     }
 
     fun rotate() = guarded { core.rotateWrapKeys(platform.clock.nowSeconds()); load() }
-    fun adoptCandidate() { token?.let { t -> guarded { core.decideReshare(t, platform.clock.nowSeconds()); load() } } }
-    fun publish() = guarded { core.publishNewShares(platform.clock.nowSeconds()); load() }
+
+    /** One call adopts and signs; the signed ops come back with it and are shown right away. */
+    fun adoptPublish() {
+        val t = token ?: return
+        guarded {
+            val out = core.decideReshare(t, platform.clock.nowSeconds())
+            apply(out.state, null)
+            _state.update { it.copy(outgoing = out.outgoing, copied = false) }
+        }
+    }
+
+    fun copy() {
+        val out = _state.value.outgoing ?: return
+        platform.clipboard.copySensitive("Signed text", out.text)
+        _state.update { it.copy(copied = true) }
+    }
 }
 
 class RecoveryViewModel(private val core: RecoveryApi, private val platform: Platform) : ViewModel() {

@@ -26,6 +26,7 @@ import uk.petruha.sshub.phone.core.RecoveryNoticeView
 import uk.petruha.sshub.phone.core.ReleaseDecision
 import uk.petruha.sshub.phone.core.ReleaseOutcome
 import uk.petruha.sshub.phone.core.ReshareOpened
+import uk.petruha.sshub.phone.core.ReshareOutcome
 import uk.petruha.sshub.phone.core.ReshareStage
 import uk.petruha.sshub.phone.core.ReshareView
 import uk.petruha.sshub.phone.core.RingDevice
@@ -80,8 +81,8 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     private val cache = LinkedHashMap<Long, Entry>()
     private var lastReshare: RsReshareView? = null
     private var rotated = false
-    private var adopted: ReshareView? = null
-    private var publishOut: Outgoing? = null
+    /** The reshare adopted and published by the one `decide(Approve)`; null until then. */
+    private var publishedView: ReshareView? = null
     private var published = false
     private var issued: CodeIssuedView? = null
 
@@ -117,8 +118,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         cache.clear()
         lastReshare = null
         rotated = false
-        adopted = null
-        publishOut = null
+        publishedView = null
         published = false
         issued = null
     }
@@ -184,8 +184,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
                 // A new reshare starts a new sequence; the rotation of a finished one does not carry over.
                 lastReshare = rs.view
                 if (published) rotated = false
-                adopted = null
-                publishOut = null
+                publishedView = null
                 published = false
             }
         }
@@ -409,7 +408,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     private fun stage(): ReshareStage = when {
         published -> ReshareStage.Published
-        adopted != null -> ReshareStage.Adopted
+        rotated && cache.values.any { it.opened is ReshareOpened } -> ReshareStage.Candidate
         rotated -> ReshareStage.Rotated
         else -> ReshareStage.Start
     }
@@ -424,7 +423,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
             credentialsReady = r?.credentialsReady?.toInt() ?: 0,
             credentialsTotal = r?.let { (it.credentialsReady + it.waiting).toInt() } ?: 0,
             stage = stage,
-            reshare = if (stage >= ReshareStage.Adopted) adopted else null,
+            reshare = if (stage == ReshareStage.Published) publishedView else null,
         )
     }
 
@@ -440,25 +439,18 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     override suspend fun reshareCandidate(token: Long, now: Long): ReshareView? = (entry(token)?.opened as? ReshareOpened)?.view
 
     /**
-     * The core adopts and signs in one step: `decide(Approve)` on a reshare appends the new shares to the chain and returns the ops.
-     * Those ops are held here until `publishNewShares` hands them out, so the two Kotlin steps are one signing.
+     * The core adopts and signs in one step: `decide(Approve)` on a reshare token appends the new shares to the chain and returns the
+     * ops to hand to a terminal. They are mapped and returned here, never held, so no restart can lose them between two calls.
      */
-    override suspend fun decideReshare(token: Long, now: Long): WrapKeyState = withContext(Dispatchers.Default) {
+    override suspend fun decideReshare(token: Long, now: Long): ReshareOutcome = withContext(Dispatchers.Default) {
         val view = (entry(token)?.opened as? ReshareOpened)?.view ?: throw badInput("This reshare is no longer pending.")
         val o = rsDecide(token, RsDecision.Approve(null), now)
         persist()
         synchronized(lock) {
-            adopted = view
-            publishOut = mapOutgoing(o)
-            published = false
+            publishedView = view
+            published = true
         }
-        wrapState(guard { core.status(now) })
-    }
-
-    override suspend fun publishNewShares(now: Long): Outgoing = synchronized(lock) {
-        val out = publishOut ?: throw badInput("No adopted reshare is waiting: adopt one first.")
-        published = true
-        out
+        ReshareOutcome(wrapState(guard { core.status(now) }), mapOutgoing(o))
     }
 
     override suspend fun exportOps(now: Long): ExportedOps = withContext(Dispatchers.Default) {

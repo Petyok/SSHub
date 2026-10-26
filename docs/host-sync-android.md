@@ -155,7 +155,7 @@ the cache does the same, so it holds what the core can still decide. It is never
 | `Opened::Refused` | `OpenedRefused` (reason as title, checks as `ReleaseCheck`); for kinds 6 to 8 `EnrollRefusal` |
 | `ShareRequest` / `RedNotice` | `OpenedRelease` / `OpenedRed`; `Row` -> `RedField(from = null)`; `typeToApprove` -> `mustType`, the "never introduced" `warn` check -> `needsTypedId` |
 | `CertRequest` / `CertExtend` | `OpenedTrustRequest` / `OpenedTrustExtend`; `problems` -> `refusal` (no Approve) |
-| `Reshare` | `ReshareOpened`; `decide(Approve)` is adopt and sign in one step, so `decideReshare` signs and holds the ops, `publishNewShares` hands them out |
+| `Reshare` | `ReshareOpened`; `decide(Approve)` is adopt and sign in one step, and `decideReshare` is that one call: it returns the new `WrapKeyState` and the signed `Outgoing` together (`ReshareOutcome`), nothing is held between two Kotlin calls |
 | `ReenrollNotice` | `RecoveryNoticeOpened`; cancel = `decide(Approve)` |
 | `Chain` | `OpenedChain`; `adoptChain` = `decide(Approve)` |
 | `Enroll` / `Enrolled` | `OpenedEnroll` / `OpenedEnrolled`; `EnrollName` / `EnrollSas` decisions |
@@ -174,7 +174,7 @@ The BLE link is `CoreBleLink` over `BleSession` (started at creation, monotonic 
 - Issued certificates: one summary line per certificate; device, end of term and budget are read back from it, hosts, issue time, term days and extensions are empty or 0.
 - `ExportedOps.rows` is empty (the core gives the frame and text, not rows); `total` is the newest seq.
 - Recovery notice: no phone name unless the phone is in its ring list; `startedUtc` and `endsUtc` are formatted in Kotlin in the core's own `iso()` form; always `cancellable` (the core refuses at decision).
-- Reshare: `note` is a count of verified contributors, `adoptable` is true whenever the core returned a view. Stage Start is shown until a rotation or adoption (so Rotate is reachable); the sequence is in memory and restarts as Start after a process restart.
+- Reshare: `note` is a count of verified contributors, `adoptable` is true whenever the core returned a view. The stages are Start, Rotated, Candidate (rotated and a reshare is held for review), Published (adopted and published by one call) and Empty; Start is shown until a rotation (so Rotate is reachable); the sequence is in memory and restarts as Start after a process restart. The signed ops are shown once, from the result of `decideReshare`; reopening the screen later offers Export my ops instead.
 - `ChainCheck`s: none (the core returns `agreed` and the heads, not a check list). `ScanEvent.Foreign` is never produced. `validateWord` judges only shape (a to z); the word list and checksum are checked by `restoreFromWords`. `nameProblem` is null: the name rules run in `enrollDecide(Name)`.
 - `state_lost` of `UnlockInfo` and `damaged` of the scan progress are not carried (a lost state shows as a restored phone with `headPending`).
 

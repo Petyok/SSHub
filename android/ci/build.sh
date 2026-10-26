@@ -34,10 +34,11 @@ if [ "$mode" = connected ]; then
     echo "== connectedDebugAndroidTest"
     cd android
     rc=0
-    ./gradlew --no-daemon --console=plain connectedDebugAndroidTest ${TEST_CLASS:+-Pandroid.testInstrumentationRunnerArguments.class=$TEST_CLASS} || rc=$?
+    ./gradlew --no-daemon --console=plain $GRADLE_EXTRA connectedDebugAndroidTest ${TEST_CLASS:+-Pandroid.testInstrumentationRunnerArguments.class=$TEST_CLASS} || rc=$?
     rm -rf /out/shots; cp -r app/build/outputs/connected_android_test_additional_output /out/shots 2>/dev/null || true
     cp -r app/build/outputs/androidTest-results /out/ 2>/dev/null || true
     cp -r app/build/reports/androidTests /out/ 2>/dev/null || true
+    [ -f gradle/verification-metadata.xml ] && cp gradle/verification-metadata.xml /out/ || true
     exit "$rc"
 fi
 
@@ -65,9 +66,11 @@ sh /work/android/ci/lint.sh
 
 echo "== gradle"
 cd android
-./gradlew --no-daemon --console=plain assembleDebug assembleDebugAndroidTest
+./gradlew --no-daemon --console=plain $GRADLE_EXTRA assembleDebug assembleDebugAndroidTest assembleRelease
 cp app/build/outputs/apk/debug/app-debug.apk /out/
 cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk /out/
+cp app/build/outputs/apk/release/app-release-unsigned.apk /out/
+[ -f gradle/verification-metadata.xml ] && cp gradle/verification-metadata.xml /out/ || true
 ls -l /out/*.apk
 sha256sum /out/*.apk
 PATH=$ANDROID_HOME/build-tools/35.0.0:$PATH sh /work/android/ci/manifest-check.sh /out/app-debug.apk

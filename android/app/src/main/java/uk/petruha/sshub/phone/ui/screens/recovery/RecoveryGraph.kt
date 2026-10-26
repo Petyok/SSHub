@@ -40,7 +40,7 @@ private fun ReshareRoute(env: AppEnv, token: Long?) {
         s,
         ReshareActions(
             onBack = { env.nav.popBackStack() }, onRotate = vm::rotate, onScan = { env.nav.navigate(Routes.Scan) },
-            onAdoptCandidate = vm::adoptCandidate, onPublish = vm::publish,
+            onAdoptPublish = vm::adoptPublish, onCopy = vm::copy,
             onExport = { env.nav.navigate(Routes.Export) }, onDone = { env.nav.popBackStack() },
         ),
     )

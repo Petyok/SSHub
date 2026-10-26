@@ -1,7 +1,10 @@
 package uk.petruha.sshub.phone.core
 
-/** Where the wrap-key and reshare sequence stands. `Empty`: no reshare is waiting. */
-enum class ReshareStage { Empty, Start, Rotated, Adopted, Published }
+/**
+ * Where the wrap-key and reshare sequence stands, in order. `Empty`: no reshare is waiting. `Candidate`: rotated, and a reshare
+ * opened by `openFrame` is held for review. `Published`: adopted and published in one signing.
+ */
+enum class ReshareStage { Empty, Start, Rotated, Candidate, Published }
 
 /** `verified` false is shown as "signature not checked". */
 data class ReshareContributor(val name: String, val id: String, val verified: Boolean)
@@ -17,7 +20,7 @@ data class ReshareView(
     val adoptable: Boolean,
 )
 
-/** `reshare` is the adopted reshare once the stage is Adopted or Published, else null. */
+/** `reshare` is the reshare that was adopted and published once the stage is Published, else null. */
 data class WrapKeyState(
     val generation: Int,
     val epoch: Long,
@@ -28,7 +31,10 @@ data class WrapKeyState(
     val reshare: ReshareView?,
 )
 
-/** `openFrame` result for a reshare frame; review it with `reshareCandidate(token)`, accept with `decideReshare(token)`. */
+/** What one `decideReshare` gives back: the state after it, and the signed ops (QR and text) to hand to a terminal. */
+class ReshareOutcome(val state: WrapKeyState, val outgoing: Outgoing)
+
+/** `openFrame` result for a reshare frame; review it with `reshareCandidate(token)`, adopt and publish with `decideReshare(token)`. */
 class ReshareOpened(val token: Long, val view: ReshareView) : Opened
 
 data class RecoveryNoticeSummary(val token: Long, val startedBy: String, val startedAt: Long, val endsAt: Long)
