@@ -532,6 +532,7 @@ fn the_cli_unlock_writes_a_release_a_holder_approves_with_sync_review_and_the_cr
         runtime,
         wait: Duration::from_secs(40),
         every: Duration::from_millis(100),
+        phrase: Default::default(),
     };
     // The holder side: what `sync-review --approve <id>` does once its user reads the listing.
     let (hstore, hid) = (r.d[2].store.clone(), r.d[2].id.clone());
