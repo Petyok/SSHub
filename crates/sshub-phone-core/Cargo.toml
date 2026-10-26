@@ -1,0 +1,43 @@
+# The native Android companion's Rust core (docs/host-sync-android.md): every rule the page implements in JavaScript,
+# on top of the sync primitives the terminal uses (sshub-sync-proto), behind uniffi. Not a default member of the
+# workspace: `cargo build` at the root never compiles uniffi. Android: `cargo ndk -t arm64-v8a -t x86_64 build -p
+# sshub-phone-core --profile phone`.
+[package]
+name = "sshub-phone-core"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-or-later"
+description = "SSHub phone companion core: the phone's rules in Rust, shared with the terminal, behind uniffi"
+
+[lib]
+name = "sshub_phone_core"
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["cli"]
+
+[features]
+default = []
+cli = ["uniffi/cli"]
+# Seedable RNG (`PhoneCore::with_rng`) for the parity and unit tests; never part of the exported surface.
+testing = []
+
+[dependencies]
+sshub-sync-proto = { path = "../sshub-sync-proto", features = ["qr-decode"] }
+uniffi = "=0.32.2"
+anyhow = "1"
+base64 = "0.22"
+blake3 = "1"
+chacha20poly1305 = "0.10"
+hex = "0.4"
+qrcode = { version = "0.14", default-features = false }
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = "1"
+
+[dev-dependencies]
+rand_chacha = "0.3"
