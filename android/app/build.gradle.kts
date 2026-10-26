@@ -61,6 +61,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.0")
     implementation("androidx.biometric:biometric:1.1.0")
+    // biometric 1.1.0 drags in an old Fragment; ActivityResult launchers need 1.3.0 or later (lint: InvalidFragmentVersionForActivityResult)
+    implementation("androidx.fragment:fragment:1.8.6")
     implementation("androidx.camera:camera-core:1.4.2")
     implementation("androidx.camera:camera-camera2:1.4.2")
     implementation("androidx.camera:camera-lifecycle:1.4.2")
