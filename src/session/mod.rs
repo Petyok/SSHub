@@ -846,14 +846,17 @@ impl Session {
     }
 
     /// Reveal the live terminal once the connect timeout elapses — but only if
-    /// real PTY content has arrived (a prompt/banner/host-key question we might
-    /// have failed to auto-answer). With `-v` debug now siphoned off the PTY, a
-    /// host that never answered has a blank grid, so failing open there would
-    /// just hide the spinner + debug tail behind emptiness. Those sessions stay
-    /// on the spinner until the child exits.
+    /// the host is there: real PTY content arrived (a prompt/banner/host-key
+    /// question we might have failed to auto-answer), or ssh authenticated. A
+    /// startup command may print nothing at all, and an authenticated session
+    /// held behind the spinner looked like a connect that never finished
+    /// (#171). With `-v` debug siphoned off the PTY, a host that never answered
+    /// has a blank grid, so failing open there would just hide the spinner +
+    /// debug tail behind emptiness. Those sessions stay on the spinner until
+    /// the child exits.
     fn reveal_on_timeout(&mut self) {
         if let SessionPhase::Connecting { started_at } = self.phase {
-            if started_at.elapsed() >= REVEAL_TIMEOUT && self.saw_pty_bytes {
+            if started_at.elapsed() >= REVEAL_TIMEOUT && (self.saw_pty_bytes || self.connected) {
                 self.diagnostics
                     .push("auth: connect timed out — showing live terminal".into());
                 self.phase = SessionPhase::Running {
@@ -2493,6 +2496,141 @@ mod prompt_tests {
             "{log}"
         );
         assert!(log.contains("Invalid user sshub-no-such-user"), "{log}");
+    }
+
+    /// A session to the tempdir sshd built the way the TUI builds one for a
+    /// host whose startup command is `command`: `build_ssh_argv`, then
+    /// `prepare_session_connect_argv`, with a client config for the test key.
+    fn startup_command_session(sshd: &crate::test_support::TempdirSshd, command: &str) -> Session {
+        let dir = sshd.dir.path();
+        let known = dir.join("known_hosts");
+        let host_key = std::fs::read_to_string(sshd.host_key.with_extension("pub")).unwrap();
+        std::fs::write(&known, format!("[127.0.0.1]:{} {host_key}", sshd.port)).unwrap();
+        let client_config = dir.join("ssh_config");
+        std::fs::write(
+            &client_config,
+            format!(
+                "IdentitiesOnly yes\nUserKnownHostsFile {}\nBatchMode yes\n",
+                known.display(),
+            ),
+        )
+        .unwrap();
+        let mut host = crate::ssh::SshHost::new("oracle");
+        host.hostname = Some("127.0.0.1".into());
+        host.port = Some(sshd.port);
+        host.user = Some(crate::test_support::current_user());
+        host.identity_file = Some(sshd.user_key.to_str().unwrap().into());
+        host.remote_command = Some(command.into());
+        let mut argv = crate::ssh::build_ssh_argv(&host);
+        argv.splice(1..1, ["-F".into(), client_config.to_str().unwrap().into()]);
+        let config = SessionConfig {
+            hops: Vec::new(),
+            argv: crate::app::prepare_session_connect_argv(argv, false),
+            display_name: "oracle".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "oracle".into(),
+        };
+        Session::spawn(config, (24, 80), None).unwrap()
+    }
+
+    #[test]
+    fn a_startup_command_runs_in_a_remote_terminal() {
+        // Oracle: real OpenSSH against a tempdir sshd (#171). ssh asks for a
+        // remote terminal on its own only for a login shell, so a startup
+        // command ran without one: `sudo su root` printed no prompt.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let mut s = startup_command_session(&sshd, "tty; exec sleep 60");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let text = loop {
+            s.drain();
+            let text = s.parser.screen().contents();
+            if text.contains("/dev/") || text.contains("not a tty") {
+                break text;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no output from the startup command (phase={:?}): {:?}",
+                s.phase,
+                s.debug_log()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(!text.contains("not a tty"), "{text:?}");
+    }
+
+    #[test]
+    fn a_startup_command_leaves_the_login_shell() {
+        // Oracle: real OpenSSH against a tempdir sshd (#171). A startup
+        // command runs at login and the session goes on: `cd /` used to be
+        // the whole session, which ended as soon as it returned.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let mut s = startup_command_session(&sshd, "cd /");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !s.is_connected() {
+            s.drain();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never authenticated: {:?}",
+                s.debug_log()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        s.write(b"echo \"pwd=$PWD\"\r").unwrap();
+        loop {
+            s.drain();
+            let text = s.parser.screen().contents();
+            if text.lines().any(|l| l.trim_end() == "pwd=/") {
+                break;
+            }
+            assert!(
+                !s.phase.is_terminal() && std::time::Instant::now() < deadline,
+                "no shell in / after the startup command (phase={:?}): {text:?}",
+                s.phase
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn an_authenticated_session_that_prints_nothing_still_reveals() {
+        // Oracle: real OpenSSH against a tempdir sshd (#171). The connect
+        // screen gave way only to output, so a startup command that prints
+        // nothing kept an authenticated session behind the spinner for good.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let mut s = startup_command_session(&sshd, "exec sleep 60");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !s.is_connected() {
+            s.drain();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never authenticated: {:?}",
+                s.debug_log()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            !s.saw_pty_bytes && matches!(s.phase, SessionPhase::Connecting { .. }),
+            "setup: authenticated and silent (phase={:?})",
+            s.phase
+        );
+        // Past the reveal timeout, without waiting it out.
+        s.phase = SessionPhase::Connecting {
+            started_at: Instant::now() - REVEAL_TIMEOUT,
+        };
+        s.drain();
+        assert!(
+            matches!(s.phase, SessionPhase::Running { .. }),
+            "{:?}",
+            s.phase
+        );
     }
 
     #[test]

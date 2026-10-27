@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 
 use crate::app::{
-    prepare_cli_connect_argv, resolve_pending_secret, resolved_session_argv, resolved_to_ssh_host,
+    prepare_cli_session_argv, resolve_pending_secret, resolved_session_argv, resolved_to_ssh_host,
     session_argv_for_entry, HostEntry,
 };
 use crate::credentials::PasswordStore;
@@ -163,7 +163,7 @@ pub fn host_resolve_json(
         (Some(m), Some(r)) => resolved_session_argv(m, r),
         _ => session_argv_for_entry(entry),
     };
-    let argv = prepare_cli_connect_argv(base_argv, pending_secret.is_some(), verbose);
+    let argv = prepare_cli_session_argv(base_argv, pending_secret.is_some(), verbose);
     HostResolveJson {
         host: host_record_json(entry, store),
         argv,
@@ -276,7 +276,11 @@ pub fn format_host_list_plain(names: &[&str]) -> String {
 pub fn format_resolve_plain(resolve: &HostResolveJson) -> String {
     let mut out = format_host_plain(&resolve.host);
     out.push_str("\n\nCommand:\n");
-    out.push_str(&format!("  {}", resolve.argv.join(" ")));
+    // One line, like the ssh log: a startup command carries a newline.
+    out.push_str(&format!(
+        "  {}",
+        resolve.argv.join(" ").replace('\n', "\\n")
+    ));
     out.push_str("\n\nHas stored secret: ");
     out.push_str(if resolve.has_stored_secret {
         "yes"
