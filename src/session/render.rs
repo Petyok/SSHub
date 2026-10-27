@@ -113,7 +113,17 @@ pub fn render(frame: &mut Frame, app: &App) {
     let ghost = app.ghost_match();
     let zoomed = app.panes.as_ref().is_some_and(|p| p.zoomed);
     match session {
-        Some(session) => render_footer(frame, chunks[2], session, theme, ghost.is_some(), zoomed),
+        Some(session) => render_footer(
+            frame,
+            chunks[2],
+            session,
+            theme,
+            FooterOpts {
+                ghost_visible: ghost.is_some(),
+                zoomed,
+                share_key: app.config.keybinds.primary(KeyAction::SessionShareNet),
+            },
+        ),
         None => render_empty_pane_footer(frame, chunks[2], &app.config.keybinds, theme),
     }
 
@@ -841,14 +851,59 @@ fn truncate(s: &str, max: usize) -> String {
 
 // ── Footer ───────────────────────────────────────────────────
 
+/// What the footer needs besides the session.
+struct FooterOpts<'a> {
+    ghost_visible: bool,
+    zoomed: bool,
+    /// The configured key that toggles sharing the network; empty when unbound.
+    share_key: &'a str,
+}
+
+/// The sharing segment of the footer: what it says and the style it takes.
+/// `None` when there is nothing to say (a tab that cannot share, or no key).
+fn net_share_segment(
+    session: &Session,
+    share_key: &str,
+    theme: &ResolvedTheme,
+) -> Option<(String, Style)> {
+    use crate::session::NetShare;
+    let mute = theme.style(StyleRole::TextMuted);
+    let role = |r| Style::default().fg(theme.color(r));
+    let key = |verb: &str| {
+        if share_key.is_empty() {
+            String::new()
+        } else {
+            format!(" \u{b7} {share_key} {verb}")
+        }
+    };
+    match session.net_share() {
+        _ if !session.can_share_net() => None,
+        NetShare::Off if share_key.is_empty() => None,
+        NetShare::Off => Some((format!("{share_key} share net"), mute)),
+        NetShare::Starting => Some(("\u{21c4} net ...".into(), mute)),
+        NetShare::Port(p) => Some((
+            format!("\u{21c4} net :{p}{}", key("stop")),
+            role(ColorRole::StatusSuccess),
+        )),
+        NetShare::Failed => Some((
+            format!("\u{21c4} net failed{}", key("retry")),
+            role(ColorRole::StatusWarning),
+        )),
+    }
+}
+
 fn render_footer(
     frame: &mut Frame,
     area: Rect,
     session: &Session,
     theme: &ResolvedTheme,
-    ghost_visible: bool,
-    zoomed: bool,
+    opts: FooterOpts<'_>,
 ) {
+    let FooterOpts {
+        ghost_visible,
+        zoomed,
+        share_key,
+    } = opts;
     // When the child has exited the footer becomes a red banner with a
     // dismiss hint. Otherwise it shows the usual session stats line.
     if let SessionPhase::Exited { status, .. } = &session.phase {
@@ -914,19 +969,66 @@ fn render_footer(
             format!("↑ scrolled {scrollback} (PgDn live)"),
             theme.style(StyleRole::SessionScrollback),
         ));
+        // An active share stays in view while scrolled back.
+        if let Some((mut text, style)) = net_share_segment(session, share_key, theme) {
+            let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
+            // Too long for the row: drop the key, keep the state.
+            if used + 3 + text.chars().count() > area.width as usize {
+                if let Some((state, _)) = text.split_once(" \u{b7} ") {
+                    text = state.to_string();
+                }
+            }
+            spans.push(Span::raw("   "));
+            spans.push(Span::styled(text, style));
+        }
     } else {
         // Pad to the right edge with the hint. The ghost keys are named only
         // while a ghost is actually visible — otherwise Tab belongs to the
         // shell and advertising it would be a lie.
         let used: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-        let hint = if ghost_visible {
-            "drag: select+copy · Shift+drag in mouse apps · Tab accept · Esc dismiss"
+        let drag_hints: &[&str] = if ghost_visible {
+            &[
+                "drag: select+copy \u{b7} Shift+drag in mouse apps \u{b7} Tab accept \u{b7} Esc dismiss",
+                "drag: select+copy \u{b7} Shift+drag in mouse apps",
+                "drag: select+copy",
+            ]
         } else {
-            "drag: select+copy · Shift+drag in mouse apps"
+            &[
+                "drag: select+copy \u{b7} Shift+drag in mouse apps",
+                "drag: select+copy",
+            ]
         };
-        let pad = (area.width as usize).saturating_sub(used + hint.chars().count() + 1);
-        spans.push(Span::raw(" ".repeat(pad)));
-        spans.push(Span::styled(hint, mute));
+        // The sharing state outranks the selection hint: it is shown whole, and
+        // the hint gives way to a shorter form, then to nothing, as the row
+        // narrows.
+        let net = net_share_segment(session, share_key, theme);
+        let net_w = net.as_ref().map_or(0, |(t, _)| t.chars().count());
+        let room = (area.width as usize).saturating_sub(used + 1);
+        // Two columns always separate it from the target on its left.
+        const LEAD: usize = 2;
+        let hint = drag_hints
+            .iter()
+            .copied()
+            .find(|h| h.chars().count() + 3 + net_w + LEAD <= room);
+        match (net, hint) {
+            (Some((text, style)), hint) => {
+                let tail = hint.map_or(0, |h| h.chars().count() + 3);
+                let pad = room.saturating_sub(net_w + tail).max(LEAD);
+                spans.push(Span::raw(" ".repeat(pad)));
+                spans.push(Span::styled(text, style));
+                if let Some(h) = hint {
+                    spans.push(Span::raw("   "));
+                    spans.push(Span::styled(h, mute));
+                }
+            }
+            // Nothing to share: the hint as it always was, clipped by the row.
+            (None, _) => {
+                let h = drag_hints[0];
+                let pad = room.saturating_sub(h.chars().count());
+                spans.push(Span::raw(" ".repeat(pad)));
+                spans.push(Span::styled(h, mute));
+            }
+        }
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -1082,6 +1184,90 @@ mod tests {
             started_at: std::time::Instant::now(),
         };
         session
+    }
+
+    fn footer_row(session: &Session, width: u16, share_key: &str) -> String {
+        let app = crate::app::tests::test_app(vec![]);
+        let theme = app.theme();
+        let area = Rect::new(0, 0, width, 1);
+        let buf = draw(area, |frame| {
+            render_footer(
+                frame,
+                area,
+                session,
+                theme,
+                FooterOpts {
+                    ghost_visible: false,
+                    zoomed: false,
+                    share_key,
+                },
+            );
+        });
+        (0..width)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol())
+            .collect()
+    }
+
+    /// The bottom bar names the sharing key, the state and the port, and gives
+    /// way to the selection hint (never the other way round) as it narrows (#174).
+    #[test]
+    fn the_footer_shows_the_shared_network_state_at_80_and_120_columns() {
+        use crate::session::NetShare;
+        let mut session = connecting_session();
+        session.config.argv = vec!["ssh".into(), "host".into()];
+        session.meta.port = Some(22);
+        session.phase = SessionPhase::Running {
+            started_at: std::time::Instant::now(),
+        };
+        let key = "Alt+Shift+N";
+        for width in [80u16, 120] {
+            for (state, needle) in [
+                (NetShare::Off, "Alt+Shift+N share net"),
+                (NetShare::Starting, "\u{21c4} net ..."),
+                (
+                    NetShare::Port(37993),
+                    "\u{21c4} net :37993 \u{b7} Alt+Shift+N stop",
+                ),
+                (
+                    NetShare::Failed,
+                    "\u{21c4} net failed \u{b7} Alt+Shift+N retry",
+                ),
+            ] {
+                session.net_share = state;
+                let row = footer_row(&session, width, key);
+                println!("{width:>3} {state:?}: |{row}|");
+                assert_eq!(row.chars().count(), width as usize);
+                assert!(row.contains(needle), "{width}: {row}");
+                assert!(row.contains(&format!("  {needle}")), "no gap: {row}");
+                if width == 120 {
+                    assert!(row.contains("drag: select+copy"), "{row}");
+                    assert!(row.contains("Shift+drag in mouse apps"), "{row}");
+                }
+            }
+        }
+        // Not shareable, or no key bound: the footer is what it always was.
+        session.net_share = NetShare::Off;
+        assert!(!footer_row(&session, 80, "").contains("share net"));
+        session.config.argv = vec!["bash".into()];
+        assert!(!footer_row(&session, 80, key).contains("share net"));
+        // Scrolled back: the share stays in view next to the way back to live.
+        session.config.argv = vec!["ssh".into(), "host".into()];
+        session.net_share = NetShare::Port(37993);
+        session.parser.process("line\r\n".repeat(100).as_bytes());
+        session.parser.scroll_up(3);
+        assert!(session.parser.scrollback() > 0);
+        for width in [80u16, 120] {
+            let row = footer_row(&session, width, key);
+            println!("{width:>3} scrolled: |{row}|");
+            assert!(row.contains("(PgDn live)"), "{row}");
+            assert!(row.contains("\u{21c4} net :37993"), "{row}");
+        }
+        session.parser.snap_to_bottom();
+        // Too narrow for everything: the state stays, the hint goes.
+        session.config.argv = vec!["ssh".into(), "host".into()];
+        session.net_share = NetShare::Port(37993);
+        let row = footer_row(&session, 62, key);
+        assert!(row.contains("\u{21c4} net :37993"), "{row}");
     }
 
     /// Connecting: background, title, the separator rule from `session.border`,

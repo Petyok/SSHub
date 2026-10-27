@@ -40,7 +40,7 @@ fn print_host() {
 USAGE:
     sshub host list    [--tag TAG]... [--group GROUP] [--sort MODE] [--format plain|json]
     sshub host show    <name> [--format plain|json]
-    sshub host connect <name> [-v|--verbose]
+    sshub host connect <name> [-v|--verbose] [--share-net]
     sshub host resolve <name> [--format plain|json]
     sshub host search  <query> [--format plain|json]
     sshub host add     --name NAME --address ADDR [--port N] [--username U] [--identity NAME]
@@ -53,6 +53,14 @@ USAGE:
 
 --sort MODE: label|last-connected|favorite|group|manual. Run `man sshub` for the
 full add/edit flag list.
+
+--share-net (connect; ssh transport only) shares this machine's network with the
+host for this session: a SOCKS5 proxy on the host's 127.0.0.1 (ssh prints the
+port) that reaches ports 80 and 443 from here, so a host with no DNS or way out
+can `apt` or `curl` through socks5h://127.0.0.1:PORT. While the session is open
+any user on the host can use it. Nothing is saved on the host. The local ssh
+client must know PermitRemoteOpen (OpenSSH 8.5); an older one refuses to start
+with "Bad configuration option".
 
 transfer copies the host into another profile: the plan prints first, then it
 asks y/N unless --yes; --move deletes the original afterwards and carries
@@ -69,7 +77,7 @@ fn print_connect() {
         r#"sshub connect - open an SSH session to a host (alias for `host connect`)
 
 USAGE:
-    sshub connect <name> [-v|--verbose]"#
+    sshub connect <name> [-v|--verbose] [--share-net]"#
     );
 }
 
