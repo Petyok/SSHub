@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-28
+
 ### Added
 
 - **Share this machine's network with a host** (issue #174) - `Alt+Shift+N` in
