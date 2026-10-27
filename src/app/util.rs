@@ -342,6 +342,21 @@ pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bo
     }
 }
 
+/// Share this machine's network with the host (#174): add the reverse
+/// dynamic forward and its destination limit to an ssh argv, ahead of the
+/// destination. `false` (argv untouched) for anything but ssh, mosh has no
+/// reverse forward.
+pub fn add_share_net_args(argv: &mut Vec<String>, permit_remote_open: &str) -> bool {
+    if argv.first().map(String::as_str) != Some("ssh") {
+        return false;
+    }
+    argv.splice(
+        1..1,
+        crate::session::share_net::ssh_args(permit_remote_open),
+    );
+    true
+}
+
 /// A startup command runs at login and the session goes on in the login
 /// shell (#171): `cd /srv` leaves a shell in /srv, `sudo su` a root shell
 /// that drops back to yours on exit. ssh runs a remote command instead of the

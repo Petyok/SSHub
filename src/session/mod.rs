@@ -14,6 +14,7 @@ pub mod keys;
 pub mod parser;
 pub mod pty;
 pub mod render;
+pub mod share_net;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -22,6 +23,7 @@ use anyhow::Result;
 
 pub use parser::ParserState;
 pub use pty::{PtyEvent, PtyRuntime};
+pub use share_net::NetShare;
 
 /// Smallest grid a session is ever given. vt100 0.16 panicked below 2x2
 /// (wrapping text on a 1-row grid, a wide character on a 1-column grid);
@@ -227,6 +229,14 @@ pub struct Session {
     ssh_log: String,
     /// Whether the child has its own ssh log channel, see `ssh_log`.
     log_channel: bool,
+    /// Whether this machine's network is shared with the host (#174), read
+    /// from the sidecar ssh's own `-E` log (never a PTY, never stderr, where a
+    /// server's banner lands).
+    net_share: NetShare,
+    /// The second ssh connection that carries the proxy. Dropped with the
+    /// session; on Linux it also ends with sshub however sshub ends, elsewhere
+    /// everything but a SIGKILL of sshub (see [`share_net::Sidecar`]).
+    sidecar: Option<share_net::Sidecar>,
     /// First host-key fingerprint seen in `debug_log` (first-wins). Cached so a
     /// hostile banner that floods the 64 KB ring buffer cannot replace the
     /// genuine KEX line with a forged `debug1: Server host key:` after eviction.
@@ -387,6 +397,8 @@ impl Session {
             debug_log: String::new(),
             ssh_log: String::new(),
             log_channel,
+            net_share: NetShare::Off,
+            sidecar: None,
             host_key_fingerprint: None,
             debug_expanded: false,
             saw_pty_bytes: false,
@@ -705,6 +717,7 @@ impl Session {
             self.answer_terminal_queries();
             self.maybe_reveal();
         }
+        self.poll_net_share();
         // `debug_log` (the only input) changes only on stderr.
         if had_stderr {
             self.maybe_detect_connected();
@@ -713,6 +726,7 @@ impl Session {
         // session blocked on auth never hangs the connect screen forever.
         self.reveal_on_timeout();
         if self.phase.is_terminal() {
+            self.stop_net_share();
             if let Some(auth) = self.auth.as_mut() {
                 auth.finish(self.connected);
             }
@@ -945,6 +959,91 @@ impl Session {
         if self.host_key_fingerprint.is_none() {
             self.host_key_fingerprint =
                 crate::known_hosts::host_key_fingerprint_from_log(&self.ssh_log);
+        }
+    }
+
+    /// Where sharing this machine's network with the host stands.
+    pub fn net_share(&self) -> NetShare {
+        self.net_share
+    }
+
+    /// Whether this tab can share the network: a plain `ssh` session. Mosh,
+    /// a local shell and a key push cannot.
+    pub fn can_share_net(&self) -> bool {
+        !self.local_shell
+            && self.key_push_identity.is_none()
+            && self.config.argv.first().map(String::as_str) == Some("ssh")
+    }
+
+    /// Start sharing: a second `ssh -N` to the same host that only carries the
+    /// proxy (see [`share_net::sidecar_argv`]). The session is not touched.
+    /// `permit_remote_open` is [`share_net::PERMIT_REMOTE_OPEN`] outside tests.
+    pub fn start_net_share(
+        &mut self,
+        secret: Option<&PendingSecret>,
+        hops: &[hop_auth::HopSecret],
+        permit_remote_open: &str,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            self.can_share_net(),
+            "only ssh sessions can share the network"
+        );
+        self.stop_net_share();
+        let argv = share_net::sidecar_argv(
+            &self.config.argv,
+            secret.is_some() || !hops.is_empty(),
+            permit_remote_open,
+        )
+        .ok_or_else(|| anyhow::anyhow!("only ssh sessions can share the network"))?;
+        self.sidecar = Some(share_net::Sidecar::spawn(argv, secret, hops)?);
+        self.net_share = NetShare::Starting;
+        Ok(())
+    }
+
+    /// Stop sharing: the sidecar and its process group are gone when this
+    /// returns.
+    pub fn stop_net_share(&mut self) {
+        self.sidecar = None;
+        self.net_share = NetShare::Off;
+    }
+
+    /// Pid of the proxy ssh, for tests.
+    #[cfg(test)]
+    fn sidecar_pid(&self) -> Option<u32> {
+        self.sidecar.as_ref().map(share_net::Sidecar::pid)
+    }
+
+    /// Read the sidecar's log: the allocated port, or why it ended. A sidecar
+    /// that ends on its own never leaves a stale port behind.
+    fn poll_net_share(&mut self) {
+        let Some(sidecar) = self.sidecar.as_mut() else {
+            return;
+        };
+        let (lines, ended) = sidecar.poll();
+        for line in lines {
+            match share_net::parse_log_line(&line) {
+                Some(NetShare::Port(port)) if self.net_share == NetShare::Starting => {
+                    self.net_share = NetShare::Port(port);
+                    self.diagnostics.push(share_net::hint(port));
+                }
+                Some(NetShare::Failed) => self.net_share = NetShare::Failed,
+                _ => {}
+            }
+        }
+        if ended {
+            let reason = sidecar.failure_reason();
+            self.sidecar = None;
+            self.net_share = NetShare::Failed;
+            self.diagnostics.push(format!(
+                "session: sharing this machine's network failed: {reason}"
+            ));
+        } else if self.net_share == NetShare::Failed {
+            // The server refused the forward but ssh is still up: end it.
+            let reason = sidecar.failure_reason();
+            self.sidecar = None;
+            self.diagnostics.push(format!(
+                "session: sharing this machine's network failed: {reason}"
+            ));
         }
     }
 
@@ -2498,10 +2597,14 @@ mod prompt_tests {
         assert!(log.contains("Invalid user sshub-no-such-user"), "{log}");
     }
 
-    /// A session to the tempdir sshd built the way the TUI builds one for a
-    /// host whose startup command is `command`: `build_ssh_argv`, then
-    /// `prepare_session_connect_argv`, with a client config for the test key.
-    fn startup_command_session(sshd: &crate::test_support::TempdirSshd, command: &str) -> Session {
+    /// The ssh argv to the tempdir sshd as the TUI builds it for a host whose
+    /// startup command is `command`: `build_ssh_argv`, with a client config for
+    /// the test key. Not yet through `prepare_session_connect_argv`.
+    fn oracle_argv(
+        sshd: &crate::test_support::TempdirSshd,
+        command: Option<&str>,
+        client_config_extra: &str,
+    ) -> Vec<String> {
         let dir = sshd.dir.path();
         let known = dir.join("known_hosts");
         let host_key = std::fs::read_to_string(sshd.host_key.with_extension("pub")).unwrap();
@@ -2510,7 +2613,7 @@ mod prompt_tests {
         std::fs::write(
             &client_config,
             format!(
-                "IdentitiesOnly yes\nUserKnownHostsFile {}\nBatchMode yes\n",
+                "IdentitiesOnly yes\nUserKnownHostsFile {}\nBatchMode yes\n{client_config_extra}",
                 known.display(),
             ),
         )
@@ -2520,9 +2623,13 @@ mod prompt_tests {
         host.port = Some(sshd.port);
         host.user = Some(crate::test_support::current_user());
         host.identity_file = Some(sshd.user_key.to_str().unwrap().into());
-        host.remote_command = Some(command.into());
+        host.remote_command = command.map(Into::into);
         let mut argv = crate::ssh::build_ssh_argv(&host);
         argv.splice(1..1, ["-F".into(), client_config.to_str().unwrap().into()]);
+        argv
+    }
+
+    fn oracle_session(argv: Vec<String>) -> Session {
         let config = SessionConfig {
             hops: Vec::new(),
             argv: crate::app::prepare_session_connect_argv(argv, false),
@@ -2533,6 +2640,12 @@ mod prompt_tests {
             host_name: "oracle".into(),
         };
         Session::spawn(config, (24, 80), None).unwrap()
+    }
+
+    /// A session to the tempdir sshd built the way the TUI builds one for a
+    /// host whose startup command is `command`.
+    fn startup_command_session(sshd: &crate::test_support::TempdirSshd, command: &str) -> Session {
+        oracle_session(oracle_argv(sshd, Some(command), ""))
     }
 
     #[test]
@@ -2595,6 +2708,496 @@ mod prompt_tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
+    }
+
+    /// A loopback HTTP server answering every connection with `body`; the
+    /// counter is how many connections it took.
+    fn http_server(body: &'static str) -> (u16, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = hits.clone();
+        std::thread::spawn(move || {
+            for mut conn in listener.incoming().flatten() {
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let mut request = [0u8; 1024];
+                let _ = conn.read(&mut request);
+                let _ = write!(
+                    conn,
+                    "HTTP/1.0 200 OK\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        (port, hits)
+    }
+
+    /// Drain `s` until `done` holds, or fail after 20 s with ssh's log.
+    fn drain_until(s: &mut Session, what: &str, done: impl Fn(&Session) -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !done(s) {
+            s.drain();
+            assert!(
+                !s.phase.is_terminal() && std::time::Instant::now() < deadline,
+                "{what} (phase={:?}): {:?} / {:?}",
+                s.phase,
+                s.parser.screen().contents(),
+                s.debug_log()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    fn curl_missing() -> bool {
+        std::process::Command::new("curl")
+            .arg("--version")
+            .output()
+            .is_err()
+            && crate::test_support::tool_missing("curl")
+    }
+
+    /// The exit code the typed command printed as `refused-rc=<n>`. The typed
+    /// command itself echoes `refused-rc=$?`, which is no number.
+    fn refused_rc(text: &str) -> Option<i32> {
+        text.lines()
+            .filter_map(|l| l.trim_end().rsplit_once("refused-rc=").map(|(_, n)| n))
+            .find_map(|n| n.parse::<i32>().ok())
+    }
+
+    /// In the session's shell: fetch `allowed`, then `other`, both through the
+    /// SOCKS proxy on `port`. Returns the screen once the second curl is done.
+    fn fetch_allowed_and_other(s: &mut Session, port: u16, allowed: u16, other: u16) -> String {
+        drain_until(s, "never authenticated", Session::is_connected);
+        let proxy = format!("socks5h://127.0.0.1:{port}");
+        s.write(
+            format!(
+                "curl -sS -m 10 -x {proxy} http://127.0.0.1:{allowed}/; echo; \
+                 curl -sS -m 10 -x {proxy} http://127.0.0.1:{other}/; echo \"refused-rc=$?\"\r"
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        drain_until(s, "no result from curl", |s| {
+            refused_rc(&s.parser.screen().contents()).is_some()
+        });
+        s.parser.screen().contents()
+    }
+
+    /// A connected session to the tempdir sshd with sharing toggled on, the
+    /// allowed destinations set to `permit`.
+    fn sharing_session(argv: Vec<String>, permit: &str) -> Session {
+        let mut s = oracle_session(argv);
+        drain_until(&mut s, "never authenticated", Session::is_connected);
+        s.start_net_share(None, &[], permit).unwrap();
+        assert_eq!(s.net_share(), NetShare::Starting);
+        s
+    }
+
+    fn shared_port(s: &mut Session) -> u16 {
+        drain_until(s, "ssh never reported the port", |s| {
+            matches!(s.net_share(), NetShare::Port(_))
+        });
+        let NetShare::Port(port) = s.net_share() else {
+            unreachable!()
+        };
+        port
+    }
+
+    fn pid_alive(pid: u32) -> bool {
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+
+    /// Whether something accepts on the host's loopback port; the tempdir sshd
+    /// is this machine, so the "host side" of the proxy is reachable directly.
+    fn accepts(port: u16) -> bool {
+        std::net::TcpStream::connect(("127.0.0.1", port)).is_ok()
+    }
+
+    fn wait_until(what: &str, done: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done() {
+            assert!(std::time::Instant::now() < deadline, "{what}");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn toggling_the_share_on_gives_the_host_a_proxy_to_the_allowed_ports_only() {
+        // Oracle: real OpenSSH against a tempdir sshd, and real curl on the
+        // "host" side of the session (#174). The port comes from the sidecar's
+        // own log; a fetch through it reaches the one allowed local web
+        // server, one to a server outside the allowed list is refused, and the
+        // session itself carries no forward.
+        if curl_missing() {
+            return;
+        }
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let (allowed, allowed_hits) = http_server("shared-net-reply");
+        let (other, other_hits) = http_server("must-stay-unreachable");
+        let mut s = sharing_session(
+            oracle_argv(&sshd, None, ""),
+            &format!("127.0.0.1:{allowed}"),
+        );
+        assert!(!s.config.argv.iter().any(|a| a == "-R"));
+        let port = shared_port(&mut s);
+        // The hint for the log panel carries the port and both commands.
+        let hint = s
+            .take_diagnostics()
+            .into_iter()
+            .find(|d| d.contains("socks5h"))
+            .expect("a hint line for the ssh log");
+        assert!(hint.starts_with("session:") && hint.contains(&format!("127.0.0.1:{port}")));
+        assert!(crate::session::keep_diagnostic(&hint, true));
+
+        let text = fetch_allowed_and_other(&mut s, port, allowed, other);
+        assert!(
+            text.lines().any(|l| l.trim_end() == "shared-net-reply"),
+            "{text:?}"
+        );
+        assert_ne!(refused_rc(&text), Some(0), "{text:?}");
+        assert!(!text.contains("must-stay-unreachable"), "{text:?}");
+        assert_eq!(allowed_hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(other_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn toggling_the_share_off_ends_the_proxy_and_its_ssh() {
+        // Oracle: real OpenSSH (#174). Off must kill the sidecar: its pid is
+        // gone and the port on the host stops accepting, while the session
+        // still works.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let mut s = sharing_session(oracle_argv(&sshd, None, ""), share_net::PERMIT_REMOTE_OPEN);
+        let port = shared_port(&mut s);
+        let pid = s.sidecar_pid().expect("a sidecar");
+        assert!(pid_alive(pid) && accepts(port), "setup: proxy is up");
+
+        s.stop_net_share();
+        assert_eq!(s.net_share(), NetShare::Off);
+        assert!(!pid_alive(pid), "the sidecar ssh outlived the toggle");
+        wait_until("the proxy port still accepts", || !accepts(port));
+        s.write(b"echo \"still-$((20+22))\"\r").unwrap();
+        drain_until(&mut s, "the session did not go on", |s| {
+            s.parser
+                .screen()
+                .contents()
+                .lines()
+                .any(|l| l.trim_end() == "still-42")
+        });
+    }
+
+    #[test]
+    fn dropping_the_session_ends_the_proxy_and_its_ssh() {
+        // Oracle: real OpenSSH (#174). Closing a session, or quitting SSHub,
+        // drops it: the sidecar must never be orphaned.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let mut s = sharing_session(oracle_argv(&sshd, None, ""), share_net::PERMIT_REMOTE_OPEN);
+        let port = shared_port(&mut s);
+        let pid = s.sidecar_pid().expect("a sidecar");
+        assert!(pid_alive(pid) && accepts(port), "setup: proxy is up");
+
+        drop(s);
+        assert!(!pid_alive(pid), "the sidecar ssh outlived its session");
+        wait_until("the proxy port still accepts", || !accepts(port));
+    }
+
+    #[test]
+    fn a_host_that_refuses_forwarding_shows_failed_and_the_session_goes_on() {
+        // Oracle: real OpenSSH against a tempdir sshd with
+        // `AllowTcpForwarding no` (#174). The sidecar ends on the refused
+        // forward (ExitOnForwardFailure): Failed with a reason in the log, and
+        // the session is untouched.
+        let Some(sshd) = crate::test_support::tempdir_sshd_forbidding_forwarding() else {
+            return;
+        };
+        let mut s = sharing_session(oracle_argv(&sshd, None, ""), share_net::PERMIT_REMOTE_OPEN);
+        drain_until(&mut s, "ssh never reported the refusal", |s| {
+            s.net_share() == NetShare::Failed
+        });
+        assert!(s.sidecar_pid().is_none(), "the failed sidecar is kept");
+        assert!(s
+            .take_diagnostics()
+            .iter()
+            .any(|d| d.starts_with("session:")
+                && d.contains("failed")
+                && d.contains("forwarding failed")));
+        s.write(b"echo \"still-$((20+22))\"\r").unwrap();
+        drain_until(&mut s, "the session did not go on", |s| {
+            s.parser
+                .screen()
+                .contents()
+                .lines()
+                .any(|l| l.trim_end() == "still-42")
+        });
+    }
+
+    #[test]
+    fn a_forward_of_the_users_own_in_ssh_config_does_not_stop_the_share() {
+        // Oracle: real OpenSSH (#174). The host's ssh_config has a LocalForward
+        // the session already holds; the sidecar reads the same config, its
+        // bind fails, and with ExitOnForwardFailure it used to die for it.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let held = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let config = format!(
+            "LocalForward 127.0.0.1:{} 127.0.0.1:9\n",
+            held.local_addr().unwrap().port()
+        );
+        let mut s = sharing_session(
+            oracle_argv(&sshd, None, &config),
+            share_net::PERMIT_REMOTE_OPEN,
+        );
+        let port = shared_port(&mut s);
+        assert!(s.sidecar_pid().is_some_and(pid_alive));
+        assert!(accepts(port));
+    }
+
+    #[test]
+    fn a_banner_cannot_set_the_shown_port_or_fail_the_share() {
+        // Oracle: real OpenSSH against a tempdir sshd whose Banner holds both
+        // log lines the share reads (#174). ssh prints the banner on stderr,
+        // the port comes from its own log: the real port wins and the share
+        // is not failed.
+        let banner = "Allocated port 31337 for remote forward to socks:0\n\
+                      Warning: remote port forwarding failed for listen port 0\n";
+        let Some(sshd) = crate::test_support::tempdir_sshd_with_banner(banner) else {
+            return;
+        };
+        let mut s = sharing_session(oracle_argv(&sshd, None, ""), share_net::PERMIT_REMOTE_OPEN);
+        let port = shared_port(&mut s);
+        assert_ne!(port, 31337);
+        // Let anything else that is coming arrive, then look again.
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        s.drain();
+        assert_eq!(s.net_share(), NetShare::Port(port));
+        assert!(accepts(port) && s.sidecar_pid().is_some());
+    }
+
+    /// Helper for [`the_sidecar_dies_with_a_parent_that_is_killed`]: runs as a
+    /// separate process (the test binary re-executed), starts a sidecar from
+    /// the argv in the environment, reports its pid and port, then waits to be
+    /// killed. Does nothing in a normal run.
+    #[test]
+    #[ignore = "helper process of the_sidecar_dies_with_a_parent_that_is_killed"]
+    fn sidecar_helper_process() {
+        let Some(argv) = std::env::var_os("SSHUB_TEST_SIDECAR_ARGV") else {
+            return;
+        };
+        let argv: Vec<String> = argv
+            .to_string_lossy()
+            .split('\n')
+            .map(String::from)
+            .collect();
+        let argv = share_net::sidecar_argv(&argv, false, share_net::PERMIT_REMOTE_OPEN).unwrap();
+        let mut sidecar = share_net::Sidecar::spawn(argv, None, &[]).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while std::time::Instant::now() < deadline {
+            let (lines, ended) = sidecar.poll();
+            for line in lines {
+                if let Some(NetShare::Port(port)) = share_net::parse_log_line(&line) {
+                    println!("SIDECAR {} {port}", sidecar.pid());
+                    std::thread::sleep(std::time::Duration::from_secs(120));
+                    return;
+                }
+            }
+            if ended {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_sidecar_dies_with_a_parent_that_is_killed() {
+        // Oracle: real OpenSSH and a real SIGKILL (#174). sshub can die
+        // without running a destructor (a closed terminal, kill -9); the
+        // sidecar must not outlive it holding a proxy port on the host.
+        use std::io::BufRead;
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let argv = oracle_argv(&sshd, None, "");
+        let mut helper = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "session::prompt_tests::sidecar_helper_process",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("SSHUB_TEST_SIDECAR_ARGV", argv.join("\n"))
+            // The helper dies by SIGKILL and cannot remove its share log dir;
+            // under the sshd's tempdir it goes when the test ends.
+            .env("TMPDIR", sshd.dir.path())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        /// Whatever happens, nothing of the helper or its sidecar survives.
+        struct Cleanup(std::process::Child, Option<u32>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+                if let Some(pid) = self.1 {
+                    unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+                }
+            }
+        }
+        let stdout = helper.stdout.take().unwrap();
+        let mut guard = Cleanup(helper, None);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stdout)
+                .lines()
+                .map_while(Result::ok)
+            {
+                // libtest writes "test <name> ... " in front of what a test prints.
+                if let Some((_, rest)) = line.split_once("SIDECAR ") {
+                    let _ = tx.send(rest.to_string());
+                    return;
+                }
+            }
+        });
+        let report = rx
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("the helper never reported a sidecar");
+        let (pid, port) = report.split_once(' ').unwrap();
+        let (pid, port): (u32, u16) = (pid.parse().unwrap(), port.parse().unwrap());
+        guard.1 = Some(pid);
+        assert!(pid_alive(pid) && accepts(port), "setup: proxy is up");
+
+        unsafe { libc::kill(guard.0.id() as i32, libc::SIGKILL) };
+        let _ = guard.0.wait();
+        wait_until("the sidecar outlived a killed parent", || {
+            !pid_alive(pid) && !accepts(port)
+        });
+    }
+
+    /// Kills the user's mux master when dropped, so a failing test leaves none.
+    struct MuxMaster(Vec<String>);
+
+    impl Drop for MuxMaster {
+        fn drop(&mut self) {
+            let mut exit = self.0.clone();
+            exit.splice(1..1, ["-O".to_string(), "exit".to_string()]);
+            let _ = std::process::Command::new(&exit[0])
+                .args(&exit[1..])
+                .output();
+        }
+    }
+
+    #[test]
+    fn the_proxy_ignores_the_users_control_master() {
+        // Oracle: real OpenSSH 10.5p1 (#174). With a ControlMaster to the host
+        // already running, a plain `-R` is forwarded to the master, which has
+        // no `PermitRemoteOpen`: the proxy then reached ports outside the
+        // allowed list. The sidecar must not ride the master.
+        if curl_missing() {
+            return;
+        }
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        // `%C` is a 40-character hash, and ssh appends a random suffix while
+        // binding: under macOS's long per-user TMPDIR that passed the ~104
+        // byte limit of a Unix socket path and the master never started. The
+        // port alone names this test's one master.
+        let control = format!(
+            "ControlMaster auto\nControlPath {}/cm-%p\nControlPersist 30\n",
+            sshd.dir.path().display()
+        );
+        let argv = oracle_argv(&sshd, None, &control);
+        let _master = MuxMaster(argv.clone());
+        let mut start = argv.clone();
+        start.splice(1..1, ["-fN".to_string()]);
+        let out = std::process::Command::new(&start[0])
+            .args(&start[1..])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "no master: {out:?}");
+        let mut check = argv.clone();
+        check.splice(1..1, ["-O".to_string(), "check".to_string()]);
+        let out = std::process::Command::new(&check[0])
+            .args(&check[1..])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "setup: master not running: {out:?}");
+
+        let (allowed, _) = http_server("shared-net-reply");
+        let (other, other_hits) = http_server("must-stay-unreachable");
+        let mut s = sharing_session(argv, &format!("127.0.0.1:{allowed}"));
+        let port = shared_port(&mut s);
+        let text = fetch_allowed_and_other(&mut s, port, allowed, other);
+        assert_ne!(refused_rc(&text), Some(0), "{text:?}");
+        assert!(!text.contains("must-stay-unreachable"), "{text:?}");
+        assert_eq!(other_hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// Run the sidecar for `argv` on its own until `done` holds of its log
+    /// lines, or it ends. Returns the lines and the failure reason.
+    fn run_sidecar(argv: &[String], done: impl Fn(&str) -> bool) -> (Vec<String>, String) {
+        let sidecar_argv = share_net::sidecar_argv(argv, false, share_net::PERMIT_REMOTE_OPEN)
+            .expect("an ssh argv");
+        let mut sidecar = share_net::Sidecar::spawn(sidecar_argv, None, &[]).unwrap();
+        let mut seen = Vec::new();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            let (lines, ended) = sidecar.poll();
+            let hit = lines.iter().any(|l| done(l));
+            seen.extend(lines);
+            if hit || ended {
+                return (seen, sidecar.failure_reason());
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no sidecar log: {seen:?}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    #[test]
+    fn the_sidecar_never_runs_the_hosts_startup_command() {
+        // Oracle: real OpenSSH (#174). The session's argv ends in the stored
+        // startup command; the sidecar only carries the proxy, so that command
+        // must not run a second time on the host.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let marker = sshd.dir.path().join("startup-ran");
+        let argv = oracle_argv(&sshd, Some(&format!("touch {}", marker.display())), "");
+        let (lines, _) = run_sidecar(&argv, |l| l.starts_with("Allocated port "));
+        assert!(
+            lines.iter().any(|l| l.starts_with("Allocated port ")),
+            "{lines:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!marker.exists(), "the sidecar ran the startup command");
+    }
+
+    #[test]
+    fn a_host_that_needs_a_password_fails_fast_with_the_reason() {
+        // Oracle: real OpenSSH against a tempdir sshd that wants a password
+        // (#174). With no stored secret the sidecar runs in BatchMode and ends
+        // instead of hanging on a prompt nobody sees.
+        let Some(sshd) = crate::test_support::tempdir_sshd_asking_for_a_password() else {
+            return;
+        };
+        let argv = oracle_argv(&sshd, None, "");
+        let (_, reason) = run_sidecar(&argv, |_| false);
+        assert_eq!(
+            reason,
+            "needs a login without prompts: key or stored password"
+        );
     }
 
     #[test]

@@ -171,7 +171,7 @@ PROFILES:
 HOST (read/write):
     sshub host list [--tag TAG]... [--group GROUP] [--sort MODE] [--format plain|json]
     sshub host show <name> [--format plain|json]
-    sshub host connect <name> [-v|--verbose]
+    sshub host connect <name> [-v|--verbose] [--share-net]
     sshub host resolve <name> [--format plain|json]
     sshub host search <query> [--format plain|json]
     sshub host add|edit|rename|delete|duplicate …

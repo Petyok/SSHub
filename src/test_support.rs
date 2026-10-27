@@ -461,17 +461,33 @@ pub(crate) fn current_user() -> String {
 }
 
 pub(crate) fn tempdir_sshd() -> Option<TempdirSshd> {
-    tempdir_sshd_with(false)
+    tempdir_sshd_with(false, "", None)
+}
+
+/// Like [`tempdir_sshd`], with `AllowTcpForwarding no`: the server refuses
+/// every port forward a client asks for.
+pub(crate) fn tempdir_sshd_forbidding_forwarding() -> Option<TempdirSshd> {
+    tempdir_sshd_with(false, "AllowTcpForwarding no\n", None)
+}
+
+/// Like [`tempdir_sshd`], with a pre-auth `Banner` of `banner`: ssh prints it on
+/// its stderr, and the server writes whatever it likes there.
+pub(crate) fn tempdir_sshd_with_banner(banner: &str) -> Option<TempdirSshd> {
+    tempdir_sshd_with(false, "", Some(banner))
 }
 
 /// Like [`tempdir_sshd`], but it asks for a password instead of a key. An
 /// unprivileged sshd cannot check one, so every answer is refused: enough to
 /// see which prompt ssh raises and what it is answered with.
 pub(crate) fn tempdir_sshd_asking_for_a_password() -> Option<TempdirSshd> {
-    tempdir_sshd_with(true)
+    tempdir_sshd_with(true, "", None)
 }
 
-fn tempdir_sshd_with(password: bool) -> Option<TempdirSshd> {
+fn tempdir_sshd_with(
+    password: bool,
+    extra_config: &str,
+    banner: Option<&str>,
+) -> Option<TempdirSshd> {
     use std::process::Command;
     let sshd_bin = ["sshd", "/usr/sbin/sshd", "/usr/bin/sshd"]
         .into_iter()
@@ -515,6 +531,14 @@ fn tempdir_sshd_with(password: bool) -> Option<TempdirSshd> {
     let auth_keys = dir.path().join("auth_keys");
     std::fs::copy(user_key.with_extension("pub"), &auth_keys).unwrap();
     let cfg = dir.path().join("sshd_config");
+    let extra_config = match banner {
+        Some(text) => {
+            let path = dir.path().join("banner");
+            std::fs::write(&path, text).unwrap();
+            format!("{extra_config}Banner {}\n", path.display())
+        }
+        None => extra_config.to_string(),
+    };
     let log = dir.path().join("sshd.log");
     // The probe port is free when picked but not reserved: another process
     // can take it before sshd binds. sshd then exits, so try a fresh port.
@@ -531,7 +555,7 @@ fn tempdir_sshd_with(password: bool) -> Option<TempdirSshd> {
                 "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nPidFile {}\n\
                  AuthorizedKeysFile {}\nStrictModes no\n\
                  PasswordAuthentication {}\nKbdInteractiveAuthentication no\n\
-                 PubkeyAuthentication {}\nUsePAM no\n",
+                 PubkeyAuthentication {}\nUsePAM no\n{extra_config}",
                 host_key.display(),
                 dir.path().join("sshd.pid").display(),
                 auth_keys.display(),

@@ -4,6 +4,33 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Share this machine's network with a host** (issue #174) - `Alt+Shift+N` in
+  an ssh session (rebindable as "Share my network with this host") opens a
+  second ssh connection to the same host that only carries a reverse dynamic
+  forward (`-R 127.0.0.1:0`), and the same key stops it. The session itself is
+  never touched or reconnected, so it is safe in a root shell. The host gets a
+  SOCKS5 proxy on its own `127.0.0.1`, and what goes through it leaves from this
+  machine, so a host with no DNS or way out can run
+  `apt -o Acquire::http::Proxy=socks5h://127.0.0.1:PORT
+  -o Acquire::https::Proxy=socks5h://127.0.0.1:PORT install ...` or
+  `curl -x socks5h://127.0.0.1:PORT ...`. The bottom bar of the session shows the
+  key, then `⇄ net :PORT` once ssh reports the port the server picked, and the
+  host's SSH log gets the ready-to-paste lines. The second connection must log in
+  without prompts (a key or a stored password); a host that forbids forwarding
+  shows `⇄ net failed`. Closing the session, quitting SSHub or stopping the share
+  ends it, and on Linux the second connection also ends when SSHub is killed;
+  elsewhere only a SIGKILL of SSHub can leave it running. It starts only once the
+  session is connected, and the key retries after a failure. Mosh and local shell tabs cannot share. `sshub connect <host>
+  --share-net` does the same for a CLI session with one ssh process. The proxy may
+  only open ports 80 and 443, never rides a ControlMaster of yours, and nothing is
+  stored on the host. Security: while it is on, any user on the host can use the
+  proxy to reach whatever this machine reaches on ports 80 and 443, internal web
+  services behind its VPNs included. The local ssh client must know
+  `PermitRemoteOpen` (OpenSSH 8.5); an older one refuses to start with "Bad
+  configuration option".
+
 ### Changed
 
 - **Session panes resize like a terminal** - growing a pane now brings back the
