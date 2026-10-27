@@ -2495,6 +2495,105 @@ mod prompt_tests {
         assert!(log.contains("Invalid user sshub-no-such-user"), "{log}");
     }
 
+    /// A session to the tempdir sshd built the way the TUI builds one for a
+    /// host whose startup command is `command`: `build_ssh_argv`, then
+    /// `prepare_session_connect_argv`, with a client config for the test key.
+    fn startup_command_session(sshd: &crate::test_support::TempdirSshd, command: &str) -> Session {
+        let dir = sshd.dir.path();
+        let known = dir.join("known_hosts");
+        let host_key = std::fs::read_to_string(sshd.host_key.with_extension("pub")).unwrap();
+        std::fs::write(&known, format!("[127.0.0.1]:{} {host_key}", sshd.port)).unwrap();
+        let client_config = dir.join("ssh_config");
+        std::fs::write(
+            &client_config,
+            format!(
+                "IdentitiesOnly yes\nUserKnownHostsFile {}\nBatchMode yes\n",
+                known.display(),
+            ),
+        )
+        .unwrap();
+        let mut host = crate::ssh::SshHost::new("oracle");
+        host.hostname = Some("127.0.0.1".into());
+        host.port = Some(sshd.port);
+        host.user = Some(crate::test_support::current_user());
+        host.identity_file = Some(sshd.user_key.to_str().unwrap().into());
+        host.remote_command = Some(command.into());
+        let mut argv = crate::ssh::build_ssh_argv(&host);
+        argv.splice(1..1, ["-F".into(), client_config.to_str().unwrap().into()]);
+        let config = SessionConfig {
+            hops: Vec::new(),
+            argv: crate::app::prepare_session_connect_argv(argv, false),
+            display_name: "oracle".into(),
+            meta: SessionMeta::default(),
+            pending_secret: None,
+            key_push_identity: None,
+            host_name: "oracle".into(),
+        };
+        Session::spawn(config, (24, 80), None).unwrap()
+    }
+
+    #[test]
+    fn a_startup_command_runs_in_a_remote_terminal() {
+        // Oracle: real OpenSSH against a tempdir sshd (#171). ssh asks for a
+        // remote terminal on its own only for a login shell, so a startup
+        // command ran without one: `sudo su root` printed no prompt.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let mut s = startup_command_session(&sshd, "tty; exec sleep 60");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let text = loop {
+            s.drain();
+            let text = s.parser.screen().contents();
+            if text.contains("/dev/") || text.contains("not a tty") {
+                break text;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no output from the startup command (phase={:?}): {:?}",
+                s.phase,
+                s.debug_log()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(!text.contains("not a tty"), "{text:?}");
+    }
+
+    #[test]
+    fn a_startup_command_leaves_the_login_shell() {
+        // Oracle: real OpenSSH against a tempdir sshd (#171). A startup
+        // command runs at login and the session goes on: `cd /` used to be
+        // the whole session, which ended as soon as it returned.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let mut s = startup_command_session(&sshd, "cd /");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !s.is_connected() {
+            s.drain();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never authenticated: {:?}",
+                s.debug_log()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        s.write(b"echo \"pwd=$PWD\"\r").unwrap();
+        loop {
+            s.drain();
+            let text = s.parser.screen().contents();
+            if text.lines().any(|l| l.trim_end() == "pwd=/") {
+                break;
+            }
+            assert!(
+                !s.phase.is_terminal() && std::time::Instant::now() < deadline,
+                "no shell in / after the startup command (phase={:?}): {text:?}",
+                s.phase
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
     #[test]
     fn clipboard_writes_from_the_pty_are_relayed_and_announced() {
         // An app inside the PTY (herdr, tmux, an editor with clipboard=osc52)

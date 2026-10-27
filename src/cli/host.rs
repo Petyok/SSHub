@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use anyhow::{bail, Context, Result};
 
 use crate::app::{
-    optional_field, parse_tags, prepare_cli_connect_argv, resolve_pending_secret,
+    optional_field, parse_tags, prepare_cli_session_argv, resolve_pending_secret,
     resolved_session_argv, session_argv_for_entry, SortMode,
 };
 use crate::cli::context::CliContext;
@@ -162,7 +162,7 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         (Some(m), Some(r)) => resolved_session_argv(m, r),
         _ => session_argv_for_entry(&entry),
     };
-    let mut argv = prepare_cli_connect_argv(base_argv, pending_secret.is_some(), verbose);
+    let mut argv = prepare_cli_session_argv(base_argv, pending_secret.is_some(), verbose);
 
     if let Some(cmd) = argv.first() {
         // Best-effort pre-flight. If `which` itself cannot run (missing from
