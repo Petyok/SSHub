@@ -565,6 +565,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Open SFTP for this host (session keeps running)",
     },
     HelpItem::Entry {
+        key: "Alt+Shift+N",
+        desc: "Share this machine's network with the host, or stop sharing (ssh sessions): a second ssh connection gives the host a SOCKS5 proxy on its 127.0.0.1 for ports 80/443; the bottom bar shows the port and the SSH log has ready apt and curl lines",
+    },
+    HelpItem::Entry {
         key: "Esc",
         desc: "While connecting: cancel the connection",
     },

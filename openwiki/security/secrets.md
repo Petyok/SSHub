@@ -211,7 +211,7 @@ credential key and the error, never the value.
 
 | Path | Option | Behaviour |
 |---|---|---|
-| Embedded ssh sessions | `StrictHostKeyChecking=ask`, `NumberOfPasswordPrompts=3`, `LogLevel=DEBUG1` (`prepare_session_connect_argv`) | Unknown and changed keys become explicit trust questions in the auth modal; the connect screen shows the server key fingerprint from the debug output |
+| Embedded ssh sessions | `StrictHostKeyChecking=ask`, `NumberOfPasswordPrompts=3`, `LogLevel=DEBUG1`, `-t` (`prepare_session_connect_argv`) | Unknown and changed keys become explicit trust questions in the auth modal; the connect screen shows the server key fingerprint from the debug output |
 | `sshub host connect`, `sshub exec`, tunnels, key push (each only with a stored secret) | `StrictHostKeyChecking=accept-new` | TOFU so a staged secret is not stuck behind a prompt; `sshub exec` and tunnels without a secret run `BatchMode=yes` |
 | Broadcast | `StrictHostKeyChecking=accept-new` (runner default), `ConnectTimeout`, `BatchMode=no` with a secret or hop refs, else `yes` | Never prompts |
 | OS detection | `accept-new`, `ConnectTimeout=8`, `BatchMode=no` with a secret, else `yes` | Never prompts |

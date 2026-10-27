@@ -6,8 +6,8 @@ use std::process::{Command, Stdio};
 use anyhow::{bail, Context, Result};
 
 use crate::app::{
-    optional_field, parse_tags, prepare_cli_connect_argv, resolve_pending_secret,
-    resolved_session_argv, session_argv_for_entry, SortMode,
+    add_share_net_args, optional_field, parse_tags, prepare_cli_session_argv,
+    resolve_pending_secret, resolved_session_argv, session_argv_for_entry, SortMode,
 };
 use crate::cli::context::CliContext;
 use crate::cli::filter::apply_filters;
@@ -141,6 +141,7 @@ fn cmd_search(ctx: &CliContext, args: &[String]) -> Result<i32> {
 fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     let mut args = args.to_vec();
     let verbose = parse::take_flag(&mut args, "--verbose") || parse::take_flag(&mut args, "-v");
+    let share_net = parse::take_flag(&mut args, "--share-net");
     let pos = parse::positional(&args);
     let Some(name) = pos.first() else {
         host_usage("connect requires <name>");
@@ -162,7 +163,17 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         (Some(m), Some(r)) => resolved_session_argv(m, r),
         _ => session_argv_for_entry(&entry),
     };
-    let mut argv = prepare_cli_connect_argv(base_argv, pending_secret.is_some(), verbose);
+    let mut argv = prepare_cli_session_argv(base_argv, pending_secret.is_some(), verbose);
+    if share_net {
+        if !add_share_net_args(&mut argv, crate::session::share_net::PERMIT_REMOTE_OPEN) {
+            eprintln!("sshub: sharing the network needs the ssh transport");
+            return Ok(1);
+        }
+        eprintln!(
+            "sshub: sharing this machine's network (web ports only) with {host_name}: use the \
+             port ssh reports as \"Allocated port N\" as socks5h://127.0.0.1:N on the host"
+        );
+    }
 
     if let Some(cmd) = argv.first() {
         // Best-effort pre-flight. If `which` itself cannot run (missing from

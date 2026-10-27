@@ -157,6 +157,10 @@ pub fn render_host_form(
                 "Startup command",
                 if editing {
                     text_input::with_cursor(&form.remote_command, form.cursor)
+                } else if form.remote_command.trim().is_empty() {
+                    // What the field does, said where it is set (#171).
+                    // Short enough for one row of the form at 80 columns.
+                    "runs at login, then your shell".to_string()
                 } else {
                     display_text(&form.remote_command)
                 },
@@ -245,6 +249,7 @@ pub fn render_host_form(
                 HostFormField::ProxyJump => form.proxy_jump.trim().is_empty(),
                 HostFormField::Username => form.username.trim().is_empty(),
                 HostFormField::SecretLookup => form.secret_lookup.trim().is_empty(),
+                HostFormField::RemoteCommand => form.remote_command.trim().is_empty(),
                 HostFormField::ForwardAgent => form.forward_agent.is_none(),
                 HostFormField::Transport => form.transport.is_none(),
                 HostFormField::Identity => form.identity_index == 0,

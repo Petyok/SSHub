@@ -21,6 +21,7 @@ body:
       options:
         - npm (sshub-tui)
         - cargo install
+        - Nix flake (nix run, nix profile, NixOS)
         - release binary from GitHub
         - built from source (say which commit below)
         - other (say which below)

@@ -67,9 +67,32 @@ subtree). \fIMODE\fR is one of
 .B sshub host show \fINAME\fR [\fB\-\-format\fR \fIF\fR]
 Show the full fact sheet for a host.
 .TP
-.B sshub host connect \fINAME\fR \fR[\fB\-v\fR|\fB\-\-verbose\fR]
+.B sshub host connect \fINAME\fR \fR[\fB\-v\fR|\fB\-\-verbose\fR] [\fB\-\-share\-net\fR]
 Connect over SSH (or mosh, per the host transport). Session logging and audit
 apply as configured. The child exit code is propagated.
+.PP
+.B \-\-share\-net
+shares this machine's network with the host for this session (ssh transport
+only; mosh is refused). ssh opens a reverse dynamic forward
+.RB ( "\-R 127.0.0.1:0" ),
+so the host gets a SOCKS5 proxy on its own 127.0.0.1 and the traffic sent
+through it leaves from this machine. ssh prints the port the server picked
+.RB ( "Allocated port N" ).
+A host with no DNS or way out can then run
+.B apt \-o Acquire::http::Proxy=socks5h://127.0.0.1:PORT \-o Acquire::https::Proxy=socks5h://127.0.0.1:PORT install ...
+or
+.BR "curl \-x socks5h://127.0.0.1:PORT ..." .
+The proxy may only open ports 80 and 443
+.RB ( "PermitRemoteOpen *:80 *:443" ).
+It is opt in per connection and nothing is saved on the host. While the session
+is open, any user on the host can use the proxy to reach whatever this machine
+reaches on those ports, internal web services behind its VPNs included. A host
+that forbids forwarding (\fBAllowTcpForwarding no\fR) leaves the session
+running without the proxy. A shared session never uses a ControlMaster
+connection of yours. The local ssh client must know
+.B PermitRemoteOpen
+(added in OpenSSH 8.5); an older client refuses to start with
+"Bad configuration option".
 .TP
 .B sshub host resolve \fINAME\fR [\fB\-\-format\fR \fIF\fR]
 Print the resolved connection details and the exact

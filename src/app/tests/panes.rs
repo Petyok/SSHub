@@ -54,8 +54,12 @@ fn frame(app: &mut App) {
 }
 
 fn first_row(app: &App, i: usize) -> String {
-    let screen = app.sessions[i].parser.screen();
-    screen.rows(0, screen.size().1).next().unwrap_or_default()
+    let parser = &app.sessions[i].parser;
+    parser
+        .screen()
+        .rows(0, parser.size().1)
+        .next()
+        .unwrap_or_default()
 }
 
 /// Run frames until session `i`'s first row satisfies `done`, then a little
@@ -152,7 +156,7 @@ fn an_exited_session_is_never_resized() {
     assert!(app.sessions[0].phase.is_terminal());
     app.terminal_area = Rect::new(0, 0, 60, 12);
     frame(&mut app);
-    assert_eq!(app.sessions[0].parser.screen().size(), (38, 120));
+    assert_eq!(app.sessions[0].parser.size(), (38, 120));
     assert!(first_row(&app, 0).starts_with("last words"));
 }
 
@@ -338,7 +342,7 @@ fn both_panes_keep_their_ground_and_only_the_focused_one_shows_a_cursor() {
             .fg
             .unwrap()
     );
-    // tui-term paints the cursor as a block; only the focused pane has one.
+    // The grid paints the cursor as a block; only the focused pane has one.
     let cursor = |i: usize| {
         let (r, c) = app.sessions[i].parser.screen().cursor_position();
         let rect = views[i].rect;

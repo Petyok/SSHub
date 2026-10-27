@@ -1,21 +1,21 @@
 //! VT100 parser wrapper. Maintains an in-memory `vt100::Screen` that the
-//! renderer reads via `tui-term`, relays OSC 52 clipboard writes that
+//! renderer draws with [`draw_screen`], relays OSC 52 clipboard writes that
 //! applications inside the PTY emit, and answers the terminal status queries
 //! they send — `vt100` implements none of the latter, and an application that
 //! asks and hears nothing back blocks until its own timeout. In front of the
-//! parser, [`XtermCompat`] translates the few xterm sequences stock `vt100`
-//! drops into ones it does understand, draws DEC Special Graphics (line
-//! drawing) as the Unicode glyphs, and tracks synchronized output (DEC mode
-//! 2026) so the pane can show the last complete frame mid-repaint.
+//! parser, [`XtermCompat`] translates the few xterm sequences `vt100` drops
+//! into ones it does understand, draws DEC Special Graphics (line drawing) as
+//! the Unicode glyphs, and tracks synchronized output (DEC mode 2026) so the
+//! pane can show the last complete frame mid-repaint.
 
 use std::collections::VecDeque;
+use std::num::NonZeroU16;
 use std::time::{Duration, Instant};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::widgets::Widget;
-use tui_term::widget::PseudoTerminal;
-use unicode_width::UnicodeWidthChar;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::{Clear, Widget};
 
 /// Largest decoded payload we'll relay from the PTY to the host clipboard
 /// (64 KiB). Keeps a remote from flooding the clipboard with a huge write.
@@ -64,10 +64,9 @@ enum Scan {
     Str,
 }
 
-/// Rewrites xterm sequences stock `vt100` 0.16 ignores into ones it handles,
-/// and clamps the counts it would loop on for seconds. btop, for one, places
-/// everything with HVP (`CSI r;c f`); vt100 ignored it, so each frame landed
-/// where the previous one stopped. Diagnosed in PR #139.
+/// Rewrites the xterm sequences `vt100` 0.18 still ignores into ones it
+/// handles (HPR and VPR, SCOSC and SCORC), and caps the REP count it would
+/// otherwise loop on: 4 KiB of `X CSI 65535 b` cost it 1.3 s.
 ///
 /// Only CSI sequences and, while DEC Special Graphics is in use, printed
 /// ASCII are touched; a CSI sequence only when held whole: one split across
@@ -79,12 +78,6 @@ struct XtermCompat {
     scan: Scan,
     /// The held `ESC` or `ESC [ …` sequence.
     seq: Vec<u8>,
-    /// Last graphic character printed, for REP. Kept across reads.
-    last: Option<char>,
-    /// A UTF-8 character being assembled, possibly across reads.
-    utf8: [u8; 4],
-    utf8_len: u8,
-    utf8_need: u8,
     /// Synchronized output (DEC mode 2026) is set: the app is mid-frame.
     sync: bool,
     /// Index in `marks` of the frame mark that opened the transaction still
@@ -95,13 +88,6 @@ struct XtermCompat {
     /// Character sets in use, and the copy DECSC saved for DECRC.
     charsets: Charsets,
     saved: Charsets,
-    /// The app is on the alternate screen, as far as the stream says.
-    alt: bool,
-    /// The primary screen has a scroll region (DECSTBM) narrower than the
-    /// grid. vt100 keeps it across a visit to the alternate screen, so only a
-    /// DECSTBM on the primary screen or RIS changes it. See
-    /// [`ParserState::set_size`].
-    primary_region: bool,
 }
 
 /// Something `ParserState` must do at a point in the translated stream.
@@ -151,8 +137,9 @@ impl Charsets {
 }
 
 impl XtermCompat {
-    /// Translate `bytes`, appending the result to `out` in order.
-    fn feed(&mut self, bytes: &[u8], size: (u16, u16), out: &mut Vec<u8>) {
+    /// Translate `bytes` for a grid `cols` wide, appending the result to `out`
+    /// in order.
+    fn feed(&mut self, bytes: &[u8], cols: u16, out: &mut Vec<u8>) {
         let mut span = 0;
         for (i, &b) in bytes.iter().enumerate() {
             if !matches!(self.scan, Scan::Esc | Scan::Csi) {
@@ -162,26 +149,21 @@ impl XtermCompat {
                         span = i + 1;
                         // vte ends a string or aborts a sequence on this ESC,
                         // before seeing what follows it. Holding the ESC would
-                        // leave vte inside, swallowing REP output and C0
-                        // controls sent ahead of it; CAN ends it right here.
+                        // leave vte inside, swallowing C0 controls sent ahead
+                        // of the held bytes; CAN ends it right here.
                         if self.scan != Scan::Ground {
                             out.push(0x18);
                         }
                         self.hold_esc();
                     }
+                    // vt100 knows no charsets: it gets the glyph itself.
                     (Scan::Ground, _) => match self.charsets.glyph(b) {
-                        // vt100 knows no charsets: it gets the glyph itself.
                         Some(c) => {
                             out.extend_from_slice(&bytes[span..i]);
                             span = i + 1;
                             out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
-                            self.last = Some(c);
-                            self.utf8_len = 0;
                         }
-                        None => {
-                            self.charsets.shift(b);
-                            self.track(b);
-                        }
+                        None => self.charsets.shift(b),
                     },
                     (_, 0x18 | 0x1a) | (Scan::Osc, 0x07) | (Scan::Dcs, 0x9c) => {
                         self.scan = Scan::Ground;
@@ -197,9 +179,9 @@ impl XtermCompat {
                     (Scan::DcsHead, 0x40..=0x7e) => self.scan = Scan::Dcs,
                     (Scan::Pass(lo), _) if (lo..=0x7e).contains(&b) => {
                         self.scan = Scan::Ground;
-                        // An overlong ICH/IL/SD still carries a count vt100
-                        // would loop on; CAN aborts it before dispatch.
-                        if lo == 0x40 && matches!(b, b'@' | b'L' | b'T') {
+                        // An overlong REP still carries a count vt100 would
+                        // loop on; CAN aborts it before dispatch.
+                        if lo == 0x40 && b == b'b' {
                             out.extend_from_slice(&bytes[span..i]);
                             out.push(0x18);
                             span = i + 1;
@@ -241,8 +223,6 @@ impl XtermCompat {
                             self.open_frame = None;
                             self.charsets = Charsets::default();
                             self.saved = Charsets::default();
-                            self.alt = false;
-                            self.primary_region = false;
                         }
                         // DECSC and DECRC carry the charsets with the cursor.
                         b'7' => self.saved = self.charsets,
@@ -267,7 +247,7 @@ impl XtermCompat {
                 }
                 0x40..=0x7e => {
                     self.seq.push(b);
-                    self.dispatch(size, out);
+                    self.dispatch(cols, out);
                     self.scan = Scan::Ground;
                 }
                 _ => {
@@ -287,45 +267,11 @@ impl XtermCompat {
     fn hold_esc(&mut self) {
         self.seq.clear();
         self.seq.push(ESC);
-        self.utf8_len = 0;
         self.scan = Scan::Esc;
     }
 
-    /// Follow printed text to know the last graphic character, the one REP
-    /// repeats. Mirrors what vt100 draws as a cell of its own: no controls, no
-    /// U+FFFD, no C1, no zero-width marks (those stack onto the cell before).
-    fn track(&mut self, b: u8) {
-        match b {
-            0x20..=0x7e => {
-                self.last = Some(char::from(b));
-                self.utf8_len = 0;
-            }
-            0x80..=0xbf if self.utf8_len > 0 => {
-                self.utf8[usize::from(self.utf8_len)] = b;
-                self.utf8_len += 1;
-                if self.utf8_len == self.utf8_need {
-                    let utf8 = &self.utf8[..usize::from(self.utf8_len)];
-                    let c = std::str::from_utf8(utf8)
-                        .ok()
-                        .and_then(|s| s.chars().next());
-                    if let Some(c) = c.filter(|&c| c != '\u{fffd}' && c.width().unwrap_or(0) > 0) {
-                        self.last = Some(c);
-                    }
-                    self.utf8_len = 0;
-                }
-            }
-            0xc2..=0xf4 => {
-                self.utf8[0] = b;
-                self.utf8_len = 1;
-                // 110xxxxx, 1110xxxx, 11110xxx: the leading ones are the length.
-                self.utf8_need = b.leading_ones() as u8;
-            }
-            _ => self.utf8_len = 0,
-        }
-    }
-
     /// Write the complete CSI sequence in `seq`, rewritten if vt100 lacks it.
-    fn dispatch(&mut self, (rows, cols): (u16, u16), out: &mut Vec<u8>) {
+    fn dispatch(&mut self, cols: u16, out: &mut Vec<u8>) {
         let end = self.seq.len() - 1;
         let (body, fin) = (&self.seq[2..end], self.seq[end]);
         // Plain parameters only: a private marker or intermediate makes it
@@ -334,14 +280,6 @@ impl XtermCompat {
             .iter()
             .all(|&b| b.is_ascii_digit() || b == b';' || b == b':');
         let bare = body.is_empty();
-        let n = param(body);
-        // Which screen the app draws on, for the scroll-region flag below.
-        if matches!(fin, b'h' | b'l') && body.first() == Some(&b'?') {
-            let mut params = body[1..].split(|&b| b == b';').map(param);
-            if params.any(|p| matches!(p, 47 | 1047 | 1049)) {
-                self.alt = fin == b'h';
-            }
-        }
         match fin {
             // DECSET/DECRST 2026, alone or combined (`CSI ? 25;2026 h`).
             // vt100 still gets the bytes; it ignores the mode itself.
@@ -373,47 +311,14 @@ impl XtermCompat {
                 self.charsets = self.saved;
                 out.extend_from_slice(b"\x1b8");
             }
-            // HVP, HPA, HPR, VPR: same parameters as CUP, CHA, CUF, CUD.
-            b'f' | b'`' | b'a' | b'e' if plain => {
-                self.seq[end] = match fin {
-                    b'f' => b'H',
-                    b'`' => b'G',
-                    b'a' => b'C',
-                    _ => b'B',
-                };
+            // HPR, VPR: same parameters as CUF, CUD.
+            b'a' | b'e' if plain => {
+                self.seq[end] = if fin == b'a' { b'C' } else { b'B' };
                 out.extend_from_slice(&self.seq);
             }
-            // REP, bounded to `cols` characters (two rows of wide ones);
-            // dropped with nothing to repeat.
-            b'b' if plain => {
-                if let Some(c) = self.last {
-                    let mut buf = [0; 4];
-                    let count = usize::from(n.max(1).min(cols));
-                    let c = c.encode_utf8(&mut buf).as_bytes();
-                    for _ in 0..count {
-                        out.extend_from_slice(c);
-                    }
-                }
-            }
-            // vt100 loops `n` times for ICH, IL and SD; past the grid it is
-            // the same blank, only seconds slower.
-            b'@' if plain && n > cols => out.extend_from_slice(format!("\x1b[{cols}@").as_bytes()),
-            b'L' | b'T' if plain && n > rows => {
-                out.extend_from_slice(format!("\x1b[{rows}{}", char::from(fin)).as_bytes());
-            }
-            // DECSTBM: remember whether the primary screen scrolls a region
-            // narrower than the grid, with vt100's own defaults and clamps.
-            b'r' if plain => {
-                if !self.alt {
-                    let mut p = body.split(|&b| b == b';').map(param);
-                    let top = p.next().unwrap_or(0).max(1);
-                    let bottom = match p.next().unwrap_or(0) {
-                        0 => rows,
-                        b => b.min(rows),
-                    };
-                    self.primary_region = top < bottom && (top > 1 || bottom < rows);
-                }
-                out.extend_from_slice(&self.seq);
+            // REP, bounded to `cols` characters (two rows of wide ones).
+            b'b' if plain && param(body) > cols => {
+                out.extend_from_slice(format!("\x1b[{cols}b").as_bytes());
             }
             _ => out.extend_from_slice(&self.seq),
         }
@@ -544,7 +449,7 @@ impl vt100::Callbacks for PtyCallbacks {
             ('n', 6) => {
                 let (row, col) = screen.cursor_position();
                 let (rows, cols) = screen.size();
-                let (row, col) = ((row + 1).min(rows), (col + 1).min(cols));
+                let (row, col) = ((row + 1).min(rows.get()), (col + 1).min(cols.get()));
                 format!("\x1b[{row};{col}R").into_bytes()
             }
             // DSR 5 — device status. Nothing can go wrong in an in-memory grid.
@@ -599,7 +504,12 @@ pub struct ParserState {
 impl ParserState {
     pub fn new(rows: u16, cols: u16) -> Self {
         Self {
-            inner: vt100::Parser::new_with_callbacks(rows, cols, 10_000, PtyCallbacks::default()),
+            inner: vt100::Parser::new_with_callbacks(
+                nonzero(rows),
+                nonzero(cols),
+                10_000,
+                PtyCallbacks::default(),
+            ),
             compat: XtermCompat::default(),
             out: Vec::new(),
             ends: VecDeque::new(),
@@ -644,8 +554,8 @@ impl ParserState {
     /// reads of a batch before applying any: the held frame is then rasterized
     /// once, at the batch's last frame boundary, instead of once per read.
     pub(crate) fn queue(&mut self, bytes: &[u8]) {
-        let size = self.inner.screen().size();
-        self.compat.feed(bytes, size, &mut self.out);
+        let (_, cols) = self.size();
+        self.compat.feed(bytes, cols, &mut self.out);
         self.ends.push_back(self.out.len());
     }
 
@@ -688,16 +598,15 @@ impl ParserState {
         }
     }
 
-    /// Rasterize the grid as the held frame, as `tui-term` would draw it.
+    /// Rasterize the grid as the held frame, as [`draw_screen`] draws it live.
     fn snapshot(&mut self, now: Instant) {
-        let screen = self.inner.screen();
         // A scrolled-back view is not the frame the app drew.
-        self.frame_ok = screen.scrollback() == 0;
+        self.frame_ok = self.scrollback() == 0;
         if self.frame_ok {
-            let (rows, cols) = screen.size();
+            let (rows, cols) = self.size();
             let area = Rect::new(0, 0, cols, rows);
             self.frame.resize(area);
-            PseudoTerminal::new(screen).render(area, &mut self.frame);
+            draw_screen(self.inner.screen(), area, &mut self.frame, true);
             self.taken = now;
             #[cfg(test)]
             {
@@ -719,38 +628,13 @@ impl ParserState {
         hold.then_some(&self.frame)
     }
 
-    /// Resize the grid to `rows` x `cols`.
-    ///
-    /// Stock vt100 shrinks rows by cutting them off the *bottom* and clamping
-    /// the cursor, so a shell whose prompt sits on the last row loses the
-    /// prompt and everything above it down to the new height, for good, and
-    /// growing back brings blank rows. A real terminal scrolls the top into
-    /// history instead. This does the same with vt100's own scrolling: on the
-    /// primary screen, with no narrowed scroll region (vt100 only keeps
-    /// history then), line feeds at the bottom margin push the rows above the
-    /// cursor into scrollback until the cursor row is the new last row.
-    ///
-    /// The alternate screen is left alone: it keeps no history, and the app
-    /// drawing there repaints on SIGWINCH. Columns are not reflowed (vt100
-    /// cuts them), which is what xterm does too.
+    /// Resize the grid to `rows` x `cols`. vt100 keeps the cursor row: a
+    /// shrink cuts blank rows below the cursor, then scrolls the top into
+    /// history; a grow pulls history back down. It also resets the scroll
+    /// region and the scrollback offset, as xterm does. Columns are cut, not
+    /// reflowed.
     pub fn set_size(&mut self, rows: u16, cols: u16) {
-        let screen = self.inner.screen();
-        let (old_rows, _) = screen.size();
-        let (row, col) = screen.cursor_position();
-        if rows < old_rows
-            && row >= rows
-            && !screen.alternate_screen()
-            && !self.compat.primary_region
-        {
-            // Down to the bottom margin, scroll, then back to the cursor's
-            // column on what becomes the new last row (CUP is 1-based).
-            let lift = usize::from(row + 1 - rows);
-            self.inner.process(format!("\x1b[{old_rows};1H").as_bytes());
-            self.inner.process("\n".repeat(lift).as_bytes());
-            self.inner
-                .process(format!("\x1b[{rows};{}H", col + 1).as_bytes());
-        }
-        self.inner.screen_mut().set_size(rows, cols);
+        self.inner.set_size(nonzero(rows), nonzero(cols));
         // The held frame has the old size: draw live until the next one.
         self.frame_ok = false;
     }
@@ -759,15 +643,20 @@ impl ParserState {
         self.inner.screen()
     }
 
+    /// The grid size as (rows, cols).
+    pub fn size(&self) -> (u16, u16) {
+        let (rows, cols) = self.inner.screen().size();
+        (rows.get(), cols.get())
+    }
+
     /// Current scrollback offset (0 = pinned to bottom).
     pub fn scrollback(&self) -> usize {
         self.inner.screen().scrollback()
     }
 
     pub fn set_scrollback(&mut self, rows: usize) {
-        // vt100 caps the value at `scrollback.len()` internally; the
-        // out-of-range panic that forced our old vendored fork was fixed
-        // upstream in 0.16, so any value up to the full buffer is safe.
+        // vt100 caps the value at `scrollback.len()` internally, so any value
+        // up to the full buffer is safe.
         self.inner.screen_mut().set_scrollback(rows);
     }
 
@@ -785,6 +674,75 @@ impl ParserState {
 
     pub fn snap_to_bottom(&mut self) {
         self.inner.screen_mut().set_scrollback(0);
+    }
+}
+
+/// vt100 takes no empty grid; the PTY never has one (`floor_grid`).
+fn nonzero(n: u16) -> NonZeroU16 {
+    NonZeroU16::new(n).unwrap_or(NonZeroU16::MIN)
+}
+
+/// Draw `screen` into `area` of `buf`: each cell's text, colours and
+/// attributes, then the cursor when `cursor` is set and the app has not hidden
+/// it, as a gray block on a blank cell and reversed over text. Cells past the
+/// grid are cleared.
+pub(crate) fn draw_screen(screen: &vt100::Screen, area: Rect, buf: &mut Buffer, cursor: bool) {
+    Clear.render(area, buf);
+    for row in 0..area.height {
+        for col in 0..area.width {
+            let Some(cell) = screen.cell(row, col) else {
+                continue;
+            };
+            let out = &mut buf[(area.x + col, area.y + row)];
+            if cell.has_contents() {
+                out.set_symbol(cell.contents());
+            }
+            let mut modifier = Modifier::empty();
+            for (on, m) in [
+                (cell.bold(), Modifier::BOLD),
+                (cell.dim(), Modifier::DIM),
+                (cell.italic(), Modifier::ITALIC),
+                (cell.underline(), Modifier::UNDERLINED),
+                (cell.inverse(), Modifier::REVERSED),
+            ] {
+                if on {
+                    modifier |= m;
+                }
+            }
+            out.set_style(
+                Style::reset()
+                    .fg(color(cell.fgcolor()))
+                    .bg(color(cell.bgcolor()))
+                    .add_modifier(modifier),
+            );
+        }
+    }
+    if !cursor || screen.hide_cursor() {
+        return;
+    }
+    // Scrolled back, the cursor's row moves down with the live screen.
+    let (row, col) = screen.cursor_position();
+    let row = row.saturating_add(u16::try_from(screen.scrollback()).unwrap_or(u16::MAX));
+    if row >= area.height || col >= area.width {
+        return;
+    }
+    let Some(cell) = screen.cell(row, col) else {
+        return;
+    };
+    let out = &mut buf[(area.x + col, area.y + row)];
+    if cell.has_contents() {
+        out.set_style(Style::default().add_modifier(Modifier::REVERSED));
+    } else {
+        out.set_symbol("\u{2588}");
+        out.set_style(Style::default().fg(Color::Gray));
+    }
+}
+
+fn color(c: vt100::Color) -> Color {
+    match c {
+        vt100::Color::Default => Color::Reset,
+        vt100::Color::Idx(i) => Color::Indexed(i),
+        vt100::Color::Rgb(r, g, b) => Color::Rgb(r, g, b),
     }
 }
 
@@ -1093,21 +1051,21 @@ mod tests {
 
     // ── xterm compatibility translator ────────────────────────────
     //
-    // Stock vt100 0.16 drops these xterm sequences; `XtermCompat` rewrites
-    // them into ones it handles before the bytes reach the parser.
+    // vt100 0.18 drops these xterm sequences; `XtermCompat` rewrites them
+    // into ones it handles before the bytes reach the parser.
 
     /// Run `chunks` through the translator alone, as successive PTY reads.
-    fn translate(size: (u16, u16), chunks: &[&[u8]]) -> Vec<u8> {
+    fn translate(cols: u16, chunks: &[&[u8]]) -> Vec<u8> {
         let mut compat = XtermCompat::default();
         let mut out = Vec::new();
         for chunk in chunks {
-            compat.feed(chunk, size, &mut out);
+            compat.feed(chunk, cols, &mut out);
         }
         out
     }
 
     fn row(p: &ParserState, r: usize) -> String {
-        let (_, cols) = p.screen().size();
+        let (_, cols) = p.size();
         p.screen().rows(0, cols).nth(r).unwrap_or_default()
     }
 
@@ -1208,7 +1166,7 @@ mod tests {
             \x1bP1$r[5;5f\x18\x1b\\\x1b_[u\x18\x1b\\";
         for k in 0..=stream.len() {
             assert_eq!(
-                translate((24, 80), &[&stream[..k], &stream[k..]]),
+                translate(80, &[&stream[..k], &stream[k..]]),
                 expected,
                 "split {k}"
             );
@@ -1225,7 +1183,7 @@ mod tests {
         assert_eq!(p.take_clipboard_writes(), vec!["R0VIRUlN".to_string()]);
         assert_eq!(row(&p, 0), "aaaxyz");
         let stream = b"ab\x1b]0;t\x1b\nY";
-        let mut raw = vt100::Parser::new(5, 20, 0);
+        let mut raw = vt100::Parser::new(nonzero(5), nonzero(20), 0);
         raw.process(stream);
         assert_eq!(raw.screen().cursor_position(), (1, 2));
         assert_eq!(
@@ -1394,8 +1352,12 @@ mod tests {
                 // Raw vt100 gets the same two reads: vte 0.15 itself mishandles
                 // a UTF-8 character split across reads, which is not ours to
                 // compare against.
-                let mut raw =
-                    vt100::Parser::new_with_callbacks(6, 20, 10_000, PtyCallbacks::default());
+                let mut raw = vt100::Parser::new_with_callbacks(
+                    nonzero(6),
+                    nonzero(20),
+                    10_000,
+                    PtyCallbacks::default(),
+                );
                 raw.process(&stream[..k]);
                 raw.process(&stream[k..]);
                 let want = (
@@ -1434,37 +1396,19 @@ mod tests {
     }
 
     #[test]
-    fn ich_il_sd_counts_are_clamped_to_the_grid() {
-        // vt100 loops once per count: a single `CSI 65535 @` takes seconds.
-        let t = |s: &[u8]| translate((24, 80), &[s]);
-        assert_eq!(t(b"\x1b[65535@"), b"\x1b[80@");
-        assert_eq!(t(b"\x1b[65535:1@"), b"\x1b[80@");
-        assert_eq!(t(b"\x1b[65535L"), b"\x1b[24L");
-        assert_eq!(t(b"\x1b[65535T"), b"\x1b[24T");
-        assert_eq!(t(b"\x1b[80@\x1b[24L\x1b[2T"), b"\x1b[80@\x1b[24L\x1b[2T");
-
-        let p = parser_with(24, 80, b"abc\x1b[1;1H\x1b[65535@");
-        assert_eq!(row(&p, 0), "");
-        let p = parser_with(5, 10, b"1\r\n2\r\n3\x1b[1;1H\x1b[65535L");
-        assert_eq!(p.screen().contents().trim(), "");
-        let p = parser_with(5, 10, b"1\r\n2\r\n3\x1b[65535T");
-        assert_eq!(p.screen().contents().trim(), "");
-    }
-
-    #[test]
-    fn overlong_count_sequence_is_aborted() {
-        // Zero padding pushes it past the hold limit; it must not reach vt100
-        // with its 65535 count intact.
-        let mut ich = b"\x1b[".to_vec();
-        ich.extend(std::iter::repeat_n(b'0', 300));
-        ich.extend_from_slice(b"65535@");
-        let mut aborted = ich.clone();
+    fn overlong_rep_is_aborted() {
+        // Zero padding pushes it past the hold limit, out of reach of the
+        // count cap; it must not reach vt100 with its 65535 count intact.
+        let mut rep = b"\x1b[".to_vec();
+        rep.extend(std::iter::repeat_n(b'0', 300));
+        rep.extend_from_slice(b"65535b");
+        let mut aborted = rep.clone();
         *aborted.last_mut().unwrap() = 0x18;
-        assert_eq!(translate((24, 80), &[&ich]), aborted);
+        assert_eq!(translate(80, &[&rep]), aborted);
 
-        let mut stream = b"abc\x1b[1;1H".to_vec();
-        stream.extend_from_slice(&ich);
-        assert_eq!(row(&parser_with(24, 80, &stream), 0), "abc");
+        let mut stream = b"a".to_vec();
+        stream.extend_from_slice(&rep);
+        assert_eq!(row(&parser_with(24, 80, &stream), 0), "a");
     }
 
     #[test]
@@ -1673,14 +1617,13 @@ mod tests {
 
     // ── Row shrink keeps the cursor row (#73) ───────────────────────
     //
-    // Oracle: xterm. Shrinking a window with the prompt on the last row
-    // scrolls the top into history; the prompt and the output just above it
-    // stay on screen.
+    // Shrinking a window with the prompt on the last row scrolls the top into
+    // history; the prompt and the output just above it stay on screen.
 
     /// Every row the screen holds, oldest scrollback first, then the screen.
     fn history(p: &ParserState) -> Vec<String> {
         let mut screen = p.screen().clone();
-        let (rows, cols) = screen.size();
+        let (rows, cols) = p.size();
         screen.set_scrollback(usize::MAX);
         let mut out: Vec<String> = Vec::new();
         // Walk up from the oldest window one screen at a time; each window
@@ -1726,58 +1669,15 @@ mod tests {
         let mut want: Vec<String> = (1..=100).map(|i| i.to_string()).collect();
         want.push("PROMPT$".into());
         assert_eq!(lines, want);
-        // Growing back adds blank rows below; history is still whole.
+        // Growing back pulls history down: the screen is what it was.
         p.set_size(46, 40);
-        assert_eq!(p.screen().cursor_position(), (22, 8));
+        assert_eq!(p.screen().cursor_position(), (45, 8));
+        let rows: Vec<String> = p.screen().rows(0, 40).collect();
+        assert_eq!(rows[45].trim_end(), "PROMPT$");
+        assert_eq!(rows[0].trim_end(), "56");
         assert_eq!(
             history(&p).iter().filter(|l| !l.trim().is_empty()).count(),
             101
         );
-    }
-
-    #[test]
-    fn a_scroll_region_is_never_scrolled_to_make_room() {
-        // A pager-style layout on the primary screen: a fixed 4-row header and
-        // a region below it. vt100 keeps no history for a region, so scrolling
-        // it would delete rows outright; the stock cut is the lesser loss. A
-        // visit to the alternate screen does not reset the primary's region.
-        let mut p = ParserState::new(10, 20);
-        let mut stream = String::from("\x1b[5;10r");
-        for row in 1..=10 {
-            stream.push_str(&format!("\x1b[{row};1Hrow{row}"));
-        }
-        stream.push_str("\x1b[?1049h\x1b[?1049l\x1b[10;1H");
-        p.process(stream.as_bytes());
-        p.set_size(6, 20);
-        let rows: Vec<String> = p
-            .screen()
-            .rows(0, 20)
-            .map(|r| r.trim_end().to_string())
-            .collect();
-        assert_eq!(rows, ["row1", "row2", "row3", "row4", "row5", "row6"]);
-    }
-
-    #[test]
-    fn the_alternate_screen_is_cut_not_scrolled() {
-        // The app there repaints on SIGWINCH; scrolling would only throw away
-        // its top rows (the alternate grid has no history to keep them in).
-        let mut p = ParserState::new(10, 20);
-        p.process(b"\x1b[?1049h\x1b[1;1HTOP\x1b[10;1HBOTTOM");
-        p.set_size(6, 20);
-        assert_eq!(p.screen().rows(0, 20).next().unwrap().trim_end(), "TOP");
-    }
-
-    #[test]
-    fn ris_clears_a_remembered_scroll_region() {
-        // After a reset the region is gone, so the shrink keeps the prompt.
-        let mut p = ParserState::new(46, 40);
-        p.process(b"\x1b[5;46r\x1bc");
-        let mut stream: String = (1..=100).map(|i| format!("{i}\r\n")).collect();
-        stream.push_str("PROMPT$ ");
-        p.process(stream.as_bytes());
-        p.set_size(23, 40);
-        let rows: Vec<String> = p.screen().rows(0, 40).collect();
-        assert_eq!(rows[22].trim_end(), "PROMPT$");
-        assert_eq!(rows[21].trim_end(), "100");
     }
 }

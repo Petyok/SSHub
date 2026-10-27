@@ -57,6 +57,10 @@ impl App {
             self.open_sftp_for_active_session();
             return Ok(());
         }
+        if self.is_action(KeyAction::SessionShareNet, &key) {
+            self.toggle_net_share();
+            return Ok(());
+        }
         // Snippet insertion only writes bytes the user explicitly picked, so the
         // bare-Running gate applies (mosh never earns `connected`): history and
         // ghost stay on the honest `is_live_authenticated` signal elsewhere.
@@ -93,7 +97,7 @@ impl App {
         // view is its pane, not the terminal.
         let body_rows = self
             .active_session()
-            .map_or(1, |s| usize::from(s.parser.screen().size().0));
+            .map_or(1, |s| usize::from(s.parser.size().0));
 
         let cancel_connecting = matches!(
             self.active_session().map(|s| &s.phase),
@@ -156,6 +160,99 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    /// Share this machine's network with the focused session's host, or stop
+    /// sharing (#174). A second ssh connection carries the proxy; the session
+    /// is not touched. It logs in with what a new connection to the saved host
+    /// would use ([`Self::stored_secret_for_session`]) and the jump hosts'
+    /// stored secrets, staged the way tunnels do. The outcome reaches the
+    /// host's ssh log.
+    pub(crate) fn toggle_net_share(&mut self) {
+        let Some(idx) = self.active_session else {
+            return;
+        };
+        let Some(session) = self.sessions.get(idx) else {
+            return;
+        };
+        let host_name = session.display_name.clone();
+        let note = |app: &mut Self, level, line: String| {
+            app.push_ssh_log(crate::ssh::probe::SshLogEntry {
+                host_name: host_name.clone(),
+                line,
+                level,
+                timestamp: SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64,
+            });
+        };
+        // Only a running share is stopped by the key; after a failure it
+        // starts again, as the footer's "retry" says.
+        if matches!(
+            session.net_share(),
+            crate::session::NetShare::Starting | crate::session::NetShare::Port(_)
+        ) {
+            self.sessions[idx].stop_net_share();
+            note(
+                self,
+                crate::ssh::probe::LogLevel::Info,
+                "session: stopped sharing this machine's network".into(),
+            );
+            return;
+        }
+        if !session.can_share_net() {
+            let msg = "only ssh sessions can share the network".to_string();
+            self.sessions[idx].copy_notice = Some((msg, std::time::Instant::now()));
+            return;
+        }
+        // The sidecar needs a host key the session has verified, and a login
+        // that is not another attempt on a half-open connection.
+        if !session.is_connected() {
+            let msg = "wait until the session is connected".to_string();
+            self.sessions[idx].copy_notice = Some((msg, std::time::Instant::now()));
+            return;
+        }
+        let secret = self.stored_secret_for_session(idx);
+        let hops = hop_secrets(
+            &self.store,
+            &self.hosts,
+            &*self.password_store,
+            session.meta.proxy_jump.as_deref(),
+        );
+        if let Err(e) = self.sessions[idx].start_net_share(
+            secret.as_ref(),
+            &hops,
+            crate::session::share_net::PERMIT_REMOTE_OPEN,
+        ) {
+            note(
+                self,
+                crate::ssh::probe::LogLevel::Error,
+                format!("session: could not share this machine's network: {e:#}"),
+            );
+        }
+    }
+
+    /// The stored secret a new connection to session `idx`'s saved host logs
+    /// in with. The session itself drops its copy once authenticated, so this
+    /// looks it up again from the host, as SFTP and broadcast do. `None` for a
+    /// session with no saved host (ad-hoc), which has a key or an agent or
+    /// nothing.
+    pub(crate) fn stored_secret_for_session(
+        &self,
+        idx: usize,
+    ) -> Option<crate::session::PendingSecret> {
+        let name = &self.sessions.get(idx)?.config.host_name;
+        let entry = self.hosts.iter().find(|e| e.name() == name)?;
+        let effective = entry
+            .managed()
+            .and_then(|m| self.store.resolve_connection(m).ok());
+        crate::app::resolve_pending_secret(
+            entry,
+            effective.as_ref().and_then(|r| r.identity.as_ref()),
+            self.password_store.as_ref(),
+        )
+        .0
     }
 
     /// Session-strip keys while on the dashboard with background sessions.
@@ -542,7 +639,7 @@ impl App {
         let mode = session.parser.screen().mouse_protocol_mode();
         let encoding = session.parser.screen().mouse_protocol_encoding();
         let alternate_screen = session.parser.screen().alternate_screen();
-        let (rows, cols) = session.parser.screen().size();
+        let (rows, cols) = session.parser.size();
 
         // Pane-local grid coordinates.
         let row = mouse.row.saturating_sub(pane.y).min(rows.saturating_sub(1));

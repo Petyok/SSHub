@@ -295,13 +295,36 @@ pub fn prepare_cli_connect_argv(
     }
 }
 
-/// Interactive SSH uses explicit host trust and at most three auth attempts.
+/// [`prepare_cli_connect_argv`] for an interactive `sshub connect` (and the argv
+/// `sshub host resolve` reports for it): ssh also gets `-t` and the startup
+/// command keeps the login shell, as in [`prepare_session_connect_argv`].
+/// `sshub exec` stays on the plain variant: it drops the startup command and
+/// picks `-T` or `-tt` itself.
+pub fn prepare_cli_session_argv(
+    argv: Vec<String>,
+    has_stored_secret: bool,
+    verbose: bool,
+) -> Vec<String> {
+    let mut argv = prepare_cli_connect_argv(argv, has_stored_secret, verbose);
+    if argv.first().map(String::as_str) == Some("ssh") {
+        argv.insert(1, "-t".into());
+        keep_login_shell(&mut argv);
+    }
+    argv
+}
+
+/// Interactive SSH uses explicit host trust, at most three auth attempts, and
+/// a remote terminal. ssh asks for a terminal on its own only for a login
+/// shell, so a startup command (`remote_command`, or `RemoteCommand` in
+/// ssh_config) ran without one: `sudo su root` printed no prompt and the
+/// session sat on the connect screen (#171).
 pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bool) -> Vec<String> {
     match argv.first().map(String::as_str) {
         Some("ssh") => {
             argv.splice(
                 1..1,
                 [
+                    "-t",
                     "-o",
                     "StrictHostKeyChecking=ask",
                     "-o",
@@ -311,10 +334,44 @@ pub fn prepare_session_connect_argv(mut argv: Vec<String>, has_stored_secret: bo
                 .chain(crate::session::SSH_DEBUG_ARGS)
                 .map(String::from),
             );
+            keep_login_shell(&mut argv);
             argv
         }
         Some("mosh") if has_stored_secret => crate::ssh::inject_mosh_ssh_accept_new(argv),
         _ => argv,
+    }
+}
+
+/// Share this machine's network with the host (#174): add the reverse
+/// dynamic forward and its destination limit to an ssh argv, ahead of the
+/// destination. `false` (argv untouched) for anything but ssh, mosh has no
+/// reverse forward.
+pub fn add_share_net_args(argv: &mut Vec<String>, permit_remote_open: &str) -> bool {
+    if argv.first().map(String::as_str) != Some("ssh") {
+        return false;
+    }
+    argv.splice(
+        1..1,
+        crate::session::share_net::ssh_args(permit_remote_open),
+    );
+    true
+}
+
+/// A startup command runs at login and the session goes on in the login
+/// shell (#171): `cd /srv` leaves a shell in /srv, `sudo su` a root shell
+/// that drops back to yours on exit. ssh runs a remote command instead of the
+/// shell, so the shell is started after it. A newline rather than `;` ends the
+/// command, so a trailing `&` or `# comment` still parses. A command that
+/// starts with `exec` replaces the shell that runs the rest, and the session
+/// ends with it.
+///
+/// Only the trailing `-- <command>` pair `build_ssh_argv` adds for a stored
+/// startup command is touched; an ssh_config `RemoteCommand` stays ssh's.
+fn keep_login_shell(argv: &mut [String]) {
+    if let [.., sep, command] = argv {
+        if sep == "--" {
+            command.push_str("\nexec \"$SHELL\" -l");
+        }
     }
 }
 

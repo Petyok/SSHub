@@ -105,7 +105,9 @@ impl App {
             .as_secs() as i64;
         self.push_ssh_log(crate::ssh::probe::SshLogEntry {
             host_name: entry.name().to_string(),
-            line: format!("$ {}", session_argv.join(" ")),
+            // A startup command carries a newline (`keep_login_shell`); the
+            // log is one line, and the panel would drop the break unseen.
+            line: format!("$ {}", session_argv.join(" ").replace('\n', "\\n")),
             level: crate::ssh::probe::LogLevel::Success,
             timestamp: now_ts_val,
         });

@@ -1126,3 +1126,56 @@ pub(crate) fn a_wheel_on_the_alternate_screen_names_the_tmux_switch_once() {
     app.handle_mouse(wheel(MouseEventKind::ScrollUp)).unwrap();
     assert!(app.active_session().unwrap().copy_notice.is_none());
 }
+
+#[test]
+pub(crate) fn sharing_logs_in_with_the_hosts_stored_password_after_the_session_dropped_its_copy() {
+    // #174 on a real password host: the session drops its copy of the stored
+    // password once authenticated, and sharing (only allowed after connect)
+    // read that copy, so the second connection had nothing to log in with
+    // and failed. A new connection must look the stored secret up again.
+    let store = test_store();
+    let mut nh = crate::store::NewHost::launcher("dev-proxy", "10.0.0.9");
+    nh.has_password = true;
+    let created = store.create_host(&nh).unwrap();
+    let secrets = Arc::new(MemoryPasswordStore::default());
+    {
+        use crate::credentials::PasswordStore;
+        secrets
+            .set(&crate::credentials::host_key(created.id), "host-pw")
+            .unwrap();
+    }
+    let mut app = App::new_with_deps(
+        AppConfig::default(),
+        AppDeps {
+            resolver: Box::new(MockResolver::new(vec![])),
+            metadata: Arc::new(MetadataDb::default()),
+            store,
+            password_store: Box::new(SharedStore(secrets)),
+        },
+    );
+    app.reload_hosts().unwrap();
+    let cfg = crate::session::SessionConfig {
+        hops: Vec::new(),
+        argv: vec!["sleep".into(), "30".into()],
+        display_name: "dev-proxy".into(),
+        meta: crate::session::SessionMeta::default(),
+        // What an authenticated session holds: no copy of the secret.
+        pending_secret: None,
+        key_push_identity: None,
+        host_name: "dev-proxy".into(),
+    };
+    app.sessions
+        .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
+
+    assert!(
+        matches!(
+            app.stored_secret_for_session(0),
+            Some(crate::session::PendingSecret::Password(ref pw)) if pw == "host-pw"
+        ),
+        "the share must log in with the host's stored password"
+    );
+    // A session with no saved host (ad-hoc) has none to look up.
+    app.sessions[0].config.host_name = "10.0.0.9".into();
+    assert!(app.stored_secret_for_session(0).is_none());
+    app.shutdown_all();
+}
