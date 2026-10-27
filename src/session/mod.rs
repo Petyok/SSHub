@@ -846,14 +846,17 @@ impl Session {
     }
 
     /// Reveal the live terminal once the connect timeout elapses — but only if
-    /// real PTY content has arrived (a prompt/banner/host-key question we might
-    /// have failed to auto-answer). With `-v` debug now siphoned off the PTY, a
-    /// host that never answered has a blank grid, so failing open there would
-    /// just hide the spinner + debug tail behind emptiness. Those sessions stay
-    /// on the spinner until the child exits.
+    /// the host is there: real PTY content arrived (a prompt/banner/host-key
+    /// question we might have failed to auto-answer), or ssh authenticated. A
+    /// startup command may print nothing at all, and an authenticated session
+    /// held behind the spinner looked like a connect that never finished
+    /// (#171). With `-v` debug siphoned off the PTY, a host that never answered
+    /// has a blank grid, so failing open there would just hide the spinner +
+    /// debug tail behind emptiness. Those sessions stay on the spinner until
+    /// the child exits.
     fn reveal_on_timeout(&mut self) {
         if let SessionPhase::Connecting { started_at } = self.phase {
-            if started_at.elapsed() >= REVEAL_TIMEOUT && self.saw_pty_bytes {
+            if started_at.elapsed() >= REVEAL_TIMEOUT && (self.saw_pty_bytes || self.connected) {
                 self.diagnostics
                     .push("auth: connect timed out — showing live terminal".into());
                 self.phase = SessionPhase::Running {
@@ -2592,6 +2595,42 @@ mod prompt_tests {
             );
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
+    }
+
+    #[test]
+    fn an_authenticated_session_that_prints_nothing_still_reveals() {
+        // Oracle: real OpenSSH against a tempdir sshd (#171). The connect
+        // screen gave way only to output, so a startup command that prints
+        // nothing kept an authenticated session behind the spinner for good.
+        let Some(sshd) = tempdir_sshd() else {
+            return;
+        };
+        let mut s = startup_command_session(&sshd, "exec sleep 60");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !s.is_connected() {
+            s.drain();
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never authenticated: {:?}",
+                s.debug_log()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            !s.saw_pty_bytes && matches!(s.phase, SessionPhase::Connecting { .. }),
+            "setup: authenticated and silent (phase={:?})",
+            s.phase
+        );
+        // Past the reveal timeout, without waiting it out.
+        s.phase = SessionPhase::Connecting {
+            started_at: Instant::now() - REVEAL_TIMEOUT,
+        };
+        s.drain();
+        assert!(
+            matches!(s.phase, SessionPhase::Running { .. }),
+            "{:?}",
+            s.phase
+        );
     }
 
     #[test]

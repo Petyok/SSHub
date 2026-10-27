@@ -11,12 +11,26 @@ All notable changes to SSHub are documented in this file.
   shrink scrolls the top away also under a scroll region and on the alternate
   screen. A resize returns a scrolled-back view to the live screen, as xterm
   does. The terminal emulator under the panes moved to vt100 0.18.
+- **Startup command runs at login and keeps the session** (issue #171, reported
+  by [@Frysuni](https://github.com/Frysuni)) - over ssh, a host's startup command
+  now runs when you log in, and the session goes on in your login shell:
+  `cd /srv` leaves you in `/srv`, and `cd / && sudo su root` in a root shell in
+  `/` that drops back to your own shell on exit. It used to replace the shell,
+  so the session ended as soon as the command did. To keep that, start the
+  command with `exec`, as in `exec tmux attach`. An ssh_config host's
+  `RemoteCommand` and a mosh host's command keep their own behaviour.
 
 ### Fixed
 
 - **Sessions** - `CSI 3 J` (sent by `clear` in most shells) now also empties the
   session's scrollback, and an emoji written with VS16 (`❤️`) takes two cells
   instead of one, so the text after it no longer lands on top of it.
+- **Startup command** (issue #171, reported by
+  [@Frysuni](https://github.com/Frysuni)) - the command now runs in a remote
+  terminal: without one, `sudo su root` printed no prompt and the session stayed
+  on the connect screen for good. `sshub connect` gets the terminal and the
+  login shell too. A session that authenticated but prints nothing now shows its
+  terminal after 6 s instead of keeping the connect screen up.
 
 ## [0.20.0] - 2026-10-24
 
