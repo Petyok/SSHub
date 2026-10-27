@@ -3107,8 +3107,12 @@ mod prompt_tests {
         let Some(sshd) = tempdir_sshd() else {
             return;
         };
+        // `%C` is a 40-character hash, and ssh appends a random suffix while
+        // binding: under macOS's long per-user TMPDIR that passed the ~104
+        // byte limit of a Unix socket path and the master never started. The
+        // port alone names this test's one master.
         let control = format!(
-            "ControlMaster auto\nControlPath {}/cm-%C\nControlPersist 30\n",
+            "ControlMaster auto\nControlPath {}/cm-%p\nControlPersist 30\n",
             sshd.dir.path().display()
         );
         let argv = oracle_argv(&sshd, None, &control);
