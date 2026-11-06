@@ -153,7 +153,10 @@ for (const ch of fx.challenges) {
       const req = d.rows.find((r) => r.label === 'Requesting device');
       assert.equal(req.danger, true);
       assert.ok(ch.name === 'unknown-requester' || req.value.includes(fx.requester.name), 'the requesting device is named');
-      assert.equal(d.rows.find((r) => r.label === 'Host credential').value, fx.host_uid);
+      // the host credential as a person compares it: 8 groups of 4, uppercase (the terminal and the app show the same)
+      assert.equal(d.rows.find((r) => r.label === 'Host credential').value, '0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A');
+      assert.equal(fx.host_uid, '0a'.repeat(16));
+      assert.match(d.headline, /host credential 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A to /);
     } else {
       assert.equal(ev.ok, false);
       assert.ok(ev.refusal.includes(ch.expect), `${ch.name}: "${ev.refusal}" should mention "${ch.expect}"`);

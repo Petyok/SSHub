@@ -23,9 +23,12 @@ impl<'a> Ctx<'a> {
         f: impl FnOnce(&mut Ctx<'a>) -> crate::error::Result<T>,
     ) -> crate::error::Result<T> {
         let saved = self.state.clone();
+        let id_saved = self.id.snapshot();
         let r = f(self);
         if r.is_err() {
             *self.state = saved;
+            // a wrap key rotation switches the identity to the next generation: that goes back too
+            self.id.rollback(&id_saved);
         }
         r
     }

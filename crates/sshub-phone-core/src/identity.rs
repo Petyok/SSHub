@@ -42,6 +42,13 @@ fn identity_at(secret: &[u8; 32], wrap_epoch: u32) -> DeviceIdentity {
     id
 }
 
+/// See [`PhoneIdentity::snapshot`].
+#[derive(Clone, Copy, Debug)]
+pub struct IdentitySnapshot {
+    wrap_epoch: u32,
+    seen_wrap_epoch: u32,
+}
+
 pub struct PhoneIdentity {
     secret: Zeroizing<[u8; 32]>,
     id: DeviceIdentity,
@@ -102,6 +109,26 @@ impl PhoneIdentity {
     }
     pub fn words(&self) -> String {
         bip39_encode(&self.secret)
+    }
+
+    /// What `rollback` needs to put the identity back after a failed transaction.
+    pub fn snapshot(&self) -> IdentitySnapshot {
+        IdentitySnapshot {
+            wrap_epoch: self.wrap_epoch,
+            seen_wrap_epoch: self.seen_wrap_epoch,
+        }
+    }
+
+    /// Back to the wrap generation of `snap` (keys are derived from the secret again, only when the generation moved).
+    pub fn rollback(&mut self, snap: &IdentitySnapshot) {
+        if self.wrap_epoch != snap.wrap_epoch {
+            if let Ok(mut old) = Self::new(&self.secret, snap.wrap_epoch) {
+                old.seen_wrap_epoch = snap.seen_wrap_epoch;
+                *self = old;
+            }
+        } else {
+            self.seen_wrap_epoch = snap.seen_wrap_epoch;
+        }
     }
 
     /// The same device one wrap generation later (the caller announces it with a `WrapKeyRotate` first).

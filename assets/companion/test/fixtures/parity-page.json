@@ -1340,7 +1340,7 @@
   {
    "id": "share-release-u64-max",
    "hash": "6b1d6b8279f47520e621a8cd7334032e07545c8a178093711f006ec5582491ed",
-   "headline": "Release your share of host credential 02020202020202020202020202020202 to terminal A [723ed85f0566df0c]",
+   "headline": "Release your share of host credential 0202 0202 0202 0202 0202 0202 0202 0202 to terminal A [723ed85f0566df0c]",
    "requester": "723ed85f0566df0c",
    "rows": [
     {
@@ -1350,7 +1350,7 @@
     },
     {
      "label": "Host credential",
-     "value": "02020202020202020202020202020202",
+     "value": "0202 0202 0202 0202 0202 0202 0202 0202",
      "danger": true
     },
     {
@@ -3076,7 +3076,7 @@
    "requester": "1355b0f2cb05902f",
    "host": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
    "description": {
-    "headline": "Release your share of host credential 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a to (no name known) [1355b0f2cb05902f]",
+    "headline": "Release your share of host credential 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A to (no name known) [1355b0f2cb05902f]",
     "rows": [
      {
       "label": "Requesting device",
@@ -3085,7 +3085,7 @@
      },
      {
       "label": "Host credential",
-      "value": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+      "value": "0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A",
       "danger": true
      },
      {
@@ -3169,7 +3169,7 @@
    "requester": "1355b0f2cb05902f",
    "host": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
    "description": {
-    "headline": "Release your share of host credential 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a to (no name known) [1355b0f2cb05902f]",
+    "headline": "Release your share of host credential 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A to (no name known) [1355b0f2cb05902f]",
     "rows": [
      {
       "label": "Requesting device",
@@ -3178,7 +3178,7 @@
      },
      {
       "label": "Host credential",
-      "value": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+      "value": "0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A",
       "danger": true
      },
      {
@@ -3516,7 +3516,7 @@
    "requester": "a098a5efa2e3bf52",
    "host": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
    "description": {
-    "headline": "Release your share of host credential 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a to (no name known) [a098a5efa2e3bf52]",
+    "headline": "Release your share of host credential 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A to (no name known) [a098a5efa2e3bf52]",
     "rows": [
      {
       "label": "Requesting device",
@@ -3525,7 +3525,7 @@
      },
      {
       "label": "Host credential",
-      "value": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+      "value": "0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A",
       "danger": true
      },
      {
@@ -3609,7 +3609,7 @@
    "requester": "1355b0f2cb05902f",
    "host": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
    "description": {
-    "headline": "Release your share of host credential 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a to (no name known) [1355b0f2cb05902f]",
+    "headline": "Release your share of host credential 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A to (no name known) [1355b0f2cb05902f]",
     "rows": [
      {
       "label": "Requesting device",
@@ -3618,7 +3618,7 @@
      },
      {
       "label": "Host credential",
-      "value": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+      "value": "0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A",
       "danger": true
      },
      {
@@ -3745,7 +3745,7 @@
    "requester": "1355b0f2cb05902f",
    "host": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
    "description": {
-    "headline": "Release your share of host credential 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a to work laptop [1355b0f2cb05902f]",
+    "headline": "Release your share of host credential 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A to work laptop [1355b0f2cb05902f]",
     "rows": [
      {
       "label": "Requesting device",
@@ -3754,7 +3754,7 @@
      },
      {
       "label": "Host credential",
-      "value": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+      "value": "0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A",
       "danger": true
      },
      {
@@ -3838,7 +3838,7 @@
    "requester": "1355b0f2cb05902f",
    "host": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
    "description": {
-    "headline": "Release your share of host credential 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a to work laptop [1355b0f2cb05902f]",
+    "headline": "Release your share of host credential 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A to work laptop [1355b0f2cb05902f]",
     "rows": [
      {
       "label": "Requesting device",
@@ -3847,7 +3847,7 @@
      },
      {
       "label": "Host credential",
-      "value": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+      "value": "0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A",
       "danger": true
      },
      {
@@ -4185,7 +4185,7 @@
    "requester": "a098a5efa2e3bf52",
    "host": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
    "description": {
-    "headline": "Release your share of host credential 0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a to (no name known) [a098a5efa2e3bf52]",
+    "headline": "Release your share of host credential 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A to (no name known) [a098a5efa2e3bf52]",
     "rows": [
      {
       "label": "Requesting device",
@@ -4194,7 +4194,7 @@
      },
      {
       "label": "Host credential",
-      "value": "0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a",
+      "value": "0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A",
       "danger": true
      },
      {
