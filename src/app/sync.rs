@@ -1740,8 +1740,16 @@ mod tests {
     #[test]
     fn a_queued_sync_now_reaches_the_worker_and_its_events_fill_the_view() {
         use crate::sync::client::{RoundSummary, SyncEvent};
-        let mut app = app_with_worker(Box::new(|_k, device, ctx| {
+        // The round waits until the assert below has seen "running": without the gate a loaded
+        // machine finishes it inside the same poll and the intermediate state is gone.
+        let go = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let gate = go.clone();
+        let mut app = app_with_worker(Box::new(move |_k, device, ctx| {
             assert_eq!(device, "id-server");
+            let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !gate.load(std::sync::atomic::Ordering::SeqCst) && std::time::Instant::now() < end {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
             ctx.emit(SyncEvent::Progress("talking".into()));
             Ok(RoundSummary {
                 pending_arrived: 3,
@@ -1754,6 +1762,7 @@ mod tests {
         app.poll_sync();
         assert!(app.sync.syncing, "a request marks the round as running");
         assert!(app.sync.intents.is_empty());
+        go.store(true, std::sync::atomic::Ordering::SeqCst);
         pump(&mut app, |a| !a.sync.syncing);
         // The round is done: the count is re-read from the store (empty here).
         assert_eq!(app.sync.pending, 0);
