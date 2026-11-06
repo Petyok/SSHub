@@ -28,6 +28,17 @@ check() {
   fi
 }
 
+# One step with its time: runs the command in the current shell (variables it sets stay), prints `date +%T` before and
+# after with the seconds it took, counts a failure. Usage: step "description" command args...
+step() {
+  d=$1; shift
+  echo "$(date +%T) step: $d"
+  t0=$(date +%s)
+  if "$@"; then r=ok; else r=FAIL; fail=$((fail + 1)); fi
+  echo "$(date +%T) $r   $d ($(( $(date +%s) - t0 )) s)"
+  [ "$r" = ok ]
+}
+
 # JSON predicate: expect "description" "$json" '.pending >= 1'
 expect() {
   desc=$1; json=$2; pred=$3

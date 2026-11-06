@@ -1,4 +1,5 @@
 #!/bin/sh
+# timeout: 1500
 # 90: checkpoint. The driver proposes a checkpoint once the log has grown by
 # CHECKPOINT_OPS (5000) ops; there is no env or config knob for small limits, so
 # this scenario produces them with safe edits through the real CLI. Pruning
@@ -25,8 +26,8 @@ cnt() { sqlite3 -cmd ".timeout 60000" "$db" "SELECT count(*) FROM sync_ops"; }
 w() { i=0; while c=$(cnt); [ -z "$c" ] || [ "$c" -lt 5100 ]; do
   out=$(sshub --profile default host add --name g$1_$i --address a$i.internal 2>&1) || echo "worker $1: add $i failed: $out"
   i=$((i+1)); [ $((i % 100)) -eq 0 ] && echo "worker $1: $i adds, $(cnt) ops"; done; }
-for k in 1 2 3; do w $k & done; wait'
-echo "--- growing peer-a's log with 3 workers until 5100 ops"
+for k in 1 2 3 4 5 6; do w $k & done; wait'
+echo "--- growing peer-a's log with 6 workers until 5100 ops"
 psh peer-a "$grow" 2>&1 | sed -u 's/^/    | /'
 check "peer-a's log passed the checkpoint op threshold (5000)" '[ "$(sq peer-a "SELECT count(*) FROM sync_ops")" -ge 5000 ]'
 show "peer-a op states (a checkpoint cannot be built while ops below its cut are pending)" sq peer-a 'SELECT state, coalesce(reason,""), count(*) FROM sync_ops GROUP BY state, reason'
