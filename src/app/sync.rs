@@ -1747,7 +1747,8 @@ mod tests {
         let mut app = app_with_worker(Box::new(move |_k, device, ctx| {
             assert_eq!(device, "id-server");
             let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
-            while !gate.load(std::sync::atomic::Ordering::SeqCst) && std::time::Instant::now() < end {
+            while !gate.load(std::sync::atomic::Ordering::SeqCst) && std::time::Instant::now() < end
+            {
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
             ctx.emit(SyncEvent::Progress("talking".into()));
