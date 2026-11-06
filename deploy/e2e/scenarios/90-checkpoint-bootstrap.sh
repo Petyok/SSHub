@@ -21,13 +21,16 @@ show "peer-a op kinds after the password edit" sq peer-a 'SELECT kind, count(*) 
 # 8 workers), so workers do not make it faster; 3 of them keep the lock contention honest. Each worker stops once the log
 # holds 5100 ops; a failing add prints its own stderr; a progress line every 100 adds, so a silent log means a hang.
 grow='db=$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)
-w() { i=0; while [ "$(sqlite3 "$db" "SELECT count(*) FROM sync_ops")" -lt 5100 ]; do
+cnt() { sqlite3 -cmd ".timeout 60000" "$db" "SELECT count(*) FROM sync_ops"; }
+w() { i=0; while c=$(cnt); [ -z "$c" ] || [ "$c" -lt 5100 ]; do
   out=$(sshub --profile default host add --name g$1_$i --address a$i.internal 2>&1) || echo "worker $1: add $i failed: $out"
-  i=$((i+1)); [ $((i % 100)) -eq 0 ] && echo "worker $1: $i adds, $(sqlite3 "$db" "SELECT count(*) FROM sync_ops") ops"; done; }
+  i=$((i+1)); [ $((i % 100)) -eq 0 ] && echo "worker $1: $i adds, $(cnt) ops"; done; }
 for k in 1 2 3; do w $k & done; wait'
 echo "--- growing peer-a's log with 3 workers until 5100 ops"
 psh peer-a "$grow" 2>&1 | sed -u 's/^/    | /'
 check "peer-a's log passed the checkpoint op threshold (5000)" '[ "$(sq peer-a "SELECT count(*) FROM sync_ops")" -ge 5000 ]'
+show "peer-a op states (a checkpoint cannot be built while ops below its cut are pending)" sq peer-a 'SELECT state, coalesce(reason,""), count(*) FROM sync_ops GROUP BY state, reason'
+show "peer-a pending ops by kind and author" sq peer-a 'SELECT kind, substr(device_id,1,8), count(*) FROM sync_ops WHERE state="pending" GROUP BY kind, device_id'
 show "peer-a ops in the log" sq peer-a 'SELECT count(*), sum(length(canonical)) FROM sync_ops'
 for round in 1 2 3; do
   snowt peer-b
