@@ -26,7 +26,7 @@ w() { i=0; while [ "$(sqlite3 "$db" "SELECT count(*) FROM sync_ops")" -lt 5100 ]
   i=$((i+1)); [ $((i % 100)) -eq 0 ] && echo "worker $1: $i adds, $(sqlite3 "$db" "SELECT count(*) FROM sync_ops") ops"; done; }
 for k in 1 2 3; do w $k & done; wait'
 echo "--- growing peer-a's log with 3 workers until 5100 ops"
-psh peer-a "$grow" 2>&1 | sed 's/^/    | /'
+psh peer-a "$grow" 2>&1 | sed -u 's/^/    | /'
 check "peer-a's log passed the checkpoint op threshold (5000)" '[ "$(sq peer-a "SELECT count(*) FROM sync_ops")" -ge 5000 ]'
 show "peer-a ops in the log" sq peer-a 'SELECT count(*), sum(length(canonical)) FROM sync_ops'
 for round in 1 2 3; do
