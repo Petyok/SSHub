@@ -54,26 +54,44 @@ function readOwnChain(identity, ops) {
 
 // A single list cannot show that it is the newest (a courier or a terminal behind on sync hands over an old tail, and
 // signing on top of it forks the chain). So a head is adopted in two steps: two lists must name the same newest op
-// (adoptOwnChain returns agreed: true only then), and the user then confirms what they see (acceptHead).
-// A terminal-signed head would be stronger; see docs/host-sync-companion.md.
-export function adoptOwnChain(state, identity, ops) {
+// (adoptOwnChain returns agreed: true only then) AND come from two DIFFERENT terminals (the kind 5 sender id: unsigned, it
+// tells two lists apart and proves nothing), and the user then confirms what they see (acceptHead). A list without a
+// sender id can be the first candidate but never agrees. A terminal-signed head would be stronger; see
+// docs/host-sync-companion.md.
+export const SAME_TERMINAL_MESSAGE = 'This list comes from the same terminal as the first one. Scan the list from another terminal.';
+export function adoptOwnChain(state, identity, ops, sender = null) {
   const r = readOwnChain(identity, ops);
-  const info = { head_seq: r.head.seq, newest_at: r.head.timestamp, ops: r.chain.length };
+  const from = sender ? hexOf(sender) : null;
+  const info = { head_seq: r.head.seq, head_hash: r.head.hash, newest_at: r.head.timestamp, ops: r.chain.length, sender: from };
   const c = state.headCandidate;
-  if (c && c.seq === r.head.seq && c.hash === r.head.hash) {
-    state.headProposal = { chain: r.chain, epoch: String(r.epoch), wrapEpoch: r.wrapEpoch };
-    delete state.headCandidate;
-    return { ...info, agreed: true };
+  let keep = from;
+  let previous = null;
+  if (c) {
+    if (c.seq === r.head.seq && c.hash === r.head.hash) {
+      if (c.sender && from && c.sender === from) throw new Error(SAME_TERMINAL_MESSAGE);
+      if (c.sender && from) {
+        state.headProposal = { chain: r.chain, epoch: String(r.epoch), wrapEpoch: r.wrapEpoch };
+        delete state.headCandidate;
+        return { ...info, agreed: true };
+      }
+      // a list that names no terminal never agrees, and never costs the first one its id
+      keep = from || c.sender || null;
+    } else {
+      previous = c.seq;
+    }
   }
   delete state.headProposal;
-  state.headCandidate = { seq: r.head.seq, hash: r.head.hash };
-  return { ...info, agreed: false, previous_seq: c ? c.seq : null };
+  state.headCandidate = { seq: r.head.seq, hash: r.head.hash, sender: keep };
+  return { ...info, agreed: false, previous_seq: previous };
 }
 
-// The user looked at the agreed head (seq, newest op time) and accepted it.
-export function acceptHead(state) {
+// The user looked at the agreed head (seq, newest op time) and accepted it. `shown` is { seq, hash } of the head the screen
+// showed: a proposal that has changed since is refused, so what is accepted is what was approved.
+export function acceptHead(state, shown = null) {
   const p = state.headProposal;
   if (!p) throw new Error('No chain head was agreed by two lists yet.');
+  const last = p.chain[p.chain.length - 1];
+  if (shown && (last.seq !== shown.seq || last.hash !== shown.hash)) throw new Error('The chain head changed since it was shown: take the chain again and look at it before accepting.');
   state.chain = p.chain;
   state.lamport = String(p.chain.reduce((m, e) => maxBig(m, big(e.lamport)), big(state.lamport)));
   state.epoch = String(maxBig(big(state.epoch), big(p.epoch)));

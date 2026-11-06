@@ -1063,11 +1063,15 @@ const opJson = (o) => {
   appendHeadAttest(st, phone, now0 - 50, null);
   appendHeadAttest(st, phone, now0 - 40, null);
   await page.click('#head-scan');
-  await pasteDoc(encodePhoneOps(courierOps(st)));
+  await pasteDoc(encodePhoneOps(courierOps(st), new Uint8Array(8).fill(1)));
   await page.waitForSelector('#head-next');
   check('one list is not enough: the page asks for a second one and shows the newest seq and time', /seq 2, signed/.test(await text(page, '#app')) && (await page.locator('#head-pending').count()) === 0, (await text(page, '#app')).replace(/\n/g, ' ').slice(0, 90));
   await page.click('#head-next');
-  await pasteDoc(encodePhoneOps(courierOps(st)));
+  await pasteDoc(encodePhoneOps(courierOps(st), new Uint8Array(8).fill(1)));
+  await page.waitForSelector('#head-same');
+  check('the same terminal twice is refused with the sentence, not agreed', /same terminal as the first one/.test(await text(page, '#head-same')), (await text(page, '#head-same')).slice(0, 70));
+  await page.click('#head-next');
+  await pasteDoc(encodePhoneOps(courierOps(st), new Uint8Array(8).fill(2)));
   await page.waitForSelector('#head-adopt');
   check('two lists with the same newest op reach the confirmation naming seq 2', /continue after seq 2/.test(await text(page, '#head-agreed')), (await text(page, '#head-agreed')).slice(0, 60));
   await page.click('#head-adopt');

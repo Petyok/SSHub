@@ -71,7 +71,17 @@ function decodeOpList(body, at) {
   return { ops, end: at };
 }
 
-export const encodePhoneOps = (ops) => encodeFrame(KIND.PHONE_OPS, encodeOpList(ops));
+// Optional trailing block of a kind 5 frame: 0x01 || terminal device id (8 bytes). UNSIGNED: a phone restored from its words
+// has no ring to check a signature against, so the id only tells two lists apart (an honest terminal that is behind, or one
+// animation scanned twice); it is not proof of who made the list. Phone-to-terminal exports carry none.
+export const PHONE_OPS_SENDER_TAG = 1;
+
+export function encodePhoneOps(ops, sender = null) {
+  const list = encodeOpList(ops);
+  if (sender == null) return encodeFrame(KIND.PHONE_OPS, list);
+  if (sender.length !== 8) throw new Error('the sender id is 8 bytes');
+  return encodeFrame(KIND.PHONE_OPS, concat(list, Uint8Array.of(PHONE_OPS_SENDER_TAG), sender));
+}
 
 // Kind 5 carries ops in both directions: the phone's own ops to a terminal, and the reshare ops
 // of an epoch (sessions sealed to the phone, batches) from a terminal to the phone.
@@ -79,7 +89,14 @@ export function decodePhoneOps(frame) {
   const { kind, body } = decodeFrame(frame);
   if (kind !== KIND.PHONE_OPS) throw new Error('not an ops frame');
   const { ops, end } = decodeOpList(body, 0);
-  if (end !== body.length) throw new Error('ops frame has trailing bytes');
+  let sender = null;
+  if (end !== body.length) {
+    if (body[end] !== PHONE_OPS_SENDER_TAG) throw new Error('ops frame has trailing bytes');
+    if (body.length - end !== 9) throw new Error('ops frame: the sender block is truncated or has trailing bytes');
+    sender = body.slice(end + 1);
+  }
+  // the ops array itself stays what every caller expects; the sender (or null) rides along, not enumerable
+  Object.defineProperty(ops, 'sender', { value: sender, enumerable: false });
   return ops;
 }
 

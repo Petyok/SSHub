@@ -71,6 +71,16 @@ test('ops travel as an ops frame in both directions, capped by the courier', () 
   const frame = encodePhoneOps(courierOps(state));
   assert.deepEqual(decodePhoneOps(frame).map((o) => hexOf(o.canonical)), courierOps(state).map((o) => hexOf(o.canonical)));
   assert.throws(() => decodePhoneOps(Uint8Array.of(...frame, 0)), /trailing/);
+  // the optional sender block (unsigned terminal id): without it none, with it the 8 bytes, truncated or longer is refused
+  assert.equal(decodePhoneOps(frame).sender, null);
+  const sender = Uint8Array.of(7, 7, 7, 7, 7, 7, 7, 7);
+  const withSender = encodePhoneOps(courierOps(state), sender);
+  assert.deepEqual(Array.from(decodePhoneOps(withSender).sender), Array.from(sender));
+  assert.deepEqual(Array.from(withSender.slice(0, frame.length)), Array.from(frame), 'the list itself is unchanged');
+  assert.deepEqual(Array.from(withSender.slice(frame.length)), [1, 7, 7, 7, 7, 7, 7, 7, 7]);
+  for (let cut = 1; cut < 9; cut++) assert.throws(() => decodePhoneOps(withSender.slice(0, withSender.length - cut)), /trailing|truncated/, `cut ${cut}`);
+  assert.throws(() => decodePhoneOps(Uint8Array.of(...withSender, 0)), /truncated or has trailing/);
+  assert.throws(() => encodePhoneOps(courierOps(state), Uint8Array.of(1, 2, 3)), /8 bytes/);
 });
 
 test('wrap key generations: rotation derives new keys, every generation still unwraps', () => {

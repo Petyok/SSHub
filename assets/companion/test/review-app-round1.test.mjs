@@ -141,10 +141,10 @@ test('F3 a restored key does not author until it has its chain head; the head co
   const forged = ops.map((o) => ({ ...o, signature: new Uint8Array(64) }));
   assert.throws(() => adoptOwnChain(restoredState(), id, forged), /does not verify/);
   assert.throws(() => adoptOwnChain(restoredState(), id, [ops[1]].concat(ops[1])), /one chain|nothing/);
-  const first = adoptOwnChain(restored, identityOfSecret(secret), ops);
+  const first = adoptOwnChain(restored, identityOfSecret(secret), ops, new Uint8Array(8).fill(1));
   assert.equal(first.agreed, false, 'one list is not enough');
   assert.throws(() => appendHeadAttest(restored, identityOfSecret(secret), NOW + 6, null), /must not sign yet/);
-  assert.equal(adoptOwnChain(restored, identityOfSecret(secret), ops).agreed, true);
+  assert.equal(adoptOwnChain(restored, identityOfSecret(secret), ops, new Uint8Array(8).fill(2)).agreed, true);
   const r = acceptHead(restored);
   assert.equal(r.head_seq, '2');
   const next = appendHeadAttest(restored, identityOfSecret(secret), NOW + 9, null);

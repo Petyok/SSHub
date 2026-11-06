@@ -16,7 +16,7 @@ import { identityOfSecret, randomBytes } from '../src/keys.mjs';
 import { b64enc, isU64, parseOp, safeText } from '../src/ops.mjs';
 import { planReshare, publishReshare } from '../src/reshare.mjs';
 import { certRequestProblems } from '../src/cert.mjs';
-import { acceptHead, adoptOwnChain, appendCertExtend, appendHeadAttest, appendWrapKeyRotate, confirmNoChain, courierOps, emptyState, loadState, memoryBackend, restoredState, saveState } from '../src/state.mjs';
+import { SAME_TERMINAL_MESSAGE, acceptHead, adoptOwnChain, appendCertExtend, appendHeadAttest, appendWrapKeyRotate, confirmNoChain, courierOps, emptyState, loadState, memoryBackend, restoredState, saveState } from '../src/state.mjs';
 import { WRAP_GEN_MAX, pinProblem } from '../src/keys.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -32,15 +32,15 @@ test('PF1 a truncated own-ops list does not let the restored phone author a seco
   const ring3 = live.chain[2];
   const stale = courierOps(live, 8).slice(0, 2); // a courier (or a terminal behind on sync) hands over seq 1..2 only
   const fresh = restoredState();
-  assert.equal(adoptOwnChain(fresh, id, stale).agreed, false);
+  assert.equal(adoptOwnChain(fresh, id, stale, new Uint8Array(8).fill(1)).agreed, false);
   assert.throws(() => appendHeadAttest(fresh, id, NOW + 100, null), /must not sign yet/, 'one list adopts nothing');
   // a second, newer list disagrees with the first: still nothing, and the page says which seq the earlier one ended at
-  const newer = adoptOwnChain(fresh, id, courierOps(live, 8));
+  const newer = adoptOwnChain(fresh, id, courierOps(live, 8), new Uint8Array(8).fill(2));
   assert.equal(newer.agreed, false);
   assert.equal(newer.previous_seq, '2');
   assert.throws(() => acceptHead(fresh), /No chain head/);
   // two lists naming the same newest op agree; acceptance continues after seq 3, no fork
-  assert.equal(adoptOwnChain(fresh, id, courierOps(live, 8)).agreed, true);
+  assert.equal(adoptOwnChain(fresh, id, courierOps(live, 8), new Uint8Array(8).fill(1)).agreed, true);
   assert.equal(acceptHead(fresh).head_seq, '3');
   const next = appendHeadAttest(fresh, id, NOW + 100, null);
   assert.equal(next.entry.seq, '4');
@@ -73,8 +73,8 @@ test('PF2 a restore plus the delivered own chain derives wrap generation 2 from 
   assert.equal(live.wrapEpoch, 2);
   const fresh = restoredState();
   const me = identityOfSecret(rnd(32, 12));
-  adoptOwnChain(fresh, me, courierOps(live, 8));
-  adoptOwnChain(fresh, me, courierOps(live, 8));
+  adoptOwnChain(fresh, me, courierOps(live, 8), new Uint8Array(8).fill(1));
+  adoptOwnChain(fresh, me, courierOps(live, 8), new Uint8Array(8).fill(2));
   acceptHead(fresh);
   assert.equal(fresh.wrapEpoch, 2, 'the page opens shares wrapped to generation 2 only if it knows to derive it');
 });
@@ -269,4 +269,52 @@ test('sound: certificate epoch range', () => {
   assert.ok(certRequestProblems(req(0n, 18446744073709551615n), NOW, 'dddddddddddddddd', '0').length > 0);
   assert.ok(certRequestProblems(req(2n, 3n), NOW, 'dddddddddddddddd', '3').length > 0);
   assert.equal(certRequestProblems(req(18446744073709551615n, 18446744073709551615n), NOW, 'dddddddddddddddd', '18446744073709551615').length, 0);
+});
+
+test('C-M2 the same terminal twice never agrees, two terminals naming the same head do, a list without a sender never does', () => {
+  const id = identityOfSecret(rnd(32, 14));
+  const live = emptyState();
+  for (let i = 0; i < 3; i++) appendHeadAttest(live, id, NOW + i, null);
+  const ops = courierOps(live, 8);
+  const a = new Uint8Array(8).fill(1);
+  const b = new Uint8Array(8).fill(2);
+  // the same frame twice: refused with the sentence, the first candidate stays
+  const s = restoredState();
+  assert.equal(adoptOwnChain(s, id, ops, a).agreed, false);
+  assert.throws(() => adoptOwnChain(s, id, ops, a), (e) => e.message === SAME_TERMINAL_MESSAGE);
+  assert.equal(s.headProposal, undefined);
+  assert.ok(s.headCandidate);
+  assert.equal(adoptOwnChain(s, id, ops, b).agreed, true);
+  // a list without a sender can be the first candidate but never agrees, from either side, and never costs the id
+  const t = restoredState();
+  assert.equal(adoptOwnChain(t, id, ops).agreed, false);
+  assert.equal(adoptOwnChain(t, id, ops).agreed, false);
+  assert.equal(adoptOwnChain(t, id, ops, a).agreed, false, 'the first one named nobody');
+  assert.equal(t.headProposal, undefined);
+  assert.equal(t.headCandidate.sender, '0101010101010101');
+  assert.equal(adoptOwnChain(t, id, ops).agreed, false, 'an anonymous list never completes a pair');
+  assert.equal(t.headCandidate.sender, '0101010101010101');
+  assert.equal(adoptOwnChain(t, id, ops, b).agreed, true);
+  // the same terminal with a newer head is a new candidate, not a refusal
+  const u = restoredState();
+  adoptOwnChain(u, id, ops.slice(0, 2), a);
+  const newer = adoptOwnChain(u, id, ops, a);
+  assert.equal(newer.agreed, false);
+  assert.equal(newer.previous_seq, '2');
+});
+
+test('C-M2 accepting a head is bound to the head that was shown', () => {
+  const id = identityOfSecret(rnd(32, 13));
+  const live = emptyState();
+  for (let i = 0; i < 3; i++) appendHeadAttest(live, id, NOW + i, null);
+  const fresh = restoredState();
+  const ops = courierOps(live, 8);
+  adoptOwnChain(fresh, id, ops, new Uint8Array(8).fill(1));
+  const agreed = adoptOwnChain(fresh, id, ops, new Uint8Array(8).fill(2));
+  assert.equal(agreed.agreed, true);
+  assert.equal(agreed.head_hash, live.chain[2].hash);
+  assert.throws(() => acceptHead(fresh, { seq: '2', hash: live.chain[1].hash }), /changed since it was shown/);
+  assert.ok(fresh.headProposal, 'the agreed proposal stays');
+  acceptHead(fresh, { seq: agreed.head_seq, hash: agreed.head_hash });
+  assert.equal(fresh.headPending, false);
 });

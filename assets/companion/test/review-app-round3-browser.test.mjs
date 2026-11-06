@@ -97,9 +97,10 @@ test('RP11 FAILS a list the terminal pushes while no screen wants it waits for t
   const live = emptyState();
   appendHeadAttest(live, id, 1_900_000_000, null);
   appendHeadAttest(live, id, 1_900_000_010, null);
-  const list = encodePhoneOps(courierOps(live, 8));
+  const list = encodePhoneOps(courierOps(live, 8), new Uint8Array(8).fill(1));
+  const list2 = encodePhoneOps(courierOps(live, 8), new Uint8Array(8).fill(2)); // the second list comes from another terminal
   const msgs = cutFrame(list, 1, 244);
-  const msgs2 = cutFrame(list, 2, 244);
+  const msgs2 = cutFrame(list2, 2, 244);
   await withPage(async (page) => {
     await page.fill('#pin1', PIN);
     await page.fill('#pin2', PIN);
