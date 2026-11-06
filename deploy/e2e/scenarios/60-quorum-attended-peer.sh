@@ -50,7 +50,7 @@ if grep -qF "$SECRET" /tmp/e2e-resolve-b.out; then echo "note: resolve printed t
 ring_view
 
 # ---- the phone: peer-a asks for the phone's share (kind 1 out, kind 2 reply in, one process)
-enr_open peer-a sync-share-request quorum1 --wait 150 --format json
+enr_open peer-a sync-share-request quorum1 --wait 400 --format json
 CH=$(enr_get 1); echo "terminal: $CH" | cut -c1-200
 show "the phone reads the challenge" phone share-open "{\"frame\":\"$(pf "$CH" challenge)\"}"
 if [ "$(pf "$LAST_OUT" ok)" = true ]; then

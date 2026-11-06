@@ -97,7 +97,8 @@ enr_open() {
   exec 9> "$ENR_DIR/in"
 }
 # enr_send LINE: one line to the verb (a phone frame, or y/n for the four words).
-enr_send() { printf '%s\n' "$1" >&9; }
+# (a verb that already gave up closed the fifo: a write then must fail, not kill the scenario shell with SIGPIPE)
+enr_send() { ( trap '' PIPE; printf '%s\n' "$1" >&9 ) || echo "the verb no longer reads its stdin"; }
 # enr_get N: the Nth event line the verb has printed (waits up to 60 s).
 enr_get() {
   i=0
