@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavHostController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,6 +26,7 @@ import uk.petruha.sshub.phone.core.OpenedEnroll
 import uk.petruha.sshub.phone.core.OpenedEnrolled
 import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.core.PhoneCoreApi
+import uk.petruha.sshub.phone.core.RefusalKind
 import uk.petruha.sshub.phone.core.Platform
 import uk.petruha.sshub.phone.core.Routes
 import uk.petruha.sshub.phone.core.ScanEvent
@@ -52,6 +54,7 @@ class EnrollViewModel(
     private var lastFrame: ByteArray? = null
     private var link: BleChannel? = null
     private var linkJob: Job? = null
+    private var connectJob: Job? = null
     private var scanJob: Job? = null
     private var soundJob: Job? = null
 
@@ -163,9 +166,19 @@ class EnrollViewModel(
                 flow.update { it.copy(conf = ConfirmStatus.Bad, confReason = o.reason) }
                 if (f.channel == EnrollChannel.Paste) nav.navigate(Routes.Enroll5)
             }
-            f.commit != null -> {
-                flow.update { it.copy(keys = KeysStatus.Mismatch, committed = o.committed.orEmpty(), shown = o.shown.orEmpty(), keysReason = o.reason) }
-                if (f.channel == EnrollChannel.Paste) nav.navigate(Routes.Enroll3)
+            f.commit != null -> when (o.kind) {
+                // A stray or out-of-order frame is a note: the session waits and the user is not told someone interferes (M7).
+                RefusalKind.Stray -> note(o.reason)
+                RefusalKind.Mismatch, RefusalKind.Stopped -> {
+                    val mismatch = o.kind == RefusalKind.Mismatch
+                    flow.update {
+                        it.copy(
+                            keys = if (mismatch) KeysStatus.Mismatch else KeysStatus.Stopped,
+                            committed = o.committed.orEmpty(), shown = o.shown.orEmpty(), keysReason = o.reason,
+                        )
+                    }
+                    if (f.channel == EnrollChannel.Paste) nav.navigate(Routes.Enroll3)
+                }
             }
             else -> note(o.reason)
         }
@@ -262,10 +275,15 @@ class EnrollViewModel(
         val f = flow.value
         val d = f.btDevices.getOrNull(f.btSel) ?: return
         if (!d.tag.equals(f.btTag, ignoreCase = true)) return
+        // Two entries with the tag mean stop (L8): neither is paired.
+        if (f.btDevices.count { it.tag.equals(f.btTag, ignoreCase = true) } > 1) return
         scanJob?.cancel()
         flow.update { it.copy(btConnecting = true, btFailed = false, channel = EnrollChannel.Bluetooth) }
-        viewModelScope.launch {
+        connectJob?.cancel()
+        connectJob = viewModelScope.launch {
             val ch = platform.ble.connect(d)
+            // Cancelled while connecting: a channel that comes back late is closed, never kept.
+            if (!isActive) { ch?.close(); return@launch }
             if (ch == null) { flow.update { it.copy(btConnecting = false, btFailed = true) }; return@launch }
             link = ch
             linkJob = launch { ch.incoming.collect { receive(it) } }
@@ -279,7 +297,7 @@ class EnrollViewModel(
         if (!ch.send(o.frame)) note("The frame could not be sent over Bluetooth.")
     }
 
-    private fun closeLink() { linkJob?.cancel(); linkJob = null; link?.close(); link = null }
+    private fun closeLink() { connectJob?.cancel(); connectJob = null; linkJob?.cancel(); linkJob = null; link?.close(); link = null }
 
     // ---- sound (this phone only plays) -----------------------------------------------------------------------------
 

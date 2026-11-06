@@ -75,7 +75,7 @@ class FakeEnrollApi : EnrollApi {
     fun open(frame: ByteArray): Opened = when {
         frame.contentEquals(EnrollSamples.frameCode) -> OpenedEnroll(token++, EnrollStage.Commit, emptyList(), EnrollSamples.terminalId, EnrollSamples.terminal, null)
         frame.contentEquals(EnrollSamples.frameKeys) -> OpenedEnroll(token++, EnrollStage.Reveal, EnrollSamples.words, EnrollSamples.terminalId, EnrollSamples.terminal, EnrollSamples.reveal)
-        frame.contentEquals(EnrollSamples.frameMismatch) -> EnrollRefusal("Nothing was enrolled.", EnrollSamples.committed, EnrollSamples.shown)
+        frame.contentEquals(EnrollSamples.frameMismatch) -> EnrollRefusal("Nothing was enrolled.", EnrollSamples.committed, EnrollSamples.shown, uk.petruha.sshub.phone.core.RefusalKind.Mismatch)
         frame.contentEquals(EnrollSamples.frameConfirm) -> OpenedEnrolled(EnrollSamples.terminalId, EnrollSamples.terminal, EnrollSamples.phoneName, EnrollSamples.phoneId)
         frame.contentEquals(EnrollSamples.frameBad) -> EnrollRefusal("The signature does not verify.", null, null)
         else -> Opened.Ignored("That is not an enrollment frame.")

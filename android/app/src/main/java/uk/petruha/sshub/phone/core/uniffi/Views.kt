@@ -24,13 +24,14 @@ import uk.petruha.sshub.phone.core.ProofState
 import uk.petruha.sshub.phone.core.RecoveryNoticeOpened
 import uk.petruha.sshub.phone.core.RecoveryNoticeView
 import uk.petruha.sshub.phone.core.RedField
-import uk.petruha.sshub.phone.core.RedProofView
+import uk.petruha.sshub.phone.core.RefusalKind
 import uk.petruha.sshub.phone.core.RedView
 import uk.petruha.sshub.phone.core.RefusalReason
 import uk.petruha.sshub.phone.core.ReleaseChannel
 import uk.petruha.sshub.phone.core.ReleaseCheck
 import uk.petruha.sshub.phone.core.ReleaseView
 import uk.petruha.sshub.phone.core.ReshareContributor
+import uk.petruha.sshub.phone.core.ReshareHolder
 import uk.petruha.sshub.phone.core.ReshareView
 import uk.petruha.sshub.phone.core.ShortCodeRow
 import uk.petruha.sshub.phone.core.ShortCodeState
@@ -115,13 +116,26 @@ internal fun mapShortCode(c: RsIssuedCode) = IssuedShortCode(c.code, c.validUnti
 internal fun RsCheck.asCheck(typeGate: Boolean = false) =
     ReleaseCheck(text, ok = ok && !(warn && typeGate), needsTypedId = warn && typeGate)
 
+/*
+ * The core's enrollment refusals carry a sentence and no kind. The two that end the session (enroll.rs `on_reveal`) are told apart by
+ * their sentence, which the tests pin; every other refusal is a stray or out-of-order frame the core waits through.
+ */
+internal const val ENROLL_MISMATCH_REASON = "The terminal reveal does not open the commitment it showed first."
+internal const val ENROLL_UNUSABLE_KEYS_REASON = "The terminal presented unusable keys."
+
+internal fun enrollRefusalKind(reason: String) = when {
+    reason.startsWith(ENROLL_MISMATCH_REASON) -> RefusalKind.Mismatch
+    reason == ENROLL_UNUSABLE_KEYS_REASON -> RefusalKind.Stopped
+    else -> RefusalKind.Stray
+}
+
 internal fun mapRefused(v: RsRefusalView, enrollFrame: Boolean): Opened =
-    if (enrollFrame) EnrollRefusal(v.reason, null, null)
+    if (enrollFrame) EnrollRefusal(v.reason, null, null, enrollRefusalKind(v.reason))
     else OpenedRefused(RefusalReason("refused", "refused", v.reason, "", emptyList(), false), v.checks.map { it.asCheck() })
 
+/** QR and one sound choice. There is no clipboard channel: the core renders none, "Copy as text" is always offered. */
 private val channels = listOf(
     ReleaseChannel(ChannelKind.Qr, "QR code"),
-    ReleaseChannel(ChannelKind.Clipboard, "Clipboard"),
     ReleaseChannel(ChannelKind.SoundFast, "Sound (fast)"),
     ReleaseChannel(ChannelKind.SoundSlow, "Sound (slow)"),
 )
@@ -149,6 +163,9 @@ internal fun mapRelease(v: RsShareRequestView): OpenedRelease {
                 is RsShortCodeOffer.Available -> "Also issue a short code (repeat access for 7 days)"
                 is RsShortCodeOffer.LiveUntil -> null
             },
+            hostUid = v.hostUid,
+            bindingHash = v.bindingHash,
+            opRows = v.op.rows.map { RedField(it.label, null, it.value, danger = it.danger) },
         ),
     )
 }
@@ -157,8 +174,6 @@ internal fun mapRed(v: RsRedNoticeView): OpenedRed {
     val checks = buildList {
         add(ReleaseCheck(v.signatureNote, ok = true))
         v.blocked?.let { add(ReleaseCheck(it, ok = false)) }
-        // The Red screen has no field for a typed id: a proposer this phone never met cannot be approved from it.
-        v.typeToApprove?.let { add(ReleaseCheck("This phone has never met $it: its device id must be typed to approve.", ok = false)) }
     }
     return OpenedRed(
         RedView(
@@ -174,12 +189,9 @@ internal fun mapRed(v: RsRedNoticeView): OpenedRed {
             hash = v.opHash,
             fields = v.op.rows.map { RedField(it.label, null, it.value, danger = it.danger) },
             note = v.banner,
-            proofs = listOf(
-                RedProofView("phone", "this phone", if (v.blocked != null) ProofState.Refused else ProofState.YourTurn),
-                RedProofView("device", "second attended device", ProofState.Waiting),
-                RedProofView("factor", "third factor", ProofState.Waiting),
-            ),
+            phoneProof = if (v.blocked != null) ProofState.Refused else ProofState.YourTurn,
             checks = checks,
+            mustType = v.typeToApprove,
         ),
     )
 }
@@ -198,6 +210,7 @@ internal fun mapNotice(v: RsReenrollNoticeView, phoneName: String) = RecoveryNot
         hash = v.opHash,
         signatureNote = v.signatureNote,
         cancellable = true,
+        opRows = v.op.rows.map { RedField(it.label, null, it.value, danger = it.danger) },
     ),
 )
 
@@ -226,16 +239,26 @@ internal fun mapTrustRequest(v: RsCertRequestView): OpenedTrustRequest {
     )
 }
 
+/** `N` and `E` of the extension rows as one allowance pair, or null when a row is not a plain count. */
+private fun allowance(budget: String?, extra: String?): Pair<String, String>? {
+    val n = budget?.trim()?.toLongOrNull() ?: return null
+    val e = extra?.trim()?.toLongOrNull() ?: return null
+    return "$n new hosts per day" to "${n + e} new hosts in the next 24 hours ($n + $e)"
+}
+
 internal fun mapTrustExtend(v: RsCertExtendView): OpenedTrustExtend {
     val extra = v.rows.lastOrNull()
+    // Old and new allowance when both rows are plain counts; else the extra stays a plain row (diffFrom empty), never "5 to 3".
+    val pair = allowance(v.rows.value("Daily budget now"), extra?.value)
     return OpenedTrustExtend(
         TrustExtendView(
             token = v.token.toLong(),
             headline = v.headline,
             fields = v.rows.map { TrustFieldView(it.label, it.value, danger = it.danger) },
-            diffKey = extra?.label.orEmpty(),
-            diffFrom = v.rows.value("Daily budget now").orEmpty(),
-            diffTo = extra?.value.orEmpty(),
+            diffKey = if (pair != null) "Allowance for the next 24 hours" else extra?.label.orEmpty(),
+            diffFrom = pair?.first.orEmpty(),
+            diffTo = pair?.second ?: extra?.value.orEmpty(),
+            diffDanger = extra?.danger ?: true,
             note = v.note,
             signedSummary = v.headline,
             refusal = problems(v.problems),
@@ -253,9 +276,11 @@ internal fun mapReshare(v: RsReshareView): ReshareView {
         holderNumber = v.myIndex.toInt(),
         credentialsReady = v.credentialsReady.toInt(),
         credentialsTotal = (v.credentialsReady + v.waiting).toInt(),
-        contributors = v.contributors.map { ReshareContributor(it.name, it.deviceId, it.verified) },
+        contributors = v.contributors.map { ReshareContributor(it.name, it.deviceId, it.verified, it.known, it.hasSession) },
         note = note,
         adoptable = true,
+        holdersAfter = v.holdersAfter.map { ReshareHolder(it.deviceId, it.name, it.isThisPhone) },
+        storageKeyNew = v.storageKeyNew,
     )
 }
 

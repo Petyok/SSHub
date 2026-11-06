@@ -9,6 +9,9 @@ fun spokenHex(groups: List<String>): String = groups.joinToString(", ") { g -> g
 /** Splits a hex string into groups of 4; the last group may be shorter. Never splits inside a group when rendered. */
 fun hexGroups(hex: String, size: Int = 4): List<String> = hex.filter { !it.isWhitespace() && it != '-' }.chunked(size)
 
+/** A host uid as text in groups of 4 (`A3F9 007C ...`): the form of the release screen's boxes, for lists and sheets (M8). */
+fun groupedUid(uid: String): String = hexGroups(uid).joinToString(" ").uppercase()
+
 /** Spec 4.3: 1 column / 2 columns / 3 columns thresholds follow the effective font scale. */
 @Composable
 @ReadOnlyComposable

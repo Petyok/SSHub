@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasText
@@ -67,7 +68,8 @@ class EnrollScreensTest {
                 EnrollScanActions(onScan = hit("scan"), onChannel = { calls += "ch:$it" }),
             )
         }
-        exists("Name accepted: pixel-8")
+        exists("This phone will be called pixel-8. The phone checks the name again when the terminal's code is read.")
+        absent("Name accepted: pixel-8")
         rule.onNodeWithContentDescription("Name this phone will have in the ring").assertExists()
         click("Bluetooth")
         click("Paste text")
@@ -171,6 +173,24 @@ class EnrollScreensTest {
         assertEquals(listOf("again"), calls)
     }
 
+    @Test fun m7_a_mismatch_without_compared_values_draws_no_empty_boxes() {
+        rule.setScreen { EnrollKeysScreen(S.keys(KeysStatus.Mismatch).copy(committed = "", shown = ""), EnrollKeysActions(onStartAgain = hit("again"))) }
+        exists("The keys do not match the first code.")
+        rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("First code committed to", substring = true)).assertCountEquals(0)
+        rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Keys shown now open to", substring = true)).assertCountEquals(0)
+        absent("first code committed to")
+    }
+
+    @Test fun m7_another_stop_is_titled_with_the_cores_sentence_not_as_a_mismatch() {
+        rule.setScreen {
+            EnrollKeysScreen(S.keys(KeysStatus.Stopped).copy(committed = "", shown = "", reason = "The terminal presented unusable keys."), EnrollKeysActions(onStartAgain = hit("again")))
+        }
+        exists("The terminal presented unusable keys.")
+        absent("The keys do not match the first code.")
+        click("Start again")
+        assertEquals(listOf("again"), calls)
+    }
+
     // ---- 4 Compare ----
 
     @Test fun compare_shows_the_four_words_whole_and_reports_the_choice() {
@@ -191,7 +211,8 @@ class EnrollScreensTest {
 
     @Test fun compare_match_continues_to_the_confirmation() {
         rule.setScreen { EnrollCompareScreen(S.compare(ComparePhase.Match), EnrollCompareActions(onContinue = hit("continue"))) }
-        exists("Words confirmed.")
+        exists("You confirmed the words.")
+        absent("Words confirmed.")
         absent("They differ")
         absent("The words match")
         click("Continue")

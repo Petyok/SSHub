@@ -97,7 +97,8 @@ class EnrollShowActions(
 
 // ---- 3 Keys -------------------------------------------------------------------------------------------------------
 
-enum class KeysStatus { Waiting, Ok, Mismatch }
+/** `Mismatch`: the keys do not open the first code. `Stopped`: another refusal that ended the session (titled with the core's sentence). */
+enum class KeysStatus { Waiting, Ok, Mismatch, Stopped }
 
 data class EnrollKeysState(
     val terminal: String,

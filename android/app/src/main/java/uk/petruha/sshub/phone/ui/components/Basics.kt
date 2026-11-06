@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -95,11 +97,15 @@ fun SshubButton(
     }
 }
 
-/** Section heading `.h`: 20 above, 8 below. */
+/** Section heading `.h`: 20 above, 8 below. The trailing text wraps under the heading when both do not fit (M10). */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SectionHeading(text: String, modifier: Modifier = Modifier, first: Boolean = false, trailing: String? = null) {
-    Row(modifier.fillMaxWidth().padding(top = if (first) 0.dp else 20.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f).semantics { heading() })
+    FlowRow(
+        modifier.fillMaxWidth().padding(top = if (first) 0.dp else 20.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween, verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.semantics { heading() })
         if (trailing != null) Text(trailing, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -227,11 +233,18 @@ fun Note(text: String, modifier: Modifier = Modifier) =
 @Composable
 fun Gap(h: Dp = 12.dp) = Spacer(Modifier.size(h))
 
+/** A key and its value. `danger` (the core's flag) draws the row with a warning glyph and the danger colour, never colour alone (D3). */
 @Composable
-fun KeyValue(key: String, value: String, modifier: Modifier = Modifier, mono: Boolean = true, valueColor: Color = MaterialTheme.colorScheme.onSurface) {
-    Column(modifier.fillMaxWidth().padding(vertical = 6.dp).semantics(mergeDescendants = true) {}) {
-        Text(key, style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = if (mono) SshubText.monoBody else MaterialTheme.typography.bodyMedium, color = valueColor)
+fun KeyValue(key: String, value: String, modifier: Modifier = Modifier, mono: Boolean = true, valueColor: Color = MaterialTheme.colorScheme.onSurface, danger: Boolean = false) {
+    Column(
+        modifier.fillMaxWidth().padding(vertical = 6.dp)
+            .semantics(mergeDescendants = true) { if (danger) contentDescription = "Danger: $key: $value" },
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (danger) Glyph(GlyphKind.Warning, MaterialTheme.sshub.dangerText, Modifier.size(16.dp), size = 16.dp)
+            Text(key, style = SshubText.fieldKey, color = if (danger) MaterialTheme.sshub.dangerText else MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Text(value, style = if (mono) SshubText.monoBody else MaterialTheme.typography.bodyMedium, color = if (danger) MaterialTheme.sshub.dangerText else valueColor)
     }
 }
 

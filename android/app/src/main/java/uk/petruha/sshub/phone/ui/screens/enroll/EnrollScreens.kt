@@ -75,22 +75,25 @@ private fun nextLines(c: EnrollChannel): List<String> = when (c) {
 
 @Composable
 fun EnrollScanScreen(state: EnrollScanState, on: EnrollScanActions) {
-    val ok = state.nameProblem == null
+    // The core checks the name rules (length, control characters) when the terminal's code is read; the screen claims nothing before that.
+    val blank = state.name.isBlank()
+    val ok = state.nameProblem == null && !blank
+    val why = state.nameProblem ?: if (blank) "Give this phone a name." else null
     EnrollFrame(
         state.terminal, 1, on.onBack,
         bar = {
             if (state.scanning) SshubButton("Cancel", on.onCancelScan, Modifier.fillMaxWidth())
             else when (state.channel) {
-                EnrollChannel.Qr, EnrollChannel.Sound -> SshubButton("Scan the terminal's code", on.onScan, Modifier.fillMaxWidth(), ButtonKind.Primary, enabled = ok, disabledReason = state.nameProblem)
-                EnrollChannel.Bluetooth -> SshubButton("Find the terminal", on.onFindTerminal, Modifier.fillMaxWidth(), ButtonKind.Primary, enabled = ok, disabledReason = state.nameProblem)
-                EnrollChannel.Paste -> SshubButton("Paste the text", on.onPasteText, Modifier.fillMaxWidth(), ButtonKind.Primary, enabled = ok, disabledReason = state.nameProblem)
+                EnrollChannel.Qr, EnrollChannel.Sound -> SshubButton("Scan the terminal's code", on.onScan, Modifier.fillMaxWidth(), ButtonKind.Primary, enabled = ok, disabledReason = why)
+                EnrollChannel.Bluetooth -> SshubButton("Find the terminal", on.onFindTerminal, Modifier.fillMaxWidth(), ButtonKind.Primary, enabled = ok, disabledReason = why)
+                EnrollChannel.Paste -> SshubButton("Paste the text", on.onPasteText, Modifier.fillMaxWidth(), ButtonKind.Primary, enabled = ok, disabledReason = why)
             }
         },
     ) {
         Note("On the terminal start phone enrollment. It shows a short QR code.", Modifier.padding(bottom = 14.dp))
         Text("Name this phone will have in the ring", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
         MonoField(state.name, on.onName, label = "Name this phone will have in the ring", error = state.nameProblem)
-        if (ok) ValidationLine(LineKind.Ok, "Name accepted: ${state.name.trim()}")
+        if (ok) ValidationLine(LineKind.Neutral, "This phone will be called ${state.name.trim()}. The phone checks the name again when the terminal's code is read.")
         SectionHeading("Channel", trailing = state.channel.label())
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Channels.forEach { (c, g, d) ->
@@ -157,30 +160,38 @@ internal fun keysLine(c: EnrollChannel, terminal: String): String = when (c) {
 
 @Composable
 fun EnrollKeysScreen(state: EnrollKeysState, on: EnrollKeysActions) {
-    val mismatch = state.status == KeysStatus.Mismatch
+    val stopped = state.status == KeysStatus.Mismatch || state.status == KeysStatus.Stopped
     EnrollFrame(
         state.terminal, 3, on.onBack,
         bar = {
             when (state.status) {
-                KeysStatus.Mismatch -> SshubButton("Start again", on.onStartAgain, Modifier.fillMaxWidth())
+                KeysStatus.Mismatch, KeysStatus.Stopped -> SshubButton("Start again", on.onStartAgain, Modifier.fillMaxWidth())
                 KeysStatus.Ok -> SshubButton("Compare the words", on.onCompare, Modifier.fillMaxWidth(), ButtonKind.Primary)
                 KeysStatus.Waiting -> SshubButton("Next", {}, Modifier.fillMaxWidth(), ButtonKind.Primary, subtitle = "waiting for the keys", enabled = false, disabledReason = "waiting for the keys")
             }
         },
     ) {
         SectionHeading("Terminal keys", first = true, trailing = state.receive.channel.label())
-        if (mismatch) {
+        if (stopped) {
             SecureWindow()
-            StopBox("The keys do not match the first code.", live = true) {
-                Text(
-                    state.reason.ifEmpty { "Nothing was enrolled." } +
-                        " Someone may be interfering, or the code came from another session. Do not retry on this channel; start again on the terminal.",
+            // Mismatch is the one refusal that says the keys differ; any other stop is titled with the core's own sentence (M7).
+            val mismatch = state.status == KeysStatus.Mismatch
+            StopBox(if (mismatch) "The keys do not match the first code." else state.reason.ifEmpty { "Enrollment stopped." }, live = true) {
+                if (mismatch) Text(
+                    state.reason.ifEmpty { "Nothing was enrolled." } + " Do not retry on this channel; start again on the terminal.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer,
+                ) else Text(
+                    "Nothing was enrolled. Start again on the terminal.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer,
                 )
-                Text("first code committed to", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onErrorContainer)
-                HexGroups(state.committed, groups = null, label = "First code committed to")
-                Text("keys shown now open to", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onErrorContainer)
-                HexGroups(state.shown, groups = null, label = "Keys shown now open to")
+                if (state.committed.isNotEmpty()) {
+                    Text("first code committed to", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onErrorContainer)
+                    HexGroups(state.committed, groups = null, label = "First code committed to")
+                }
+                if (state.shown.isNotEmpty()) {
+                    Text("keys shown now open to", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onErrorContainer)
+                    HexGroups(state.shown, groups = null, label = "Keys shown now open to")
+                }
             }
         } else {
             Note(keysLine(state.receive.channel, state.terminal), Modifier.padding(bottom = 12.dp))
@@ -237,7 +248,7 @@ fun EnrollCompareScreen(state: EnrollCompareState, on: EnrollCompareActions) {
             Gap12()
             SshubCard {
                 if (state.phase == ComparePhase.Match) {
-                    Text("Words confirmed.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.sshub.ok)
+                    Text("You confirmed the words.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.sshub.ok)
                     Note("Next, hold this phone's confirmation to $t, then read its answer. The terminal adds this phone to the ring.")
                 } else Note("Here both sides always have a screen, so the four words are a real check, unlike a machine reached over ssh. Different words mean someone sits between you: tap They differ.")
             }
@@ -321,7 +332,9 @@ fun EnrollBtScreen(state: EnrollBtState, on: EnrollBtActions) {
     val tagOk = state.tag.length == 4
     val sel = state.devices.getOrNull(state.selected)
     val tagMatches = sel != null && tagOk && sel.tag.equals(state.tag, ignoreCase = true)
-    val canPair = state.phase == BtPhase.Found && tagMatches
+    // Two entries with one tag mean stop: either may be a stranger imitating the terminal (L8). Pair stays off until one is left.
+    val sameTag = tagOk && state.devices.count { it.tag.equals(state.tag, ignoreCase = true) } > 1
+    val canPair = state.phase == BtPhase.Found && tagMatches && !sameTag
     EnrollFrame(
         t, 1, on.onBack,
         bar = {
@@ -329,7 +342,7 @@ fun EnrollBtScreen(state: EnrollBtState, on: EnrollBtActions) {
                 BtPhase.Searching, BtPhase.Connecting -> SshubButton("Cancel", on.onBack, Modifier.fillMaxWidth())
                 BtPhase.Found -> SshubButton(
                     if (canPair) "Pair with ${sel!!.name}" else "Pair", on.onPair, Modifier.fillMaxWidth(), ButtonKind.Primary,
-                    subtitle = if (canPair) "tag ${state.tag}" else "pick the row with your tag", enabled = canPair, disabledReason = "pick the row with your tag",
+                    subtitle = if (canPair) "tag ${state.tag}" else if (sameTag) "two devices show this tag" else "pick the row with your tag", enabled = canPair, disabledReason = if (sameTag) "two devices show this tag" else "pick the row with your tag",
                 )
                 BtPhase.Unsupported -> SshubButton("Other channel", on.onOtherChannel, Modifier.fillMaxWidth())
                 else -> BarButtons {
@@ -362,6 +375,9 @@ fun EnrollBtScreen(state: EnrollBtState, on: EnrollBtActions) {
             when (state.phase) {
                 BtPhase.Searching -> { Text("Looking for devices nearby", style = SshubText.monoBody, color = cs.onSurface); WaitingDots(word = "searching") }
                 BtPhase.Found -> {
+                    if (sameTag) WarnBox("Two devices show the tag ${state.tag}. Stop.", live = true) {
+                        Note("Only one of them is the terminal. Do not pair with either: turn Bluetooth off on the other device or move away, then search again.")
+                    }
                     state.devices.forEachIndexed { i, d -> BtRow(d, i == state.selected, tagOk && d.tag.equals(state.tag, ignoreCase = true)) { on.onSelect(i) } }
                     if (sel != null && !tagMatches) WarnBox(
                         if (tagOk) "Tag ${sel.tag} is not the tag you typed (${state.tag})." else "Type the tag shown on $t first.", live = true,

@@ -127,9 +127,9 @@ fun MonoField(
     }
 }
 
-/** Multi-line paste box (spec 7.12): 84dp min, 1dp border, mono 14. */
+/** Multi-line paste box (spec 7.12): 84dp min, 1dp border, mono 14. `secret` (the 24 words) asks the keyboard not to learn or suggest what is typed. */
 @Composable
-fun TextArea(value: String, onValueChange: (String) -> Unit, label: String, modifier: Modifier = Modifier, placeholder: String = "", readOnly: Boolean = false) {
+fun TextArea(value: String, onValueChange: (String) -> Unit, label: String, modifier: Modifier = Modifier, placeholder: String = "", readOnly: Boolean = false, secret: Boolean = false) {
     val cs = MaterialTheme.colorScheme
     BasicTextField(
         value, onValueChange, modifier.fillMaxWidth().heightIn(min = 84.dp)
@@ -137,7 +137,7 @@ fun TextArea(value: String, onValueChange: (String) -> Unit, label: String, modi
         readOnly = readOnly,
         textStyle = SshubText.monoBody.merge(TextStyle(color = cs.onSurface)),
         cursorBrush = SolidColor(cs.onSurface),
-        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii),
+        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, keyboardType = if (secret) KeyboardType.Password else KeyboardType.Ascii),
         decorationBox = { inner ->
             Box { if (value.isEmpty() && placeholder.isNotEmpty()) Text(placeholder, style = SshubText.monoBody, color = cs.onSurfaceVariant); inner() }
         },
