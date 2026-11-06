@@ -36,6 +36,14 @@ for round in 1 2 3; do
   snowt peer-b
   snowt peer-a
 done
+# A checkpoint is built only when no op below its cut is waiting for review (and signed only by a peer that reviewed the
+# same state), so the reviewers go through what arrived: one bulk approval per device.
+show "peer-b approves everything that waits without a ceremony" peer peer-b $SSHUB sync-review --approve-all
+show "peer-a approves what waits there" peer peer-a $SSHUB sync-review --approve-all
+for round in 1 2 3; do
+  snowt peer-a
+  snowt peer-b
+done
 show "peer-a devices" sq peer-a 'SELECT substr(device_id,1,8), role, kind, attendance, status FROM sync_devices'
 show "peer-a op kinds after the rounds" sq peer-a 'SELECT kind, count(*) FROM sync_ops GROUP BY kind'
 show "peer-a sync_meta keys" sq peer-a 'SELECT key FROM sync_meta WHERE key NOT LIKE "bytes:%" AND key NOT LIKE "pair:%"'
