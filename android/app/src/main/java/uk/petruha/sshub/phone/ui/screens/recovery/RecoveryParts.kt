@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.core.ReshareContributor
+import uk.petruha.sshub.phone.core.ReshareHolder
 import uk.petruha.sshub.phone.ui.components.BarButtons
 import uk.petruha.sshub.phone.ui.components.ButtonKind
 import uk.petruha.sshub.phone.ui.components.ChainSquare
@@ -107,13 +109,35 @@ internal fun StepRow(
     }
 }
 
-/** Contributor check lines (a cross and the words "signature not checked" when not verified) and the core's rule text. */
+/**
+ * Contributor check lines: signature, whether this phone has met the contributor, and whether it holds a session key for it.
+ * A cross and the words when a check fails; no session key is a failing line (this phone cannot read that contributor's shares).
+ */
 @Composable
 internal fun ContributorLines(contributors: List<ReshareContributor>, note: String) {
     contributors.forEach { c ->
-        CheckLine("${c.name} [${c.id}]: " + if (c.verified) "signature verified" else "signature not checked", c.verified)
+        val who = "${c.name} [${c.id}]"
+        CheckLine("$who: " + if (c.verified) "signature verified" else "signature not checked", c.verified)
+        CheckLine("$who: " + if (c.known) "known to this phone" else "not known to this phone", c.known)
+        CheckLine("$who: " + if (c.hasSession) "session key for this phone" else "no session key for this phone", c.hasSession)
     }
     Note(note, Modifier.padding(top = 6.dp))
+}
+
+/** Who holds a share afterwards, one merged node per holder (this phone marked), and whether a storage key is published with the shares. */
+@Composable
+internal fun HolderLines(holders: List<ReshareHolder>, storageKeyNew: Boolean) {
+    holders.forEach { h ->
+        val line = "${h.name} [${h.id}]" + if (h.isThisPhone) " (this phone)" else ""
+        Text(
+            line, Modifier.fillMaxWidth().heightIn(min = 32.dp).padding(vertical = 4.dp).semantics(mergeDescendants = true) { contentDescription = "Holder afterwards: $line" },
+            style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+    Note(
+        if (storageKeyNew) "A storage key of this epoch is published with the new shares." else "A storage key of this epoch was already published.",
+        Modifier.padding(top = 6.dp),
+    )
 }
 
 /** Signed bytes handed to a terminal: looping QR, the same data as text, the sensitive-copy notice and the "Copied" line (D19). */

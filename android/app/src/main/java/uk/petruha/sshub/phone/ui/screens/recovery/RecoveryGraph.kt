@@ -14,6 +14,8 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.delay
 import uk.petruha.sshub.phone.core.AppEnv
 import uk.petruha.sshub.phone.core.Routes
+import uk.petruha.sshub.phone.core.ScanPurpose
+import uk.petruha.sshub.phone.core.scanRoute
 
 /** Review of a reshare that `openFrame` returned as `ReshareOpened`. */
 fun reshareRoute(token: Long) = Routes.Reshare + "/" + token
@@ -39,7 +41,7 @@ private fun ReshareRoute(env: AppEnv, token: Long?) {
     ReshareScreen(
         s,
         ReshareActions(
-            onBack = { env.nav.popBackStack() }, onRotate = vm::rotate, onScan = { env.nav.navigate(Routes.Scan) },
+            onBack = { env.nav.popBackStack() }, onRotate = vm::rotate, onScan = { env.nav.navigate(scanRoute(ScanPurpose.Reshare)) },
             onAdoptPublish = vm::adoptPublish, onCopy = vm::copy,
             onExport = { env.nav.navigate(Routes.Export) }, onDone = { env.nav.popBackStack() },
         ),
@@ -54,7 +56,7 @@ private fun RecoveryRoute(env: AppEnv) {
     RecoveryScreen(
         s,
         RecoveryActions(
-            onBack = { env.nav.popBackStack() }, onScan = { env.nav.navigate(Routes.Scan) },
+            onBack = { env.nav.popBackStack() }, onScan = { env.nav.navigate(scanRoute(ScanPurpose.Recovery)) },
             onOpenNotice = { env.nav.navigate(recoveryNoticeRoute(it)) },
         ),
     )

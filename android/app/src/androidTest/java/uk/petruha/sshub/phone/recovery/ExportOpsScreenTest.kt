@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.junit.Assert.assertEquals
@@ -14,6 +15,8 @@ import uk.petruha.sshub.phone.fake.RecoverySamples
 import uk.petruha.sshub.phone.testing.assertNoVisualOverflow
 import uk.petruha.sshub.phone.testing.assertTargets48
 import uk.petruha.sshub.phone.testing.setScreen
+import uk.petruha.sshub.phone.ui.components.groupedUid
+import uk.petruha.sshub.phone.ui.components.hexGroups
 import uk.petruha.sshub.phone.ui.components.spokenHex
 import uk.petruha.sshub.phone.ui.screens.recovery.ExportActions
 import uk.petruha.sshub.phone.ui.screens.recovery.ExportOpsScreen
@@ -30,8 +33,13 @@ class ExportOpsScreenTest {
         rule.onNodeWithText("Newest entries").assertExists()
         rule.onNodeWithText("8 of 41 ops").assertExists()
         RecoverySamples.exportRows.forEach { r ->
-            rule.onNodeWithContentDescription("Operation ${r.seq}, ${r.kind}, ${r.time}, hash ${spokenHex(listOf(r.hash))}").assertExists()
+            val danger = if (r.danger) ", danger" else ""
+            rule.onNodeWithContentDescription("Operation ${r.seq}, ${r.kind}, ${r.time}$danger, hash ${spokenHex(hexGroups(r.hash))}").assertExists()
         }
+        // L6: a dangerous op carries the word, a plain one does not
+        rule.onAllNodesWithText("danger").assertCountEquals(RecoverySamples.exportRows.count { it.danger })
+        // D4: the hash is shown in groups of 4
+        rule.onNodeWithText(groupedUid(RecoverySamples.exportRows.first().hash), useUnmergedTree = true).assertExists()
         rule.onAllNodes(hasContentDescription("Operation ", substring = true)).assertCountEquals(8)
     }
 

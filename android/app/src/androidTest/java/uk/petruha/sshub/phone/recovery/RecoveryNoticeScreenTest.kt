@@ -34,15 +34,21 @@ class RecoveryNoticeScreenTest {
     @Test fun review_starts_with_the_red_banner_and_shows_every_field() {
         show(review)
         rule.onNodeWithText("RECOVERY YOU DID NOT START?").assertExists()
-        rule.onNodeWithText("Someone is replacing pixel-8 with another phone.").assertExists()
+        rule.onNodeWithText("A phone recovery was proposed. If you did not start it, cancel it.").assertExists()
         rule.onNodeWithContentDescription("Field Started by, new value workstation [9C61-E2A8]").assertExists()
         rule.onNodeWithContentDescription("Field Lamport, new value 1038").assertExists()
         rule.onNodeWithContentDescription("Field Operation, new value phone recovery: a new phone replaces pixel-8").assertExists()
         rule.onNodeWithContentDescription("Field Started, new value 21 h ago, 2026-10-25 12:41Z").assertExists()
+        // M6: every leaf of the op, danger rows included
+        rule.onNodeWithText("Fields of the operation").assertExists()
+        rule.onNodeWithContentDescription("Field signers, new value workstation [9C61-E2A8]").assertExists()
+        rule.onNodeWithContentDescription("Field via_paper, new value false").assertExists()
+        rule.onNodeWithContentDescription("Field third_factor, new value EmailCode").assertExists()
+        rule.onNodeWithContentDescription("Field initiated_at, new value 2026-10-25T12:41:00Z").assertExists()
         rule.onNodeWithText("The signature verifies", substring = true).assertExists()
     }
 
-    @Test fun an_empty_phone_name_leaves_the_replacing_line_out() {
+    @Test fun the_notice_never_names_a_phone_it_cannot_know() {
         show(review.copy(view = review.view!!.copy(phoneName = "")))
         rule.onNodeWithText("Someone is replacing", substring = true).assertDoesNotExist()
     }
@@ -117,8 +123,8 @@ class RecoveryNoticeScreenTest {
         var done = 0
         show(RecoverySamples.noticeSigned, NoticeActions(onCopy = { copied++ }, onDone = { done++ }))
         rule.onNodeWithText("CANCELLATION SIGNED").assertExists()
-        rule.onNodeWithText("Recovery cancelled").assertExists()
-        rule.onNodeWithText("workstation [9C61-E2A8] recovery, signed with this phone").assertExists()
+        rule.onNodeWithText("Cancellation signed").assertExists()
+        rule.onAllNodesWithText("Recovery cancelled").assertCountEquals(0)
         rule.onNode(hasContentDescription("QR code with the signed recovery cancellation", substring = true)).assertExists()
         rule.onNodeWithContentDescription("Signed text", substring = true).assertExists()
         rule.onNodeWithText("Copying marks the text as sensitive. It leaves the clipboard after 60 s.").assertExists()

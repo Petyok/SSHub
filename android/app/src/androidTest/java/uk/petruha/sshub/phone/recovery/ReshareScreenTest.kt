@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
@@ -16,6 +17,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import uk.petruha.sshub.phone.core.ReshareStage
+import uk.petruha.sshub.phone.release.descStartsWith
 import uk.petruha.sshub.phone.fake.RecoverySamples
 import uk.petruha.sshub.phone.testing.assertNoVisualOverflow
 import uk.petruha.sshub.phone.testing.assertTargets48
@@ -43,9 +45,9 @@ class ReshareScreenTest {
         assertEquals(1, rotated)
     }
 
-    @Test fun start_adopt_waits_and_says_why() {
+    @Test fun m1_adopt_is_enabled_before_any_rotation_in_this_process() {
         show(sample(ReshareStage.Start))
-        rule.button("Adopt a reshare").assertDisabled("rotate wrap keys first")
+        rule.button("Adopt a reshare").assertIsEnabled()
     }
 
     @Test fun there_is_no_separate_publish_step() {
@@ -74,6 +76,16 @@ class ReshareScreenTest {
         rule.onNodeWithText("Reshare for epoch 8").assertExists()
         rule.onNodeWithText("laptop-main [7B3E-0D15]: signature verified").assertExists()
         rule.onNodeWithText("not met [E7A4-6B02]: signature not checked").assertExists()
+        // H3: the flags are lines of their own, a missing session key is a failing one
+        rule.onNodeWithText("laptop-main [7B3E-0D15]: known to this phone").assertExists()
+        rule.onNodeWithText("laptop-main [7B3E-0D15]: session key for this phone").assertExists()
+        rule.onNodeWithContentDescription("Failed: not met [E7A4-6B02]: not known to this phone").assertExists()
+        rule.onNodeWithContentDescription("Failed: not met [E7A4-6B02]: no session key for this phone").assertExists()
+        // the holders afterwards, this phone marked, one node each
+        rule.onNodeWithContentDescription("Holder afterwards: laptop-main [7B3E-0D15]").assertExists()
+        rule.onNodeWithContentDescription("Holder afterwards: pixel-8 [4F2A-91C0] (this phone)").assertExists()
+        rule.onAllNodes(descStartsWith("Holder afterwards: ")).assertCountEquals(RecoverySamples.holders.size)
+        rule.onNodeWithText("A storage key of this epoch is published with the new shares.").assertExists()
         rule.button("Adopt and publish the new shares").assertIsEnabled().performScrollTo().performClick()
         assertEquals(1, adopted)
     }
@@ -85,9 +97,9 @@ class ReshareScreenTest {
         assertEquals(0, adopted)
     }
 
-    @Test fun candidate_before_rotation_waits_for_the_rotation() {
+    @Test fun m1_a_candidate_can_be_adopted_without_a_rotation_in_this_process() {
         show(sample(ReshareStage.Start).copy(candidate = RecoverySamples.candidate))
-        rule.button("Adopt and publish the new shares").assertDisabled("rotate wrap keys first")
+        rule.button("Adopt and publish the new shares").assertIsEnabled()
     }
 
     @Test fun candidate_while_busy_cannot_be_adopted_twice() {

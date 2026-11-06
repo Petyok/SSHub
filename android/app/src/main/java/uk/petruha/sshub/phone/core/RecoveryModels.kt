@@ -6,8 +6,14 @@ package uk.petruha.sshub.phone.core
  */
 enum class ReshareStage { Empty, Start, Rotated, Candidate, Published }
 
-/** `verified` false is shown as "signature not checked". */
-data class ReshareContributor(val name: String, val id: String, val verified: Boolean)
+/**
+ * `verified` false is shown as "signature not checked". `known` is whether this phone has met the contributor; `hasSession` whether it
+ * holds a session key for it (without one this phone cannot read that contributor's shares).
+ */
+data class ReshareContributor(val name: String, val id: String, val verified: Boolean, val known: Boolean = true, val hasSession: Boolean = true)
+
+/** One holder of the shares after the reshare. `isThisPhone` marks this phone. */
+data class ReshareHolder(val id: String, val name: String, val isThisPhone: Boolean)
 
 /** A reshare as the core read it. `note` states the contributor rule and its result; `adoptable` is the core's verdict. */
 data class ReshareView(
@@ -18,6 +24,10 @@ data class ReshareView(
     val contributors: List<ReshareContributor>,
     val note: String,
     val adoptable: Boolean,
+    /** Who holds a share once the reshare is adopted, in the core's order. */
+    val holdersAfter: List<ReshareHolder> = emptyList(),
+    /** A storage key of this epoch is published with the new shares (false: one was already published). */
+    val storageKeyNew: Boolean = false,
 )
 
 /** `reshare` is the reshare that was adopted and published once the stage is Published, else null. */
@@ -57,6 +67,8 @@ data class RecoveryNoticeView(
     /** False when this phone cannot cancel it (already cancelled, timelock over); then `closedReason` says why. */
     val cancellable: Boolean,
     val closedReason: String? = null,
+    /** Every leaf of the signed op, with the core's danger flag (signers, paper phrase, third factor, ...). */
+    val opRows: List<RedField> = emptyList(),
 )
 
 /** `openFrame` result for a recovery notice frame; leads to the recovery-notice screen for `token`. */

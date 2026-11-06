@@ -59,7 +59,6 @@ data class ReshareActions(
     val onDone: () -> Unit = {},
 )
 
-private const val ROTATE_FIRST = "rotate wrap keys first"
 
 /** Spec 12 `reshare`: wrap keys, rotate, adopt a reshare and publish the new shares in one signing, and what resharing cannot do. */
 @Composable
@@ -95,6 +94,10 @@ fun ReshareScreen(state: ReshareState, on: ReshareActions) {
             if (shown != null) {
                 SectionHeading("Contributors", trailing = "${shown.contributors.size} counted")
                 SshubCard { ContributorLines(shown.contributors, shown.note) }
+                if (shown.holdersAfter.isNotEmpty()) {
+                    SectionHeading("Holders afterwards", trailing = "${shown.holdersAfter.size} holders")
+                    SshubCard { HolderLines(shown.holdersAfter, shown.storageKeyNew) }
+                }
             }
             if (published && outgoing != null) {
                 SectionHeading("Signed ops")
@@ -160,17 +163,21 @@ private fun Steps(s: ReshareState, on: ReshareActions) {
                     KeyValue("holder no.", "#${candidate.holderNumber}")
                     KeyValue("credentials", "${candidate.credentialsReady} of ${candidate.credentialsTotal}")
                     ContributorLines(candidate.contributors, candidate.note)
+                    if (candidate.holdersAfter.isNotEmpty()) {
+                        Text("Holders afterwards (${candidate.holdersAfter.size})", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+                        HolderLines(candidate.holdersAfter, candidate.storageKeyNew)
+                    }
                 }
                 SshubButton(
-                    "Adopt and publish the new shares", on.onAdoptPublish, fill, if (rotated) ButtonKind.Primary else ButtonKind.Outline,
-                    "sign with the phone, sealed into this phone chain", enabled = rotated && candidate.adoptable && !s.busy,
-                    disabledReason = if (!rotated) ROTATE_FIRST else candidate.note,
+                    "Adopt and publish the new shares", on.onAdoptPublish, fill, ButtonKind.Primary,
+                    "sign with the phone, sealed into this phone chain", enabled = candidate.adoptable && !s.busy,
+                    disabledReason = candidate.note,
                 )
                 SshubButton("Scan another reshare", on.onScan, fill, ButtonKind.Outline)
             } else {
                 SshubButton(
-                    "Adopt a reshare", on.onScan, fill, if (rotated) ButtonKind.Primary else ButtonKind.Outline,
-                    "scan or paste the reshare ops", enabled = rotated, disabledReason = ROTATE_FIRST,
+                    "Adopt a reshare", on.onScan, fill, ButtonKind.Primary,
+                    "scan or paste the reshare ops", enabled = !s.busy,
                 )
             }
         }

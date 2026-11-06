@@ -12,6 +12,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -21,13 +22,18 @@ import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.ui.components.ButtonKind
 import uk.petruha.sshub.phone.ui.components.EmptyState
 import uk.petruha.sshub.phone.ui.components.Gap
+import uk.petruha.sshub.phone.ui.components.Glyph
+import uk.petruha.sshub.phone.ui.components.GlyphKind
 import uk.petruha.sshub.phone.ui.components.Note
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
 import uk.petruha.sshub.phone.ui.components.SectionHeading
 import uk.petruha.sshub.phone.ui.components.SshubButton
 import uk.petruha.sshub.phone.ui.components.SshubCard
+import uk.petruha.sshub.phone.ui.components.groupedUid
+import uk.petruha.sshub.phone.ui.components.hexGroups
 import uk.petruha.sshub.phone.ui.components.spokenHex
 import uk.petruha.sshub.phone.ui.theme.SshubText
+import uk.petruha.sshub.phone.ui.theme.sshub
 
 /** `outgoing` is null when there are no rows. `clearsIn` is the clipboard port's countdown, null when nothing of ours is on it. */
 data class ExportState(
@@ -83,17 +89,21 @@ fun ExportOpsScreen(state: ExportState, on: ExportActions) {
 private fun OpRow(r: ExportOpRow) {
     Row(
         Modifier.fillMaxWidth().padding(vertical = 8.dp).semantics(mergeDescendants = true) {
-            contentDescription = "Operation ${r.seq}, ${r.kind}, ${r.time}" + (if (r.hash.isNotEmpty()) ", hash ${spokenHex(listOf(r.hash))}" else "")
+            contentDescription = "Operation ${r.seq}, ${r.kind}, ${r.time}" + (if (r.danger) ", danger" else "") +
+                (if (r.hash.isNotEmpty()) ", hash ${spokenHex(hexGroups(r.hash))}" else "")
         },
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text(r.seq.toString(), Modifier.widthIn(min = 32.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
         Column(Modifier.weight(1f)) {
-            Text(r.kind, style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(r.time, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (r.hash.isNotEmpty()) Text(r.hash, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            // A dangerous op carries a glyph and the word, not colour alone (D3): a CertIssue must not look like a HeadAttest.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
+                if (r.danger) Glyph(GlyphKind.Warning, MaterialTheme.sshub.dangerText, size = 18.dp)
+                Text(r.kind, style = SshubText.monoBody, color = if (r.danger) MaterialTheme.sshub.dangerText else MaterialTheme.colorScheme.onSurface)
+                if (r.danger) Text("danger", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.sshub.dangerText)
             }
+            Text(r.time, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (r.hash.isNotEmpty()) Text(groupedUid(r.hash), style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

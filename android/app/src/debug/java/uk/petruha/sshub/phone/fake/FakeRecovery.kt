@@ -10,7 +10,9 @@ import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.core.RecoveryApi
 import uk.petruha.sshub.phone.core.RecoveryNoticeSummary
 import uk.petruha.sshub.phone.core.RecoveryNoticeView
+import uk.petruha.sshub.phone.core.RedField
 import uk.petruha.sshub.phone.core.ReshareContributor
+import uk.petruha.sshub.phone.core.ReshareHolder
 import uk.petruha.sshub.phone.core.ReshareOutcome
 import uk.petruha.sshub.phone.core.ReshareStage
 import uk.petruha.sshub.phone.core.ReshareView
@@ -82,11 +84,15 @@ object RecoverySamples {
     val contributors = listOf(
         ReshareContributor("laptop-main", "7B3E-0D15", true),
         ReshareContributor("workstation", "9C61-E2A8", true),
-        ReshareContributor("not met", "E7A4-6B02", false),
+        ReshareContributor("not met", "E7A4-6B02", false, known = false, hasSession = false),
+    )
+    val holders = listOf(
+        ReshareHolder("7B3E-0D15", "laptop-main", false), ReshareHolder("9C61-E2A8", "workstation", false), ReshareHolder("4F2A-91C0", "pixel-8", true),
     )
     val candidate = ReshareView(
         epoch = 8, holderNumber = 3, credentialsReady = 9, credentialsTotal = 9, contributors = contributors,
         note = "At least 2 contributors must be terminals this phone enrolled with and whose signature verifies: 2 of 2.", adoptable = true,
+        holdersAfter = holders, storageKeyNew = true,
     )
     val refusedCandidate = candidate.copy(
         contributors = listOf(ReshareContributor("laptop-main", "7B3E-0D15", true), ReshareContributor("not met", "E7A4-6B02", false)),
@@ -121,6 +127,12 @@ object RecoverySamples {
         hash = "a3f9007c4e1b9c2d" + "5e8f0a1b3c4d5e6f" + "708192a3b4c5d6e7" + "f8091a2b3c4d5e6f",
         signatureNote = "The signature verifies: this phone knows workstation. The ring accepts the new phone after the timelock unless it is cancelled.",
         cancellable = true,
+        opRows = listOf(
+            RedField("signers", null, "workstation [9C61-E2A8]"),
+            RedField("via_paper", null, "false"),
+            RedField("third_factor", null, "EmailCode"),
+            RedField("initiated_at", null, "2026-10-25T12:41:00Z", danger = false),
+        ),
     )
     val noticeReview = NoticeState(loaded = true, view = noticeView, now = now)
     val noticeConfirm = noticeReview.copy(phase = NoticePhase.Confirm)
@@ -129,11 +141,14 @@ object RecoverySamples {
         view = noticeView.copy(cancellable = false, closedReason = "This recovery is already cancelled."),
     )
 
+    /** A 64 digit hash from an 8 digit seed: the real core gives the full BLAKE3 hex. */
+    private fun hash64(seed: String) = seed.repeat(8)
+
     val exportRows = listOf(
-        ExportOpRow(41, "CertExtend", "10-26 03:03", "c71d4e90"), ExportOpRow(40, "RedPhoneSign", "10-25 18:20", "9f3c1ab2"),
-        ExportOpRow(39, "CertIssue", "10-20 11:05", "52e0b7d4"), ExportOpRow(38, "WrapKeyRotate", "10-19 09:30", "a04f6c13"),
-        ExportOpRow(37, "RedPhoneSign", "10-17 14:44", "e8d219a6"), ExportOpRow(36, "CertRevoke", "10-15 16:02", "1b73f0c8"),
-        ExportOpRow(35, "CertIssue", "10-12 10:11", "7d95a2e1"), ExportOpRow(34, "RedPhoneSign", "10-08 19:58", "3c6e84f7"),
+        ExportOpRow(41, "CertExtend", "10-26 03:03", hash64("c71d4e90"), danger = true), ExportOpRow(40, "RedPhoneSign", "10-25 18:20", hash64("9f3c1ab2")),
+        ExportOpRow(39, "CertIssue", "10-20 11:05", hash64("52e0b7d4"), danger = true), ExportOpRow(38, "WrapKeyRotate", "10-19 09:30", hash64("a04f6c13")),
+        ExportOpRow(37, "RedPhoneSign", "10-17 14:44", hash64("e8d219a6")), ExportOpRow(36, "CertRevoke", "10-15 16:02", hash64("1b73f0c8"), danger = true),
+        ExportOpRow(35, "CertIssue", "10-12 10:11", hash64("7d95a2e1"), danger = true), ExportOpRow(34, "RedPhoneSign", "10-08 19:58", hash64("3c6e84f7")),
     )
     val exportState = ExportState(loaded = true, rows = exportRows, total = 41, outgoing = outgoing(3))
     val exportEmpty = ExportState(loaded = true)

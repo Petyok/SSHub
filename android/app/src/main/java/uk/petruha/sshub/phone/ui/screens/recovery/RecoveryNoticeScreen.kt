@@ -29,6 +29,7 @@ import uk.petruha.sshub.phone.ui.components.Note
 import uk.petruha.sshub.phone.ui.components.RedBanner
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
 import uk.petruha.sshub.phone.ui.components.SecureWindow
+import uk.petruha.sshub.phone.ui.components.SectionHeading
 import uk.petruha.sshub.phone.ui.components.SshubButton
 import uk.petruha.sshub.phone.ui.components.SshubCard
 import uk.petruha.sshub.phone.ui.components.TickScale
@@ -82,7 +83,7 @@ fun RecoveryNoticeScreen(state: NoticeState, on: NoticeActions) {
             banner = { RedBanner("CANCELLATION SIGNED", kind = BannerKind.Green, trailing = "recovery") },
             bar = { CopyBar(state.copied, on.onCopy, on.onDone) },
         ) {
-            Text("Recovery cancelled", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text("Cancellation signed", Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
             Text("${v.startedBy} recovery, signed with this phone", style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Gap()
             HandoffCard(
@@ -124,9 +125,7 @@ fun RecoveryNoticeScreen(state: NoticeState, on: NoticeActions) {
             Gap()
         }
         Text(TITLE, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
-        if (v.phoneName.isNotBlank()) {
-            Text("Someone is replacing ${v.phoneName} with another phone.", style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        Text("A phone recovery was proposed. If you did not start it, cancel it.", style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Gap()
         DiffBox(
             listOf(
@@ -136,6 +135,10 @@ fun RecoveryNoticeScreen(state: NoticeState, on: NoticeActions) {
                 DiffEntry("Started", null, "${formatAgo(state.now - v.startedAt)}, ${v.startedUtc}", mono = true),
             ),
         )
+        if (v.opRows.isNotEmpty()) {
+            SectionHeading("Fields of the operation", trailing = "${v.opRows.size} fields")
+            DiffBox(v.opRows.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
+        }
         Gap()
         NoticeHash(v.hash)
         Gap()
