@@ -25,18 +25,24 @@ import uk.petruha.sshub.phone.core.ScanResults
 
 /** The "last sync" age is relative, so it is recomputed once a minute while the screen is alive. Nothing here acts on its own. */
 class HomeViewModel(private val core: HomeApi, private val platform: Platform) : ViewModel() {
-    private val _state = MutableStateFlow(read())
-    val state: StateFlow<HomeState> = _state.asStateFlow()
+    private val _state = MutableStateFlow(read(null))
+    /** Null while the core refuses to answer (locked): the shell moves to the Lock screen on the vault state, nothing is drawn. */
+    val state: StateFlow<HomeState?> = _state.asStateFlow()
 
     init {
         viewModelScope.launch { while (isActive) { delay(60_000); refresh() } }
     }
 
-    fun refresh() { _state.value = read() }
+    fun refresh() { _state.value = read(_state.value) }
 
-    private fun read(): HomeState {
+    /** A locked core throws; a refused read keeps what was shown. */
+    private fun read(previous: HomeState?): HomeState? {
         val now = platform.clock.nowSeconds()
-        return HomeState(core.thisPhone(now), core.ring(now), core.pending(now))
+        return try {
+            HomeState(core.thisPhone(now), core.ring(now), core.pending(now))
+        } catch (e: CoreException) {
+            previous
+        }
     }
 }
 
@@ -49,7 +55,7 @@ class ApprovalsViewModel(private val core: HomeApi, private val platform: Platfo
 
     /** First segment that has something, unless the user already chose one. */
     private fun read(selected: Int?): ApprovalsState {
-        val items = core.pending(platform.clock.nowSeconds())
+        val items = try { core.pending(platform.clock.nowSeconds()) } catch (e: CoreException) { emptyList() } // locked: the shell shows Lock
         val first = ApprovalTab.entries.indexOfFirst { t -> items.any { it.kind.tab() == t } }.coerceAtLeast(0)
         return ApprovalsState(items, selected ?: first)
     }

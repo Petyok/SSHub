@@ -28,6 +28,7 @@ import uk.petruha.sshub.phone.core.PhoneCoreApi
 import uk.petruha.sshub.phone.core.Platform
 import uk.petruha.sshub.phone.core.Routes
 import uk.petruha.sshub.phone.core.ScanEvent
+import uk.petruha.sshub.phone.core.VaultState
 
 /**
  * One enrollment run across the nine screens. Holds the core and the platform ports, never decides anything: frames go to
@@ -54,6 +55,13 @@ class EnrollViewModel(
     private var linkJob: Job? = null
     private var scanJob: Job? = null
     private var soundJob: Job? = null
+
+    init {
+        // The core drops its enrollment when it locks; the flow shown here must not outlive it.
+        viewModelScope.launch {
+            platform.keys.state.collect { if (it != VaultState.Unlocked) runCatching { restart() } }
+        }
+    }
 
     private fun now() = platform.clock.nowSeconds()
     private fun note(text: String?) = flow.update { it.copy(note = text) }
