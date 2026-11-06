@@ -15,7 +15,11 @@ step() {
 }
 # A step the rest of the scenario depends on: on failure the scenario ends here with what it has.
 must() {
-  step "$@" || { echo "--- the scenario cannot go on after: $1"; finish "$NAME"; }
+  step "$@" || {
+    echo "--- the scenario cannot go on after: $1"
+    [ -z "${APP_INSTR:-}" ] || app_stop
+    finish "$NAME"
+  }
 }
 
 # app JSON: one command to the live session; the answer is in APP_OUT; fails when the session says ok=false or does not answer.
@@ -138,7 +142,8 @@ enroll_app() {
   E5=$(enr_get 5)
   must "step 5: the terminal confirmation is pasted" apptype "Text from the terminal" "$(pf "$E5" frame)"
   must "step 5: check the signature" appclick "Check the signature"
-  must "step 5: finish" appclick "Finish"
+  # (the app goes straight to its Enrolled screen after the signature check; a Finish button is not always there)
+  appclick "Finish" true 6000 >/dev/null || echo "    (no Finish button: the app went straight to Enrolled)"
   must "enrolled: done" appclick "Done"
   if enr_close; then echo "ok   sync-phone-enroll exits 0 (the app verified and admitted)"; else echo "FAIL sync-phone-enroll exit status"; fail=$((fail + 1)); fi
   ADD=$(lastop "$1" DeviceAdd)
