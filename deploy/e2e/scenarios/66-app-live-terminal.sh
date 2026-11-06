@@ -21,7 +21,7 @@ fi
 PHONE_PREP=app_prep
 PHONE_ENROLL=enroll_app
 PHONE_SIGNS=app_signs
-ring_with_phone ring3
+step "ring with the app as the phone (ring3)" ring_with_phone ring3
 st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
 expect "the app is a holder in force on peer-a" "$st" '[.devices[] | select(.name=="my phone") | .role] == ["holder"]'
 
@@ -32,11 +32,12 @@ check "peer-a stores host quorum1 with a password" "printf '%s\n' '$SECRET' | pe
 check "peer-a migrates it into the ring" "peer peer-a $SSHUB sync-migrate"
 show "peer-a sync-mode quorum, first call proposes it" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
 MODE_OP=$(opid "$LAST_OUT")
-red_complete "$MODE_OP"
+step "mode change ceremony (app, peer-b, paper)" red_complete "$MODE_OP"
 show "peer-a sync-mode quorum again: the ring agreed" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
 st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
 expect "peer-a reports Quorum mode" "$st" '.credential_mode == "quorum"'
 
+share_release_with_app() {
 enr_open peer-a sync-share-request quorum1 --wait 400 --format json
 CH=$(enr_get 1); echo "terminal: $CH" | cut -c1-200
 CHALLENGE=$(pf "$CH" challenge)
@@ -62,6 +63,8 @@ else
 fi
 if enr_close; then echo "ok   sync-share-request exits 0"; else echo "FAIL sync-share-request exit status"; fail=$((fail + 1)); fi
 step "app: back to the approvals" appclick "Back to approvals"
+}
+step "share release: peer-a asks, the app approves, the credential opens" share_release_with_app
 
 # ---- 3. a Red approval from the app: the revocation of a holder
 C_ID=$(devid peer-a peer-c)
@@ -69,7 +72,7 @@ check "peer-a can name peer-c" "test -n '$C_ID'"
 show "peer-a sync-revoke peer-c (a holder)" peer peer-a $SSHUB sync-revoke "$C_ID" --format json
 REV=$(opid "$LAST_OUT")
 check "the revocation is a Red op" "test -n '$REV'"
-red_complete "$REV"
+step "revocation ceremony (app, peer-b, paper)" red_complete "$REV"
 expect "the revocation ceremony is complete" "$LAST_OUT" '.ceremony.complete == true'
 spread peer-b peer-a peer-b
 st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)

@@ -8,11 +8,6 @@ APP_LIVE=/sdcard/Android/data/$APP_PKG/files/live
 APK_DIR=${APK_DIR:-/root/sshub-ci/android-app/out/hs-e2e-live}
 APP_OUT=
 
-# A step that counts as a failure when it does not hold, in the current shell (check runs in a subshell and would lose APP_OUT).
-step() {
-  d=$1; shift
-  if "$@"; then echo "ok   $d"; else echo "FAIL $d"; fail=$((fail + 1)); return 1; fi
-}
 # A step the rest of the scenario depends on: on failure the scenario ends here with what it has.
 must() {
   step "$@" || {
