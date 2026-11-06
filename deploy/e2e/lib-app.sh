@@ -5,7 +5,8 @@
 
 APP_PKG=uk.petruha.sshub.phone
 APP_LIVE=/sdcard/Android/data/$APP_PKG/files/live
-APK_DIR=${APK_DIR:-/root/sshub-ci/android-app/out/hs-e2e-live}
+# android.sh builds use the fixed run name hs-e2e2-app (a warm cargo target); hs-e2e-live is the older name of the first builds.
+APK_DIR=${APK_DIR:-$([ -d /root/sshub-ci/android-app/out/hs-e2e2-app ] && echo /root/sshub-ci/android-app/out/hs-e2e2-app || echo /root/sshub-ci/android-app/out/hs-e2e-live)}
 APP_OUT=
 
 # A step the rest of the scenario depends on: on failure the scenario ends here with what it has.
@@ -64,7 +65,7 @@ appfind() { app "{\"op\":\"find\",\"pattern\":\"$1\",\"timeout\":${2:-20000}}" &
 # Install both APKs, start the live session (a long instrumentation run), wait until it is ready.
 app_boot() {
   for f in app-debug.apk app-debug-androidTest.apk; do
-    [ -f "$APK_DIR/$f" ] || { echo "missing $APK_DIR/$f: build it with gpu-verify/android.sh <checkout> hs-e2e-live build"; return 1; }
+    [ -f "$APK_DIR/$f" ] || { echo "missing $APK_DIR/$f: build it with gpu-verify/android.sh <checkout> hs-e2e2-app build"; return 1; }
     $C cp "$APK_DIR/$f" "android:/tmp/$f" || return 1
     out=$($C exec -T android adb install -r "/tmp/$f" 2>&1); echo "adb install $f: $out"
     printf '%s' "$out" | grep -q Success || return 1

@@ -1,7 +1,7 @@
 #!/bin/sh
 # 66: the NATIVE Android app (the debug APK with the real Rust core, on the emulator of this compose project) as the ring's phone
 # against real terminals (the CLI in the peers). Needs the phone target `native` (deploy/e2e/phone-target) and the APKs built with
-# gpu-verify/android.sh <checkout> hs-e2e-live build. The app is driven through its real UI by LiveTerminalTest; frames move as text
+# gpu-verify/android.sh <checkout> hs-e2e2-app build. The app is driven through its real UI by LiveTerminalTest; frames move as text
 # (paste in, Copy out). QR, sound and Bluetooth are not used.
 #   1. enrollment: restore from the fixed words, enroll to peer-a over text with the four-word check, in the ring-setup order
 #      (the app signs its own admission, then promotions and the paper registration)
