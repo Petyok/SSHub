@@ -46,8 +46,11 @@ struct Unlocked {
 }
 
 struct Inner {
-    /// The sealed state as stored; opened at `unlock` with the secret.
+    /// The sealed state as stored; opened at `unlock` with the secret. `lock` puts the live state back here, so a
+    /// lock followed by an unlock in the same process opens it (never starts empty).
     sealed: Option<Vec<u8>>,
+    /// An unlock succeeded in this process: from now on missing sealed bytes are an error, not a fresh install.
+    had_state: bool,
     /// `restore_from_words` ran: BLAKE3 of the restored secret. Only an `unlock` with that very secret starts from a
     /// restored (head pending) state; an unlock with any other secret (the old key after a cancelled prompt) opens the
     /// sealed state normally and clears this.
@@ -135,6 +138,16 @@ fn info(u: &Unlocked, now: i64) -> UnlockInfo {
     }
 }
 
+impl Inner {
+    /// Ends the unlocked session and keeps its state, sealed under its own secret (the bytes `sealed_state()` gives), in
+    /// `sealed` for the next `unlock`. Nothing is dropped without being sealed first.
+    fn seal_and_drop(&mut self) {
+        if let Some(mut u) = self.unlocked.take() {
+            self.sealed = Some(u.state.seal(u.id.secret(), &mut *self.rng));
+        }
+    }
+}
+
 impl PhoneCore {
     fn lock_inner(&self) -> MutexGuard<'_, Inner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
@@ -144,6 +157,7 @@ impl PhoneCore {
         Arc::new(Self {
             inner: Mutex::new(Inner {
                 sealed,
+                had_state: false,
                 restored: None,
                 unlocked: None,
                 rng,
@@ -367,12 +381,18 @@ impl PhoneCore {
                 .map_err(|_| CoreError::bad("the phone secret must be 32 bytes"))?,
         );
         let mut g = self.lock_inner();
+        g.seal_and_drop();
         let restore_of_this_secret =
             g.restored.take() == Some(sshub_sync_proto::crypto::chain_hash(&s[..]));
         let (state, lost) = if restore_of_this_secret {
             (PhoneState::restored(), false)
         } else {
             match g.sealed.as_deref() {
+                None if g.had_state => {
+                    return Err(CoreError::refused(
+                        "This phone was unlocked before, but no stored state is held any more: restart the app. Nothing was changed.",
+                    ))
+                }
                 None => (PhoneState::default(), false),
                 Some(b) => match PhoneState::open(b, &s) {
                     Ok(st) => (st, false),
@@ -381,6 +401,7 @@ impl PhoneCore {
             }
         };
         let id = PhoneIdentity::new(&s, state.wrap_epoch)?;
+        g.had_state = true;
         g.sealed = None;
         g.pending.clear();
         g.enroll = None;
@@ -406,7 +427,7 @@ impl PhoneCore {
     /// Zeroizes the secret and every key.
     pub fn lock(&self) {
         let mut g = self.lock_inner();
-        g.unlocked = None;
+        g.seal_and_drop();
         g.pending.clear();
         g.enroll = None;
     }
@@ -427,7 +448,7 @@ impl PhoneCore {
         let s = secret_from_words(&words)?;
         let mut g = self.lock_inner();
         g.restored = Some(sshub_sync_proto::crypto::chain_hash(&s[..]));
-        g.unlocked = None;
+        g.seal_and_drop();
         Ok(s.to_vec())
     }
 
@@ -958,6 +979,108 @@ mod tests {
                 now + 1
             )
             .is_ok());
+    }
+
+    #[test]
+    fn lock_then_unlock_in_the_same_process_keeps_the_state_and_a_wrong_secret_is_state_lost_never_empty(
+    ) {
+        use crate::state::RingDevice;
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.never_signed(c.status(0).unwrap().device_id).unwrap();
+        {
+            let mut g = c.lock_inner();
+            let g = &mut *g;
+            let u = g.unlocked.as_mut().unwrap();
+            for t in 0..2 {
+                chain::head_attest(&mut u.state, &u.id, 1_900_000_000 + t, None).unwrap();
+            }
+            u.state.ring.insert(
+                "723ed85f0566df0c".into(),
+                RingDevice {
+                    name: "terminal A".into(),
+                    ed25519_pub: "00".repeat(32),
+                    enrolled_at: 5,
+                },
+            );
+            u.state.record_snapshot(
+                &"0a".repeat(16),
+                crate::state::SnapshotRecord {
+                    issued_at: 1_900_000_000,
+                    expires_at: 1_900_600_000,
+                    mem_kib: 64,
+                    iters: 1,
+                    weak: false,
+                },
+            );
+        }
+        let before = c.lock_inner().unlocked.as_ref().unwrap().state.clone();
+        // every seal bumps the version counter `rev`; everything else must be equal
+        let same = |c: &PhoneCore, want: &PhoneState| {
+            let mut got = c.lock_inner().unlocked.as_ref().unwrap().state.clone();
+            got.rev = want.rev;
+            got == *want
+        };
+        // a screen off locks the core; the next unlock in the same process opens the same state
+        c.lock();
+        let info = c.unlock(vec![0x42; 32]).unwrap();
+        assert!(!info.state_lost && !info.head_pending);
+        assert_eq!(info.head_seq, Some(2));
+        assert_eq!(info.ring.len(), 1);
+        assert!(same(&c, &before), "ring, chain, short codes and all");
+        // many locks in a row, an unlock that is repeated without a lock in between, still the same state
+        c.lock();
+        c.lock();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.unlock(vec![0x42; 32]).unwrap();
+        assert!(same(&c, &before));
+        // the bytes the shell stores are the same state
+        let stored = c.sealed_state().unwrap();
+        c.lock();
+        let c2 = PhoneCore::with_rng(Some(stored), Box::new(ChaCha8Rng::seed_from_u64(2)));
+        c2.unlock(vec![0x42; 32]).unwrap();
+        assert!(same(&c2, &before));
+        // the wrong secret after a lock is a lost state (restored, head pending), never a silent empty default
+        c.lock();
+        let info = c.unlock(vec![0x43; 32]).unwrap();
+        assert!(info.state_lost && info.head_pending, "{info:?}");
+    }
+
+    #[test]
+    fn a_restore_started_while_unlocked_keeps_the_old_state_for_the_old_key() {
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.never_signed(c.status(0).unwrap().device_id).unwrap();
+        {
+            let mut g = c.lock_inner();
+            let g = &mut *g;
+            let u = g.unlocked.as_mut().unwrap();
+            chain::head_attest(&mut u.state, &u.id, 1_900_000_000, None).unwrap();
+        }
+        let other = core();
+        other.unlock(vec![0x11; 32]).unwrap();
+        let words = other.backup_words().unwrap();
+        c.restore_from_words(words).unwrap();
+        // the prompt is cancelled: the old key unlocks and finds its state, not an empty one
+        let info = c.unlock(vec![0x42; 32]).unwrap();
+        assert!(!info.state_lost && !info.head_pending);
+        assert_eq!(info.head_seq, Some(1));
+    }
+
+    #[test]
+    fn missing_stored_state_after_an_unlock_is_refused_not_started_empty() {
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        // a fresh install started empty; if the bytes were ever lost after that, say so
+        {
+            let mut g = c.lock_inner();
+            g.unlocked = None;
+            g.sealed = None;
+        }
+        let e = c.unlock(vec![0x42; 32]).unwrap_err();
+        assert!(matches!(e, CoreError::Refused { .. }), "{e}");
+        // a core that never held a state still starts empty
+        assert!(core().unlock(vec![0x42; 32]).is_ok());
     }
 
     #[test]
