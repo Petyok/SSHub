@@ -44,7 +44,6 @@ data class TrustExtendState(
 class TrustExtendActions(
     val onApprove: () -> Unit,
     val onDecline: () -> Unit,
-    val onReviewAgain: () -> Unit,
     val onCopy: () -> Unit,
     val onDone: () -> Unit,
     val onBack: () -> Unit,
@@ -70,7 +69,7 @@ fun TrustExtendScreen(state: TrustExtendState, on: TrustExtendActions) {
         bar = {
             when {
                 signed -> HandoffBar(state.clearsIn, on.onDone, on.onCopy)
-                state.phase == TrustPhase.Declined -> SshubButton("Review again", on.onReviewAgain, Modifier.fillMaxWidth())
+                state.phase == TrustPhase.Declined -> SshubButton("Back to approvals", on.onBack, Modifier.fillMaxWidth())
                 closed || v.refusal != null -> SshubButton("Back to approvals", on.onBack, Modifier.fillMaxWidth())
                 else -> BarButtons {
                     SshubButton("Decline", on.onDecline, enabled = !state.busy)
@@ -123,10 +122,10 @@ fun TrustExtendScreen(state: TrustExtendState, on: TrustExtendActions) {
                     }
                     Gap()
                 }
-                SshubCard { v.fields.forEach { KeyValue(it.key, it.value) } }
+                SshubCard { v.fields.forEach { KeyValue(it.key, it.value, danger = it.danger) } }
                 if (v.refusal == null) {
                     Gap()
-                    DiffBox(listOf(DiffEntry(v.diffKey, v.diffFrom, v.diffTo, mono = true)))
+                    DiffBox(listOf(DiffEntry(v.diffKey, v.diffFrom.takeIf { it.isNotEmpty() }, v.diffTo, mono = true, danger = v.diffDanger)))
                     Gap()
                     Note(v.note)
                 }

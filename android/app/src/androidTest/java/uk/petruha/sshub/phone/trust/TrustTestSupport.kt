@@ -24,12 +24,12 @@ internal fun SemanticsNodeInteraction.description(): String =
     fetchSemanticsNode().config[SemanticsProperties.ContentDescription].joinToString(" ")
 
 internal fun requestActions(
-    onTyped: (String) -> Unit = {}, onApprove: () -> Unit = {}, onDecline: () -> Unit = {}, onReviewAgain: () -> Unit = {}, onBack: () -> Unit = {},
-) = TrustRequestActions(onTyped, onApprove, onDecline, onReviewAgain, onBack)
+    onTyped: (String) -> Unit = {}, onApprove: () -> Unit = {}, onDecline: () -> Unit = {}, onBack: () -> Unit = {},
+) = TrustRequestActions(onTyped, onApprove, onDecline, onBack)
 
 internal fun extendActions(
-    onApprove: () -> Unit = {}, onDecline: () -> Unit = {}, onReviewAgain: () -> Unit = {}, onCopy: () -> Unit = {}, onDone: () -> Unit = {}, onBack: () -> Unit = {},
-) = TrustExtendActions(onApprove, onDecline, onReviewAgain, onCopy, onDone, onBack)
+    onApprove: () -> Unit = {}, onDecline: () -> Unit = {}, onCopy: () -> Unit = {}, onDone: () -> Unit = {}, onBack: () -> Unit = {},
+) = TrustExtendActions(onApprove, onDecline, onCopy, onDone, onBack)
 
 internal fun handoffActions(onCopy: () -> Unit = {}, onDone: () -> Unit = {}, onBack: () -> Unit = {}) = TrustHandoffActions(onCopy, onDone, onBack)
 

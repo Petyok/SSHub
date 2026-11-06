@@ -72,7 +72,7 @@ class TrustHandoffTest {
     @Test fun revoked_main_path() {
         var done = 0
         rule.setScreen { TrustRevokedScreen(revoked, handoffActions(onDone = { done++ })) }
-        rule.onNodeWithText("REVOKED").assertExists()
+        rule.onNodeWithText("REVOCATION SIGNED").assertExists()
         rule.onNodeWithText("laptop-old [1D88-A340], group prod-web, was to end 2026-11-27").assertExists()
         rule.onNode(hasContentDescription("QR code with the signed revocation", substring = true)).assertExists()
         rule.onNodeWithText("Copy the text").assertExists()
@@ -101,7 +101,7 @@ class TrustHandoffTest {
 
     @Test fun revoked_light() {
         rule.setScreen(dark = false) { TrustRevokedScreen(revoked, handoffActions()) }
-        rule.onAllNodesWithText("Trust session revoked").onFirst().assertExists()
+        rule.onAllNodesWithText("Revocation signed").onFirst().assertExists()
     }
 
     @Test fun signed_font_scale_2_has_no_overflow() {

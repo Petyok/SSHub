@@ -66,11 +66,11 @@ fun TrustRevokedScreen(state: TrustRevokedState, on: TrustRevokedActions) {
     SecureWindow()
     val h = state.handoff
     ScreenFrame(
-        "Trust session revoked", on.onBack,
-        banner = { RedBanner("REVOKED", kind = BannerKind.Neutral, trailing = "trust certificate") },
+        "Revocation signed", on.onBack,
+        banner = { RedBanner("REVOCATION SIGNED", kind = BannerKind.Neutral, trailing = "trust certificate") },
         bar = { if (h != null) HandoffBar(state.clearsIn, on.onDone, on.onCopy) else SshubButton("Done", on.onDone, Modifier.fillMaxWidth()) },
     ) {
-        Text("Trust session revoked", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+        Text("Revocation signed", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         if (h == null) { Gap(); Note("The signed revocation is no longer on this phone. Revoke the trust session again from the list."); return@ScreenFrame }
         Text(h.summary, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Gap()

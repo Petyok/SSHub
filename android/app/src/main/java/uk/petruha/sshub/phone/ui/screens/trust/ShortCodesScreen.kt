@@ -16,6 +16,7 @@ import uk.petruha.sshub.phone.core.ShortCodeState
 import uk.petruha.sshub.phone.ui.components.ButtonKind
 import uk.petruha.sshub.phone.ui.components.EmptyState
 import uk.petruha.sshub.phone.ui.components.Gap
+import uk.petruha.sshub.phone.ui.components.HexGroups
 import uk.petruha.sshub.phone.ui.components.KeyValue
 import uk.petruha.sshub.phone.ui.components.Note
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
@@ -24,6 +25,7 @@ import uk.petruha.sshub.phone.ui.components.SshubButton
 import uk.petruha.sshub.phone.ui.components.SshubCard
 import uk.petruha.sshub.phone.ui.components.TickScale
 import uk.petruha.sshub.phone.ui.components.WarnBox
+import uk.petruha.sshub.phone.ui.components.groupedUid
 import uk.petruha.sshub.phone.ui.theme.SshubText
 
 data class ShortCodesState(
@@ -59,12 +61,12 @@ fun ShortCodesScreen(state: ShortCodesState, on: ShortCodesActions) {
         if (state.codes.isEmpty()) {
             EmptyState("None.", "No short codes issued. You can issue one when you approve a release.")
         } else {
-            Note("One live code per credential. The code itself is never stored here.")
+            Note("One live code per credential. The terminal shows the same host id. The code itself is never stored here.")
             SectionHeading("Per credential", trailing = if (state.codes.size == 1) "1 code" else "${state.codes.size} codes")
             state.codes.forEach { c ->
                 SshubCard {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp), itemVerticalAlignment = Alignment.CenterVertically) {
-                        Text(c.host, style = SshubText.deviceName, color = MaterialTheme.colorScheme.onSurface)
+                    HexGroups(c.host, groups = null, label = "Host id")
+                    FlowRow(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp), itemVerticalAlignment = Alignment.CenterVertically) {
                         when (c.state) {
                             ShortCodeState.Live -> TrustStateChip("live", ChipTone.Ok)
                             ShortCodeState.Expired -> TrustStateChip("expired", ChipTone.Neutral)
@@ -90,7 +92,7 @@ fun ShortCodesScreen(state: ShortCodesState, on: ShortCodesActions) {
     }
     val asked = state.codes.firstOrNull { it.host == state.confirming }
     if (asked != null) TrustConfirmSheet("Declare it dead?", "Declare it dead", "Keep it live", on.onDeclareDead, on.onKeep, enabled = !state.busy) {
-        Text("${asked.host}, issued ${isoDate(asked.issuedAt)}", style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("${groupedUid(asked.host)}, issued ${isoDate(asked.issuedAt)}", style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
         WarnBox("Only when you know the sealed blob never reached the terminal, or the credential was reissued.") {
             Text("If it did arrive, the old blob stays valid until it expires.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
         }

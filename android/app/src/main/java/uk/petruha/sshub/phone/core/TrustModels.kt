@@ -53,10 +53,14 @@ data class TrustExtendView(
     val headline: String,
     /** Device, certificate, hosts, term ends, budget now, requested. */
     val fields: List<TrustFieldView>,
-    /** The one changing field: `from` is the old allowance, `to` the new one. */
+    /**
+     * The one changing field. With `diffFrom` set, `from` is the old allowance and `to` the new one for the next 24 hours; with
+     * `diffFrom` empty it is a plain row (the extra alone). `diffDanger` is the core's flag.
+     */
     val diffKey: String,
     val diffFrom: String,
     val diffTo: String,
+    val diffDanger: Boolean = true,
     val note: String,
     /** `laptop-main [7B3E-0D15], +10 new hosts for 24 hours`, shown after signing. */
     val signedSummary: String,

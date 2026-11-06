@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -24,6 +25,7 @@ import uk.petruha.sshub.phone.ui.components.EmptyState
 import uk.petruha.sshub.phone.ui.components.Gap
 import uk.petruha.sshub.phone.ui.components.Glyph
 import uk.petruha.sshub.phone.ui.components.GlyphKind
+import uk.petruha.sshub.phone.ui.components.HexGroups
 import uk.petruha.sshub.phone.ui.components.KeyValue
 import uk.petruha.sshub.phone.ui.components.Note
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
@@ -95,7 +97,11 @@ fun TrustListScreen(state: TrustListState, on: TrustListActions) {
                     }
                     if (open) {
                         KeyValue("device id", c.deviceId)
-                        KeyValue(if (c.group != null) "group" else "hosts", c.group ?: c.hosts.joinToString(", "))
+                        if (c.group != null) KeyValue("group", c.group)
+                        else {
+                            Text("hosts", Modifier.padding(top = 6.dp), style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            c.hosts.forEach { HexGroups(it, Modifier.padding(top = 4.dp), groups = null, label = "Host id") }
+                        }
                         KeyValue("issued", isoDate(c.issuedAt))
                         KeyValue("term", "${c.termText}, ends ${isoDate(c.endsAt)}")
                         KeyValue("epoch range", "epoch ${c.epochLo} to ${c.epochHi}")

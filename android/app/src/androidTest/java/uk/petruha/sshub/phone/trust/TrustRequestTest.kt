@@ -122,14 +122,15 @@ class TrustRequestTest {
         assertFlagSecure(rule)
     }
 
-    @Test fun declined_ends_without_signing_and_can_be_reviewed_again() {
-        var again = 0
-        rule.setScreen { TrustRequestScreen(ok.copy(phase = TrustPhase.Declined), requestActions(onReviewAgain = { again++ })) }
+    @Test fun l5_declined_ends_without_signing_and_does_not_offer_to_review_again() {
+        var back = 0
+        rule.setScreen { TrustRequestScreen(ok.copy(phase = TrustPhase.Declined), requestActions(onBack = { back++ })) }
         rule.onNodeWithText("DECLINED").assertExists()
-        rule.onNodeWithText("Nothing was signed. The request lapses on its own.").assertExists()
+        rule.onNodeWithText("Nothing was signed. This phone dropped the request: to look at it again, ask the terminal for a new one.").assertExists()
         rule.onAllNodesWithText("Approve").assertCountEquals(0)
-        rule.onNodeWithText("Review again").performClick()
-        assertEquals(1, again)
+        rule.onAllNodesWithText("Review again").assertCountEquals(0)
+        rule.onNodeWithText("Back to approvals").performClick()
+        assertEquals(1, back)
     }
 
     @Test fun window_closed_after_12_minutes_has_no_approve() {

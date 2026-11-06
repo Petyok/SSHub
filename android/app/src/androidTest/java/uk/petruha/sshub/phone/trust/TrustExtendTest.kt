@@ -58,14 +58,15 @@ class TrustExtendTest {
         assertFalse(TrustExtendState(TrustSamples.extendAgain).approveEnabled)
     }
 
-    @Test fun declined_can_be_reviewed_again() {
-        var again = 0
-        rule.setScreen { TrustExtendScreen(ok.copy(phase = TrustPhase.Declined), extendActions(onReviewAgain = { again++ })) }
+    @Test fun l5_declined_offers_back_to_approvals_and_no_review_again() {
+        var back = 0
+        rule.setScreen { TrustExtendScreen(ok.copy(phase = TrustPhase.Declined), extendActions(onBack = { back++ })) }
         rule.onNodeWithText("DECLINED").assertExists()
         rule.onNodeWithText("Nothing was signed.").assertExists()
         rule.onAllNodesWithText("Approve").assertCountEquals(0)
-        rule.onNodeWithText("Review again").performClick()
-        assertEquals(1, again)
+        rule.onAllNodesWithText("Review again").assertCountEquals(0)
+        rule.onNodeWithText("Back to approvals").performClick()
+        assertEquals(1, back)
     }
 
     @Test fun signed_shows_the_handoff() {

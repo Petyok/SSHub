@@ -17,6 +17,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
 import uk.petruha.sshub.phone.core.AppEnv
 import uk.petruha.sshub.phone.core.Routes
+import uk.petruha.sshub.phone.core.ScanPurpose
+import uk.petruha.sshub.phone.core.scanRoute
 import uk.petruha.sshub.phone.ui.components.Note
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
 
@@ -42,7 +44,7 @@ fun NavGraphBuilder.trustGraph(env: AppEnv) {
             TrustRequestActions(
                 onTyped = vm::typed,
                 onApprove = { vm.approve { nav.navigate(Routes.TrustSigned) { popUpTo(Routes.TrustRequest + "/{token}") { inclusive = true } } } },
-                onDecline = vm::decline, onReviewAgain = vm::reviewAgain, onBack = { backTo(Routes.Approvals) },
+                onDecline = vm::decline, onBack = { backTo(Routes.Approvals) },
             ),
         )
     }
@@ -55,7 +57,7 @@ fun NavGraphBuilder.trustGraph(env: AppEnv) {
         else TrustExtendScreen(
             st,
             TrustExtendActions(
-                onApprove = vm::approve, onDecline = vm::decline, onReviewAgain = vm::reviewAgain, onCopy = vm::copy,
+                onApprove = vm::approve, onDecline = vm::decline, onCopy = vm::copy,
                 onDone = { backTo(Routes.Approvals) }, onBack = { backTo(Routes.Approvals) },
             ),
         )
@@ -73,7 +75,7 @@ fun NavGraphBuilder.trustGraph(env: AppEnv) {
             TrustListActions(
                 onToggle = vm::toggle, onAskRevoke = vm::askRevoke, onKeep = vm::keep,
                 onRevoke = { vm.revoke { nav.navigate(Routes.TrustRevoked) } },
-                onScan = { nav.navigate(Routes.Scan) }, onBack = ::back,
+                onScan = { nav.navigate(scanRoute(ScanPurpose.Request)) }, onBack = ::back,
             ),
         )
     }

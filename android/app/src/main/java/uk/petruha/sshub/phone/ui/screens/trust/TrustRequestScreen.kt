@@ -45,7 +45,6 @@ class TrustRequestActions(
     val onTyped: (String) -> Unit,
     val onApprove: () -> Unit,
     val onDecline: () -> Unit,
-    val onReviewAgain: () -> Unit,
     val onBack: () -> Unit,
 )
 
@@ -57,11 +56,11 @@ fun TrustRequestScreen(state: TrustRequestState, on: TrustRequestActions) {
         TrustPhase.Declined -> ScreenFrame(
             "Trust request", on.onBack,
             banner = { RedBanner("DECLINED", kind = BannerKind.Neutral, trailing = "trust certificate") },
-            bar = { SshubButton("Review again", on.onReviewAgain, Modifier.fillMaxWidth()) },
+            bar = { SshubButton("Back to approvals", on.onBack, Modifier.fillMaxWidth()) },
         ) {
             SshubCard {
                 Text("Declined.", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
-                Note("Nothing was signed. The request lapses on its own.")
+                Note("Nothing was signed. This phone dropped the request: to look at it again, ask the terminal for a new one.")
             }
         }
         TrustPhase.Closed -> ScreenFrame(

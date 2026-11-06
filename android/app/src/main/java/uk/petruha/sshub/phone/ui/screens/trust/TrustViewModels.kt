@@ -43,7 +43,6 @@ class TrustRequestViewModel(
     init { viewModelScope.launch { core.trustRequest(token)?.let { _state.value = TrustRequestState(it) } } }
 
     fun typed(text: String) = _state.update { it?.copy(typed = text, error = null) }
-    fun reviewAgain() = _state.update { it?.copy(phase = TrustPhase.Review, error = null) }
 
     fun decline() {
         if (_state.value == null) return
@@ -92,7 +91,6 @@ class TrustExtendViewModel(
 
     init { viewModelScope.launch { core.trustExtend(token)?.let { base.value = TrustExtendState(it) } } }
 
-    fun reviewAgain() = base.update { it?.copy(phase = TrustPhase.Review, error = null) }
 
     fun decline() {
         viewModelScope.launch {
