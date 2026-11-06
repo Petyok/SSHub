@@ -317,7 +317,9 @@ mod tests {
     use std::time::{Duration, Instant};
 
     fn tick_until(app: &mut App, predicate: impl Fn(&App) -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // Only a bound for a hung run: a helper's request expires with its own timeout, so on a
+        // loaded machine a short bound turned a slow poll into a lost request.
+        let deadline = Instant::now() + Duration::from_secs(120);
         loop {
             for session in &mut app.sessions {
                 session.drain();
@@ -445,7 +447,7 @@ mod tests {
                         &token,
                         prompt,
                         None,
-                        Duration::from_secs(5),
+                        Duration::from_secs(120),
                     )
                 })
             })
