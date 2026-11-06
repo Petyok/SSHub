@@ -5,10 +5,13 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uk.petruha.sshub.phone.core.ChannelKind
 import uk.petruha.sshub.phone.core.ReleaseCheck
 import uk.petruha.sshub.phone.core.VaultResult
 import uk.petruha.sshub.phone.fake.ReleaseSamples
 import uk.petruha.sshub.phone.ui.screens.release.ApprovalPhase
+import uk.petruha.sshub.phone.ui.screens.release.NO_CHANNEL
+import uk.petruha.sshub.phone.ui.screens.release.TYPE_ID_FIRST
 import uk.petruha.sshub.phone.ui.screens.release.announceStep
 import uk.petruha.sshub.phone.ui.screens.release.announcement
 import uk.petruha.sshub.phone.ui.screens.release.durationText
@@ -150,8 +153,28 @@ class ReleaseLogicTest {
         assertEquals("1BF0 D57E F9DD", hashPrefix(ReleaseSamples.redRevoke.hash))
     }
 
-    @Test fun fake_data_has_three_proofs_and_matching_hash_length() {
-        listOf(ReleaseSamples.redRevoke, ReleaseSamples.redMode).forEach { assertEquals(3, it.proofs.size); assertEquals(64, it.hash.length) }
+    @Test fun h2_red_gate_needs_the_typed_id_only_for_a_proposer_never_met() {
+        val ok = checks(true, true, true)
+        assertTrue(redGate(ok, lapsed = false, closed = false, busy = false, mustType = null, typed = "").enabled)
+        assertEquals(TYPE_ID_FIRST, redGate(ok, false, false, false, mustType = "7b3e0d15aabbccdd", typed = "").reason)
+        assertFalse(redGate(ok, false, false, false, mustType = "7b3e0d15aabbccdd", typed = "0000000000000000").enabled)
+        assertTrue(redGate(ok, false, false, false, mustType = "7b3e0d15aabbccdd", typed = " 7B3E0D15AABBCCDD ").enabled)
+        // a failing check still blocks after the id is typed
+        assertFalse(redGate(checks(true, false, true), false, false, false, mustType = "7b3e0d15aabbccdd", typed = "7b3e0d15aabbccdd").enabled)
+    }
+
+    @Test fun m3_release_gate_blocks_when_nothing_shows_the_answer() {
+        val ok = checks(true, true, true)
+        assertEquals(NO_CHANNEL, releaseGate(ok, 60, closed = false, mustType = null, typed = "", busy = false, noChannel = true).reason)
+        assertTrue(releaseGate(ok, 60, closed = false, mustType = null, typed = "", busy = false, noChannel = false).enabled)
+    }
+
+    @Test fun m3_a_release_starts_with_qr_only() {
+        assertEquals(setOf(ChannelKind.Qr), ReleaseSamples.releaseState().channelsOn)
+    }
+
+    @Test fun fake_data_has_matching_hash_length() {
+        listOf(ReleaseSamples.redRevoke, ReleaseSamples.redMode).forEach { assertEquals(64, it.hash.length) }
         assertEquals(18, ReleaseSamples.refusals.size)
         assertEquals(18, ReleaseSamples.refusals.map { it.reason.key }.distinct().size)
     }

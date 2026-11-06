@@ -15,9 +15,6 @@ data class ReleaseCheck(val text: String, val ok: Boolean, val needsTypedId: Boo
 
 enum class ProofState { YourTurn, Signed, Waiting, Refused }
 
-/** One of the three proofs of a Red operation (D6). `name` and `caption` are the core's words, for example "phone" / "this phone". */
-data class RedProofView(val name: String, val caption: String, val state: ProofState)
-
 /** One changing field. `from == null` is a field with no old value (plain row with a red gutter, D2). `danger` is the core's flag (all rows of a Red op are dangerous, D2); a row without it is drawn plain. */
 data class RedField(val key: String, val from: String?, val to: String, val mono: Boolean = false, val danger: Boolean = true)
 
@@ -25,7 +22,9 @@ data class RedField(val key: String, val from: String?, val to: String, val mono
  * A Red notice as the core describes it. `hash` is the full 64 hex digits of the operation (D7).
  * `proposerName` is null for a proposer this phone does not know; the UI shows "not met" plus the id. `lamport` and `seq` (null when the core has none) order the notice.
  * `proposedAt` and `lapsesAt` bound the 3 day validity (contract C21); the UI shows the age on a tick scale between them.
- * `checks` decide whether Approve is enabled (D8): every one must be ok.
+ * `checks` decide whether Approve is enabled (D8): every one must be ok. `mustType` is the proposer id the user has to type when the
+ * proposer was never met (D13); null for a proposer that was met. `phoneProof` is the one proof the phone knows: its own.
+ * The other two proofs of a Red operation are not tracked on this phone (M2).
  */
 data class RedView(
     val token: Long,
@@ -40,13 +39,13 @@ data class RedView(
     val hash: String,
     val fields: List<RedField>,
     val note: String,
-    val proofs: List<RedProofView>,
+    val phoneProof: ProofState,
     val checks: List<ReleaseCheck>,
-) {
-    init { require(proofs.size == 3) { "a Red operation always has three proofs (D6)" } }
-}
+    val mustType: String? = null,
+)
 
-enum class ChannelKind { Qr, Clipboard, SoundFast, SoundSlow }
+/** How a release answer is shown. The clipboard is not a channel: "Copy as text" is always offered after approval. */
+enum class ChannelKind { Qr, SoundFast, SoundSlow }
 data class ReleaseChannel(val kind: ChannelKind, val label: String)
 
 /**
@@ -54,7 +53,8 @@ data class ReleaseChannel(val kind: ChannelKind, val label: String)
  * when the requester was never met (D13); null for a requester that was met. `requesterKnown` is that same fact (known == met).
  * `requesterKey` is the hex of the requester's Ed25519 key, only when its signature was verified, else null.
  * `shareKind` is "hybrid" or "envelope"; `shareEpoch` and `shareIndex` name the share. The host, credential and mode are not in the
- * signed challenge and are never shown: the terminal shows which host. `shortCodeOffer` is the line under the short code toggle, null when the core offers none.
+ * signed op and shown as `hostUid` plus `opRows` (every leaf of the op, `danger` as the core flags it); `bindingHash` is the hex of the
+ * binding the four words come from. `shortCodeOffer` is the line under the short code toggle, null when the core offers none.
  */
 data class ReleaseView(
     val token: Long,
@@ -72,6 +72,9 @@ data class ReleaseView(
     val channels: List<ReleaseChannel>,
     val mustType: String?,
     val shortCodeOffer: String?,
+    val hostUid: String = "",
+    val bindingHash: String = "",
+    val opRows: List<RedField> = emptyList(),
 )
 
 data class RefusalRow(val key: String, val value: String)
@@ -109,6 +112,7 @@ data class OpenedRefused(val reason: RefusalReason, val checks: List<ReleaseChec
 
 data class ReleaseChannels(
     val qr: Boolean = false,
+    /** The core renders no clipboard channel: always false, kept for the core call. */
     val clipboard: Boolean = false,
     val soundFast: Boolean = false,
     val soundSlow: Boolean = false,

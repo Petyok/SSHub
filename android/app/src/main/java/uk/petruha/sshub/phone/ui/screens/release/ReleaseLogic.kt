@@ -20,6 +20,7 @@ const val APPROVAL_WINDOW_SECONDS = 720L
 val ANNOUNCE_AT = listOf(120, 60, 30, 10, 0)
 
 const val TYPE_ID_FIRST = "type the id first"
+const val NO_CHANNEL = "choose how to show the answer"
 
 fun windowLeft(openedAt: Long, now: Long): Long = (openedAt + APPROVAL_WINDOW_SECONDS - now).coerceIn(0L, APPROVAL_WINDOW_SECONDS)
 
@@ -92,12 +93,16 @@ fun announcement(left: Long, released: Boolean): String {
 
 data class Gate(val enabled: Boolean, val reason: String?)
 
-/** D8: Approve is enabled only when every check passes and the request is inside its limits. Pure, so it is unit-testable. */
-fun redGate(checks: List<ReleaseCheck>, lapsed: Boolean, closed: Boolean, busy: Boolean): Gate {
+/**
+ * D8 + D13 for a Red operation: every check must pass, the request must be inside its limits, and a proposer this phone never met
+ * needs its id typed (`mustType`; the core checks it again).
+ */
+fun redGate(checks: List<ReleaseCheck>, lapsed: Boolean, closed: Boolean, busy: Boolean, mustType: String? = null, typed: String = ""): Gate {
     if (closed) return Gate(false, "window closed")
     if (busy) return Gate(false, "signing")
     if (lapsed) return Gate(false, "the request lapsed after 3 days")
     checks.firstOrNull { !it.ok }?.let { return Gate(false, it.text) }
+    if (!typedIdMatches(mustType, typed)) return Gate(false, TYPE_ID_FIRST)
     return Gate(true, null)
 }
 
@@ -107,12 +112,13 @@ fun typedIdMatches(required: String?, typed: String): Boolean = required == null
  * D8 + D13 for a share release. A check with `needsTypedId` stops blocking once the typed id equals the requester id; it keeps
  * blocking when the view names no id to type. Every other failing check, an expired challenge or a closed window blocks for good.
  */
-fun releaseGate(checks: List<ReleaseCheck>, left: Long, closed: Boolean, mustType: String?, typed: String, busy: Boolean): Gate {
+fun releaseGate(checks: List<ReleaseCheck>, left: Long, closed: Boolean, mustType: String?, typed: String, busy: Boolean, noChannel: Boolean = false): Gate {
     if (closed) return Gate(false, "window closed")
     if (busy) return Gate(false, "signing")
     if (left <= 0L) return Gate(false, "the request expired")
     checks.firstOrNull { !it.ok && !(it.needsTypedId && mustType != null) }?.let { return Gate(false, it.text) }
     if (!typedIdMatches(mustType, typed)) return Gate(false, TYPE_ID_FIRST)
+    if (noChannel) return Gate(false, NO_CHANNEL)
     return Gate(true, null)
 }
 
@@ -142,10 +148,11 @@ data class RedState(
     val copied: Boolean = false,
     val clearsIn: Int? = null,
     val error: String? = null,
+    val typed: String = "",
 ) {
     val lapsed: Boolean get() = redLapsed(view, now)
     val closed: Boolean get() = phase == ApprovalPhase.Review && windowClosed(openedAt, now)
-    val gate: Gate get() = redGate(view.checks, lapsed, closed, phase == ApprovalPhase.Signing)
+    val gate: Gate get() = redGate(view.checks, lapsed, closed, phase == ApprovalPhase.Signing, view.mustType, typed)
 }
 
 data class ReleaseState(
@@ -154,7 +161,8 @@ data class ReleaseState(
     val openedAt: Long = now,
     val phase: ApprovalPhase = ApprovalPhase.Review,
     val typed: String = "",
-    val channelsOn: Set<ChannelKind> = view.channels.map { it.kind }.toSet(),
+    /** QR on, sound off by default; at most one sound profile is ever on. */
+    val channelsOn: Set<ChannelKind> = view.channels.map { it.kind }.filter { it == ChannelKind.Qr }.toSet(),
     val shortCode: Boolean = false,
     val byHand: Boolean = false,
     val outcome: ReleaseOutcome? = null,
@@ -164,5 +172,5 @@ data class ReleaseState(
 ) {
     val left: Long get() = releaseLeft(view, now)
     val closed: Boolean get() = phase == ApprovalPhase.Review && windowClosed(openedAt, now)
-    val gate: Gate get() = releaseGate(view.checks, left, closed, view.mustType, typed, phase == ApprovalPhase.Signing)
+    val gate: Gate get() = releaseGate(view.checks, left, closed, view.mustType, typed, phase == ApprovalPhase.Signing, channelsOn.isEmpty() && !byHand)
 }

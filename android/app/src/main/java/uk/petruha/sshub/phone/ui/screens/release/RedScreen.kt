@@ -20,9 +20,10 @@ import uk.petruha.sshub.phone.ui.components.ButtonKind
 import uk.petruha.sshub.phone.ui.components.DiffBox
 import uk.petruha.sshub.phone.ui.components.DiffEntry
 import uk.petruha.sshub.phone.ui.components.HexGroups
+import uk.petruha.sshub.phone.ui.components.MonoField
+import uk.petruha.sshub.phone.ui.components.WarnBox
 import uk.petruha.sshub.phone.ui.components.Note
-import uk.petruha.sshub.phone.ui.components.ProofChain
-import uk.petruha.sshub.phone.ui.components.ProofItem
+import uk.petruha.sshub.phone.ui.components.OwnProof
 import uk.petruha.sshub.phone.ui.components.ProofKind
 import uk.petruha.sshub.phone.ui.components.RedBanner
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
@@ -39,6 +40,7 @@ class RedActions(
     val onBack: () -> Unit = {},
     val onApprove: () -> Unit = {},
     val onDecline: () -> Unit = {},
+    val onTyped: (String) -> Unit = {},
     val onToggleHash: () -> Unit = {},
     val onCopy: () -> Unit = {},
 )
@@ -105,20 +107,22 @@ fun RedScreen(state: RedState, on: RedActions) {
             onClick = on.onToggleHash, label = "Hash of the operation",
         )
 
-        val shown = v.proofs.map { p ->
-            when {
-                p.state != ProofState.YourTurn -> p
-                state.phase == ApprovalPhase.Approved -> p.copy(state = ProofState.Signed)
-                declined -> p.copy(state = ProofState.Refused)
-                else -> p
-            }
+        // Only this phone's own proof is known here; the page states the rule in a sentence and so does this screen (M2).
+        val phone = when {
+            v.phoneProof != ProofState.YourTurn -> v.phoneProof
+            state.phase == ApprovalPhase.Approved -> ProofState.Signed
+            declined -> ProofState.Refused
+            else -> v.phoneProof
         }
-        SectionHeading("Proofs", trailing = "${shown.count { it.state == ProofState.Signed }} of 3")
+        SectionHeading("Proofs")
         SshubCard {
-            ProofChain(shown.map { ProofItem(it.name, it.caption, it.state.toKind()) })
+            OwnProof(phone.toKind())
+            Note("A Red operation takes effect only with three proofs: this phone, a second attended device and a third factor.", Modifier.padding(top = 8.dp))
         }
 
         ChecksCard(v.checks)
+
+        if (v.mustType != null && state.phase == ApprovalPhase.Review) RedNeverMet(state, on)
 
         state.error?.let { ErrorBox(it) }
 
@@ -170,4 +174,23 @@ private fun RedBar(state: RedState, on: RedActions) {
             }
         }
     }
+}
+
+/** D13 for a Red notice: the proposer was never met, so its id is typed to approve. No amber inside. */
+@Composable
+private fun RedNeverMet(state: RedState, on: RedActions) {
+    val v = state.view
+    val required = v.mustType ?: return
+    val mismatch = state.typed.isNotBlank() && !typedIdMatches(required, state.typed)
+    WarnBox("This proposer has never met this phone.", Modifier.padding(top = 12.dp)) {
+        Text(
+            "Its signature cannot be checked against a known device. Approve only if you proposed this operation yourself and the id printed on the terminal is $required.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(nameAndId(v.proposerName, required), style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
+    }
+    MonoField(
+        state.typed, on.onTyped, Modifier.padding(top = 12.dp), placeholder = "Type $required",
+        error = if (mismatch) "does not match" else null, capitalize = true, label = "Typed proposer id",
+    )
 }

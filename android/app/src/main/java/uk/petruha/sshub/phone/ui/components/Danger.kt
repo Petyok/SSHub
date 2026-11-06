@@ -54,8 +54,16 @@ fun RedBanner(text: String, modifier: Modifier = Modifier, kind: BannerKind = Ba
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Glyph(if (kind == BannerKind.Green) GlyphKind.Check else GlyphKind.Warning, on, Modifier.clearAndSetSemantics { })
-        Text(text, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = on)
-        if (trailing != null) Text(trailing, style = SshubText.monoBody.copy(fontSize = 13.sp), color = on)
+        // From font scale 1.3 the trailing text goes under the title: a word is never broken to fit both on one line (M10).
+        if (fontScale() >= 1.3f) {
+            Column(Modifier.weight(1f)) {
+                Text(text, style = MaterialTheme.typography.titleMedium, color = on)
+                if (trailing != null) Text(trailing, style = SshubText.monoBody.copy(fontSize = 13.sp), color = on)
+            }
+        } else {
+            Text(text, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, color = on)
+            if (trailing != null) Text(trailing, style = SshubText.monoBody.copy(fontSize = 13.sp), color = on)
+        }
     }
 }
 

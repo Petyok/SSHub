@@ -134,6 +134,22 @@ fun ProofChain(proofs: List<ProofItem>, modifier: Modifier = Modifier) {
     }
 }
 
+/** The one proof this phone knows: its own. A square and the words; the other two proofs are not tracked here. */
+@Composable
+fun OwnProof(kind: ProofKind, modifier: Modifier = Modifier) {
+    val word = when (kind) { ProofKind.YourTurn -> "your turn"; ProofKind.Signed -> "signed"; ProofKind.Waiting -> "waiting"; ProofKind.Refused -> "refused" }
+    Row(
+        modifier.fillMaxWidth().semantics(mergeDescendants = true) { contentDescription = "Proof of this phone, $word" },
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ChainSquare(when (kind) { ProofKind.YourTurn -> SquareState.Current; ProofKind.Signed -> SquareState.Ok; ProofKind.Waiting -> SquareState.Default; ProofKind.Refused -> SquareState.No })
+        Column {
+            Text("this phone", style = SshubText.secondaryMono.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), color = MaterialTheme.colorScheme.onSurface)
+            Text(word, style = MaterialTheme.typography.labelMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Bold), color = if (kind == ProofKind.Refused) MaterialTheme.sshub.dangerText else MaterialTheme.colorScheme.onSurface)
+        }
+    }
+}
+
 /** Spec 7.2. 380x44 drawing scaled to the width; ticks left of the needle are dim (elapsed), the rest lit. */
 @Composable
 fun TickScale(
@@ -162,10 +178,17 @@ fun TickScale(
             drawPath(head, c.focus)
             drawPath(head, c.focusText, style = Stroke(1.dp.toPx()))
         }
-        if (labels != null) Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(labels.first, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(labels.second, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(labels.third, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (labels != null) {
+            val l = listOf(labels.first, labels.second, labels.third)
+            val style = MaterialTheme.typography.labelMedium
+            val color = MaterialTheme.colorScheme.onSurfaceVariant
+            // The three labels share the width; from font scale 1.3 they stack so none runs into another (M10).
+            if (fontScale() >= 1.3f) Column(Modifier.fillMaxWidth().padding(top = 4.dp)) { l.filter { it.isNotEmpty() }.forEach { Text(it, style = style, color = color) } }
+            else Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(l[0], Modifier.weight(1f), style = style, color = color, textAlign = TextAlign.Start)
+                Text(l[1], Modifier.weight(1f), style = style, color = color, textAlign = TextAlign.Center)
+                Text(l[2], Modifier.weight(1f), style = style, color = color, textAlign = TextAlign.End)
+            }
         }
     }
 }

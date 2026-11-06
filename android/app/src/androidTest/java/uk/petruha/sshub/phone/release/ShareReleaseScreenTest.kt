@@ -54,6 +54,7 @@ class ShareReleaseScreenTest {
                     onBack = { log += "back" }, onApprove = { log += "approve" }, onDecline = { log += "decline" },
                     onTyped = { st.value = st.value.copy(typed = it) },
                     onChannel = { k, on -> log += "channel $k $on"; st.value = st.value.copy(channelsOn = if (on) st.value.channelsOn + k else st.value.channelsOn - k) },
+                    onSound = { k -> log += "sound $k"; st.value = st.value.copy(channelsOn = st.value.channelsOn - ChannelKind.SoundFast - ChannelKind.SoundSlow + listOfNotNull(k)) },
                     onShortCode = { log += "short $it"; st.value = st.value.copy(shortCode = it) },
                     onByHand = { st.value = st.value.copy(byHand = it) },
                     onCopy = { log += "copy"; st.value = st.value.copy(copied = true, clearsIn = 60) },
@@ -81,12 +82,18 @@ class ShareReleaseScreenTest {
         rule.onNodeWithText("9C61-E2A8").assertExists()
         rule.onNodeWithText("hybrid, epoch 7, share 2").assertExists()
         rule.onNodeWithText("signed 38 s ago", substring = true, useUnmergedTree = true).assertExists()
-        rule.onNodeWithText("The terminal shows which host. Compare the binding words.").assertExists()
-        listOf("host", "credential", "mode").forEach { rule.onAllNodesWithText(it).assertCountEquals(0) }
+        rule.onNodeWithText("Compare the host and the four words with the terminal.").assertExists()
+        // H1: the host id in groups of 4 and every row of the signed op, danger rows with the red gutter
+        rule.onNode(descStartsWith("Host id 0 A 0 B, 0 C 0 D"), useUnmergedTree = true).assertExists()
+        rule.onNodeWithText("What you release").assertExists()
+        rule.onNodeWithText("3 fields").assertExists()
+        rule.onNodeWithContentDescription("Field host_uid, new value ${ReleaseSamples.HOST_UID}").assertExists()
+        rule.onNodeWithContentDescription("Field requester, new value workstation [9C61-E2A8]").assertExists()
+        rule.onAllNodesWithText("The terminal shows which host", substring = true).assertCountEquals(0)
         val key = rule.onNode(descStartsWith("Requester key"), useUnmergedTree = true).fetchSemanticsNode()
             .config[SemanticsProperties.ContentDescription].first()
         assertEquals(15, key.count { it == ',' })
-        rule.onNodeWithText("Approve and release").assertIsEnabled().performClick()
+        rule.onNodeWithText("Approve").assertIsEnabled().performClick()
         rule.onNodeWithText("Decline").performClick()
         assertEquals(listOf("approve", "decline"), log)
     }
@@ -111,7 +118,7 @@ class ShareReleaseScreenTest {
         val v = ReleaseSamples.releaseDbs
         rule.show(ReleaseSamples.releaseState(now = v.expiresAt), log = log)
         rule.onNodeWithContentDescription("Request expired").assertExists()
-        rule.onAllNodesWithText("Approve and release").assertCountEquals(0)
+        rule.onAllNodesWithText("Approve").assertCountEquals(0)
         rule.onNodeWithText("Ask the terminal again").performClick()
         assertEquals(listOf("again"), log)
     }
@@ -121,7 +128,7 @@ class ShareReleaseScreenTest {
         val log = mutableListOf<String>()
         rule.show(ReleaseSamples.releaseState(now = t0, openedAt = t0 - 720), log = log)
         rule.onNodeWithText("Window closed").assertExists()
-        rule.onAllNodesWithText("Approve and release").assertCountEquals(0)
+        rule.onAllNodesWithText("Approve").assertCountEquals(0)
         rule.onNodeWithText("Back to approvals").performClick()
         assertEquals(listOf("back"), log)
     }
@@ -136,7 +143,7 @@ class ShareReleaseScreenTest {
         rule.show(dbs)
         rule.onNodeWithContentDescription("compile, trash, chop, valley").assertExists()
         rule.onNodeWithText("Binding words").assertExists()
-        rule.onNodeWithText("Approve and release").assertIsEnabled()
+        rule.onNodeWithText("Approve").assertIsEnabled()
         rule.onNodeWithText("Decline").assertIsEnabled()
         listOf("They match", "They differ").forEach { rule.onAllNodesWithText(it).assertCountEquals(0) }
     }
@@ -150,8 +157,8 @@ class ShareReleaseScreenTest {
     @Test fun d8_a_failing_check_disables_approve_and_names_the_reason() {
         val bad = ReleaseSamples.releaseDbs.copy(checks = ReleaseSamples.releaseDbs.checks.dropLast(1) + uk.petruha.sshub.phone.core.ReleaseCheck("Own share cannot be unwrapped for deploy@db-staging", false))
         rule.show(ReleaseSamples.releaseState(bad))
-        rule.onNodeWithText("Approve and release").assertIsNotEnabled()
-        rule.onNodeWithText("Approve and release").assert(
+        rule.onNodeWithText("Approve").assertIsNotEnabled()
+        rule.onNodeWithText("Approve").assert(
             SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Disabled, Own share cannot be unwrapped for deploy@db-staging"),
         )
         rule.onNodeWithContentDescription("Failed: Own share cannot be unwrapped for deploy@db-staging").assertExists()
@@ -161,17 +168,17 @@ class ShareReleaseScreenTest {
     @Test fun d13_primary_disabled_until_typed_id_matches() {
         val s = rule.show(bastion)
         rule.onNodeWithText("This requester has never met this phone.").assertExists()
-        rule.onNodeWithText("Approve and release").assertIsNotEnabled()
-        rule.onNodeWithText("Approve and release").assert(
+        rule.onNodeWithText("Approve").assertIsNotEnabled()
+        rule.onNodeWithText("Approve").assert(
             SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Disabled, type the id first"),
         )
         rule.onNodeWithText("type the id first").assertExists()
         rule.onNodeWithContentDescription("Typed requester id").performScrollTo().performTextInput("E7A4-6B03")
-        rule.onNodeWithText("Approve and release").assertIsNotEnabled()
+        rule.onNodeWithText("Approve").assertIsNotEnabled()
         rule.onNodeWithText("does not match").assertExists()
         rule.runOnIdle { s.value = s.value.copy(typed = "") }
         rule.onNodeWithContentDescription("Typed requester id").performScrollTo().performTextInput("e7a4-6b02")
-        rule.onNodeWithText("Approve and release").assertIsEnabled()
+        rule.onNodeWithText("Approve").assertIsEnabled()
         rule.onAllNodesWithText("does not match").assertCountEquals(0)
         rule.onAllNodesWithText("type the id first").assertCountEquals(0)
     }
@@ -190,16 +197,33 @@ class ShareReleaseScreenTest {
         rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Typed requester id")).assertCountEquals(0)
     }
 
-    @Test fun channels_toggles_and_short_code() {
+    @Test fun m3_defaults_are_qr_on_and_sound_off_and_sound_is_one_choice() {
         val log = mutableListOf<String>()
-        rule.show(dbs, log = log)
-        rule.onNodeWithText("3 on").assertExists()
+        val s = rule.show(dbs, log = log)
+        assertEquals(setOf(ChannelKind.Qr), s.value.channelsOn)
+        rule.onNodeWithText("1 on").assertExists()
+        rule.onAllNodesWithText("Clipboard").assertCountEquals(0)
         rule.onNodeWithText("QR code").performScrollTo().performClick()
-        rule.onNodeWithText("2 on").assertExists()
+        rule.onNodeWithText("nothing chosen").assertExists()
         rule.onNodeWithText("Sound (fast)").performScrollTo().performClick()
+        rule.onNodeWithText("Sound (slow)").performScrollTo().performClick()
+        assertEquals(setOf(ChannelKind.SoundSlow), s.value.channelsOn)
+        rule.onNodeWithText("Off").performScrollTo().performClick()
+        assertTrue(s.value.channelsOn.isEmpty())
         rule.onNodeWithText("Also issue a short code").performScrollTo().performClick()
         rule.onNodeWithText("Opens this share later without the phone, 7 days").assertExists()
-        assertEquals(listOf("channel ${ChannelKind.Qr} false", "channel ${ChannelKind.SoundFast} false", "short true"), log)
+        assertEquals(listOf("channel ${ChannelKind.Qr} false", "sound ${ChannelKind.SoundFast}", "sound ${ChannelKind.SoundSlow}", "sound null", "short true"), log)
+    }
+
+    @Test fun m3_with_no_channel_and_no_hand_approve_is_disabled_and_says_why() {
+        rule.show(dbs.copy(channelsOn = emptySet()))
+        rule.onNodeWithText("Approve").assertIsNotEnabled()
+        rule.onNodeWithText("Approve").assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Disabled, choose how to show the answer"))
+    }
+
+    @Test fun m3_by_hand_alone_is_enough_to_approve() {
+        rule.show(dbs.copy(channelsOn = emptySet(), byHand = true))
+        rule.onNodeWithText("Approve").assertIsEnabled()
     }
 
     @Test fun type_it_by_hand_explains_that_the_words_come_after_approve() {
@@ -213,8 +237,10 @@ class ShareReleaseScreenTest {
     @Test fun released_state_shows_qr_copy_short_code_and_covered_words_without_copy_buttons() {
         val log = mutableListOf<String>()
         rule.show(released, log = log)
-        rule.onNodeWithText("Released.").assertExists()
-        rule.onNodeWithText("Sent by QR code, Clipboard, Sound (fast). Your share left this phone.").assertExists()
+        rule.onNodeWithText("Signed.").assertExists()
+        rule.onNodeWithText("Shown as: QR code. Check on the terminal that it took the share.").assertExists()
+        rule.onAllNodesWithText("Sent by", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("left this phone", substring = true).assertCountEquals(0)
         rule.onNode(descStartsWith("QR code")).assertExists()
         rule.onNodeWithContentDescription("Short code, shown once: K7Q2, 9FMX, C41T, 8PWD").assertExists()
         rule.onNodeWithText("share index 2").assertExists()
@@ -225,15 +251,15 @@ class ShareReleaseScreenTest {
         rule.onNodeWithText("Copy as text").performScrollTo().performClick()
         rule.onNodeWithText("Copied, clears in 60 s").assertExists()
         assertEquals(listOf("copy"), log)
-        rule.onAllNodesWithText("Approve and release").assertCountEquals(0)
+        rule.onAllNodesWithText("Approve").assertCountEquals(0)
         rule.onNodeWithText("Back to approvals").assertExists()
     }
 
     @Test fun released_without_the_qr_channel_shows_no_qr() {
-        val st = released.copy(channelsOn = setOf(ChannelKind.Clipboard))
+        val st = released.copy(channelsOn = emptySet())
         rule.show(st)
         rule.onAllNodes(descStartsWith("QR code")).assertCountEquals(0)
-        rule.onNodeWithText("Sent by Clipboard. Your share left this phone.").assertExists()
+        rule.onNodeWithText("Shown as: nothing on this phone. Check on the terminal that it took the share.").assertExists()
     }
 
     @Test fun released_timer_ends_with_share_expired() {
@@ -245,7 +271,7 @@ class ShareReleaseScreenTest {
         rule.show(dbs.copy(phase = ApprovalPhase.Declined))
         rule.onNodeWithText("Declined.").assertExists()
         rule.onNodeWithText("Nothing was released.").assertExists()
-        rule.onAllNodesWithText("Approve and release").assertCountEquals(0)
+        rule.onAllNodesWithText("Approve").assertCountEquals(0)
     }
 
     @Test fun an_error_is_shown() {

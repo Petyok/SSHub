@@ -19,6 +19,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.performTextReplacement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -50,6 +51,7 @@ class RedScreenTest {
                     onBack = { log += "back" }, onApprove = { log += "approve" }, onDecline = { log += "decline" },
                     onToggleHash = { st.value = st.value.copy(showHash = !st.value.showHash) },
                     onCopy = { log += "copy"; st.value = st.value.copy(copied = true, clearsIn = 60) },
+                    onTyped = { st.value = st.value.copy(typed = it) },
                 ),
             )
         }
@@ -101,22 +103,38 @@ class RedScreenTest {
         rule.onNodeWithText("6 fields").assertExists()
         rule.onAllNodes(fieldNodes()).assertCountEquals(6)
         rule.onNodeWithContentDescription("Field Mode changes from Single to Quorum").assertExists()
-        rule.onNodeWithContentDescription("Proof 2 of 3, second, signed").assertExists()
     }
 
-    @Test fun d6_three_proofs_exist_in_every_state() {
+    @Test fun m2_only_this_phones_proof_is_a_state_and_the_rule_is_one_sentence() {
         val s = rule.show(ReleaseSamples.redState())
-        listOf(ReleaseSamples.redState(), signed, declined, ReleaseSamples.redState(ReleaseSamples.redFailing), ReleaseSamples.redState(ReleaseSamples.redLapsed)).forEach {
-            rule.runOnIdle { s.value = it }
-            rule.onAllNodes(descStartsWith("Proof ")).assertCountEquals(3)
-        }
-        rule.runOnIdle { s.value = ReleaseSamples.redState() }
-        rule.onNodeWithContentDescription("Proof 1 of 3, phone, your turn").assertExists()
-        rule.onNodeWithContentDescription("Proof 3 of 3, factor, waiting").assertExists()
+        rule.onAllNodes(descStartsWith("Proof of ")).assertCountEquals(1)
+        rule.onNodeWithContentDescription("Proof of this phone, your turn").assertExists()
+        rule.onNodeWithText("A Red operation takes effect only with three proofs: this phone, a second attended device and a third factor.").assertExists()
+        rule.onAllNodesWithText("second attended device", substring = true).assertCountEquals(1)
         rule.runOnIdle { s.value = signed }
-        rule.onNodeWithContentDescription("Proof 1 of 3, phone, signed").assertExists()
+        rule.onNodeWithContentDescription("Proof of this phone, signed").assertExists()
         rule.runOnIdle { s.value = declined }
-        rule.onNodeWithContentDescription("Proof 1 of 3, phone, refused").assertExists()
+        rule.onNodeWithContentDescription("Proof of this phone, refused").assertExists()
+    }
+
+    @Test fun h2_a_proposer_never_met_needs_its_id_typed_before_approve() {
+        val log = mutableListOf<String>()
+        rule.show(ReleaseSamples.redState(ReleaseSamples.redUnknownProposer), log = log)
+        rule.onNodeWithText("This proposer has never met this phone.").assertExists()
+        rule.onNodeWithText("Approve").assertIsNotEnabled()
+        rule.onNodeWithText("Approve").assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Disabled, type the id first"))
+        rule.onNodeWithContentDescription("Typed proposer id").performTextReplacement("0000-0000")
+        rule.onNodeWithText("does not match").assertExists()
+        rule.onNodeWithText("Approve").assertIsNotEnabled()
+        rule.onNodeWithContentDescription("Typed proposer id").performTextReplacement(ReleaseSamples.redUnknownProposer.proposerId.lowercase())
+        rule.onNodeWithText("Approve").assertIsEnabled().performClick()
+        assertEquals(listOf("approve"), log)
+    }
+
+    @Test fun a_proposer_that_was_met_shows_no_typed_id_field() {
+        rule.show(ReleaseSamples.redState())
+        rule.onAllNodesWithText("This proposer has never met this phone.").assertCountEquals(0)
+        rule.onAllNodes(hasContentDescription("Typed proposer id")).assertCountEquals(0)
     }
 
     @Test fun d7_hash_prefix_is_always_there_and_a_tap_shows_all_16_groups() {
@@ -202,7 +220,7 @@ class RedScreenTest {
         assertEquals(emptyList<String>(), log)
     }
 
-    @Test fun signed_hand_off_has_qr_text_with_copy_and_three_proofs() {
+    @Test fun signed_hand_off_has_qr_text_with_copy() {
         val log = mutableListOf<String>()
         rule.show(signed, log = log)
         rule.onNodeWithText("Signed with this phone").assertExists()
@@ -213,7 +231,6 @@ class RedScreenTest {
         rule.onNodeWithText("Copied, clears in 60 s").assertExists()
         rule.onNodeWithText("Done").performClick()
         assertEquals(listOf("copy", "back"), log)
-        rule.onAllNodes(descStartsWith("Proof ")).assertCountEquals(3)
     }
 
     @Test fun nothing_is_copied_by_default() {

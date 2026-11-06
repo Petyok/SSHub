@@ -19,6 +19,8 @@ import uk.petruha.sshub.phone.core.OpenedRed
 import uk.petruha.sshub.phone.core.OpenedRefused
 import uk.petruha.sshub.phone.core.OpenedRelease
 import uk.petruha.sshub.phone.core.Routes
+import uk.petruha.sshub.phone.core.ScanPurpose
+import uk.petruha.sshub.phone.core.scanRoute
 
 /** Argument routes of this group, `Routes.X + "/{arg}"` (core/Env.kt owns the base ids). */
 object ReleaseRoutes {
@@ -69,7 +71,7 @@ fun NavGraphBuilder.releaseGraph(env: AppEnv) {
         else RedScreen(
             s, RedActions(
                 onBack = { env.nav.popBackStack() }, onApprove = vm::approve, onDecline = vm::decline,
-                onToggleHash = vm::toggleHash, onCopy = vm::copy,
+                onToggleHash = vm::toggleHash, onCopy = vm::copy, onTyped = vm::typed,
             ),
         )
     }
@@ -82,14 +84,14 @@ fun NavGraphBuilder.releaseGraph(env: AppEnv) {
         else ShareReleaseScreen(
             s, ReleaseActions(
                 onBack = { env.nav.popBackStack() }, onApprove = vm::approve, onDecline = vm::decline, onTyped = vm::typed,
-                onChannel = vm::channel, onShortCode = vm::shortCode, onByHand = vm::byHand, onCopy = vm::copy,
-                onAskAgain = { env.nav.navigate(Routes.Scan) },
+                onChannel = vm::channel, onSound = vm::sound, onShortCode = vm::shortCode, onByHand = vm::byHand, onCopy = vm::copy,
+                onAskAgain = { env.nav.navigate(scanRoute(ScanPurpose.Request)) },
             ),
         )
     }
     composable(ReleaseRoutes.REFUSAL, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
         val refused = remember { RefusalStore.get(entry.long("id")) }
         if (refused == null) LaunchedEffect(Unit) { env.nav.popBackStack() }
-        else RefusalScreen(refused, RefusalActions(onBack = { env.nav.popBackStack() }, onScanAgain = { env.nav.navigate(Routes.Scan) }))
+        else RefusalScreen(refused, RefusalActions(onBack = { env.nav.popBackStack() }, onScanAgain = { env.nav.navigate(scanRoute(ScanPurpose.Request)) }))
     }
 }

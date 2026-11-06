@@ -53,6 +53,7 @@ fun ComposeContentTestRule.assertNoVisualOverflow() {
             }
         }
     check(bad.isEmpty()) { "texts with visual overflow: ${bad.size}: " + bad.take(4).joinToString(" ; ") }
+    assertNoBrokenWords()
 }
 
 /**
@@ -66,6 +67,35 @@ private fun androidx.compose.ui.text.TextLayoutResult.reallyClipped(): Boolean {
     val tooTall = c.hasBoundedHeight && size.height > c.maxHeight + 1
     val ellipsized = (0 until lineCount).any { isLineEllipsized(it) }
     return tooWide || tooTall || ellipsized
+}
+
+/**
+ * A word broken inside a token ("RED / OPERATI / ON", "laptop-mai / n") is a defect at the largest font size: the line breaks where no
+ * whitespace is, although the token alone would have fitted a line. A token longer than every line (a 64 digit hash in plain text)
+ * has to break somewhere and is not reported.
+ */
+fun ComposeContentTestRule.assertNoBrokenWords() {
+    val bad = mutableListOf<String>()
+    onAllNodes(androidx.compose.ui.test.SemanticsMatcher("has text") { it.config.contains(androidx.compose.ui.semantics.SemanticsProperties.Text) })
+        .fetchSemanticsNodes().forEach { n ->
+            val r = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+            n.config.getOrNull(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult)?.action?.invoke(r)
+            r.forEach { l -> bad += l.brokenTokens() }
+        }
+    check(bad.isEmpty()) { "words broken inside a token: " + bad.take(6).joinToString(" ; ") }
+}
+
+private fun androidx.compose.ui.text.TextLayoutResult.brokenTokens(): List<String> {
+    val text = layoutInput.text.text
+    val widest = (0 until lineCount).maxOfOrNull { getLineEnd(it) - getLineStart(it) } ?: return emptyList()
+    return (0 until lineCount - 1).mapNotNull { i ->
+        val o = getLineEnd(i)
+        // After a hyphen is a legal break point; inside a word is not.
+        if (o <= 0 || o >= text.length || text[o - 1].isWhitespace() || text[o].isWhitespace() || text[o - 1] == '-') return@mapNotNull null
+        var a = o; while (a > 0 && !text[a - 1].isWhitespace()) a--
+        var b = o; while (b < text.length && !text[b].isWhitespace()) b++
+        text.substring(a, b).takeIf { it.length <= widest }
+    }
 }
 
 /**

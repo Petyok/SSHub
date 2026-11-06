@@ -10,7 +10,6 @@ import uk.petruha.sshub.phone.core.OpenedRelease
 import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.core.ProofState
 import uk.petruha.sshub.phone.core.RedField
-import uk.petruha.sshub.phone.core.RedProofView
 import uk.petruha.sshub.phone.core.RedView
 import uk.petruha.sshub.phone.core.RefusalReason
 import uk.petruha.sshub.phone.core.RefusalRow
@@ -104,12 +103,6 @@ object ReleaseSamples {
         ReleaseCheck("Is a Red operation", true),
     )
 
-    private fun proofs(second: String, secondState: ProofState) = listOf(
-        RedProofView("phone", "this phone", ProofState.YourTurn),
-        RedProofView("second", second, secondState),
-        RedProofView("factor", "paper code or email code", ProofState.Waiting),
-    )
-
     val redRevoke = RedView(
         token = TOKEN_REVOKE, kind = "Revoke holder", title = "Revoke device laptop-old",
         proposerName = "laptop-main", proposerId = "7B3E-0D15", lamport = 1042, seq = 57,
@@ -124,7 +117,7 @@ object ReleaseSamples {
             RedField("Credentials affected", null, "9 Quorum credentials are reshared"),
         ),
         note = "laptop-old has not been seen for 41 days. After this the ring has three holders and needs 2 of 3.",
-        proofs = proofs("workstation, attended", ProofState.Waiting), checks = okChecksRed,
+        phoneProof = ProofState.YourTurn, checks = okChecksRed,
     )
 
     val redMode = RedView(
@@ -141,14 +134,17 @@ object ReleaseSamples {
             RedField("Unlock", "any terminal", "two holders must release a share"),
         ),
         note = "After this the terminal cannot open deploy@db-staging alone.",
-        proofs = proofs("laptop-main, attended", ProofState.Signed), checks = okChecksRed,
+        phoneProof = ProofState.YourTurn, checks = okChecksRed,
     )
 
     /** A Red notice whose hash check fails: Approve must stay disabled and say why (D8). */
     val redFailing = redRevoke.copy(checks = okChecksRed.dropLast(1) + ReleaseCheck("Hash does not match what the terminal shows", false))
     val redLapsed = redRevoke.copy(proposedAt = T0 - THREE_DAYS - 60, lapsesAt = T0 - 60)
     /** A proposer this phone never met: the core has no name for it. */
-    val redUnknownProposer = redRevoke.copy(proposerName = null)
+    val redUnknownProposer = redRevoke.copy(proposerName = null, mustType = redRevoke.proposerId)
+
+    /** The host of the sample release: 64 hex digits, as the core gives it. */
+    const val HOST_UID = "0a0b0c0d0e0f1011121314151617181920212223242526272829303132333435"
 
     val releaseDbs = ReleaseView(
         token = TOKEN_DBS, requesterName = "workstation", requesterId = "9C61-E2A8", requesterKnown = true, requesterKey = "9c61e2a8" + "fedcba9876543210".repeat(3) + "01234567",
@@ -160,10 +156,16 @@ object ReleaseSamples {
             ReleaseCheck("Signature of 9C61-E2A8 verifies", true), ReleaseCheck("Own share unwrapped", true),
         ),
         channels = listOf(
-            ReleaseChannel(ChannelKind.Qr, "QR code"), ReleaseChannel(ChannelKind.Clipboard, "Clipboard"),
-            ReleaseChannel(ChannelKind.SoundFast, "Sound (fast)"),
+            ReleaseChannel(ChannelKind.Qr, "QR code"), ReleaseChannel(ChannelKind.SoundFast, "Sound (fast)"),
+            ReleaseChannel(ChannelKind.SoundSlow, "Sound (slow)"),
         ),
         mustType = null, shortCodeOffer = "Opens this share later without the phone, 7 days",
+        hostUid = HOST_UID, bindingHash = "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12",
+        opRows = listOf(
+            RedField("Op signed by", null, "workstation [9C61-E2A8]", danger = false),
+            RedField("host_uid", null, HOST_UID, mono = true),
+            RedField("requester", null, "workstation [9C61-E2A8]"),
+        ),
     )
 
     val releaseBastion = ReleaseView(

@@ -50,6 +50,7 @@ class RedViewModel(private val core: ReleaseApi, private val platform: Platform,
     }
 
     fun toggleHash() = _state.update { it?.copy(showHash = !it.showHash) }
+    fun typed(text: String) = _state.update { it?.copy(typed = text) }
 
     fun approve() {
         val s = _state.value ?: return
@@ -59,7 +60,7 @@ class RedViewModel(private val core: ReleaseApi, private val platform: Platform,
             val failure = platform.confirmWithSystemLock("Approve Red operation", hashPrefix(s.view.hash))
             if (failure != null) { _state.update { it?.copy(phase = ApprovalPhase.Review, error = failure) }; return@launch }
             try {
-                val out = core.decide(token, ReleaseDecision.Approve(), platform.clock.nowSeconds())
+                val out = core.decide(token, ReleaseDecision.Approve(typedId = s.view.mustType?.let { s.typed.trim() }), platform.clock.nowSeconds())
                 _state.update { it?.copy(phase = ApprovalPhase.Approved, outcome = out) }
             } catch (e: CoreException) {
                 _state.update { it?.copy(phase = ApprovalPhase.Review, error = (e.message ?: "The core refused.") + " Nothing was signed.") }
@@ -102,6 +103,11 @@ class ReleaseViewModel(private val core: ReleaseApi, private val platform: Platf
 
     fun typed(text: String) = _state.update { it?.copy(typed = text) }
     fun channel(kind: ChannelKind, on: Boolean) = _state.update { it?.copy(channelsOn = if (on) it.channelsOn + kind else it.channelsOn - kind) }
+
+    /** The one sound choice: off (null), fast or slow. Never two profiles at once. */
+    fun sound(kind: ChannelKind?) = _state.update { s ->
+        s?.copy(channelsOn = s.channelsOn - ChannelKind.SoundFast - ChannelKind.SoundSlow + listOfNotNull(kind))
+    }
     fun shortCode(on: Boolean) = _state.update { it?.copy(shortCode = on) }
     fun byHand(on: Boolean) = _state.update { it?.copy(byHand = on) }
 
@@ -115,7 +121,7 @@ class ReleaseViewModel(private val core: ReleaseApi, private val platform: Platf
             val on = s.channelsOn
             val decision = ReleaseDecision.Approve(
                 channels = ReleaseChannels(
-                    qr = ChannelKind.Qr in on, clipboard = ChannelKind.Clipboard in on,
+                    qr = ChannelKind.Qr in on,
                     soundFast = ChannelKind.SoundFast in on, soundSlow = ChannelKind.SoundSlow in on,
                 ),
                 shortCode = s.shortCode, byHand = s.byHand, typedId = s.view.mustType?.let { s.typed.trim() },

@@ -22,6 +22,9 @@ import uk.petruha.sshub.phone.ui.components.BarButtons
 import uk.petruha.sshub.phone.ui.components.BigWords
 import uk.petruha.sshub.phone.ui.components.ButtonKind
 import uk.petruha.sshub.phone.ui.components.CheckboxRow
+import uk.petruha.sshub.phone.ui.components.ChoiceRow
+import uk.petruha.sshub.phone.ui.components.DiffBox
+import uk.petruha.sshub.phone.ui.components.DiffEntry
 import uk.petruha.sshub.phone.ui.components.HexGroups
 import uk.petruha.sshub.phone.ui.components.HoldCover
 import uk.petruha.sshub.phone.ui.components.KeyValue
@@ -46,6 +49,7 @@ class ReleaseActions(
     val onDecline: () -> Unit = {},
     val onTyped: (String) -> Unit = {},
     val onChannel: (ChannelKind, Boolean) -> Unit = { _, _ -> },
+    val onSound: (ChannelKind?) -> Unit = {},
     val onShortCode: (Boolean) -> Unit = {},
     val onByHand: (Boolean) -> Unit = {},
     val onCopy: () -> Unit = {},
@@ -99,19 +103,33 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
             )
         }
 
+        if (v.hostUid.isNotEmpty()) {
+            SectionHeading("Host", trailing = "the terminal shows the same id")
+            HexGroups(v.hostUid, groups = null, label = "Host id")
+        }
+        if (v.opRows.isNotEmpty()) {
+            SectionHeading("What you release", trailing = "${v.opRows.size} fields")
+            DiffBox(v.opRows.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
+        }
+
         SectionHeading("Binding words", trailing = "compare with the terminal")
         BigWords(v.words)
-        Note("The terminal shows which host. Compare the binding words.", Modifier.padding(top = 8.dp))
+        if (v.bindingHash.isNotEmpty()) HexGroups(v.bindingHash, Modifier.padding(top = 8.dp), groups = null, label = "Binding hash")
+        Note("Compare the host and the four words with the terminal.", Modifier.padding(top = 8.dp))
 
         ChecksCard(v.checks)
 
         if (v.mustType != null && review) NeverMet(state, on)
 
         if (review) {
-            val on1 = state.channelsOn.size
-            SectionHeading("Send the answer by", trailing = "$on1 on")
+            SectionHeading("Show the answer as", trailing = if (state.channelsOn.isEmpty() && !state.byHand) "nothing chosen" else "${state.channelsOn.size} on")
             SshubCard {
-                v.channels.forEach { c -> ToggleRow(c.label, c.kind in state.channelsOn, { on.onChannel(c.kind, it) }) }
+                v.channels.firstOrNull { it.kind == ChannelKind.Qr }?.let { c -> ToggleRow(c.label, c.kind in state.channelsOn, { on.onChannel(c.kind, it) }) }
+                Text("Sound", Modifier.padding(top = 8.dp), style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val sounds = v.channels.filter { it.kind != ChannelKind.Qr }
+                val chosen = sounds.firstOrNull { it.kind in state.channelsOn }?.kind
+                ChoiceRow("Off", chosen == null, { on.onSound(null) }, Modifier.padding(top = 4.dp))
+                sounds.forEach { c -> ChoiceRow(c.label, chosen == c.kind, { on.onSound(c.kind) }, Modifier.padding(top = 6.dp)) }
             }
             if (v.shortCodeOffer != null) {
                 SshubCard(Modifier.padding(top = 12.dp)) {
@@ -166,10 +184,10 @@ private fun NeverMet(state: ReleaseState, on: ReleaseActions) {
 private fun ReleasedCard(state: ReleaseState, on: ReleaseActions) {
     val v = state.view
     val out = state.outcome
-    val sent = v.channels.filter { it.kind in state.channelsOn }.joinToString(", ") { it.label }.ifEmpty { "no channel" }
+    val shown = v.channels.filter { it.kind in state.channelsOn }.joinToString(", ") { it.label }.ifEmpty { "nothing on this phone" }
     SshubCard(Modifier.padding(top = 12.dp)) {
-        Text("Released.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.sshub.ok)
-        Note("Sent by $sent. Your share left this phone.")
+        Text("Signed.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.sshub.ok)
+        Note("Shown as: $shown. Check on the terminal that it took the share.")
         val frame = out?.outgoing
         if (frame != null) {
             if (ChannelKind.Qr in state.channelsOn) QrLoop(frame.qr, QR_DESCRIPTION)
@@ -208,7 +226,7 @@ private fun ReleaseBar(state: ReleaseState, on: ReleaseActions) {
             BarButtons {
                 SshubButton("Decline", on.onDecline, kind = ButtonKind.Outline, enabled = state.phase == ApprovalPhase.Review)
                 SshubButton(
-                    "Approve and release", on.onApprove, kind = ButtonKind.Primary,
+                    "Approve", on.onApprove, kind = ButtonKind.Primary,
                     subtitle = if (gate.reason == TYPE_ID_FIRST) TYPE_ID_FIRST else "sign with the phone",
                     enabled = gate.enabled, disabledReason = gate.reason,
                 )
