@@ -150,15 +150,22 @@ object IdentitySamples {
     val firstRunNoLock = FirstRunState(FirstRunPhase.NoSecureLock)
     val firstRunCreating = FirstRunState(FirstRunPhase.Creating)
 
-    fun restore(words: List<String>, cleared: Boolean = false, replaces: Boolean = false, phase: RestorePhase = RestorePhase.Editing): RestoreState {
+    fun restore(
+        words: List<String>, cleared: Boolean = false, replaces: Boolean = false, phase: RestorePhase = RestorePhase.Editing,
+        usedPage: Boolean? = true,
+    ): RestoreState {
         val padded = words + List(24 - words.size) { "" }
-        return RestoreState(padded, padded.map { DemoWords.stateOf(it) }, siteDataCleared = cleared, replaces = replaces, phase = phase)
+        return RestoreState(padded, padded.map { DemoWords.stateOf(it) }, usedPage = usedPage, siteDataCleared = cleared, replaces = replaces, phase = phase)
     }
     val restoreEmpty = restore(emptyList())
     val restorePartial = restore(DemoWords.backup.take(9))
     val restoreBad = restore(DemoWords.backup.toMutableList().also { it[7] = "twich"; it[19] = "blurbb" }, cleared = true)
     val restoreFull = restore(DemoWords.backup, cleared = true)
     val restoreFullNotCleared = restore(DemoWords.backup, cleared = false)
+    /** All words, the question not answered yet. */
+    val restoreFullUnanswered = restore(DemoWords.backup, usedPage = null)
+    /** All words, the page never used: no box to tick. */
+    val restoreFullNoPage = restore(DemoWords.backup, usedPage = false)
     val restoreOver = restore(emptyList(), replaces = true)
 
     val backupAuthenticating = BackupState(phase = BackupPhase.Authenticating, firstRun = true)

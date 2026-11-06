@@ -78,6 +78,8 @@ class RestoreViewModel(private val core: IdentityApi, private val platform: Plat
         flow.value = withWords(tokens + List(RestoreState.WORDS - tokens.size) { "" }).copy(paste = "")
     }
 
+    fun onUsedPage(used: Boolean) { flow.value = flow.value.copy(usedPage = used, siteDataCleared = if (used) flow.value.siteDataCleared else false) }
+
     fun onSiteDataCleared(cleared: Boolean) { flow.value = flow.value.copy(siteDataCleared = cleared) }
 
     /** Restores, wraps the secret with the Keystore key, unlocks the core. `onRestored` runs when the phone holds its key (head pending). */
@@ -280,18 +282,22 @@ class ChainHeadViewModel(private val core: IdentityApi, private val scan: ScanAp
 
 class SecurityMenuViewModel(private val core: IdentityApi, private val platform: Platform, private val settings: SettingsStore) : ViewModel() {
     private val status = core.status(platform.clock.nowSeconds())
+    private val headPending = MutableStateFlow(status.headPending)
 
     val state: StateFlow<SecurityMenuState> = combine(
-        settings.theme, settings.autoLockSeconds, settings.backupConfirmed, settings.signerMismatch,
-    ) { theme, autoLock, backup, blocked ->
-        SecurityMenuState(status.deviceName, status.deviceId, theme, autoLock, backup, blocked)
+        settings.theme, settings.autoLockSeconds, settings.backupConfirmed, settings.signerMismatch, headPending,
+    ) { theme, autoLock, backup, blocked, pending ->
+        SecurityMenuState(status.deviceName, status.deviceId, theme, autoLock, backup, blocked, pending)
     }.stateIn(
         viewModelScope, SharingStarted.Eagerly,
         SecurityMenuState(
             status.deviceName, status.deviceId, settings.theme.value, settings.autoLockSeconds.value,
-            settings.backupConfirmed.value, settings.signerMismatch.value,
+            settings.backupConfirmed.value, settings.signerMismatch.value, status.headPending,
         ),
     )
+
+    /** The chain may have been taken since this model was made (Take chain, then back to the menu). */
+    fun refresh() { headPending.value = core.status(platform.clock.nowSeconds()).headPending }
 
     fun setTheme(choice: ThemeChoice) = settings.setTheme(choice)
     fun setAutoLock(seconds: Int) = settings.setAutoLock(seconds)

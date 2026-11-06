@@ -113,9 +113,11 @@ fun NavGraphBuilder.identityGraph(env: AppEnv, settings: SettingsStore = AppSett
     composable(Routes.Menu) {
         val vm: SecurityMenuViewModel = viewModel(factory = factory { SecurityMenuViewModel(env.core, env.platform, settings) })
         val state by vm.state.collectAsStateWithLifecycle()
+        LaunchedEffect(Unit) { vm.refresh() }
         SecurityMenuScreen(
             state,
             SecurityMenuActions(
+                onTakeChain = { nav.navigate(Routes.ChainHead) },
                 onTrustList = { nav.navigate(Routes.TrustList) }, onCodes = { nav.navigate(Routes.Codes) }, onReshare = { nav.navigate(Routes.Reshare) },
                 onRecovery = { nav.navigate(Routes.Recovery) }, onBackup = { nav.navigate(backupRoute(false)) }, onExport = { nav.navigate(Routes.Export) },
                 onAbout = { nav.navigate(Routes.About) },
@@ -146,7 +148,7 @@ private fun RestoreDestination(env: AppEnv, replaces: Boolean) {
     RestoreScreen(
         state,
         RestoreActions(
-            onWord = vm::onWord, onPaste = vm::onPaste, onFill = vm::onFill, onSiteDataCleared = vm::onSiteDataCleared,
+            onWord = vm::onWord, onPaste = vm::onPaste, onFill = vm::onFill, onUsedPage = vm::onUsedPage, onSiteDataCleared = vm::onSiteDataCleared,
             onRestore = { vm.restore { env.nav.navigate(Routes.ChainHead) { popUpTo(env.nav.graph.id) { inclusive = true } } } },
             onBack = { env.nav.popBackStack() }, onOpenSecuritySettings = openSettings,
         ),

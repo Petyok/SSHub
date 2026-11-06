@@ -35,6 +35,7 @@ import uk.petruha.sshub.phone.ui.components.ButtonKind
 import uk.petruha.sshub.phone.ui.components.BarButtons
 import uk.petruha.sshub.phone.ui.components.CheckLine
 import uk.petruha.sshub.phone.ui.components.CheckboxRow
+import uk.petruha.sshub.phone.ui.components.ChoiceRow
 import uk.petruha.sshub.phone.ui.components.Gap
 import uk.petruha.sshub.phone.ui.components.Glyph
 import uk.petruha.sshub.phone.ui.components.GlyphKind
@@ -58,14 +59,16 @@ data class RestoreState(
     val paste: String = "",
     /** Restoring over a stored key: the old enrollments and short codes are erased. */
     val replaces: Boolean = false,
-    /** "I cleared the site data of the companion page": the app may not sign while the page still can (C21). */
+    /** Answer to "Did you use the companion page in a browser on this phone before?"; null until the user answers (M4). */
+    val usedPage: Boolean? = null,
+    /** Only asked when `usedPage` is true: "I cleared the site data of the companion page" (the app may not sign while the page still can, C21). */
     val siteDataCleared: Boolean = false,
     val phase: RestorePhase = RestorePhase.Editing,
     val error: String? = null,
 ) {
     val accepted: Int get() = wordStates.count { it == WordState.Ok }
     val bad: Int get() = wordStates.count { it == WordState.Bad }
-    val canRestore: Boolean get() = accepted == WORDS && siteDataCleared && phase != RestorePhase.Restoring
+    val canRestore: Boolean get() = accepted == WORDS && usedPage != null && (usedPage == false || siteDataCleared) && phase != RestorePhase.Restoring
 
     companion object { const val WORDS = 24 }
 }
@@ -74,6 +77,7 @@ class RestoreActions(
     val onWord: (index: Int, text: String) -> Unit = { _, _ -> },
     val onPaste: (String) -> Unit = {},
     val onFill: () -> Unit = {},
+    val onUsedPage: (Boolean) -> Unit = {},
     val onSiteDataCleared: (Boolean) -> Unit = {},
     val onRestore: () -> Unit = {},
     val onBack: () -> Unit = {},
@@ -87,7 +91,8 @@ fun RestoreScreen(state: RestoreState, on: RestoreActions) {
     val restoring = state.phase == RestorePhase.Restoring
     val reason = when {
         state.accepted < RestoreState.WORDS -> "${state.accepted} of ${RestoreState.WORDS} words accepted"
-        !state.siteDataCleared -> "tick that you cleared the site data of the companion page"
+        state.usedPage == null -> "answer whether you used the companion page"
+        !state.siteDataCleared && state.usedPage == true -> "tick that you cleared the site data of the companion page"
         else -> "the phone is being restored"
     }
     ScreenFrame(
@@ -122,12 +127,17 @@ fun RestoreScreen(state: RestoreState, on: RestoreActions) {
         }
         if (state.bad > 0) CheckLine("${state.bad} not in the word list: fix the marked ones.", ok = false)
         SectionHeading("Or paste all 24")
-        TextArea(state.paste, on.onPaste, label = "Pasted words", placeholder = "24 backup words, separated by spaces")
+        TextArea(state.paste, on.onPaste, label = "Pasted words", placeholder = "24 backup words, separated by spaces", secret = true)
         Gap(8.dp)
         SshubButton("Fill the grid", on.onFill, enabled = state.paste.isNotBlank(), disabledReason = "paste the words first")
         SectionHeading("The companion page")
-        Note("If the words of this phone were ever used in the SSHub companion web page, open its menu, choose Show backup words, then clear the site data of that page in the browser. Two copies that sign with one key fork the chain.")
-        CheckboxRow("I cleared the site data of the companion page", state.siteDataCleared, on.onSiteDataCleared)
+        Text("Did you use the companion page in a browser on this phone before?", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+        ChoiceRow("Yes, I used it", state.usedPage == true, { on.onUsedPage(true) }, Modifier.padding(top = 8.dp))
+        ChoiceRow("No, never", state.usedPage == false, { on.onUsedPage(false) }, Modifier.padding(top = 6.dp))
+        if (state.usedPage == true) {
+            Note("Open the companion page menu, choose Show backup words, then clear the site data of that page in the browser. Two copies that sign with one key fork the chain.", Modifier.padding(top = 8.dp))
+            CheckboxRow("I cleared the site data of the companion page", state.siteDataCleared, on.onSiteDataCleared)
+        }
         Gap(12.dp)
         WarnBox("A restored phone signs nothing yet.") {
             Text(
@@ -204,7 +214,8 @@ private fun WordCell(index: Int, word: String, wordState: WordState, onChange: (
             textStyle = SshubText.monoBody.merge(TextStyle(color = cs.onSurface, fontWeight = FontWeight.Bold)),
             cursorBrush = SolidColor(cs.onSurface),
             keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Next,
+                // The password variation keeps the keyboard from learning, suggesting or syncing the phrase (platform M12).
+                capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, keyboardType = KeyboardType.Password, imeAction = ImeAction.Next,
             ),
             // the padding lives inside the field so the touch target (the semantics node) keeps the whole 48dp
             decorationBox = { inner -> Box(Modifier.heightIn(min = 48.dp).padding(vertical = 12.dp), contentAlignment = Alignment.CenterStart) { inner() } },

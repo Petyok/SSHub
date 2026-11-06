@@ -53,7 +53,15 @@ fun RingHomeScreen(state: HomeState, on: HomeActions) {
             }
         }) else null,
     ) {
-        if (ring == null) EmptyHomeBody(state.phone) else RingBody(state.phone, ring, state.pending, on)
+        // The card follows the status, not the ring: a restored phone has no ring yet and still must take its chain (H5).
+        if (state.headPending) {
+            WarnBox(HEAD_PENDING_TITLE) {
+                Note(HEAD_PENDING_BODY)
+                SshubButton(TAKE_CHAIN_LABEL, on.onTakeChain, Modifier.fillMaxWidth(), kind = ButtonKind.Outline)
+            }
+            Gap()
+        }
+        if (ring == null) EmptyHomeBody(state.phone, state.headPending) else RingBody(state.phone, ring, state.pending, state.headPending, on)
     }
 }
 
@@ -66,15 +74,8 @@ private fun TitleLine(title: String, trailing: String) {
 }
 
 @Composable
-private fun RingBody(phone: HomePhoneView, ring: RingView, pending: List<PendingItem>, on: HomeActions) {
-    if (ring.headPending) {
-        WarnBox(HEAD_PENDING_TITLE) {
-            Note(HEAD_PENDING_BODY)
-            SshubButton(TAKE_CHAIN_LABEL, on.onTakeChain, Modifier.fillMaxWidth(), kind = ButtonKind.Outline)
-        }
-        Gap()
-    }
-    PhoneCard(phone, ring.epoch)
+private fun RingBody(phone: HomePhoneView, ring: RingView, pending: List<PendingItem>, headPending: Boolean, on: HomeActions) {
+    PhoneCard(phone, ring.epoch, headPending)
     SectionHeading("Approvals", trailing = "${pending.size} pending")
     PendingGroups(pending, on)
     SectionHeading("Devices", trailing = "${ring.devices.size} in ring")
@@ -82,7 +83,7 @@ private fun RingBody(phone: HomePhoneView, ring: RingView, pending: List<Pending
 }
 
 @Composable
-private fun PhoneCard(p: HomePhoneView, epoch: Long) {
+private fun PhoneCard(p: HomePhoneView, epoch: Long, headPending: Boolean) {
     SshubCard {
         Text("this phone", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(p.id, Modifier.padding(top = 2.dp, bottom = 8.dp), style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onSurface)
@@ -90,13 +91,14 @@ private fun PhoneCard(p: HomePhoneView, epoch: Long) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         KvRow("ring epoch", epoch.toString())
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        KvRow("head seq", headSeqText(p))
+        KvRow("head seq", headSeqText(p, headPending))
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         KvRow("live short codes", p.liveShortCodes.toString())
     }
 }
 
-private fun headSeqText(p: HomePhoneView) = p.headSeq?.toString() ?: "no ops yet"
+private fun headSeqText(p: HomePhoneView, headPending: Boolean) =
+    p.headSeq?.toString() ?: if (headPending) "unknown, not taken yet" else "no ops yet"
 
 private fun groupTitle(tab: ApprovalTab) = when (tab) {
     ApprovalTab.Red -> "Red operations"
@@ -137,14 +139,14 @@ private fun DeviceRow(d: RingDevice, first: Boolean, last: Boolean) {
 }
 
 @Composable
-private fun EmptyHomeBody(p: HomePhoneView) {
+private fun EmptyHomeBody(p: HomePhoneView, headPending: Boolean) {
     TitleLine("no ring yet", "not enrolled")
     SshubCard {
         Text("this phone", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(p.id, Modifier.padding(top = 2.dp, bottom = 8.dp), style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onSurface)
         KvRow("name", p.name)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        KvRow("head seq", headSeqText(p))
+        KvRow("head seq", headSeqText(p, headPending))
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         KvRow("live short codes", p.liveShortCodes.toString())
     }

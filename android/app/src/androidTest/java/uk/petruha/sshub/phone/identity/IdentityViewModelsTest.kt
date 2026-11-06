@@ -102,7 +102,7 @@ class RestoreViewModelTest {
         onMain { vm.restore { restored++ } }
         assertEquals(0, restored)
         assertNull(core.restoredWith)
-        onMain { vm.onSiteDataCleared(true); vm.restore { restored++ } }
+        onMain { vm.onUsedPage(true); vm.onSiteDataCleared(true); vm.restore { restored++ } }
         assertEquals(1, restored)
         assertEquals(DemoWords.backup, core.restoredWith)
         assertTrue(core.headPending)
@@ -116,7 +116,7 @@ class RestoreViewModelTest {
         onMain { vm = RestoreViewModel(core, platform, true) }
         fill(vm)
         var restored = 0
-        onMain { vm.onSiteDataCleared(true); vm.restore { restored++ } }
+        onMain { vm.onUsedPage(true); vm.onSiteDataCleared(true); vm.restore { restored++ } }
         assertEquals(0, restored)
         assertEquals(RestorePhase.Failed, vm.state.value.phase)
         assertTrue(vm.state.value.replaces)
@@ -127,7 +127,7 @@ class RestoreViewModelTest {
         lateinit var vm: RestoreViewModel
         onMain { vm = RestoreViewModel(core, platform, false) }
         fill(vm)
-        onMain { vm.onSiteDataCleared(true); vm.restore { } }
+        onMain { vm.onUsedPage(false); vm.restore { } }
         assertEquals(RestorePhase.NoSecureLock, vm.state.value.phase)
     }
 }

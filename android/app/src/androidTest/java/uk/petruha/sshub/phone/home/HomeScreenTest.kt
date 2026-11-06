@@ -93,6 +93,20 @@ class HomeScreenTest {
         check(log == listOf("restore", "enroll")) { log.toString() }
     }
 
+    @Test fun h5_a_restored_phone_without_a_ring_still_shows_the_card_and_the_button() {
+        show(HomeSamples.homeEmpty.copy(headPending = true))
+        rule.onNodeWithText("This phone does not sign yet.").assertIsDisplayed()
+        rule.onNodeWithText("unknown, not taken yet").assertExists()
+        rule.onNodeWithText("no ops yet").assertDoesNotExist()
+        rule.onNodeWithText("Take my chain from a terminal").performClick()
+        check(log == listOf("chain")) { log.toString() }
+    }
+
+    @Test fun h5_no_card_for_a_never_restored_empty_home() {
+        show(HomeSamples.homeEmpty)
+        rule.onNodeWithText("This phone does not sign yet.").assertDoesNotExist()
+        rule.onNodeWithText("no ops yet").assertExists()
+    }
     @Test fun dark_and_light_render() {
         show(HomeSamples.home, dark = true)
         rule.onNodeWithText("ring epoch").assertIsDisplayed()

@@ -5,8 +5,8 @@ import uk.petruha.sshub.phone.core.PendingItem
 import uk.petruha.sshub.phone.core.PendingKind
 import uk.petruha.sshub.phone.core.RingView
 
-/** Home before enrollment is `ring == null`. */
-data class HomeState(val phone: HomePhoneView, val ring: RingView?, val pending: List<PendingItem>)
+/** Home before enrollment is `ring == null`. `headPending` is the status's, so a restored phone without a ring still shows the card. */
+data class HomeState(val phone: HomePhoneView, val ring: RingView?, val pending: List<PendingItem>, val headPending: Boolean = ring?.headPending ?: false)
 
 class HomeActions(
     val onOpenPending: (PendingItem) -> Unit = {},

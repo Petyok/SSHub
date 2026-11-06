@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import uk.petruha.sshub.phone.core.AutoLockChoices
 import uk.petruha.sshub.phone.core.ThemeChoice
+import uk.petruha.sshub.phone.ui.screens.home.TAKE_CHAIN_LABEL
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
 import uk.petruha.sshub.phone.ui.components.SectionHeading
 import uk.petruha.sshub.phone.ui.components.SshubRow
@@ -23,9 +24,12 @@ data class SecurityMenuState(
     val backupConfirmed: Boolean = false,
     /** D17: the signing fingerprint differs from the terminal's value; every flow except About and Lock now is closed. */
     val blocked: Boolean = false,
+    /** The chain was not taken yet (restored phone): the menu offers it again, whatever happened to the first attempt. */
+    val headPending: Boolean = false,
 )
 
 class SecurityMenuActions(
+    val onTakeChain: () -> Unit = {},
     val onTrustList: () -> Unit = {},
     val onCodes: () -> Unit = {},
     val onReshare: () -> Unit = {},
@@ -52,7 +56,13 @@ fun SecurityMenuScreen(state: SecurityMenuState, on: SecurityMenuActions) {
                 )
             }
         }
-        SectionHeading("Holder", first = !state.blocked, trailing = "${state.deviceName} ${state.deviceId}")
+        if (state.headPending) {
+            SectionHeading("Chain", first = !state.blocked, trailing = "not taken yet")
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SshubRow(TAKE_CHAIN_LABEL, secondary = if (state.blocked) closed else "This phone does not sign until it has taken its chain", onClick = go(on.onTakeChain))
+            }
+        }
+        SectionHeading("Holder", first = !state.blocked && !state.headPending, trailing = "${state.deviceName} ${state.deviceId}")
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SshubRow("Trust sessions", secondary = if (state.blocked) closed else "Certificates this phone issued", onClick = go(on.onTrustList))
             SshubRow("Short codes I issued", secondary = if (state.blocked) closed else "One live code per credential", onClick = go(on.onCodes))

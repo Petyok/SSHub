@@ -14,6 +14,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.HomeApi
+import uk.petruha.sshub.phone.core.PhoneCoreApi
 import uk.petruha.sshub.phone.core.Opened
 import uk.petruha.sshub.phone.core.Platform
 import uk.petruha.sshub.phone.core.CameraPermission
@@ -24,7 +25,7 @@ import uk.petruha.sshub.phone.core.ScanResult
 import uk.petruha.sshub.phone.core.ScanResults
 
 /** The "last sync" age is relative, so it is recomputed once a minute while the screen is alive. Nothing here acts on its own. */
-class HomeViewModel(private val core: HomeApi, private val platform: Platform) : ViewModel() {
+class HomeViewModel(private val core: PhoneCoreApi, private val platform: Platform) : ViewModel() {
     private val _state = MutableStateFlow(read())
     val state: StateFlow<HomeState> = _state.asStateFlow()
 
@@ -36,7 +37,8 @@ class HomeViewModel(private val core: HomeApi, private val platform: Platform) :
 
     private fun read(): HomeState {
         val now = platform.clock.nowSeconds()
-        return HomeState(core.thisPhone(now), core.ring(now), core.pending(now))
+        // `headPending` comes from the status, not from the ring: a restored phone has no ring and is still pending (H5).
+        return HomeState(core.thisPhone(now), core.ring(now), core.pending(now), core.status(now).headPending)
     }
 }
 

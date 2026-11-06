@@ -121,6 +121,30 @@ class RestoreScreenTest {
         assertEquals(true, cleared)
     }
 
+    @Test fun m4_the_question_is_asked_and_unanswered_blocks_with_its_reason() {
+        rule.setScreen { RestoreScreen(IdentitySamples.restoreFullUnanswered, RestoreActions()) }
+        rule.onNodeWithText("Did you use the companion page in a browser on this phone before?").performScrollTo().assertExists()
+        rule.onAllNodesWithText("I cleared the site data of the companion page").assertCountEquals(0)
+        rule.onNodeWithText("Restore this phone").assertIsNotEnabled()
+    }
+
+    @Test fun m4_a_user_who_never_used_the_page_sees_no_box_and_can_restore() {
+        var restored = 0
+        rule.setScreen { RestoreScreen(IdentitySamples.restoreFullNoPage, RestoreActions(onRestore = { restored++ })) }
+        rule.onAllNodesWithText("I cleared the site data of the companion page").assertCountEquals(0)
+        rule.onNodeWithText("Restore this phone").assertIsEnabled().performClick()
+        assertEquals(1, restored)
+    }
+
+    @Test fun m4_yes_shows_the_steps_and_the_required_box() {
+        var answer: Boolean? = null
+        rule.setScreen { RestoreScreen(IdentitySamples.restoreFullNotCleared, RestoreActions(onUsedPage = { answer = it })) }
+        rule.onNodeWithText("Open the companion page menu", substring = true).performScrollTo().assertExists()
+        rule.onNodeWithText("I cleared the site data of the companion page").performScrollTo().assertExists()
+        rule.onNodeWithText("No, never").performScrollTo().performClick()
+        assertEquals(false, answer)
+    }
+
     @Test fun the_warning_that_a_restored_phone_signs_nothing_is_shown() {
         rule.setScreen { RestoreScreen(IdentitySamples.restoreEmpty, RestoreActions()) }
         rule.onNodeWithText("A restored phone signs nothing yet.").assertExists()
