@@ -352,6 +352,9 @@ pub struct ChainAdopted {
     pub ops: u32,
     /// The seq the earlier, disagreeing list ended at.
     pub previous_seq: Option<u64>,
+    /// The terminal id (hex) the list named as its sender (unsigned: it tells two lists apart, it proves nothing), if it
+    /// named one. Two lists from two different ids naming the same head are what `agreed` needs.
+    pub sender: Option<String>,
     /// The sentence the page prints under the title: "Newest op in this list: seq N, signed ...Z (n op(s) read)."
     pub summary: String,
     /// What to do next, in the page's words (take another list, or the warning to read before adopting).

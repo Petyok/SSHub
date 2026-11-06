@@ -178,13 +178,13 @@ impl Inner {
         })
     }
 
-    fn open_chain(&mut self, ops: &[SignedOpBytes]) -> Result<Opened> {
+    fn open_chain(&mut self, ops: &[SignedOpBytes], sender: Option<[u8; 8]>) -> Result<Opened> {
         let t = self.token();
         let u = self.unlocked.as_mut().ok_or(CoreError::Locked)?;
         if !u.state.head_pending {
             return Ok(refused("This phone already knows its own chain; a list of its own ops needs nothing from it."));
         }
-        let r = match chain::adopt_own_chain(&mut u.state, &u.id, ops) {
+        let r = match chain::adopt_own_chain(&mut u.state, &u.id, ops, sender) {
             Ok(r) => r,
             Err(e) => return Ok(refused(e.reason().to_string())),
         };
@@ -205,6 +205,7 @@ impl Inner {
                 newest_at: r.newest_at,
                 ops: r.ops,
                 previous_seq: r.previous_seq,
+                sender: r.sender.clone(),
                 summary: format!(
                     "Newest op in this list: seq {}, signed {}Z ({} op(s) read).",
                     r.head_seq,
@@ -213,8 +214,9 @@ impl Inner {
                 ),
                 note: match (r.agreed, r.previous_seq) {
                     (true, _) => format!("This phone will continue after seq {}. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.", r.head_seq),
-                    (false, Some(p)) => format!("The earlier list ended at seq {p}, so one of the two is behind. Take a list from another terminal, or again after it synced."),
-                    (false, None) => "Take a second list, from another terminal or from the same one later, before this chain head is trusted.".to_string(),
+                    (false, Some(p)) => format!("The earlier list ended at seq {p}, so one of the two is behind. Take a list from another terminal that is up to date."),
+                    (false, None) if r.sender.is_none() => "This list does not say which terminal made it, so it cannot be one of the two. Take the chain from two different terminals that name themselves.".to_string(),
+                    (false, None) => "Take a second list from another terminal before this chain head is trusted.".to_string(),
                 },
             },
         })
@@ -266,8 +268,8 @@ impl Inner {
                 Ok(o)
             }
             KIND_PHONE_OPS => {
-                let ops = match PhoneOpsWire::decode(frame) {
-                    Ok(w) => w.ops,
+                let (ops, sender) = match PhoneOpsWire::decode(frame) {
+                    Ok(w) => (w.ops, w.sender),
                     Err(e) => return Ok(refused(format!("Not a list of ops: {e:#}"))),
                 };
                 let own = self
@@ -280,7 +282,7 @@ impl Inner {
                     .all(|(c, _)| op_author(c).as_deref() == Some(own.as_str()))
                     && !ops.is_empty()
                 {
-                    return self.open_chain(&ops);
+                    return self.open_chain(&ops, sender);
                 }
                 let mut ctx = self.ctx(now)?;
                 let (o, p) = reshare::open_reshare(ops, &mut ctx, t);
@@ -485,10 +487,9 @@ impl PhoneCore {
     /// The head adoption step 1 for a list given directly (the same as `open_frame` on a kind 5 list of own ops).
     pub fn take_chain(&self, ops_frame: Vec<u8>) -> Result<ChainAdopted> {
         let mut g = self.lock_inner();
-        let ops = PhoneOpsWire::decode(&ops_frame)
-            .map_err(|e| CoreError::bad(format!("Not a list of ops: {e:#}")))?
-            .ops;
-        match g.open_chain(&ops)? {
+        let wire = PhoneOpsWire::decode(&ops_frame)
+            .map_err(|e| CoreError::bad(format!("Not a list of ops: {e:#}")))?;
+        match g.open_chain(&wire.ops, wire.sender)? {
             Opened::Chain { view } => Ok(view),
             Opened::Refused { view } => Err(CoreError::bad(view.reason)),
             _ => Err(CoreError::internal("unexpected view")),
@@ -511,6 +512,7 @@ impl PhoneCore {
         }
         Ok(to_base64(
             &PhoneOpsWire {
+                sender: None,
                 ops: chain::courier_ops(&u.state, COURIER_TAIL),
             }
             .encode(),
@@ -742,12 +744,15 @@ mod tests {
         let id = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
         let mut live = PhoneState::default();
         chain::head_attest(&mut live, &id, now - 10, None).unwrap();
-        let list = PhoneOpsWire {
-            ops: chain::courier_ops(&live, 8),
-        }
-        .encode();
-        assert!(!c.take_chain(list.clone()).unwrap().agreed);
-        let agreed = c.take_chain(list).unwrap();
+        let list = |sender: u8| {
+            PhoneOpsWire {
+                sender: Some([sender; 8]),
+                ops: chain::courier_ops(&live, 8),
+            }
+            .encode()
+        };
+        assert!(!c.take_chain(list(1)).unwrap().agreed);
+        let agreed = c.take_chain(list(2)).unwrap();
         assert!(agreed.agreed);
         c.decide(agreed.token, Decision::Approve { typed_id: None }, now)
             .unwrap();
@@ -926,20 +931,25 @@ mod tests {
         for t in 0..3 {
             chain::head_attest(&mut live, &id, 1_893_452_400 + t, None).unwrap();
         }
-        let wire = |n: usize| {
+        let wire = |n: usize, sender: Option<u8>| {
             PhoneOpsWire {
+                sender: sender.map(|s| [s; 8]),
                 ops: chain::courier_ops(&live, 8).into_iter().take(n).collect(),
             }
             .encode()
         };
-        let first = c.take_chain(wire(2)).unwrap();
+        let first = c.take_chain(wire(2, Some(1))).unwrap();
         assert!(!first.agreed);
+        assert_eq!(first.sender.as_deref(), Some("0101010101010101"));
         assert_eq!(
             first.summary,
             "Newest op in this list: seq 2, signed 2029-12-31T23:00Z (2 op(s) read)."
         );
-        assert_eq!(first.note, "Take a second list, from another terminal or from the same one later, before this chain head is trusted.");
-        let second = c.take_chain(wire(3)).unwrap();
+        assert_eq!(
+            first.note,
+            "Take a second list from another terminal before this chain head is trusted."
+        );
+        let second = c.take_chain(wire(3, Some(2))).unwrap();
         assert!(!second.agreed);
         assert!(
             second
@@ -948,7 +958,24 @@ mod tests {
             "{}",
             second.note
         );
-        let agreed = c.take_chain(wire(3)).unwrap();
+        // the same frame again (one animation scanned twice) is refused with a sentence, not agreed
+        let e = c.take_chain(wire(3, Some(2))).unwrap_err();
+        assert_eq!(e.reason(), chain::SAME_TERMINAL_MESSAGE);
+        // a list that names no terminal never agrees, and does not cost the candidate its id
+        let anon = c.take_chain(wire(3, None)).unwrap();
+        assert!(!anon.agreed);
+        assert!(
+            anon.note
+                .starts_with("This list does not say which terminal made it"),
+            "{}",
+            anon.note
+        );
+        assert_eq!(
+            c.take_chain(wire(3, Some(2))).unwrap_err().reason(),
+            chain::SAME_TERMINAL_MESSAGE
+        );
+        // another terminal naming the same head agrees
+        let agreed = c.take_chain(wire(3, Some(3))).unwrap();
         assert!(agreed.agreed);
         assert_eq!(
             agreed.summary,

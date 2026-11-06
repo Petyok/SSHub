@@ -383,7 +383,10 @@ pub struct AdoptInfo {
     pub head_hash: Vec<u8>,
     pub newest_at: i64,
     pub ops: u32,
-    /// Two lists named the same newest op: the head waits for the user's acceptance (`accept_head`).
+    /// The terminal id this list named (hex), if it named one.
+    pub sender: Option<String>,
+    /// Two lists from two different terminals named the same newest op: the head waits for the user's acceptance
+    /// (`accept_head`).
     pub agreed: bool,
     /// The seq the earlier, disagreeing list ended at.
     pub previous_seq: Option<u64>,
@@ -391,12 +394,19 @@ pub struct AdoptInfo {
 
 /// A single list cannot show that it is the newest (a courier or a terminal behind on sync hands over an old tail, and
 /// signing on top of it forks the chain). So a head is adopted in two steps: two lists must name the same newest op
-/// (`agreed`), and the user then confirms what they see (`accept_head`). A terminal-signed head would be stronger.
+/// (`agreed`), the lists must come from two DIFFERENT terminals (the kind 5 sender id, unsigned: it tells two lists
+/// apart, it does not prove who made them), and the user then confirms what they see (`accept_head`). A list without a
+/// sender id can be the first candidate but never agrees. A terminal-signed head would be stronger.
+pub const SAME_TERMINAL_MESSAGE: &str =
+    "This list comes from the same terminal as the first one. Scan the list from another terminal.";
+
 pub fn adopt_own_chain(
     state: &mut PhoneState,
     id: &PhoneIdentity,
     ops: &[SignedOpBytes],
+    sender: Option<[u8; 8]>,
 ) -> Result<AdoptInfo> {
+    let sender = sender.map(hex::encode);
     let r = read_own_chain(id, ops)?;
     let head = r
         .chain
@@ -410,24 +420,37 @@ pub fn adopt_own_chain(
         ops: r.chain.len() as u32,
         agreed: false,
         previous_seq: None,
+        sender: sender.clone(),
     };
+    let mut keep_sender = sender.clone();
     if let Some(c) = &state.head_candidate {
         if c.seq == head.seq && c.hash == head.hash {
-            state.head_proposal = Some(HeadProposal {
-                chain: r.chain,
-                epoch: r.epoch,
-                wrap_epoch: r.wrap_epoch,
-            });
-            state.head_candidate = None;
-            info.agreed = true;
-            return Ok(info);
+            match (&c.sender, &sender) {
+                (Some(a), Some(b)) if a == b => {
+                    return Err(CoreError::refused(SAME_TERMINAL_MESSAGE));
+                }
+                (Some(_), Some(_)) => {
+                    state.head_proposal = Some(HeadProposal {
+                        chain: r.chain,
+                        epoch: r.epoch,
+                        wrap_epoch: r.wrap_epoch,
+                    });
+                    state.head_candidate = None;
+                    info.agreed = true;
+                    return Ok(info);
+                }
+                // a list that names no terminal never agrees, and never costs the first one its id
+                _ => keep_sender = sender.or_else(|| c.sender.clone()),
+            }
+        } else {
+            info.previous_seq = Some(c.seq);
         }
-        info.previous_seq = Some(c.seq);
     }
     state.head_proposal = None;
     state.head_candidate = Some(HeadCandidate {
         seq: head.seq,
         hash: head.hash,
+        sender: keep_sender,
     });
     Ok(info)
 }
@@ -557,18 +580,18 @@ mod tests {
         let live = live(&me, 3);
         let stale: Vec<_> = courier_ops(&live, 8).into_iter().take(2).collect();
         let mut fresh = PhoneState::restored();
-        let first = adopt_own_chain(&mut fresh, &me, &stale).unwrap();
+        let first = adopt_own_chain(&mut fresh, &me, &stale, Some([1; 8])).unwrap();
         assert!(!first.agreed);
         assert!(
             head_attest(&mut fresh, &me, NOW + 100, None).is_err(),
             "one list adopts nothing"
         );
-        let newer = adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8)).unwrap();
+        let newer = adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8), Some([2; 8])).unwrap();
         assert!(!newer.agreed);
         assert_eq!(newer.previous_seq, Some(2));
         assert!(accept_head(&mut fresh, (0, &[])).is_err());
         assert!(
-            adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8))
+            adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8), Some([1; 8]))
                 .unwrap()
                 .agreed
         );
@@ -587,21 +610,21 @@ mod tests {
         let other = id(12);
         let ops = courier_ops(&live(&me, 2), 8);
         let mut s = PhoneState::restored();
-        assert!(adopt_own_chain(&mut s, &me, &[])
+        assert!(adopt_own_chain(&mut s, &me, &[], None)
             .unwrap_err()
             .reason()
             .contains("holds no op"));
-        assert!(adopt_own_chain(&mut s, &other, &ops)
+        assert!(adopt_own_chain(&mut s, &other, &ops, None)
             .unwrap_err()
             .reason()
             .contains("not by this phone"));
         let forged: Vec<_> = ops.iter().map(|(c, _)| (c.clone(), [0u8; 64])).collect();
-        assert!(adopt_own_chain(&mut s, &me, &forged)
+        assert!(adopt_own_chain(&mut s, &me, &forged, None)
             .unwrap_err()
             .reason()
             .contains("does not verify"));
         let dup = vec![ops[1].clone(), ops[1].clone()];
-        assert!(adopt_own_chain(&mut s, &me, &dup)
+        assert!(adopt_own_chain(&mut s, &me, &dup, None)
             .unwrap_err()
             .reason()
             .contains("one chain"));
@@ -625,13 +648,67 @@ mod tests {
     }
 
     #[test]
+    fn the_same_terminal_twice_never_agrees_and_neither_does_a_list_without_a_sender() {
+        let me = id(14);
+        let live = live(&me, 3);
+        let ops = courier_ops(&live, 8);
+        let a = Some([1; 8]);
+        // the same frame twice: refused with the sentence, the first candidate stays
+        let mut s = PhoneState::restored();
+        assert!(!adopt_own_chain(&mut s, &me, &ops, a).unwrap().agreed);
+        let e = adopt_own_chain(&mut s, &me, &ops, a).unwrap_err();
+        assert_eq!(e.reason(), SAME_TERMINAL_MESSAGE);
+        assert!(s.head_proposal.is_none() && s.head_candidate.is_some());
+        // two terminals naming the same head agree
+        assert!(
+            adopt_own_chain(&mut s, &me, &ops, Some([2; 8]))
+                .unwrap()
+                .agreed
+        );
+        // a list without a sender can be the first candidate but never agrees, from either side
+        let mut s = PhoneState::restored();
+        assert!(!adopt_own_chain(&mut s, &me, &ops, None).unwrap().agreed);
+        assert!(!adopt_own_chain(&mut s, &me, &ops, None).unwrap().agreed);
+        assert!(
+            !adopt_own_chain(&mut s, &me, &ops, a).unwrap().agreed,
+            "the first one named nobody"
+        );
+        assert!(s.head_proposal.is_none());
+        assert_eq!(
+            s.head_candidate.as_ref().unwrap().sender.as_deref(),
+            Some("0101010101010101")
+        );
+        assert!(
+            !adopt_own_chain(&mut s, &me, &ops, None).unwrap().agreed,
+            "an anonymous list never completes a pair"
+        );
+        assert_eq!(
+            s.head_candidate.as_ref().unwrap().sender.as_deref(),
+            Some("0101010101010101"),
+            "and keeps the id"
+        );
+        assert!(
+            adopt_own_chain(&mut s, &me, &ops, Some([2; 8]))
+                .unwrap()
+                .agreed
+        );
+        // the same terminal with a newer head is a new candidate, not a refusal
+        let mut s = PhoneState::restored();
+        let old: Vec<_> = ops.iter().take(2).cloned().collect();
+        adopt_own_chain(&mut s, &me, &old, a).unwrap();
+        let newer = adopt_own_chain(&mut s, &me, &ops, a).unwrap();
+        assert!(!newer.agreed);
+        assert_eq!(newer.previous_seq, Some(2));
+    }
+
+    #[test]
     fn accepting_a_head_is_bound_to_the_head_that_was_shown() {
         let me = id(13);
         let live = live(&me, 3);
         let mut fresh = PhoneState::restored();
         let ops = courier_ops(&live, 8);
-        adopt_own_chain(&mut fresh, &me, &ops).unwrap();
-        let agreed = adopt_own_chain(&mut fresh, &me, &ops).unwrap();
+        adopt_own_chain(&mut fresh, &me, &ops, Some([1; 8])).unwrap();
+        let agreed = adopt_own_chain(&mut fresh, &me, &ops, Some([2; 8])).unwrap();
         assert!(agreed.agreed);
         assert_eq!(agreed.head_hash, live.chain[2].hash);
         // the screen showed another head (an older one): refused, and the agreed proposal stays
@@ -657,8 +734,8 @@ mod tests {
         assert_eq!(live.wrap_epoch, 2);
         let mut fresh = PhoneState::restored();
         let me = id(12);
-        adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8)).unwrap();
-        adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8)).unwrap();
+        adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8), Some([1; 8])).unwrap();
+        adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8), Some([2; 8])).unwrap();
         let last = live.chain.last().unwrap();
         accept_head(&mut fresh, (last.seq, &last.hash)).unwrap();
         assert_eq!(fresh.wrap_epoch, 2);
@@ -698,7 +775,7 @@ mod tests {
         let canon = op.canonical_bytes();
         let sig = me.sign(&canon);
         let mut s = PhoneState::restored();
-        let err = adopt_own_chain(&mut s, &me, &[(canon, sig)]).unwrap_err();
+        let err = adopt_own_chain(&mut s, &me, &[(canon, sig)], None).unwrap_err();
         assert!(err.reason().contains("starts from nothing"));
     }
 }
