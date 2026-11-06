@@ -61,12 +61,23 @@ done
 echo "mailpit ready"
 
 fail=0
+# SCENARIOS: space separated name prefixes (default: all), e.g. "60 65" or "66-app". The runner passes no environment
+# (gpu-verify/e2e.sh), so the file deploy/e2e/scenarios.filter works as well. SCENARIO_TIMEOUT (seconds, default 900) caps each scenario.
+FILTER=${SCENARIOS:-$(cat "$HERE/scenarios.filter" 2>/dev/null || true)}
 for s in "$HERE"/scenarios/*.sh; do
   name=$(basename "$s" .sh)
-  echo "$(date -u +%H:%M:%S) scenario $name"
-  if ! sh "$s"; then
-    fail=$((fail + 1))
+  if [ -n "$FILTER" ]; then
+    keep=0
+    for g in $FILTER; do case $name in "$g"*) keep=1 ;; esac; done
+    [ "$keep" = 1 ] || continue
   fi
+  t0=$(date +%s)
+  echo "$(date -u +%H:%M:%S) scenario $name start"
+  timeout "${SCENARIO_TIMEOUT:-900}" sh "$s"
+  rc=$?
+  if [ "$rc" -eq 124 ]; then echo "@@@SCENARIO $name FAIL timeout after ${SCENARIO_TIMEOUT:-900} s"; fi
+  [ "$rc" -eq 0 ] || fail=$((fail + 1))
+  echo "$(date -u +%H:%M:%S) scenario $name end rc=$rc ($(( $(date +%s) - t0 )) s)"
 done
 
 echo "$(date -u +%H:%M:%S) compose logs"

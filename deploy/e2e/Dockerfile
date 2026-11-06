@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Peer image for the host-sync e2e stack (see run.sh). One image serves every
 # peer; behaviour differs only by the PEER_NAME environment variable.
 
@@ -7,9 +8,12 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
-# --no-default-features: links system OpenSSL/libdbus (see Cargo.toml [features]).
-RUN cargo build --release --locked --no-default-features --bin sshub \
- && install -m 0755 target/release/sshub /out-sshub
+# --no-default-features: links system OpenSSL/libdbus (see Cargo.toml [features]). The e2e profile (Cargo.toml) skips LTO; the
+# BuildKit cache mounts keep the registry and the target directory between runs, so a run rebuilds only what changed.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --profile e2e --locked --no-default-features --bin sshub \
+ && install -m 0755 target/e2e/sshub /out-sshub
 
 FROM debian:bookworm-slim
 RUN apt-get update \

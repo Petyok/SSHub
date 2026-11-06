@@ -6,7 +6,7 @@
 . "$E2E_DIR/lib-creds.sh"
 NAME=70-red-revoke
 
-ring_with_phone ring3
+step "ring with the phone (ring3)" ring_with_phone ring3
 st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
 expect "three terminals and the phone are in the ring" "$st" '(.devices | length) >= 5'
 C_ID=$(devid peer-a peer-c)
@@ -18,7 +18,7 @@ show "peer-a sync-revoke peer-c (a holder)" peer peer-a $SSHUB sync-revoke "$C_I
 expect "revoking a holder is a Red change with a ceremony" "$LAST_OUT" '.tier == "Red" and (.ceremony != null)'
 REV=$(opid "$LAST_OUT")
 echo "missing right after the proposal: $(printf '%s' "$LAST_OUT" | pjq -c '.ceremony.missing')"
-red_complete "$REV"
+step "revocation ceremony (phone, peer-b, paper)" red_complete "$REV"
 expect "the revocation ceremony is complete" "$LAST_OUT" '.ceremony.complete == true'
 spread peer-b peer-a peer-b
 for p in peer-a peer-b; do

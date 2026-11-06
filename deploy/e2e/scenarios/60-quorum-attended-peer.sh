@@ -6,7 +6,7 @@
 . "$E2E_DIR/lib-creds.sh"
 NAME=60-quorum-attended-peer
 
-ring_with_phone ring2
+step "ring with the phone (ring2)" ring_with_phone ring2
 check "peer-a sets up the Vault" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-a $SSHUB sync-import-kit"
 check "peer-b imports the kit" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-b $SSHUB sync-import-kit"
 check "peer-a stores host quorum1 with a password" "printf '%s\n' '$SECRET' | peer peer-a $SSHUB host add --name quorum1 --address quorum1.internal --password-stdin"
@@ -15,7 +15,7 @@ check "peer-a migrates it into the ring" "peer peer-a $SSHUB sync-migrate"
 show "peer-a sync-mode quorum, first call proposes it (phrase on stdin)" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
 expect "the mode change is a Red op with a ceremony" "$LAST_OUT" '.tier == "Red" and (.ceremony != null)'
 MODE_OP=$(opid "$LAST_OUT")
-red_complete "$MODE_OP"
+step "mode change ceremony (phone, peer-b, paper)" red_complete "$MODE_OP"
 show "peer-a sync-mode quorum again: the ring agreed, credentials are re-encrypted" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
 st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
 expect "peer-a reports Quorum mode" "$st" '.credential_mode == "quorum"'

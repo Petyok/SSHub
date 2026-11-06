@@ -11,7 +11,7 @@ check "the phone daemon answers" phone_ready
 show "phone info" phone info
 expect "the pinned page equals its FINGERPRINT" "$LAST_OUT" '.fingerprint_ok == true'
 
-ring_with_phone ring2
+step "ring with the phone (ring2)" ring_with_phone ring2
 
 spread peer-b peer-a peer-b
 st=$(peer peer-b $SSHUB sync-status --format json 2>/dev/null || true)
