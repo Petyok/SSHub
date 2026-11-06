@@ -48,8 +48,10 @@ struct Unlocked {
 struct Inner {
     /// The sealed state as stored; opened at `unlock` with the secret.
     sealed: Option<Vec<u8>>,
-    /// `restore_from_words` ran: the next `unlock` starts from a restored (head pending) state.
-    restored: bool,
+    /// `restore_from_words` ran: BLAKE3 of the restored secret. Only an `unlock` with that very secret starts from a
+    /// restored (head pending) state; an unlock with any other secret (the old key after a cancelled prompt) opens the
+    /// sealed state normally and clears this.
+    restored: Option<[u8; 32]>,
     unlocked: Option<Unlocked>,
     rng: Box<dyn RngCore + Send>,
     next_token: u64,
@@ -142,7 +144,7 @@ impl PhoneCore {
         Arc::new(Self {
             inner: Mutex::new(Inner {
                 sealed,
-                restored: false,
+                restored: None,
                 unlocked: None,
                 rng,
                 next_token: 1,
@@ -306,7 +308,17 @@ impl Inner {
                     now,
                 };
                 let o = flow.on_frame(frame, &mut ctx, t);
-                if matches!(o, Opened::Refused { .. } | Opened::Enrolled { .. }) {
+                // The flow ends when the enrollment is done or a refusal stopped it (the terminal's reveal does not open its
+                // commitment, it declined, a bad signature, unusable keys). A frame at the wrong step or a stray document
+                // is refused and the enrollment goes on where it was: one wrong QR must not kill the session.
+                let ended = match &o {
+                    Opened::Enrolled { .. } => true,
+                    Opened::Refused { view } => {
+                        !matches!(view.kind, RefusalKind::WrongOrder | RefusalKind::StrayFrame)
+                    }
+                    _ => false,
+                };
+                if ended {
                     self.enroll = None;
                 }
                 Ok(o)
@@ -355,7 +367,9 @@ impl PhoneCore {
                 .map_err(|_| CoreError::bad("the phone secret must be 32 bytes"))?,
         );
         let mut g = self.lock_inner();
-        let (state, lost) = if g.restored {
+        let restore_of_this_secret =
+            g.restored.take() == Some(sshub_sync_proto::crypto::chain_hash(&s[..]));
+        let (state, lost) = if restore_of_this_secret {
             (PhoneState::restored(), false)
         } else {
             match g.sealed.as_deref() {
@@ -367,7 +381,6 @@ impl PhoneCore {
             }
         };
         let id = PhoneIdentity::new(&s, state.wrap_epoch)?;
-        g.restored = false;
         g.sealed = None;
         g.pending.clear();
         g.enroll = None;
@@ -377,6 +390,17 @@ impl PhoneCore {
             state_lost: lost,
         });
         Ok(info(g.unlocked.as_ref().unwrap(), 0))
+    }
+
+    /// The tokens of the requests that are pending now (a share request, a notice, a trust request or extension, a
+    /// reshare, an agreed chain head), ascending. Call it after every `open_frame`, `take_chain`, `decide` and `lock`:
+    /// `open_frame` replaces the pending requests when a new request parses, `decide` consumes one, and `lock` drops all,
+    /// and this is exactly what Rust still holds.
+    pub fn pending_tokens(&self) -> Vec<u64> {
+        let g = self.lock_inner();
+        let mut t: Vec<u64> = g.pending.keys().copied().collect();
+        t.sort_unstable();
+        t
     }
 
     /// Zeroizes the secret and every key.
@@ -402,7 +426,7 @@ impl PhoneCore {
     pub fn restore_from_words(&self, words: String) -> Result<Vec<u8>> {
         let s = secret_from_words(&words)?;
         let mut g = self.lock_inner();
-        g.restored = true;
+        g.restored = Some(sshub_sync_proto::crypto::chain_hash(&s[..]));
         g.unlocked = None;
         Ok(s.to_vec())
     }
@@ -934,6 +958,178 @@ mod tests {
                 now + 1
             )
             .is_ok());
+    }
+
+    #[test]
+    fn a_cancelled_restore_does_not_arm_the_next_unlock_of_the_old_key() {
+        // the old phone: key B with a real chain, sealed
+        let old = core();
+        old.unlock(vec![0x42; 32]).unwrap();
+        old.never_signed(old.status(0).unwrap().device_id).unwrap();
+        {
+            let mut g = old.lock_inner();
+            let g = &mut *g;
+            let u = g.unlocked.as_mut().unwrap();
+            for t in 0..2 {
+                chain::head_attest(&mut u.state, &u.id, 1_900_000_000 + t, None).unwrap();
+            }
+        }
+        let sealed = old.sealed_state().unwrap();
+        // the shell's PhoneCore over that stored state; the words of another key A are typed in
+        let c = PhoneCore::with_rng(Some(sealed), Box::new(ChaCha8Rng::seed_from_u64(9)));
+        let other = core();
+        other.unlock(vec![0x11; 32]).unwrap();
+        let words = other.backup_words().unwrap();
+        assert_eq!(c.restore_from_words(words.clone()).unwrap(), vec![0x11; 32]);
+        // the person cancels the system prompt: the old key stays and unlocks normally, its sealed state opens
+        let info = c.unlock(vec![0x42; 32]).unwrap();
+        assert!(!info.head_pending && !info.state_lost);
+        assert_eq!(info.head_seq, Some(2));
+        // the flag is gone: a later unlock of the old key (sealed state given again) is still normal
+        c.lock();
+        // and a restore that is carried out (the restored secret itself) starts head pending
+        assert_eq!(c.restore_from_words(words).unwrap(), vec![0x11; 32]);
+        let info = c.unlock(vec![0x11; 32]).unwrap();
+        assert!(info.head_pending);
+        assert_eq!(info.head_seq, None);
+    }
+
+    #[test]
+    fn one_wrong_or_stray_frame_during_enrollment_does_not_end_it_but_a_stopping_refusal_does() {
+        use sshub_sync_proto::crypto::DeviceIdentity;
+        use sshub_sync_proto::enroll_core::Party;
+        use sshub_sync_proto::wire::EnrollFrame;
+        let now = 1_900_000_000;
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let t = DeviceIdentity::generate();
+        let party = Party::new(&t, "lab terminal", true);
+        let commit = EnrollFrame::Commit {
+            role: 1,
+            commit: party.commit(1),
+        }
+        .encode();
+        let reveal = |bytes: Vec<u8>| {
+            EnrollFrame::Reveal {
+                role: 1,
+                reveal: bytes,
+            }
+            .encode()
+        };
+        let kind = |o: &Opened| match o {
+            Opened::Refused { view } => view.kind,
+            other => panic!("expected a refusal, got {other:?}"),
+        };
+        let Opened::Enroll { view } = c.open_frame(commit.clone(), now).unwrap() else {
+            panic!()
+        };
+        // a reveal before the phone named itself: wrong order, the enrollment goes on
+        let o = c.open_frame(reveal(party.reveal.bytes()), now).unwrap();
+        assert_eq!(kind(&o), RefusalKind::WrongOrder);
+        // a stray document of an enrollment kind: stray, the enrollment goes on
+        let o = c
+            .open_frame(vec![0x53, 0x57, 0x52, 0x31, 0, 1, 6, 9], now)
+            .unwrap();
+        assert_eq!(kind(&o), RefusalKind::StrayFrame);
+        // the session is alive: the phone can still be named and commits
+        let out = c
+            .decide(
+                view.token,
+                Decision::EnrollName {
+                    name: "my phone".into(),
+                },
+                now,
+            )
+            .unwrap();
+        assert_eq!(out.kind, 6);
+        // a wrong frame while waiting for the reveal (a second commitment): wrong order, still alive
+        let o = c.open_frame(commit.clone(), now).unwrap();
+        assert_eq!(kind(&o), RefusalKind::WrongOrder);
+        // a reveal that does not open the commitment stops the enrollment for good
+        let mut tampered = party.reveal.clone();
+        tampered.nonce[0] ^= 1;
+        let o = c.open_frame(reveal(tampered.bytes()), now).unwrap();
+        assert_eq!(kind(&o), RefusalKind::Mismatch);
+        let e = c
+            .decide(view.token, Decision::EnrollSas { matches: true }, now)
+            .unwrap_err();
+        assert!(
+            e.reason().contains("no enrollment is running"),
+            "{}",
+            e.reason()
+        );
+    }
+
+    #[test]
+    fn the_pending_tokens_are_exactly_what_rust_holds() {
+        let f = fixture();
+        let now = f["now"].as_i64().unwrap();
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        assert!(c.pending_tokens().is_empty());
+        let Opened::ShareRequest { view: a } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(c.pending_tokens(), vec![a.token]);
+        // garbage and refused frames change nothing
+        let _ = c
+            .open_frame(vec![0x53, 0x57, 0x52, 0x31, 0, 1, 1, 9], now)
+            .unwrap();
+        assert_eq!(c.pending_tokens(), vec![a.token]);
+        // a typed-id refusal keeps the token
+        let _ = c
+            .decide(a.token, release(Some("0000000000000000")), now + 1)
+            .unwrap_err();
+        assert_eq!(c.pending_tokens(), vec![a.token]);
+        // a new request replaces it
+        let Opened::ShareRequest { view: b } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(c.pending_tokens(), vec![b.token]);
+        assert_ne!(a.token, b.token);
+        // a completed decision consumes it
+        c.decide(b.token, release(b.type_to_approve.as_deref()), now + 1)
+            .unwrap();
+        assert!(c.pending_tokens().is_empty());
+        let Opened::ShareRequest { .. } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        c.lock();
+        assert!(c.pending_tokens().is_empty());
+    }
+
+    #[test]
+    fn a_failed_wrap_key_rotation_rolls_back_the_state_and_the_identity() {
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.never_signed(c.status(0).unwrap().device_id).unwrap();
+        let before = c.status(0).unwrap();
+        // the rotation appends its op and switches the identity, then rendering the reply fails
+        crate::outgoing::fault::FAIL_NEXT_RENDER.with(|f| f.set(true));
+        assert!(c.rotate_wrap_keys(1_900_000_000).is_err());
+        let after = c.status(0).unwrap();
+        assert_eq!(
+            (after.wrap_epoch, after.head_seq),
+            (before.wrap_epoch, before.head_seq)
+        );
+        assert_eq!(
+            c.lock_inner().unlocked.as_ref().unwrap().id.wrap_epoch(),
+            0,
+            "the identity is back at generation 0"
+        );
+        // the same identity still signs for generation 0 and a later rotation works from there
+        assert!(c.rotate_wrap_keys(1_900_000_001).is_ok());
+        assert_eq!(c.status(0).unwrap().wrap_epoch, 1);
+        assert_eq!(c.lock_inner().unlocked.as_ref().unwrap().id.wrap_epoch(), 1);
     }
 
     #[test]
