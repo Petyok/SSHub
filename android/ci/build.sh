@@ -46,8 +46,12 @@ echo "== versions"; cat /opt/VERSIONS.txt
 
 # The Rust core: crates/sshub-phone-core in the root workspace (one Cargo.lock with the terminal), built with the `phone` profile
 # (release, symbols kept: uniffi library mode reads its metadata from them).
-echo "== core unit tests (host)"
-cargo test --locked -p sshub-phone-core --lib
+if [ -z "${TEST_CLASS:-}" ]; then
+    echo "== core unit tests (host)"
+    cargo test --locked -p sshub-phone-core --lib
+else
+    echo "== core unit tests (host) skipped: focused run (TEST_CLASS set)"
+fi
 
 echo "== cargo-ndk"
 rm -rf android/app/src/main/jniLibs
