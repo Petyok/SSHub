@@ -159,7 +159,6 @@ internal fun mapRelease(v: RsShareRequestView): OpenedRelease {
                 is RsShortCodeOffer.Available -> "Also issue a short code (repeat access for 7 days)"
                 is RsShortCodeOffer.LiveUntil -> null
             },
-            headPending = v.headPending,
             hostUid = v.hostUid,
             bindingHash = v.bindingHash,
             opRows = v.op.rows.map { RedField(it.label, null, it.value, danger = it.danger) },
