@@ -921,7 +921,11 @@ mod tests {
             "Expected the terminal commitment first."
         );
         // a frame of another kind
-        let ops = sshub_sync_proto::wire::PhoneOpsWire { ops: vec![] }.encode();
+        let ops = sshub_sync_proto::wire::PhoneOpsWire {
+            sender: None,
+            ops: vec![],
+        }
+        .encode();
         let o = flow.on_frame(&ops, &mut rig.ctx(), 1);
         assert!(reason(&o).starts_with("Not an enrollment document"));
         assert_eq!(kind(&o), RefusalKind::StrayFrame);

@@ -39,7 +39,15 @@ pub fn render(frame: Vec<u8>, with_qr: bool, note: &str) -> Result<Outgoing> {
 
 /// A kind 5 list of ops for a terminal (QR and text), as every screen that produces signed operations shows it.
 pub fn ops_out(ops: &[SignedOpBytes], note: &str) -> Result<Outgoing> {
-    render(PhoneOpsWire { ops: ops.to_vec() }.encode(), true, note)
+    render(
+        PhoneOpsWire {
+            sender: None,
+            ops: ops.to_vec(),
+        }
+        .encode(),
+        true,
+        note,
+    )
 }
 
 /// Test hook: makes the next `render` fail, to prove a failed approval leaves the state untouched.
