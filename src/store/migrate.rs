@@ -136,8 +136,11 @@ fn prune_backups(launcher_path: &Path) {
 pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     // Wait instead of failing with SQLITE_BUSY when another instance (or the
-    // watcher-triggered reimport) holds the write lock.
-    conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+    // watcher-triggered reimport) holds the write lock. SQLite's busy handler backs off with sleeps and is not
+    // fair: with several CLI processes on one profile (a script adding hosts in parallel) a process can starve
+    // for seconds, and 5 s measured as "database is locked" on one add in ten. A write that waits is the
+    // better failure mode than a lost add.
+    conn.execute_batch("PRAGMA busy_timeout = 60000;")?;
 
     // Snapshot first: a migration rewrites tables in place, and v0.17.0 proved
     // what a wrong one costs. Nothing to save for a database that does not
@@ -148,9 +151,17 @@ pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<
         backup_before_migration(conn, launcher_path, before);
     }
 
+    // A current database needs nothing: no transaction, no lock (every CLI call opens the store, and
+    // several processes open it at once).
+    if before >= SCHEMA_VERSION {
+        return Ok(());
+    }
+
     // Run the whole chain atomically: a crash mid-migration must not leave the
-    // schema half-upgraded with no recorded version step.
-    let tx = conn.unchecked_transaction()?;
+    // schema half-upgraded with no recorded version step. IMMEDIATE takes the write lock up front, where
+    // the busy timeout applies: a deferred transaction that reads first and writes later fails at once with
+    // "database is locked" when another process holds the lock (no wait is possible, it would deadlock).
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     tx.execute_batch(V2_SCHEMA)?;
 
     let current = schema_version(conn)?;
