@@ -237,7 +237,7 @@ fn present(app: &mut App, out: FlowOut) {
                 h.send_frame(f.clone());
             }
             h.ble_tag().map(|t| {
-                format!("Bluetooth: choose SSHub-{t} in the phone page's device list to use it instead.")
+                format!("Bluetooth: choose SSHub-{t} in the phone app's (or page's) device list to use it instead.")
             })
         });
     match out {
@@ -352,7 +352,7 @@ pub(crate) fn drop_central(app: &mut App) {
 pub(crate) fn paste_ops(app: &mut App) {
     app.sync_prompt(
         "Paste phone ops",
-        "The phone's ops (base64, as the page copies them)",
+        "The phone's ops (base64, as the phone app or page copies them)",
         false,
         |app, text| {
             app.run_sync_job(move |env| {
