@@ -28,8 +28,8 @@ import java.io.File
 
 /**
  * A live session of the REAL app (real MainActivity, UniffiPhoneCore, AndroidPlatform, Keystore, BiometricPrompt) driven from outside by
- * the e2e scenario `66-app-live-terminal.sh`. There is one long test, `serve`: it polls `<external files>/live/in/*.json`, runs each
- * command against the UI through its semantics (texts and content descriptions, no test tags), and writes `live/out/<same name>.json`.
+ * the e2e scenario `66-app-live-terminal.sh`. There is one long test, `serve`: it polls the json files in `<external files>/live/in`, runs each
+ * command against the UI through its semantics (texts and content descriptions, no test tags), and writes the answer to `live/out` under the same name.
  * The scenario moves the files with `adb shell`; the frames of the terminal come in through the app's paste boxes and the frames of
  * the app go out through the text it shows or the clipboard its Copy buttons fill (QR, sound and Bluetooth are not used here).
  *
