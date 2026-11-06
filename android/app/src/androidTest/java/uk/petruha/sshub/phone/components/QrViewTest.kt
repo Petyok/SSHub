@@ -86,8 +86,8 @@ class QrViewTest {
         fun flag() = window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0
         rule.waitForIdle()
         assertTrue(flag())
-        val end = System.currentTimeMillis() + 5_000
-        while (flag() && System.currentTimeMillis() < end) Thread.sleep(50)
+        rule.mainClock.advanceTimeBy(1_000) // the effect's delay runs on the test clock
+        rule.waitForIdle()
         assertTrue("the hold must end after the bound", !flag())
         assertEquals(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE, window.attributes.screenBrightness, 0f)
     }
