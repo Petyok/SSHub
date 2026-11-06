@@ -110,13 +110,17 @@ const targets = {
     for (let i = 0; i < 30 && !(await shTry('pm path com.android.chrome')).includes('package:'); i++) await sleep(2000);
     await sh('am start -n com.android.chrome/com.google.android.apps.chrome.Main');
     let up = false;
-    for (let i = 0; i < 30 && !up; i++) {
+    for (let i = 0; i < 120 && !up; i++) { // a cold emulator under load needs minutes for Chrome's first run
       await sleep(2500);
       const tapped = await tapOnce();
       const socket = Number((await shTry('cat /proc/net/unix | grep -c chrome_devtools_remote')).trim()) > 0;
       up = !tapped && socket && i >= 2;
     }
-    if (!up) throw new Error('Chrome did not reach its tab switcher');
+    if (!up) {
+      const top = (await shTry('dumpsys activity activities | grep -m1 topResumedActivity')).trim();
+      const texts = [...(await shTry('uiautomator dump /dev/tty')).matchAll(/text="([^"]+)"/g)].map((m) => m[1]).slice(0, 15).join(' | ');
+      throw new Error(`Chrome did not reach its tab switcher; top activity: ${top}; screen texts: ${texts}`);
+    }
     const relay = net.createServer(async (conn) => {
       const dev = await device.open('localabstract:chrome_devtools_remote');
       conn.on('data', (b) => dev.write(b));
