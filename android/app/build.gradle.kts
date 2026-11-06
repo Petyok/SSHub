@@ -32,6 +32,8 @@ android {
     }
 
     buildTypes {
+        // A separate application id so a debug install never replaces or shares data with the release app.
+        debug { applicationIdSuffix = ".debug" }
         release { isMinifyEnabled = false; signingConfig = null }
     }
     compileOptions {
@@ -39,7 +41,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
 
     // android/ci/build.sh builds libsshub_phone_core.so into jniLibs (cargo-ndk) and writes the
     // uniffi Kotlin bindings here.

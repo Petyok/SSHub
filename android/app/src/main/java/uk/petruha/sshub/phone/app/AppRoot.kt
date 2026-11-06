@@ -26,6 +26,8 @@ import androidx.compose.foundation.background
 import androidx.compose.runtime.collectAsState
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import uk.petruha.sshub.phone.ui.screens.identity.StateLostScreen
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import uk.petruha.sshub.phone.core.AppEnv
@@ -64,7 +66,7 @@ import uk.petruha.sshub.phone.core.ReshareOpened
 
 /** Routes with no bottom bar: first run, lock, scan and the enroll steps 2 to 5 (spec 12, Nav column "none"). */
 /** Routes that are meant to be shown while the vault is not Unlocked. */
-private val LOCK_SAFE_ROUTES = setOf(Routes.Lock, Routes.LockRestore, Routes.Restore, Routes.FirstRun)
+private val LOCK_SAFE_ROUTES = setOf(Routes.Lock, Routes.LockRestore, Routes.Restore, Routes.FirstRun, Routes.StateLost)
 
 private val MISMATCH_SAFE_ROUTES = LOCK_SAFE_ROUTES + Routes.About
 
@@ -112,6 +114,11 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
 
             // One lock path: every source (screen off, the auto-lock timer, the Lock button, a restored back stack after process death)
             // ends as a vault that is not Unlocked, and the UI follows that state here. The platform and the vault do the locking.
+            // Security M2: an unreadable saved state stops everything until the user read the stop screen.
+            LaunchedEffect(vault, route) {
+                if (route == null || vault != VaultState.Unlocked) return@LaunchedEffect
+                if (core.stateLost() && route != Routes.StateLost) nav.navigate(Routes.StateLost) { popUpTo(nav.graph.id) { inclusive = true } }
+            }
             // D17: with the signer mismatch set every flow except About and Lock stays closed, also after a restart.
             LaunchedEffect(mismatch, route) {
                 if (route == null || !mismatch) return@LaunchedEffect
@@ -137,6 +144,12 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
                         popExitTransition = { if (reduced) fadeOut(tween(0)) else fadeOut(tween(90)) },
                     ) {
                         identityGraph(env, settings)
+                        composable(Routes.StateLost) {
+                            StateLostScreen(
+                                onContinue = { core.confirmStateLost(); nav.navigate(Routes.Home) { popUpTo(nav.graph.id) { inclusive = true } } },
+                                onLock = { core.lock(); platform.keys.lock() },
+                            )
+                        }
                         homeGraph(env, AppRouter { settings.signerMismatch.value })
                         releaseGraph(env)
                         trustGraph(env)

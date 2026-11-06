@@ -1,5 +1,11 @@
 package uk.petruha.sshub.phone.ui.components
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.view.Window
+import android.view.WindowManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -57,16 +63,57 @@ class QrMatrix(val size: Int, private val bits: BooleanArray) {
     operator fun get(x: Int, y: Int) = bits[y * size + x]
 }
 
+/** Whole device pixels per module; `modules` includes the quiet zone. Never below 1 so a tiny box still draws. */
+fun qrModulePx(widthPx: Int, modules: Int): Int = (widthPx / modules).coerceAtLeast(1)
+
+/**
+ * Reference-counted FLAG_KEEP_SCREEN_ON plus full brightness for every visible QR (a dimmed screen is hard for the terminal camera).
+ * The first acquire saves the previous state, the last release restores it.
+ */
+object QrScreenHold {
+    private var count = 0
+    private var saved = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    private var hadFlag = false
+
+    fun acquire(window: Window) {
+        if (count++ > 0) return
+        val a = window.attributes
+        saved = a.screenBrightness
+        hadFlag = a.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0
+        a.screenBrightness = 1f
+        window.attributes = a
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    fun release(window: Window) {
+        if (count == 0 || --count > 0) return
+        val a = window.attributes
+        a.screenBrightness = saved
+        window.attributes = a
+        if (!hadFlag) window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+}
+
+private tailrec fun Context.findWindow(): Window? = when (this) {
+    is Activity -> window
+    is ContextWrapper -> baseContext.findWindow()
+    else -> null
+}
+
 @Composable
-fun QrView(matrix: QrMatrix, description: String, modifier: Modifier = Modifier, side: androidx.compose.ui.unit.Dp = 176.dp) {
+fun QrView(matrix: QrMatrix, description: String, modifier: Modifier = Modifier) {
+    val window = LocalContext.current.findWindow()
+    DisposableEffect(window) {
+        window?.let(QrScreenHold::acquire)
+        onDispose { window?.let(QrScreenHold::release) }
+    }
     Canvas(
-        modifier.size(side).semantics { contentDescription = description },
+        modifier.fillMaxWidth().aspectRatio(1f).semantics { contentDescription = description },
     ) {
         val quiet = 4
         val total = matrix.size + 2 * quiet
-        // whole device pixels per module (the terminal camera needs crisp edges)
-        val px = kotlin.math.floor(size.width / total).coerceAtLeast(1f)
-        val origin = (size.width - px * total) / 2f
+        val px = qrModulePx(size.width.toInt(), total).toFloat()
+        val origin = ((size.width - px * total) / 2f).toInt().toFloat()
         drawRect(Color.White)
         for (y in 0 until matrix.size) for (x in 0 until matrix.size) if (matrix[x, y]) {
             drawRect(Color.Black, Offset(origin + (x + quiet) * px, origin + (y + quiet) * px), androidx.compose.ui.geometry.Size(px, px))

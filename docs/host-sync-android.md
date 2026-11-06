@@ -457,7 +457,7 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
   file in `noBackupFilesDir`, CameraX luma frames, BLE GATT central for C20 driving the Rust `BleSession`, AudioTrack FSK playback, sensitive clipboard with
   the 60 s clear, FLAG_SECURE helper), `app/AppRoot` (nav host, bottom bar, lock on stop and screen off, theme choice).
 - Debug builds run the REAL core (the debug APK, signed with the committed public debug key, is what is installed for a device session); the Kotlin
-  `FakePhoneCore` (src/debug) is a demo: `adb shell am start -n uk.petruha.sshub.phone/.MainActivity --es core fake`. Release builds always use the Rust core.
+  `FakePhoneCore` (src/debug) is for instrumented tests only (the `core=fake` extra is ignored outside instrumentation); the debug app id is `uk.petruha.sshub.phone.debug`. Release builds always use the Rust core.
 - CI (`android/ci/build.sh`): host tests of the core, `cargo ndk` with `--profile phone`, uniffi bindings, `lint.sh` (no `Color(0x` outside the theme, no
   `Ellipsis` or `maxLines` in ui, no `Log.` in platform and core), `manifest-check.sh` (permissions exactly CAMERA, BLUETOOTH_SCAN neverForLocation,
   BLUETOOTH_CONNECT, USE_BIOMETRIC; no INTERNET; backup and cleartext off), debug APK and test APK.

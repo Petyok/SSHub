@@ -31,7 +31,13 @@ interface IdentityApi {
     fun lock()
 
     /** Only for a key that never signed anything: the user typed the device id, the core checks it. Clears `headPending`. Throws `Malformed` on a mismatch. */
-    fun neverSigned(typedId: String, now: Long): PhoneStatus
+    suspend fun neverSigned(typedId: String, now: Long): PhoneStatus
+
+    /** True after an unlock whose sealed state could not be read: every flow stays closed until `confirmStateLost`. */
+    fun stateLost(): Boolean = false
+
+    /** The user read the stop screen: the empty state replaces the unreadable one (a copy stays as `state.bin.lost`). */
+    fun confirmStateLost() {}
 
     /**
      * The user accepts the chain head of an `OpenedChain` (the core's `decide(token, Decision.Approve)`). Returns only after the core
