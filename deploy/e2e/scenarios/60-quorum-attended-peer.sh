@@ -1,4 +1,5 @@
 #!/bin/sh
+# timeout: 1800
 # 60: Quorum mode with a phone. The ring is two attended holders plus the phone. peer-a switches the ring from Vault
 # to Quorum (a Red change: phone, peer-b, paper), then the credential is opened twice: by peer-b asking the attended
 # holder peer-a (sync-review --approve), and by peer-a asking the phone (sync-share-request: kind 1 out, kind 2 in).

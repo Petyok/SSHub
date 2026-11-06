@@ -1,4 +1,5 @@
 #!/bin/sh
+# timeout: 1200
 # 65: the ring's phone is the committed companion page (phone-driver.mjs, compose service `phone`). It acts through
 # paste text, the text and QR the page shows, and buttons only. The terminal side is the real CLI: sync-phone-enroll
 # (enrollment as text, SAS words), sync-notice (kind 3), sync-phone-ops (kind 5 in). Nothing is read from a database

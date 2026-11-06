@@ -1,4 +1,5 @@
 #!/bin/sh
+# timeout: 1500
 # 95: bulk export, with the phone. `sync-export` proposes a BulkExport (Red) and writes nothing until its ceremony is
 # complete: the phone signs the notice, peer-b votes, the paper signs. Then the window opens and the CSV holds the
 # stored password.

@@ -71,11 +71,14 @@ for s in "$HERE"/scenarios/*.sh; do
     for g in $FILTER; do case $name in "$g"*) keep=1 ;; esac; done
     [ "$keep" = 1 ] || continue
   fi
+  # the cap: SCENARIO_TIMEOUT, else the scenario's own header line `# timeout: SECONDS`, else 900
+  cap=${SCENARIO_TIMEOUT:-$(sed -n 's/^# timeout: *\([0-9][0-9]*\).*/\1/p' "$s" | sed -n 1p)}
+  cap=${cap:-900}
   t0=$(date +%s)
-  echo "$(date -u +%H:%M:%S) scenario $name start"
-  timeout "${SCENARIO_TIMEOUT:-900}" sh "$s"
+  echo "$(date -u +%H:%M:%S) scenario $name start (cap $cap s)"
+  timeout "$cap" sh "$s"
   rc=$?
-  if [ "$rc" -eq 124 ]; then echo "@@@SCENARIO $name FAIL timeout after ${SCENARIO_TIMEOUT:-900} s"; fi
+  if [ "$rc" -eq 124 ]; then echo "@@@SCENARIO $name FAIL timeout after $cap s"; fi
   [ "$rc" -eq 0 ] || fail=$((fail + 1))
   echo "$(date -u +%H:%M:%S) scenario $name end rc=$rc ($(( $(date +%s) - t0 )) s)"
 done

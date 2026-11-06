@@ -1,4 +1,5 @@
 #!/bin/sh
+# timeout: 1500
 # 70: Red revocation of a holder, with the phone. Three attended holders and the phone; peer-a proposes
 # `sync-revoke peer-c`. The ceremony wants the phone (notice, approve, ops text in), a second attended holder (peer-b)
 # and the paper factor. Every step is the real CLI or the phone page.
