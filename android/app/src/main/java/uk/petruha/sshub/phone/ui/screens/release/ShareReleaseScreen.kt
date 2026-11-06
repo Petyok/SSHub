@@ -113,7 +113,7 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
         }
 
         if (v.hostUid.isNotEmpty()) {
-            SectionHeading("Host", trailing = "from the signed request")
+            SectionHeading("Host", trailing = "the terminal shows the same id")
             HexGroups(v.hostUid, groups = null, label = "Host id")
         }
         if (v.opRows.isNotEmpty()) {
@@ -124,7 +124,7 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
         SectionHeading("Binding words", trailing = "compare with the terminal")
         BigWords(v.words)
         if (v.bindingHash.isNotEmpty()) HexGroups(v.bindingHash, Modifier.padding(top = 8.dp), groups = null, label = "Binding hash")
-        Note("Compare the four words with the terminal. The host id comes from the signed request; the terminal does not print it.", Modifier.padding(top = 8.dp))
+        Note("Compare the host and the four words with the terminal.", Modifier.padding(top = 8.dp))
 
         ChecksCard(v.checks)
 

@@ -61,7 +61,7 @@ fun ShortCodesScreen(state: ShortCodesState, on: ShortCodesActions) {
         if (state.codes.isEmpty()) {
             EmptyState("None.", "No short codes issued. You can issue one when you approve a release.")
         } else {
-            Note("One live code per credential. The host id comes from the signed request; the terminal does not print it. The code itself is never stored here.")
+            Note("One live code per credential. The terminal shows the same host id. The code itself is never stored here.")
             SectionHeading("Per credential", trailing = if (state.codes.size == 1) "1 code" else "${state.codes.size} codes")
             state.codes.forEach { c ->
                 SshubCard {

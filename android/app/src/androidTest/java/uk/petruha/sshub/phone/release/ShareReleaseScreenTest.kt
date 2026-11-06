@@ -82,7 +82,7 @@ class ShareReleaseScreenTest {
         rule.onNodeWithText("9C61-E2A8").assertExists()
         rule.onNodeWithText("hybrid, epoch 7, share 2").assertExists()
         rule.onNodeWithText("signed 38 s ago", substring = true, useUnmergedTree = true).assertExists()
-        rule.onNodeWithText("Compare the four words with the terminal. The host id comes from the signed request; the terminal does not print it.").assertExists()
+        rule.onNodeWithText("Compare the host and the four words with the terminal.").assertExists()
         // H1: the host id in groups of 4 and every row of the signed op, danger rows with the red gutter
         rule.onNode(descStartsWith("Host id 0 A 0 B, 0 C 0 D"), useUnmergedTree = true).assertExists()
         rule.onNodeWithText("What you release").assertExists()
