@@ -92,6 +92,9 @@ pub struct HeadCandidate {
     pub seq: u64,
     #[serde(with = "hexbytes")]
     pub hash: Vec<u8>,
+    /// Hex of the terminal id the list named (kind 5 sender block, unsigned), if it named one.
+    #[serde(default)]
+    pub sender: Option<String>,
 }
 
 /// A head two lists agreed on, waiting for the user's acceptance.

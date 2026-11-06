@@ -127,6 +127,7 @@ fn sync_phone_ops_takes_the_phones_signature_in_and_it_counts_in_red_status() {
     let sign = append(&d[2], red_phone_sign_body(&op));
     let text = B64.encode(
         crate::sync::wire::PhoneOpsWire {
+            sender: None,
             ops: vec![(sign.canonical_bytes(), sign.signature)],
         }
         .encode(),
@@ -144,6 +145,7 @@ fn sync_phone_ops_takes_the_phones_signature_in_and_it_counts_in_red_status() {
 fn ops_text(ops: &[&crate::sync::oplog::Op]) -> String {
     B64.encode(
         crate::sync::wire::PhoneOpsWire {
+            sender: None,
             ops: ops
                 .iter()
                 .map(|o| (o.canonical_bytes(), o.signature))

@@ -388,6 +388,7 @@ pub fn issued_certs(
 fn refused(reason: String) -> Opened {
     Opened::Refused {
         view: RefusalView {
+            kind: crate::views::RefusalKind::Other,
             reason,
             checks: Vec::new(),
         },

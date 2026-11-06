@@ -386,12 +386,16 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     ctx.store.set_host_groups(created.id, &group_ids)?;
 
+    // The host exists either way; a password that could not be stored (or replicated) is reported AND fails the
+    // command, so a script never mistakes a host without its password for a complete add.
+    let mut password_failed = false;
     if let Some(pw) = spec.password {
         if let Err(e) = ctx
             .password_store()
             .set(&crate::credentials::host_key(created.id), &pw)
         {
-            eprintln!("sshub: warning: storing password failed: {e:#}");
+            eprintln!("sshub: storing password failed: {e:#}");
+            password_failed = true;
         }
     }
 
@@ -402,7 +406,7 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     ctx.reload_hosts()?;
     println!("{}", created.name);
-    Ok(0)
+    Ok(i32::from(password_failed))
 }
 
 fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
@@ -559,12 +563,14 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         ctx.store.set_host_groups(managed.id, &group_ids)?;
     }
 
+    let mut password_failed = false;
     if let Some(pw) = patch.password {
         if let Err(e) = ctx
             .password_store()
             .set(&crate::credentials::host_key(managed.id), &pw)
         {
-            eprintln!("sshub: warning: storing password failed: {e:#}");
+            eprintln!("sshub: storing password failed: {e:#}");
+            password_failed = true;
         }
     } else if patch.clear_password {
         let _ = ctx
@@ -575,7 +581,7 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     ctx.reload_hosts()?;
     let out_name = update.name.as_deref().unwrap_or(saved_name.as_str());
     println!("{out_name}");
-    Ok(0)
+    Ok(i32::from(password_failed))
 }
 
 fn apply_metadata_edit(

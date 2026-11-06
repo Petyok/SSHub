@@ -21,7 +21,7 @@ use super::crypto::DeviceIdentity;
 use super::oplog::{DeviceId, Op, OpBody};
 use super::protocol::{ingest_ops, run_sync_serve, RoundSummary, SyncLink};
 use super::quorum::{meta_get, meta_set};
-use super::wire::{RecoveryNoticeWire, SignedOpBytes, MAX_COURIER_OPS};
+use super::wire::{PhoneOpsWire, RecoveryNoticeWire, SignedOpBytes, MAX_COURIER_OPS};
 use crate::config::NotifyConfig;
 use crate::store::{uid_hex, LauncherStore};
 
@@ -232,6 +232,32 @@ pub fn courier_ingest(store: &LauncherStore, ops: &[SignedOpBytes]) -> Result<Ro
     };
     ingest_ops(store, decoded, &mut sum)?;
     Ok(sum)
+}
+
+/// The kind 5 list a terminal shows a restored phone so it can take its own chain back: the newest (at most 8) ops this
+/// terminal holds for `phone`, carrying this terminal's own device id as the UNSIGNED sender (the phone needs two lists from
+/// two different terminals; a phone with no ring cannot check a signature, so the id only tells two lists apart).
+pub fn phone_chain_wire(store: &LauncherStore, phone: &str, me: &str) -> Result<PhoneOpsWire> {
+    let phone = phone.trim().to_lowercase();
+    let sender: [u8; 8] = hex::decode(me)
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .ok_or_else(|| anyhow::anyhow!("this terminal's device id is not 16 hex characters"))?;
+    let Some((_, head, _)) = store
+        .sync_chain_heads()?
+        .into_iter()
+        .find(|(d, _, _)| *d == phone)
+    else {
+        bail!("this terminal holds no op of that phone yet: run a sync round, or ask another terminal");
+    };
+    let ops = store.sync_chain_tail(&phone, head.saturating_sub(MAX_COURIER_OPS as u64))?;
+    Ok(PhoneOpsWire {
+        ops: ops
+            .iter()
+            .map(|o| (o.canonical_bytes(), o.signature))
+            .collect(),
+        sender: Some(sender),
+    })
 }
 
 /// The recovery notice a terminal shows the phone (QR, kind 3): the `PhoneReenroll` op as stored.

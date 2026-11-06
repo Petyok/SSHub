@@ -23,7 +23,9 @@ use crate::error::{CoreError, Result};
 use crate::outgoing::render;
 use crate::state::{Enrolled, RingDevice};
 use crate::text::safe_text;
-use crate::views::{Decision, EnrollStep, EnrollView, EnrolledView, Opened, Outgoing, RefusalView};
+use crate::views::{
+    Decision, EnrollStep, EnrollView, EnrolledView, Opened, Outgoing, RefusalKind, RefusalView,
+};
 
 /// Transport roles of the frames (the same numbers as the commitment roles of `enroll_core`).
 const ROLE_JOINING: u8 = 0;
@@ -67,9 +69,10 @@ impl Default for EnrollFlow {
     }
 }
 
-fn refused(reason: impl Into<String>) -> Opened {
+fn refused(kind: RefusalKind, reason: impl Into<String>) -> Opened {
     Opened::Refused {
         view: RefusalView {
+            kind,
             reason: reason.into(),
             checks: Vec::new(),
         },
@@ -78,7 +81,7 @@ fn refused(reason: impl Into<String>) -> Opened {
 
 /// The name rules of the page (`enroll`): not empty, at most 64 bytes, no control characters (the terminal refuses a
 /// reveal with one, so a name it would refuse is stopped here).
-fn check_name(raw: &str) -> Result<String> {
+pub(crate) fn check_name(raw: &str) -> Result<String> {
     let name = raw.trim();
     if name.is_empty() {
         return Err(CoreError::bad("Give this phone a name."));
@@ -125,7 +128,12 @@ impl EnrollFlow {
     pub fn on_frame(&mut self, frame: &[u8], ctx: &mut Ctx, token: u64) -> Opened {
         let msg = match EnrollFrame::decode(frame) {
             Ok(m) => m,
-            Err(e) => return refused(format!("Not an enrollment document: {e:#}")),
+            Err(e) => {
+                return refused(
+                    RefusalKind::StrayFrame,
+                    format!("Not an enrollment document: {e:#}"),
+                )
+            }
         };
         let (next, out) = match std::mem::replace(&mut self.stage, Stage::Idle) {
             Stage::Idle => match msg {
@@ -147,10 +155,16 @@ impl EnrollFlow {
                 ),
                 _ => (
                     Stage::Idle,
-                    refused("Expected the terminal commitment first."),
+                    refused(
+                        RefusalKind::WrongOrder,
+                        "Expected the terminal commitment first.",
+                    ),
                 ),
             },
-            stage @ Stage::NeedName { .. } => (stage, refused("Name this phone first.")),
+            stage @ Stage::NeedName { .. } => (
+                stage,
+                refused(RefusalKind::WrongOrder, "Name this phone first."),
+            ),
             Stage::AwaitReveal { me, commit } => match msg {
                 EnrollFrame::Reveal {
                     role: ROLE_EXISTING,
@@ -158,12 +172,15 @@ impl EnrollFlow {
                 } => self.on_reveal(me, commit, &reveal, token),
                 _ => (
                     Stage::AwaitReveal { me, commit },
-                    refused("Expected the terminal reveal."),
+                    refused(RefusalKind::WrongOrder, "Expected the terminal reveal."),
                 ),
             },
             stage @ Stage::AwaitSas { .. } => (
                 stage,
-                refused("Compare the four words and answer on this phone first."),
+                refused(
+                    RefusalKind::WrongOrder,
+                    "Compare the four words and answer on this phone first.",
+                ),
             ),
             Stage::AwaitConfirm { me, peer, th } => match msg {
                 EnrollFrame::Confirm {
@@ -176,13 +193,17 @@ impl EnrollFlow {
                         (
                             Stage::Idle,
                             refused(
+                                RefusalKind::BadSignature,
                                 "Enrollment failed: the terminal confirmation signature is bad",
                             ),
                         )
                     } else if !ok {
                         (
                             Stage::Idle,
-                            refused("Enrollment failed: the terminal declined"),
+                            refused(
+                                RefusalKind::Declined,
+                                "Enrollment failed: the terminal declined",
+                            ),
                         )
                     } else {
                         let id = device_id_of(p);
@@ -209,7 +230,10 @@ impl EnrollFlow {
                 }
                 _ => (
                     Stage::AwaitConfirm { me, peer, th },
-                    refused("Enrollment failed: not the terminal confirmation"),
+                    refused(
+                        RefusalKind::WrongOrder,
+                        "Enrollment failed: not the terminal confirmation",
+                    ),
                 ),
             },
         };
@@ -223,20 +247,29 @@ impl EnrollFlow {
             Err(e) => {
                 return (
                     Stage::AwaitReveal { me, commit },
-                    refused(format!("Not an enrollment document: {e:#}")),
+                    refused(
+                        RefusalKind::StrayFrame,
+                        format!("Not an enrollment document: {e:#}"),
+                    ),
                 )
             }
         };
         if commit_of(ROLE_EXISTING, &peer) != commit {
             return (
                 Stage::Idle,
-                refused("The terminal reveal does not open the commitment it showed first. Enrollment stopped: someone is interfering."),
+                refused(
+                    RefusalKind::Mismatch,
+                    "The terminal reveal does not open the commitment it showed first. Enrollment stopped: someone is interfering.",
+                ),
             );
         }
         if peer.public().validate().is_err() || peer.ed25519_pub == me.ed25519_pub {
             return (
                 Stage::Idle,
-                refused("The terminal presented unusable keys."),
+                refused(
+                    RefusalKind::UnusableKeys,
+                    "The terminal presented unusable keys.",
+                ),
             );
         }
         let th = transcript_hash(&me, &peer);
@@ -251,7 +284,7 @@ impl EnrollFlow {
             "Show this to the terminal, then compare the four words on both screens.",
         ) {
             Ok(o) => o,
-            Err(e) => return (Stage::Idle, refused(e.reason())),
+            Err(e) => return (Stage::Idle, refused(RefusalKind::Other, e.reason())),
         };
         let view = EnrollView {
             token,
@@ -370,6 +403,13 @@ mod tests {
     fn reason(o: &Opened) -> &str {
         match o {
             Opened::Refused { view } => &view.reason,
+            other => panic!("expected a refusal, got {other:?}"),
+        }
+    }
+
+    fn kind(o: &Opened) -> RefusalKind {
+        match o {
+            Opened::Refused { view } => view.kind,
             other => panic!("expected a refusal, got {other:?}"),
         }
     }
@@ -627,8 +667,9 @@ mod tests {
             reveal: r.bytes(),
         }
         .encode();
-        assert!(reason(&flow.on_frame(&bad, &mut rig.ctx(), 2))
-            .contains("does not open the commitment"));
+        let o = flow.on_frame(&bad, &mut rig.ctx(), 2);
+        assert!(reason(&o).contains("does not open the commitment"));
+        assert_eq!(kind(&o), RefusalKind::Mismatch);
         // the honest reveal now finds no flow
         assert_eq!(
             reason(&flow.on_frame(&t.reveal(), &mut rig.ctx(), 3)),
@@ -666,6 +707,7 @@ mod tests {
             2,
         );
         assert_eq!(reason(&o), "The terminal presented unusable keys.");
+        assert_eq!(kind(&o), RefusalKind::UnusableKeys);
         // the terminal presents this phone's own signing key
         let mut mirror = t.party.reveal.clone();
         let mine = rig.id.public();
@@ -793,6 +835,7 @@ mod tests {
             reason(&o),
             "Enrollment failed: the terminal confirmation signature is bad"
         );
+        assert_eq!(kind(&o), RefusalKind::BadSignature);
         assert!(rig.state.ring.is_empty());
         // the terminal declines (validly signed)
         let (mut flow, me, _) = up_to_sas(&mut rig, &t);
@@ -811,6 +854,7 @@ mod tests {
             3,
         );
         assert_eq!(reason(&o), "Enrollment failed: the terminal declined");
+        assert_eq!(kind(&o), RefusalKind::Declined);
         assert!(rig.state.ring.is_empty() && rig.state.enrolled.is_none());
         // a confirm that claims the joining role is not the terminal's
         let (mut flow, me, _) = up_to_sas(&mut rig, &t);
@@ -853,10 +897,9 @@ mod tests {
         let t = Term::new();
         let mut flow = EnrollFlow::new();
         // a reveal or a confirm first
-        assert_eq!(
-            reason(&flow.on_frame(&t.reveal(), &mut rig.ctx(), 1)),
-            "Expected the terminal commitment first."
-        );
+        let o = flow.on_frame(&t.reveal(), &mut rig.ctx(), 1);
+        assert_eq!(reason(&o), "Expected the terminal commitment first.");
+        assert_eq!(kind(&o), RefusalKind::WrongOrder);
         let c = EnrollFrame::Confirm {
             role: 1,
             ok: true,
@@ -878,9 +921,14 @@ mod tests {
             "Expected the terminal commitment first."
         );
         // a frame of another kind
-        let ops = sshub_sync_proto::wire::PhoneOpsWire { ops: vec![] }.encode();
-        assert!(reason(&flow.on_frame(&ops, &mut rig.ctx(), 1))
-            .starts_with("Not an enrollment document"));
+        let ops = sshub_sync_proto::wire::PhoneOpsWire {
+            sender: None,
+            ops: vec![],
+        }
+        .encode();
+        let o = flow.on_frame(&ops, &mut rig.ctx(), 1);
+        assert!(reason(&o).starts_with("Not an enrollment document"));
+        assert_eq!(kind(&o), RefusalKind::StrayFrame);
         // the commitment, then a reveal before the phone named itself
         enroll_view(flow.on_frame(&t.commit(), &mut rig.ctx(), 1));
         assert_eq!(

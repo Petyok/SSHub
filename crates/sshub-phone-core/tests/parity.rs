@@ -458,6 +458,7 @@ fn share_release_every_challenge_same_checks_refusals_and_reply() {
             sound: true,
             audio_profile: AudioProfile::Fast,
             issue_short_code: false,
+            by_hand: true,
         };
         let out = release::approve(pending, &opts, &mut ctx)
             .unwrap_or_else(|e| panic!("{label}: approve: {e}"));

@@ -15,6 +15,21 @@ pub struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
+    /// Runs `f` as one transaction on the state: on any `Err` (a render or size failure after an op was appended, a
+    /// recorded short code) the state is put back exactly as it was, so a failed approval leaves nothing for the next
+    /// reply's courier tail to carry.
+    pub fn atomically<T>(
+        &mut self,
+        f: impl FnOnce(&mut Ctx<'a>) -> crate::error::Result<T>,
+    ) -> crate::error::Result<T> {
+        let saved = self.state.clone();
+        let r = f(self);
+        if r.is_err() {
+            *self.state = saved;
+        }
+        r
+    }
+
     /// Names of devices this phone knows: names the user gave plus the names of the terminals it enrolled with
     /// (the ring wins), by device id.
     pub fn aliases(&self) -> std::collections::BTreeMap<String, String> {

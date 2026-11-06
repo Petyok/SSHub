@@ -294,8 +294,10 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
   terminal can show as a QR code or as text), tap **Take my chain from a terminal** and scan or paste it. The page
   checks that every op is by this key, verifies each signature and that they form one chain. **One list is not
   enough**, because a terminal can be behind and signing on top of an old list forks the chain: take a second list
-  (from another terminal, or from the same one later) and the page continues only when both end at the same newest
-  op. It then shows the seq and the time of that op; if any terminal holds a higher seq for this phone, do not adopt
+  from a different terminal (`sshub sync-phone-chain <this phone's id>` on each, or "Show a restored phone's own ops" in
+  the terminal's sync menu) and the page continues only when both end at the same newest op. The same terminal's list
+  scanned twice is refused ("This list comes from the same terminal as the first one"): the lists name the terminal that
+  made them, so two lists from two terminals are told apart. It then shows the seq and the time of that op; if any terminal holds a higher seq for this phone, do not adopt
   it. The wrap key generation is read from the adopted chain's wrap key rotations. Only when this key has never signed
   anything (a brand new key restored from its words) use **This key never signed anything**, and type this phone's
   device id to confirm it. On the lock screen, "Restore from 24 words instead" replaces the stored key and erases the
@@ -343,7 +345,9 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
   A list carries at most 8 ops, 256 KiB per op and 1 MiB in all.
 - **A restored phone cannot know that a list of its own ops is the newest.** The page asks for two lists that name the
   same newest op and shows its seq and time before you adopt it, but two lists from terminals that are both behind
-  still look right. Compare with the newest seq of this phone on a terminal. The terminal does not yet vouch for the
+  still look right. The terminal's name in a list is not signed (a restored phone has no ring to check a signature
+  against), so it stops accidents (one terminal behind, one code scanned twice), not a forger who names a second
+  terminal. Compare with the newest seq of this phone on a terminal. The terminal does not yet vouch for the
   head with its own signature; until it does, this is the limit. A wrongly adopted head makes the next op reuse a seq
   the ring holds, which the ring reads as a fork.
 - Two copies of the page on one browser storage (the installed page and a tab): every save carries a version counter,

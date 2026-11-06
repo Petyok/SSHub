@@ -200,6 +200,7 @@ fn pasted_phone_ops_reach_the_log_once() {
         (op.canonical_bytes(), op.signature)
     };
     let frame = PhoneOpsWire {
+        sender: None,
         ops: vec![(canonical, sig)],
     }
     .encode();
