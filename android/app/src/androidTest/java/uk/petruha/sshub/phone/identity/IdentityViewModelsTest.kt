@@ -295,8 +295,8 @@ class AboutAndMenuViewModelTest {
         assertTrue(menu.state.value.blocked)
         onMain { about.onReference(IdentitySamples.FINGERPRINT) }
         assertEquals(FingerprintCompare.Equal, about.state.value.compare)
-        assertFalse(settings.signerMismatch.value)
-        assertFalse(menu.state.value.blocked)
+        assertTrue("sticky: a later matching value does not reopen the app", settings.signerMismatch.value)
+        assertTrue(menu.state.value.blocked)
     }
 
     @Test fun an_incomplete_value_does_not_block() {

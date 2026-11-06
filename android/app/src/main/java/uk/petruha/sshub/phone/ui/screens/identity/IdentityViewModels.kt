@@ -324,7 +324,7 @@ class AboutViewModel(private val core: IdentityApi, private val platform: Platfo
 
     fun toggleCompare() { ui.value = ui.value.copy(comparing = !ui.value.comparing) }
 
-    /** D17: a typed value that differs sets the app-wide block, an equal or shorter one clears it. */
+    /** D17: a typed value that differs sets the app-wide block, the block is sticky (a later matching value does not clear it; reinstalling the app does). */
     fun onReference(text: String) {
         ui.value = ui.value.copy(reference = text)
         settings.setSignerMismatch(compareFingerprint(platform.system.apkCertSha256, text) == FingerprintCompare.Differ)

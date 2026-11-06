@@ -1,6 +1,10 @@
 package uk.petruha.sshub.phone.app
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
@@ -16,6 +20,7 @@ import org.junit.runner.RunWith
 import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.HomeApi
 import uk.petruha.sshub.phone.core.PhoneCoreApi
+import uk.petruha.sshub.phone.core.VaultResult
 import uk.petruha.sshub.phone.core.VaultState
 import uk.petruha.sshub.phone.fake.FakePhoneCore
 import uk.petruha.sshub.phone.fake.FakePlatform
@@ -39,15 +44,18 @@ class LockPathTest {
     @Test fun the_vault_locking_on_a_release_screen_shows_lock_without_a_core_exception() {
         val core = LockingCore(); val platform = FakePlatform()
         rule.setContent { AppRoot(core, platform) }
-        rule.onAllNodesWithText("db-staging").onFirst().performScrollTo().performClick()
-        rule.onNodeWithText("Approve", substring = true).assertExists()
+        rule.onNode(hasText("Approvals") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)).performClick()
+        rule.onNodeWithText("Revoke device laptop-old").performScrollTo().performClick()
+        rule.onAllNodesWithText("Approve", substring = true, ignoreCase = true).onFirst().assertExists()
+        platform.keys.nextResult = VaultResult.Canceled // the Lock screen asks for the system prompt at once; here the user does not answer
         rule.runOnIdle { core.lock(); platform.keys.lock() } // what the screen-off receiver does
         rule.onNodeWithText("Locked because the screen turned off.", substring = true).assertExists()
-        rule.onAllNodesWithText("Approve", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("Revoke device laptop-old").assertCountEquals(0)
     }
 
     @Test fun a_restored_screen_with_a_locked_vault_lands_on_lock() {
         val core = LockingCore().also { it.lock() }; val platform = FakePlatform()
+        platform.keys.nextResult = VaultResult.Canceled
         platform.keys.st.value = VaultState.Locked // the new process: unlocked in no way, but the nav state was restored on Home
         rule.setContent { AppRoot(core, platform) }
         rule.onNodeWithText("Unlock", substring = true).assertExists()
@@ -81,6 +89,7 @@ class LockPathTest {
             vm = uk.petruha.sshub.phone.ui.screens.enroll.EnrollViewModel(core, platform, androidx.navigation.NavHostController(inst.targetContext), "laptop")
             vm.startScan()
         }
+        inst.waitForIdleSync()
         assertEquals(true, vm.ui.value.flow.scanning)
         inst.runOnMainSync { platform.keys.lock() }
         inst.waitForIdleSync()
