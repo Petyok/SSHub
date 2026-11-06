@@ -76,6 +76,7 @@ pub fn run(
             parsed.json,
         ),
         "sync-status" => status(&paths, parsed.json),
+        "sync-review" if parsed.approve_all => approve_all(&paths, parsed.json),
         "sync-review" => review(&paths, parsed.json, parsed.resolve.as_ref()),
         other => anyhow::bail!("unknown sync command: {other}"),
     };
@@ -102,6 +103,8 @@ struct Parsed {
     json: bool,
     /// `sync-review`: (approve, id prefix).
     resolve: Option<(bool, String)>,
+    /// `sync-review --approve-all`: every pending change that has no ceremony (see [`approve_all`]).
+    approve_all: bool,
 }
 
 /// Arguments after the (already extracted) global profile flags.
@@ -111,6 +114,7 @@ fn parse_args(cmd: &str, args: &[String]) -> Result<Parsed, String> {
         positionals: Vec::new(),
         json: false,
         resolve: None,
+        approve_all: false,
     };
     let mut i = 0;
     while i < args.len() {
@@ -123,6 +127,9 @@ fn parse_args(cmd: &str, args: &[String]) -> Result<Parsed, String> {
                 None => return Err("--format requires a value".into()),
             };
             i += 2;
+        } else if cmd == "sync-review" && a == "--approve-all" {
+            out.approve_all = true;
+            i += 1;
         } else if cmd == "sync-review" && (a == "--approve" || a == "--reject") {
             let id = args
                 .get(i + 1)
@@ -748,6 +755,38 @@ fn resolve_prefix(hashes: &[[u8; 32]], prefix: &str) -> Result<[u8; 32], String>
 
 /// Review pending changes. Read-only apart from the one resolution; never
 /// loads or creates the device identity.
+/// Approve every pending change that carries no ceremony: Yellow changes held for review (a new host's
+/// address, a rename onto a taken name ...). Red changes (they need their own proofs), share releases (they answer
+/// a request, with grants) and ops of unknown authors are left for `--approve <id>`. One process, one pass: a
+/// ring that received thousands of changes cannot be reviewed one `--approve` call at a time (each call lists the
+/// whole queue).
+fn approve_all(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
+    let store = open_store(paths)?;
+    let (approved, left) = approve_all_on(&store, crate::store::now_ts())?;
+    if json_out {
+        println!("{}", json!({ "approved": approved, "left": left }));
+    } else {
+        println!("Approved {approved} change(s); {left} left for `sync-review --approve <id>`");
+    }
+    Ok(0)
+}
+
+/// `(approved, left)` of one [`approve_all`] pass.
+fn approve_all_on(store: &LauncherStore, now: i64) -> Result<(usize, usize)> {
+    let (mut approved, mut left) = (0usize, 0usize);
+    for (op, reason) in store.sync_pending_with_reasons()? {
+        let skip = reason == "unknown-author"
+            || crate::sync::ceremony::is_gated(store, &op)?
+            || matches!(op.body, crate::sync::oplog::OpBody::ShareRelease { .. });
+        if skip || crate::sync::ceremony::resolve(store, &op.hash(), true, now).is_err() {
+            left += 1;
+        } else {
+            approved += 1;
+        }
+    }
+    Ok((approved, left))
+}
+
 fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>) -> Result<i32> {
     use crate::app::sync_view::pending_view;
     let store = open_store(paths)?;
@@ -1113,5 +1152,70 @@ mod tests {
         let store = LauncherStore::open(paths.launcher_db()).unwrap();
         assert!(store.get_host_by_name("web").unwrap().is_none());
         assert!(store.sync_pending().unwrap().is_empty());
+    }
+
+    #[test]
+    fn approve_all_is_a_flag_of_sync_review_only() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert!(
+            parse_args("sync-review", &s(&["--approve-all"]))
+                .unwrap()
+                .approve_all
+        );
+        assert!(parse_args("sync-now", &s(&["--approve-all"])).is_err());
+        assert!(!parse_args("sync-review", &s(&[])).unwrap().approve_all);
+    }
+
+    #[test]
+    fn approve_all_approves_the_yellow_changes_and_leaves_the_red_ones() {
+        use crate::sync::crypto::DeviceIdentity;
+        use crate::sync::oplog::{
+            Attendance, DeviceKind, DeviceRole, HostFields, OpBody, VerifiedBy,
+        };
+        let (a, b) = (
+            (
+                LauncherStore::open_in_memory().unwrap(),
+                DeviceIdentity::generate(),
+            ),
+            (
+                LauncherStore::open_in_memory().unwrap(),
+                DeviceIdentity::generate(),
+            ),
+        );
+        for (store, _) in [&a, &b] {
+            for (_, id) in [&a, &b] {
+                store
+                    .sync_register_device(
+                        &id.public(),
+                        "peer",
+                        DeviceRole::Holder,
+                        Attendance::Attended,
+                        DeviceKind::Terminal,
+                        VerifiedBy::Sas,
+                    )
+                    .unwrap();
+            }
+        }
+        for n in 0..3u8 {
+            let op =
+                b.0.sync_append_local(
+                    &b.1,
+                    OpBody::HostUpsert {
+                        host_uid: [n + 1; 16],
+                        fields: HostFields {
+                            name: Some(format!("h{n}")),
+                            address: Some("10.0.0.1".into()),
+                            ..Default::default()
+                        },
+                    },
+                )
+                .unwrap();
+            a.0.sync_ingest(op).unwrap();
+        }
+        assert_eq!(a.0.sync_pending().unwrap().len(), 3, "the addresses wait");
+        let (approved, left) = approve_all_on(&a.0, 1_000).unwrap();
+        assert_eq!((approved, left), (3, 0));
+        assert!(a.0.sync_pending().unwrap().is_empty());
+        assert_eq!(a.0.list_hosts().unwrap().len(), 3);
     }
 }

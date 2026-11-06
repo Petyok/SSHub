@@ -107,8 +107,19 @@ pub fn after_round(
     if due(store, now, policy)? {
         // Not building (pending ops, a running recovery, not an attended terminal)
         // just means: not now.
-        if let Ok((op, _)) = store.sync_checkpoint_propose(id, None, now) {
-            report.proposed = Some(op.hash());
+        match store.sync_checkpoint_propose(id, None, now) {
+            Ok((op, _)) => {
+                report.proposed = Some(op.hash());
+                let _ = crate::sync::quorum::meta_set(store, "checkpoint_propose_error", b"");
+            }
+            // Not a failure of the round, but never silent: the reason is kept where support can read it.
+            Err(e) => {
+                let _ = crate::sync::quorum::meta_set(
+                    store,
+                    "checkpoint_propose_error",
+                    format!("{now}: {e:#}").as_bytes(),
+                );
+            }
         }
     }
     report.pruned = store.sync_prune(now)?;
@@ -257,5 +268,32 @@ mod tests {
         let report = after_round(&store, &id, 200, &Policy { ops: 1, ..quiet() }).unwrap();
         assert_eq!(report.proposed, None);
         assert!(report.signed.is_empty());
+    }
+
+    /// Scale: at the default policy a log of 5100 ops of one attended terminal gets a checkpoint proposed.
+    #[test]
+    fn a_log_past_the_op_trigger_gets_a_proposal_at_the_default_policy() {
+        let (store, id) = store_with_device();
+        for n in 0..5100u32 {
+            store
+                .sync_append_local_at(
+                    &id,
+                    OpBody::HostUpsert {
+                        host_uid: {
+                            let mut u = [0u8; 16];
+                            u[..4].copy_from_slice(&n.to_be_bytes());
+                            u
+                        },
+                        fields: HostFields {
+                            name: Some(format!("h{n}")),
+                            ..Default::default()
+                        },
+                    },
+                    100,
+                )
+                .unwrap();
+        }
+        let report = after_round(&store, &id, 100_000, &Policy::default()).unwrap();
+        assert!(report.proposed.is_some(), "{report:?}");
     }
 }

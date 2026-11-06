@@ -344,6 +344,7 @@ sshub sync-now laptop --format json           # one device, by name or id prefix
 sshub sync-status                             # ring devices (this one marked), how each was verified, pending changes, credential mode
 sshub sync-review                             # every change waiting for review (id, author, reason, field diffs, Red ceremony)
 sshub sync-review --approve 3fa9c1            # or --reject; id = unique prefix (4+ hex chars)
+sshub sync-review --approve-all               # every waiting change without a ceremony, in one pass (Red changes and share releases stay)
 sshub sync-revoke <device>                    # revoke a device (Red for a holder)
 sshub sync-role <device> holder|mirror        # promote or demote (Red)
 sshub sync-approve <op-id>                    # second-device vote on a Red change

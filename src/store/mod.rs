@@ -284,6 +284,29 @@ impl LauncherStore {
     }
 }
 
+/// A write transaction that takes the write lock up front. A deferred one that reads first and writes later
+/// fails at once with "database is locked" when another process holds the lock (the upgrade cannot wait without
+/// a deadlock), and the busy handler never runs for it.
+pub(crate) fn write_tx(conn: &Connection) -> rusqlite::Result<rusqlite::Transaction<'_>> {
+    rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+}
+
+/// SQLite's own busy timeout polls with sleeps of up to 100 ms, and a process that sleeps loses every time a
+/// busy neighbour comes back at once: measured starvation of tens of seconds with eight CLI processes on one
+/// profile. Poll often with a jitter instead, for at most a minute.
+pub(crate) fn wait_for_the_lock(attempt: i32) -> bool {
+    const MAX_ATTEMPTS: i32 = 12_000;
+    if attempt >= MAX_ATTEMPTS {
+        return false;
+    }
+    let jitter = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::from(d.subsec_nanos()))
+        % 8_000;
+    std::thread::sleep(std::time::Duration::from_micros(1_000 + jitter));
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,8 +349,12 @@ mod tests {
                                     .map_err(|e| anyhow::anyhow!("create_host: {e:#}"))?;
                                 Ok(())
                             };
+                            let t0 = std::time::Instant::now();
                             if let Err(e) = one() {
-                                bad.push(format!("worker {w} add {i}: {e:#}"));
+                                bad.push(format!(
+                                    "worker {w} add {i} after {:?}: {e:#}",
+                                    t0.elapsed()
+                                ));
                             }
                         }
                         bad

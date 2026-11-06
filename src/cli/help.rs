@@ -352,6 +352,7 @@ fn print_sync_review() {
 USAGE:
     sshub [--profile NAME] sync-review [--format plain|json]
     sshub [--profile NAME] sync-review (--approve <id> | --reject <id>) [--format plain|json]
+    sshub [--profile NAME] sync-review --approve-all [--format plain|json]
 
 Without a flag, lists each change waiting for review: a 12-character id, the
 author device, a summary, and one line per field (`[!]` marks a dangerous
@@ -364,6 +365,10 @@ way the TUI does: a Red change is approved only when its ceremony is complete. A
 a share release (a requester asking this holder for a share of a credential) is the explicit
 consent: the line names the requester, its full device id and the request age, and the grants
 are written as the TUI confirmation would; a request older than 120 s is refused.
+--approve-all approves, in one pass, every waiting change that has no ceremony (a new host's address, a rename onto a
+taken name ...): for a ring that delivered thousands of changes, where one --approve call per change is not workable.
+Red changes (they need their own proofs), share releases and changes of unknown authors are left for --approve <id>;
+it prints how many were approved and how many are left.
 Read-only otherwise; never creates a device key (approving a share release loads the existing one).
 
 EXIT CODES:

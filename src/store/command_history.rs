@@ -21,7 +21,7 @@ impl LauncherStore {
         }
         let command = command.trim();
         self.with_conn(|conn| {
-            let tx = conn.unchecked_transaction()?;
+            let tx = super::write_tx(conn)?;
             let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM hosts WHERE id=?1)", [host_id], |r| r.get(0))?;
             if !exists { return Ok(false); }
             let now = super::migrate::now_ts();
