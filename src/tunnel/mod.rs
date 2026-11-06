@@ -78,6 +78,27 @@ impl TunnelStatus {
     }
 }
 
+/// Cap on the stderr kept per tunnel process (bytes); past it the oldest
+/// output is dropped down to [`STDERR_TAIL_KEEP`].
+const STDERR_TAIL_CAP: usize = 8192;
+const STDERR_TAIL_KEEP: usize = 4096;
+
+/// Append one stderr line to `buf`, trimming old output from the front once
+/// `buf` passes [`STDERR_TAIL_CAP`].
+fn push_stderr_line(buf: &mut String, line: &str) {
+    buf.push_str(line);
+    buf.push('\n');
+    if buf.len() > STDERR_TAIL_CAP {
+        // `cut` is a byte offset: step back to a char boundary so a multibyte
+        // character is never split.
+        let mut cut = buf.len() - STDERR_TAIL_KEEP;
+        while !buf.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        buf.drain(..cut);
+    }
+}
+
 struct TunnelProcess {
     child: Child,
     started_at: Instant,
@@ -149,12 +170,7 @@ impl TunnelManager {
                     use std::io::{BufRead, BufReader};
                     for line in BufReader::new(err).lines().map_while(Result::ok) {
                         if let Ok(mut s) = buf.lock() {
-                            s.push_str(&line);
-                            s.push('\n');
-                            if s.len() > 8192 {
-                                let cut = s.len() - 4096;
-                                s.drain(..cut);
-                            }
+                            push_stderr_line(&mut s, &line);
                         }
                     }
                 });
@@ -558,6 +574,18 @@ impl Drop for TunnelManager {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn stderr_tail_trim_does_not_split_a_multibyte_char() {
+        let mut buf = String::new();
+        // Two-byte chars after a one-byte prefix, so the trim point lands
+        // inside a char whenever the buffer crosses the cap on an odd length.
+        for i in 0..200 {
+            push_stderr_line(&mut buf, &format!("x{}", "\u{e9}".repeat(50 + i % 7)));
+        }
+        assert!(buf.len() <= STDERR_TAIL_CAP);
+        assert!(buf.ends_with('\n'));
+    }
 
     #[test]
     fn active_work_excludes_exhausted_reconnects() {
