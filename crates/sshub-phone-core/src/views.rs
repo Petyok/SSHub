@@ -175,8 +175,30 @@ pub struct CertExtensionView {
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct RefusalView {
+    /// Why the frame was refused, for enrollment frames (`Other` for every other kind of frame): the app picks its
+    /// words by this, not by matching `reason`.
+    pub kind: RefusalKind,
     pub reason: String,
     pub checks: Vec<Check>,
+}
+
+/// The reason class of an enrollment refusal (`RefusalView.kind`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum RefusalKind {
+    /// Not an enrollment refusal.
+    Other,
+    /// The terminal reveal does not open the commitment it showed first: someone is interfering. Enrollment stopped.
+    Mismatch,
+    /// The terminal declined the enrollment (its confirmation says no). Enrollment stopped.
+    Declined,
+    /// An enrollment frame at the wrong step (or the wrong role); the enrollment goes on where it was.
+    WrongOrder,
+    /// The terminal confirmation signature is bad. Enrollment stopped.
+    BadSignature,
+    /// The terminal presented keys that cannot be used. Enrollment stopped.
+    UnusableKeys,
+    /// A document that is not an enrollment frame (damaged, or another kind of QR); the enrollment goes on.
+    StrayFrame,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
@@ -200,6 +222,9 @@ pub struct ShareRequestView {
     pub binding_hash: String,
     pub checks: Vec<Check>,
     pub expires_at: i64,
+    /// This phone was restored and has not taken its chain yet: it cannot sign, so Approve is refused (and keeps the
+    /// request open) until `take_chain` and `Decision::Approve` accept the head. Show the stop box up front.
+    pub head_pending: bool,
     /// Set for a requester this phone never met: Approve needs this id typed (`ReleaseOptions.typed_id`).
     pub type_to_approve: Option<String>,
     /// The requester as this phone knows it: name (escaped), whether it is a terminal this phone enrolled with, and the
@@ -387,6 +412,9 @@ pub struct ReleaseOptions {
     pub audio_profile: AudioProfile,
     /// Also issue a short code (repeat access for 7 days); ignored when one is live.
     pub issue_short_code: bool,
+    /// The person chose to read the share to the terminal by hand: only then does `Outgoing.manual` carry the
+    /// plaintext share words. False keeps them out of the reply (they would reach the JVM as immutable Strings).
+    pub by_hand: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Enum)]

@@ -62,6 +62,7 @@ fn opts(typed: Option<&str>, code: bool) -> ReleaseOptions {
         sound: true,
         audio_profile: AudioProfile::Fast,
         issue_short_code: code,
+        by_hand: true,
     }
 }
 
@@ -782,4 +783,76 @@ fn an_op_that_is_not_canonical_is_refused_before_anything_else_is_looked_at() {
             .unwrap();
         assert!(e.reason.contains("operation is malformed"), "{}", e.reason);
     }
+}
+
+#[test]
+fn the_share_words_leave_the_core_only_when_asked_for_by_hand() {
+    let f = fx();
+    let now = f["now"].as_i64().unwrap();
+    let frame = hx(&case(&f, "good")["frame_hex"]);
+    for (by_hand, want) in [(false, false), (true, true)] {
+        let mut w = fx_world(&f, true);
+        let (_, p) = w.open(&frame, now).ok().unwrap();
+        let o = ReleaseOptions {
+            by_hand,
+            ..opts(None, false)
+        };
+        let out = approve(p, &o, &mut w.ctx(now + 3)).unwrap();
+        assert_eq!(out.manual.is_some(), want, "by_hand {by_hand}");
+        // the sealed reply and the audio frame do not depend on it
+        assert_eq!(out.kind, 2);
+        assert!(out.audio_frame.is_some());
+    }
+}
+
+#[test]
+fn a_restored_phone_is_refused_before_the_short_code_or_anything_else_runs() {
+    let f = fx();
+    let now = f["now"].as_i64().unwrap();
+    let frame = hx(&case(&f, "good")["frame_hex"]);
+    let mut w = fx_world(&f, true);
+    w.state.head_pending = true;
+    let (view, p) = w.open(&frame, now).ok().unwrap();
+    assert!(view.head_pending, "the view says so up front");
+    let rng_before = w.rng.clone();
+    let e = approve(p, &opts(None, true), &mut w.ctx(now + 1)).unwrap_err();
+    assert!(matches!(e, CoreError::Refused { .. }), "{e}");
+    assert_eq!(e.reason(), crate::state::HEAD_PENDING_MESSAGE);
+    assert_eq!(
+        w.rng, rng_before,
+        "no randomness was drawn, so no Argon2 salt was made"
+    );
+    assert!(w.state.snapshots.is_empty() && w.state.chain.is_empty());
+    let (view, _) = fx_world(&f, true).open(&frame, now).ok().unwrap();
+    assert!(!view.head_pending);
+}
+
+#[test]
+fn a_failure_after_the_ops_were_appended_leaves_the_chain_the_lamport_and_the_short_codes_untouched(
+) {
+    const CHEAP: Argon2Profile = Argon2Profile {
+        mem_kib: 64,
+        iters: 1,
+    };
+    let f = fx();
+    let now = f["now"].as_i64().unwrap();
+    let frame = hx(&case(&f, "good")["frame_hex"]);
+    let mut w = fx_world(&f, true);
+    let (_, p) = w.open(&frame, now).ok().unwrap();
+    let before = w.state.clone();
+    crate::outgoing::fault::FAIL_NEXT_RENDER.with(|f| f.set(true));
+    // the short code is recorded and the HeadAttest appended before the reply is rendered: then the render fails
+    let r = w
+        .ctx(now + 2)
+        .atomically(|c| approve_with(p, &opts(None, true), c, &[CHEAP]));
+    assert!(r.is_err());
+    assert_eq!(w.state, before, "the state is exactly as it was");
+    assert!(w.state.chain.is_empty() && w.state.snapshots.is_empty());
+    assert_eq!(w.state.lamport, before.lamport);
+    // without the transaction the same failure would have left them behind (this is what the courier tail would carry)
+    let (_, p) = w.open(&frame, now).ok().unwrap();
+    crate::outgoing::fault::FAIL_NEXT_RENDER.with(|f| f.set(true));
+    assert!(approve_with(p, &opts(None, true), &mut w.ctx(now + 2), &[CHEAP]).is_err());
+    assert_eq!(w.state.chain.len(), 1);
+    assert_eq!(w.state.snapshots.len(), 1);
 }

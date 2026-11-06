@@ -442,6 +442,7 @@ fn refuse(reason: impl Into<String>) -> (Opened, Option<PendingReshare>) {
     (
         Opened::Refused {
             view: RefusalView {
+                kind: crate::views::RefusalKind::Other,
                 reason: reason.into(),
                 checks: Vec::new(),
             },
@@ -494,6 +495,7 @@ pub fn open_reshare(
             return (
                 Opened::Refused {
                     view: RefusalView {
+                        kind: crate::views::RefusalKind::Other,
                         reason: f.error,
                         checks,
                     },

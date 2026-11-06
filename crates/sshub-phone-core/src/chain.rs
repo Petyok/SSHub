@@ -379,6 +379,8 @@ fn read_own_chain(id: &PhoneIdentity, ops: &[SignedOpBytes]) -> Result<OwnChain>
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AdoptInfo {
     pub head_seq: u64,
+    /// Hash of the newest op of the list (what `accept_head` is bound to).
+    pub head_hash: Vec<u8>,
     pub newest_at: i64,
     pub ops: u32,
     /// Two lists named the same newest op: the head waits for the user's acceptance (`accept_head`).
@@ -403,6 +405,7 @@ pub fn adopt_own_chain(
         .clone();
     let mut info = AdoptInfo {
         head_seq: head.seq,
+        head_hash: head.hash.clone(),
         newest_at: head.timestamp,
         ops: r.chain.len() as u32,
         agreed: false,
@@ -430,12 +433,20 @@ pub fn adopt_own_chain(
 }
 
 /// The user looked at the agreed head (seq, newest op time) and accepted it. Returns (head seq, ops read).
-pub fn accept_head(state: &mut PhoneState) -> Result<(u64, u32)> {
-    let Some(p) = state.head_proposal.take() else {
+/// `shown` is the (seq, hash) of the head the user was looking at: a proposal that has changed since (another list was
+/// taken) is refused, so what is accepted is what was approved.
+pub fn accept_head(state: &mut PhoneState, shown: (u64, &[u8])) -> Result<(u64, u32)> {
+    let Some(p) = state.head_proposal.as_ref() else {
         return Err(CoreError::refused(
             "No chain head was agreed by two lists yet.",
         ));
     };
+    if p.chain.last().map(|e| (e.seq, e.hash.as_slice())) != Some(shown) {
+        return Err(CoreError::refused(
+            "The chain head changed since it was shown: take the chain again and look at it before accepting.",
+        ));
+    }
+    let p = state.head_proposal.take().expect("checked above");
     let head_seq = p.chain.last().map_or(0, |e| e.seq);
     let n = p.chain.len() as u32;
     state.lamport = state
@@ -555,13 +566,16 @@ mod tests {
         let newer = adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8)).unwrap();
         assert!(!newer.agreed);
         assert_eq!(newer.previous_seq, Some(2));
-        assert!(accept_head(&mut fresh).is_err());
+        assert!(accept_head(&mut fresh, (0, &[])).is_err());
         assert!(
             adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8))
                 .unwrap()
                 .agreed
         );
-        assert_eq!(accept_head(&mut fresh).unwrap(), (3, 3));
+        assert_eq!(
+            accept_head(&mut fresh, (3, &live.chain[2].hash)).unwrap(),
+            (3, 3)
+        );
         let next = head_attest(&mut fresh, &me, NOW + 100, None).unwrap();
         assert_eq!(next.op.seq, 4);
         assert_eq!(next.op.prev_hash, live.chain[2].hash32());
@@ -611,6 +625,28 @@ mod tests {
     }
 
     #[test]
+    fn accepting_a_head_is_bound_to_the_head_that_was_shown() {
+        let me = id(13);
+        let live = live(&me, 3);
+        let mut fresh = PhoneState::restored();
+        let ops = courier_ops(&live, 8);
+        adopt_own_chain(&mut fresh, &me, &ops).unwrap();
+        let agreed = adopt_own_chain(&mut fresh, &me, &ops).unwrap();
+        assert!(agreed.agreed);
+        assert_eq!(agreed.head_hash, live.chain[2].hash);
+        // the screen showed another head (an older one): refused, and the agreed proposal stays
+        let e = accept_head(&mut fresh, (2, &live.chain[1].hash)).unwrap_err();
+        assert!(
+            e.reason().contains("changed since it was shown"),
+            "{}",
+            e.reason()
+        );
+        assert!(fresh.head_pending && fresh.head_proposal.is_some());
+        accept_head(&mut fresh, (3, &agreed.head_hash)).unwrap();
+        assert!(!fresh.head_pending);
+    }
+
+    #[test]
     fn wrap_generation_comes_back_from_the_adopted_rotations() {
         let g0 = id(12);
         let mut live = PhoneState::default();
@@ -623,7 +659,8 @@ mod tests {
         let me = id(12);
         adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8)).unwrap();
         adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8)).unwrap();
-        accept_head(&mut fresh).unwrap();
+        let last = live.chain.last().unwrap();
+        accept_head(&mut fresh, (last.seq, &last.hash)).unwrap();
         assert_eq!(fresh.wrap_epoch, 2);
         // a rotation op announces the keys of that generation
         let op = decode_op(&live.chain[1].canonical, live.chain[1].signature64()).unwrap();
