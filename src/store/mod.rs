@@ -320,7 +320,7 @@ mod tests {
                                     .map_err(|e| anyhow::anyhow!("open: {e:#}"))?;
                                 store
                                     .create_host(&crate::store::NewHost::launcher(
-                                        &format!("g{w}_{i}"),
+                                        format!("g{w}_{i}"),
                                         "10.0.0.1",
                                     ))
                                     .map_err(|e| anyhow::anyhow!("create_host: {e:#}"))?;
