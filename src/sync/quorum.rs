@@ -17,7 +17,8 @@ use zeroize::Zeroizing;
 
 use super::crypto::{
     dek_open, derive_key, hybrid_unwrap, hybrid_wrap, paper_derive, vault_recipient_with,
-    Argon2Profile, DeviceIdentity, DevicePublic, PaperDomain, Share, ALG_CURRENT, ARGON2_MASTER,
+    sas_words, Argon2Profile, DeviceIdentity, DevicePublic, PaperDomain, Share, ALG_CURRENT,
+    ARGON2_MASTER,
 };
 use super::oplog::{
     CredMode, DeviceId, DeviceRole, DeviceStatus, HostUid, Op, OpBody, WrappedShare,
@@ -37,6 +38,41 @@ pub enum UnlockPath {
     PhoneClipboard,
     ShortCode,
     FullEntry,
+}
+
+/// What the terminal shows beside the host name when it asks the phone for a share, so the user can compare
+/// it with the phone's release screen: the host uid in the phone's grouping and the binding words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChallengeShown {
+    /// The credential's host uid, lowercase hex, no grouping (the JSON field `host_uid`).
+    pub host_uid: String,
+    /// The same uid as the phone draws it (the app's `groupedUid`): groups of 4, uppercase, one space.
+    pub host_id: String,
+    /// The four binding words of the challenge (`sas_words` of its binding hash, as the phone derives them).
+    pub words: String,
+}
+
+/// The host uid in the phone's grouping: `A3F9 007C ...` (4 hex digits per group, uppercase, single spaces).
+pub fn grouped_host_uid(host: &HostUid) -> String {
+    let hex: String = host.iter().map(|b| format!("{b:02X}")).collect();
+    hex.as_bytes()
+        .chunks(4)
+        .map(|g| String::from_utf8_lossy(g).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// [`ChallengeShown`] of a challenge as the phone receives it.
+pub fn challenge_shown(wire: &ChallengeWire) -> Result<ChallengeShown> {
+    let op = Op::from_canonical(&wire.op_canonical, wire.op_signature)?;
+    let OpBody::ShareRelease { host_uid, .. } = &op.body else {
+        bail!("the challenge does not carry a share release");
+    };
+    Ok(ChallengeShown {
+        host_uid: host_uid.iter().map(|b| format!("{b:02x}")).collect(),
+        host_id: grouped_host_uid(host_uid),
+        words: sas_words(&wire.binding_hash()),
+    })
 }
 
 /// What a terminal shows a phone: the whole `ShareRelease` op and the material the phone needs.
@@ -70,6 +106,11 @@ impl Challenge {
 
     pub fn binding_hash(&self) -> [u8; 32] {
         self.to_wire().binding_hash()
+    }
+
+    /// What to show beside the host name (see [`ChallengeShown`]).
+    pub fn shown(&self) -> Result<ChallengeShown> {
+        challenge_shown(&self.to_wire())
     }
 
     /// The bytes the phone signs.

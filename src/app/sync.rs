@@ -220,6 +220,10 @@ pub struct UnlockView {
     /// Challenge payloads, one QR frame each, looped at 8 fps. Empty hides the
     /// QR.
     pub frames: Vec<Vec<u8>>,
+    /// The host uid as the phone draws it (groups of 4) and the challenge's four binding words: what the user
+    /// compares with the phone's release screen. Empty until the challenge exists.
+    pub host_id: String,
+    pub words: String,
     /// The short code or words typed so far.
     pub code: String,
 }
@@ -845,10 +849,15 @@ impl App {
                     (u.have, u.need) = (have, need);
                 }
             }
-            SyncEvent::UnlockChallenge(frames) => {
+            SyncEvent::UnlockChallenge {
+                frames,
+                host_id,
+                words,
+            } => {
                 sync.qr_frame = 0;
                 if let Some(u) = sync.unlock.as_mut() {
                     u.frames = frames;
+                    (u.host_id, u.words) = (host_id, words);
                 }
             }
             SyncEvent::ForkDetected(id) => {
@@ -1147,6 +1156,8 @@ impl App {
             need: 0,
             paths: Vec::new(),
             frames: Vec::new(),
+            host_id: String::new(),
+            words: String::new(),
             code: String::new(),
         });
         self.sync.intents.push(SyncIntent::Unlock { secrets });
@@ -1397,6 +1408,8 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
                 crate::sync::limits::QR_PARITY_PERCENT,
             )
             .unwrap(),
+            host_id: "A3F9 007C 1B2E 55D0 9C41 7E08 F2A6 3D19".into(),
+            words: "harbor-globe-lantern-mint".into(),
             code: "ab-12".into(),
         }),
         sas: Some(SasView {
@@ -1455,6 +1468,8 @@ mod tests {
                 })
                 .collect(),
             frames: vec![],
+            host_id: String::new(),
+            words: String::new(),
             code: String::new(),
         });
         app
@@ -1602,6 +1617,8 @@ mod tests {
                 status: "listening".into(),
             }],
             frames: Vec::new(),
+            host_id: String::new(),
+            words: String::new(),
             code: String::new(),
         });
         app.handle_paste("ab-12\n").unwrap();
@@ -1855,7 +1872,11 @@ mod tests {
                 "laptop is asking you".into(),
             ));
             ctx.emit(SyncEvent::UnlockProgress { have: 1, need: 2 });
-            ctx.emit(SyncEvent::UnlockChallenge(vec![vec![1, 2, 3]]));
+            ctx.emit(SyncEvent::UnlockChallenge {
+                frames: vec![vec![1, 2, 3]],
+                host_id: "A3F9 007C".into(),
+                words: "harbor-globe-lantern-mint".into(),
+            });
             Ok(RoundSummary::default())
         }));
         app.open_sync_unlock(UnlockView {
@@ -1864,6 +1885,8 @@ mod tests {
             need: 0,
             paths: Vec::new(),
             frames: Vec::new(),
+            host_id: String::new(),
+            words: String::new(),
             code: String::new(),
         });
         app.sync.intents.push(SyncIntent::SyncNow {
@@ -1874,6 +1897,10 @@ mod tests {
         let u = app.sync.unlock.as_ref().unwrap();
         assert_eq!((u.have, u.need), (1, 2));
         assert_eq!(u.frames, vec![vec![1, 2, 3]]);
+        assert_eq!(
+            (u.host_id.as_str(), u.words.as_str()),
+            ("A3F9 007C", "harbor-globe-lantern-mint")
+        );
         let status = |k| {
             u.paths
                 .iter()

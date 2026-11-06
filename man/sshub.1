@@ -540,8 +540,10 @@ Print the kind 3 notice (base64) of a Red op for the phone.
 Take in the ops the phone copied (kind 5, base64) from standard input and print what applied.
 .TP
 .B sshub sync\-share\-request \fIHOST\fR \fR[\fB\-\-wait\fR \fISECS\fR]
-Print the kind 1 challenge for the phone, read its kind 2 reply from standard input and open the credential
-in this process.
+Print the host name with its host id (32 hex digits in groups of four, as the phone draws it) and the challenge's
+four binding words, to compare with the phone before approving there, then the kind 1 challenge for the phone;
+read its kind 2 reply from standard input and open the credential in this process.
+The TUI unlock modal shows the same host id and words under the host name.
 .TP
 .B sshub sync\-cert\-request \fR(\fB\-\-group\fR \fINAME\fR|\fB\-\-host\fR \fINAME\fR...) [\fB\-\-days\fR \fIN\fR] [\fB\-\-budget\fR \fIN\fR]
 Print the kind 9 trust-session request for the phone. Every verb takes \fB\-\-format\fR \fBplain\fR|\fBjson\fR.
