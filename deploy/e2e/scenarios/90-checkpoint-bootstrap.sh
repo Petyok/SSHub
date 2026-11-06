@@ -15,12 +15,17 @@ check "peer-a adds host big with a password" "printf 'pw0\n' | peer peer-a $SSHU
 show "peer-a op kinds before a password edit" sq peer-a 'SELECT kind, count(*) FROM sync_ops GROUP BY kind'
 show "peer-a edits the password of big (T1: one CredUpdate expected)" sh -c "printf 'pw1\n' | $C exec -T peer-a $SSHUB host edit --name big --set-password-stdin"
 show "peer-a op kinds after the password edit" sq peer-a 'SELECT kind, count(*) FROM sync_ops GROUP BY kind'
-# Finding P1 (settled): a password edit appends no op and the remote command of a host does not travel in its op (an op is
-# about 350 bytes), so only the op trigger (5000) can be reached: 8 workers add 650 hosts each (one HostUpsert op per
-# add, about 0.4 s a process), a progress line per 100 adds, so a silent log means a hang.
-grow='w() { i=0; while [ $i -lt 650 ]; do sshub --profile default host add --name g$1_$i --address a$i.internal >/dev/null 2>&1 || echo "worker $1: add $i failed"; i=$((i+1)); [ $((i % 100)) -eq 0 ] && echo "worker $1: $i adds"; done; }
-for k in 1 2 3 4 5 6 7 8; do w $k & done; wait'
-echo "--- growing peer-a's log: 8 workers x 650 host adds"
+# Finding P1 (settled): a password edit appends one CredUpdate (T1 answered above) and the remote command of a host does not
+# travel in its op (about 350 bytes), so only the op trigger (5000) can be reached. Parallel CLI processes on one profile
+# serialize on the database write lock (a real limit, fixed to wait instead of failing: "database is locked" came out of
+# 8 workers), so workers do not make it faster; 3 of them keep the lock contention honest. Each worker stops once the log
+# holds 5100 ops; a failing add prints its own stderr; a progress line every 100 adds, so a silent log means a hang.
+grow='db=$(find "$HOME/.local/share/sshub" -name launcher.db | head -n1)
+w() { i=0; while [ "$(sqlite3 "$db" "SELECT count(*) FROM sync_ops")" -lt 5100 ]; do
+  out=$(sshub --profile default host add --name g$1_$i --address a$i.internal 2>&1) || echo "worker $1: add $i failed: $out"
+  i=$((i+1)); [ $((i % 100)) -eq 0 ] && echo "worker $1: $i adds, $(sqlite3 "$db" "SELECT count(*) FROM sync_ops") ops"; done; }
+for k in 1 2 3; do w $k & done; wait'
+echo "--- growing peer-a's log with 3 workers until 5100 ops"
 psh peer-a "$grow" 2>&1 | sed 's/^/    | /'
 check "peer-a's log passed the checkpoint op threshold (5000)" '[ "$(sq peer-a "SELECT count(*) FROM sync_ops")" -ge 5000 ]'
 show "peer-a ops in the log" sq peer-a 'SELECT count(*), sum(length(canonical)) FROM sync_ops'
