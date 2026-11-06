@@ -54,11 +54,12 @@ internal class FakeLink : BleLink {
     @Volatile var failure: String? = null
     @Volatile var byeCalled = false
     @Volatile var slowMs = 0L
+    // a two byte message is data that is not a whole frame (the notification-order test); every other message is a frame
 
     override fun onMessage(b: ByteArray) {
         if (slowMs > 0) Thread.sleep(slowMs)
         got += b
-        if (b.size == 1 && b[0] == 'X'.code.toByte()) { closed = true; closedReason = "The terminal ended the session." } else frames += b
+        if (b.size == 1 && b[0] == 'X'.code.toByte()) { closed = true; closedReason = "The terminal ended the session." } else if (b.size != 2) frames += b
     }
     override fun takeOutbox(): List<ByteArray> = out.toList().also { out.clear() }
     override fun sendFrame(f: ByteArray): Boolean { out += f; return true }
