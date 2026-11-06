@@ -1201,9 +1201,10 @@ the share and ignores an extension.
 
 ```text
 kind 3 Red notice      (terminal to phone; any Red op, PhoneReenroll included) = op_len u32 BE || op_canonical || op_signature(64)
-kind 5 ops list        (BOTH directions) = n u8 || n * (op_len u32 BE || op_canonical || signature(64))
-                       phone to terminal: the phone's own ops; terminal to phone: the epoch's ShareReshareSession
-                       addressed to the phone and that epoch's ShareReshareBatch ops (it combines them, see 4c)
+kind 5 ops list        (BOTH directions) = n u8 || n * (op_len u32 BE || op_canonical || signature(64)) [|| 0x01 || sender(8)]
+                       phone to terminal: the phone's own ops (no sender block); terminal to phone: the epoch's
+                       ShareReshareSession addressed to the phone and that epoch's ShareReshareBatch ops (it combines
+                       them, see 4c), or the phone's own newest ops for a restored phone (head adoption, below)
 kind 6 enroll commit   = role u8 || commit(32)
 kind 7 enroll reveal   = role u8 || reveal bytes (enroll.rs Reveal::bytes, opaque to the wire)
 kind 8 enroll confirm  = role u8 || ok u8 || signature(64)       role 0 = joining (phone), 1 = existing terminal
@@ -1215,6 +1216,22 @@ share reply plaintext (inside the C11 sealed box of the kind 2 frame):
 ```
 
 - `approval_sig` is Ed25519 by the phone over the binding preimage of the challenge (section 4).
+- Kind 5 sender block (C-M2). A terminal that renders a kind 5 list for the phone appends `0x01 || sender(8)`, its own
+  device id (the raw 8 bytes of the 16 hex characters). A frame without the block still decodes (every frame written before
+  it, and every phone export); a truncated block (tag plus fewer than 8 bytes), a longer one, or another tag after the list
+  is refused. Rust: `PhoneOpsWire.sender: Option<[u8; 8]>`; JS: `encodePhoneOps(ops, sender)`, `decodePhoneOps(frame).sender`
+  (null when absent). **The sender id is UNSIGNED, on purpose.** A phone restored from its 24 words has an empty ring, so it
+  cannot check a terminal's signature, and a signature it could not verify would only look like proof. The id exists to tell
+  two lists apart (an honest terminal that is behind on sync, or one animated QR scanned twice), not to prove who made a
+  list: a forger can name any id, and a phone cannot tell. Head adoption of a restored phone (`adopt_own_chain`,
+  `adoptOwnChain`) therefore needs the SAME newest op (seq and hash) from two DIFFERENT sender ids; a list without a sender
+  id can be the first candidate but never completes a pair (and never costs the first candidate its id); the same id twice
+  is refused with "This list comes from the same terminal as the first one. Scan the list from another terminal."; the
+  same terminal with a newer head is simply a new candidate. After two lists agree, accepting the head is bound to the
+  (seq, hash) the user was shown (`accept_head`, `acceptHead(state, shown)`): if the proposal changed, it is refused. The
+  terminal side is `sshub sync-phone-chain <phone-id>` and the TUI entry "Show a restored phone's own ops" (the newest at
+  most 8 ops of that phone this terminal holds, naming this terminal). Still true: two terminals that are both behind look
+  right; compare with the newest seq of the phone on a terminal.
 - Courier: the ops are the newest (at most 8) of the phone's own chain, each approval appends one
   `HeadAttest { device_id: phone, seq: previous own seq, chain_hash: previous own op hash }`
   (seq 0 and 32 zero bytes before the first op) with a fresh timestamp, `lamport` above every
