@@ -762,24 +762,29 @@ fn resolve_prefix(hashes: &[[u8; 32]], prefix: &str) -> Result<[u8; 32], String>
 /// whole queue).
 fn approve_all(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     let store = open_store(paths)?;
-    let now = crate::store::now_ts();
-    let (mut approved, mut left) = (0usize, 0usize);
-    for (op, reason) in store.sync_pending_with_reasons()? {
-        let skip = reason == "unknown-author"
-            || crate::sync::ceremony::is_gated(&store, &op)?
-            || matches!(op.body, crate::sync::oplog::OpBody::ShareRelease { .. });
-        if skip || crate::sync::ceremony::resolve(&store, &op.hash(), true, now).is_err() {
-            left += 1;
-        } else {
-            approved += 1;
-        }
-    }
+    let (approved, left) = approve_all_on(&store, crate::store::now_ts())?;
     if json_out {
         println!("{}", json!({ "approved": approved, "left": left }));
     } else {
         println!("Approved {approved} change(s); {left} left for `sync-review --approve <id>`");
     }
     Ok(0)
+}
+
+/// `(approved, left)` of one [`approve_all`] pass.
+fn approve_all_on(store: &LauncherStore, now: i64) -> Result<(usize, usize)> {
+    let (mut approved, mut left) = (0usize, 0usize);
+    for (op, reason) in store.sync_pending_with_reasons()? {
+        let skip = reason == "unknown-author"
+            || crate::sync::ceremony::is_gated(store, &op)?
+            || matches!(op.body, crate::sync::oplog::OpBody::ShareRelease { .. });
+        if skip || crate::sync::ceremony::resolve(store, &op.hash(), true, now).is_err() {
+            left += 1;
+        } else {
+            approved += 1;
+        }
+    }
+    Ok((approved, left))
 }
 
 fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>) -> Result<i32> {
@@ -1155,5 +1160,53 @@ mod tests {
         assert!(parse_args("sync-review", &s(&["--approve-all"])).unwrap().approve_all);
         assert!(parse_args("sync-now", &s(&["--approve-all"])).is_err());
         assert!(!parse_args("sync-review", &s(&[])).unwrap().approve_all);
+    }
+
+    #[test]
+    fn approve_all_approves_the_yellow_changes_and_leaves_the_red_ones() {
+        use crate::sync::crypto::DeviceIdentity;
+        use crate::sync::oplog::{
+            Attendance, DeviceKind, DeviceRole, HostFields, OpBody, VerifiedBy,
+        };
+        let (a, b) = (
+            (LauncherStore::open_in_memory().unwrap(), DeviceIdentity::generate()),
+            (LauncherStore::open_in_memory().unwrap(), DeviceIdentity::generate()),
+        );
+        for (store, _) in [&a, &b] {
+            for (_, id) in [&a, &b] {
+                store
+                    .sync_register_device(
+                        &id.public(),
+                        "peer",
+                        DeviceRole::Holder,
+                        Attendance::Attended,
+                        DeviceKind::Terminal,
+                        VerifiedBy::Sas,
+                    )
+                    .unwrap();
+            }
+        }
+        for n in 0..3u8 {
+            let op = b
+                .0
+                .sync_append_local(
+                    &b.1,
+                    OpBody::HostUpsert {
+                        host_uid: [n + 1; 16],
+                        fields: HostFields {
+                            name: Some(format!("h{n}")),
+                            address: Some("10.0.0.1".into()),
+                            ..Default::default()
+                        },
+                    },
+                )
+                .unwrap();
+            a.0.sync_ingest(op).unwrap();
+        }
+        assert_eq!(a.0.sync_pending().unwrap().len(), 3, "the addresses wait");
+        let (approved, left) = approve_all_on(&a.0, 1_000).unwrap();
+        assert_eq!((approved, left), (3, 0));
+        assert!(a.0.sync_pending().unwrap().is_empty());
+        assert_eq!(a.0.list_hosts().unwrap().len(), 3);
     }
 }
