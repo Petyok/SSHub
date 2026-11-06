@@ -40,7 +40,10 @@ done
 # same state), so the reviewers go through what arrived: one bulk approval per device.
 show "peer-b approves everything that waits without a ceremony" peer peer-b $SSHUB sync-review --approve-all
 show "peer-a approves what waits there" peer peer-a $SSHUB sync-review --approve-all
-for round in 1 2 3; do
+# The hub is an attended device of the ring too: a checkpoint needs the signature of every live attended terminal, and
+# a device signs only a state equal to its own fold, which excludes what it never reviewed.
+show "the hub approves what waits there" peer hub $SSHUB sync-review --approve-all
+for round in 1 2 3 4; do
   snowt peer-a
   snowt peer-b
 done
