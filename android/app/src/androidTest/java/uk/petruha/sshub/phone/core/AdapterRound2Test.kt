@@ -62,6 +62,37 @@ class AdapterRound2Test {
         assertEquals("the core is locked", CoreException.Code.Refused, refusal { c.status(now) }.code)
     }
 
+    @Test fun a_failed_write_drops_the_in_memory_state_so_the_discarded_op_never_comes_back() {
+        val dir = newDir()
+        val c = core(PassVault(), dir)
+        val before = runBlocking { c.exportOps(now) }.total
+        val v = open(c)
+        File(dir, "state.bin.tmp").mkdirs()
+        refusal { c.decide(v.token, approve(v), now) }
+        File(dir, "state.bin.tmp").deleteRecursively()
+        runBlocking { c.unlock(secret, now) }
+        assertEquals("the op the user was told was discarded is not in the chain after lock and unlock", before, runBlocking { c.exportOps(now) }.total)
+    }
+
+    // ------------------------------------------------------------------------------ R3-M1: lock and unlock keep the stop
+
+    @Test fun lock_then_unlock_keeps_the_state_lost_stop_and_never_overwrites_the_unreadable_file() {
+        val dir = newDir()
+        val junk = ByteArray(200) { 7 }
+        File(dir, "state.bin").writeBytes(junk)
+        val c = UniffiPhoneCore(SealedStateStore(dir)).also { it.blocked = { false }; it.vault = PassVault() }
+        assertTrue(runBlocking { c.unlock(secret, now) }.stateLost)
+        assertTrue(c.stateLost())
+        c.lock()
+        refusal { c.status(now) } // queued behind the lock: refused once it ran
+        runBlocking { c.unlock(secret, now) } // the core now opens its own sealed (empty) state and says stateLost = false
+        assertTrue("the stop stays until confirmStateLost", c.stateLost())
+        assertArrayEquals("the unreadable bytes were not overwritten", junk, File(dir, "state.bin").readBytes())
+        runBlocking { c.confirmStateLost() }
+        assertFalse(c.stateLost())
+        assertFalse(junk.contentEquals(File(dir, "state.bin").readBytes()))
+    }
+
     // ------------------------------------------------------------------------------ L3, N-L6: the cache follows the core's queue
 
     @Test fun garbage_frames_keep_the_pending_release_and_a_new_frame_replaces_it_as_the_core_does() {

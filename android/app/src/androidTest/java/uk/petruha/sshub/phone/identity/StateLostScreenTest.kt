@@ -46,4 +46,17 @@ class StateLostScreenTest {
         assertEquals(1, core.confirmed)
         rule.onNodeWithText("Saved state not readable", substring = true).assertDoesNotExist()
     }
+
+    @Test fun a_signer_block_together_with_a_lost_state_settles_on_the_stop_screen() {
+        val settings = uk.petruha.sshub.phone.core.InMemorySettingsStore().also { it.setSignerMismatch(true) }
+        val core = LostCore()
+        rule.setContent { AppRoot(core, FakePlatform(), settings) }
+        rule.waitForIdle()
+        rule.mainClock.advanceTimeBy(500)
+        rule.waitForIdle()
+        rule.onNodeWithText("Saved state not readable", substring = true).assertExists() // no loop between About and the stop screen
+        rule.onNodeWithText("Continue as a restored phone").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithText("About and security", substring = true).assertExists() // once the stop is over the block applies
+    }
 }
