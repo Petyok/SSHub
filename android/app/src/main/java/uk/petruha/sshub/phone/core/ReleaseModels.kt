@@ -67,6 +67,8 @@ data class ReleaseView(
     val shareIndex: Int,
     val signedAt: Long,
     val expiresAt: Long,
+    /** A restored phone that has not taken its chain yet: the core will refuse the release until it has. */
+    val headPending: Boolean = false,
     val words: List<String>,
     val checks: List<ReleaseCheck>,
     val channels: List<ReleaseChannel>,

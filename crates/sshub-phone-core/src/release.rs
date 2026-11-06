@@ -25,7 +25,7 @@ use crate::describe::{describe_op, is_device_id, parse_op};
 use crate::error::{CoreError, Result};
 use crate::identity::PhoneIdentity;
 use crate::outgoing;
-use crate::state::COURIER_TAIL;
+use crate::state::{COURIER_TAIL, HEAD_PENDING_MESSAGE};
 use crate::text::safe_text;
 use crate::views::{
     Check, IssuedCode, ManualEntry, Outgoing, RefusalView, ReleaseOptions, ShareRequestView,
@@ -88,7 +88,11 @@ fn refuse(checks: &[Check], reason: impl Into<String>) -> RefusalView {
         warn: false,
         ok: false,
     });
-    RefusalView { reason, checks }
+    RefusalView {
+        kind: crate::views::RefusalKind::Other,
+        reason,
+        checks,
+    }
 }
 
 /// Opens the phone's own share. Hybrid (kind 0): `host_uid(16) || index || share` with a MANDATORY host comparison.
@@ -336,6 +340,7 @@ pub fn open_challenge(
         binding_hash: hex::encode(bhash),
         checks,
         expires_at: ch.expiry,
+        head_pending: ctx.state.head_pending,
         type_to_approve: type_to_approve.clone(),
         requester_name: ctx
             .aliases()
@@ -382,6 +387,10 @@ pub(crate) fn approve_with(
         return Err(CoreError::refused(
             "The challenge expired: ask the terminal for a new request.",
         ));
+    }
+    // Before anything costly (the Argon2 short code) and before the typed id: a restored phone cannot sign at all.
+    if ctx.state.head_pending {
+        return Err(CoreError::refused(HEAD_PENDING_MESSAGE));
     }
     if let Some(want) = &p.type_to_approve {
         let typed = opts.typed_id.as_deref().unwrap_or("").trim().to_lowercase();
@@ -433,7 +442,7 @@ pub(crate) fn approve_with(
     );
     let mut out = outgoing::render(full, opts.qr, &note)?;
     out.audio_frame = opts.sound.then_some(short);
-    out.manual = Some(ManualEntry {
+    out.manual = opts.by_hand.then(|| ManualEntry {
         index: u32::from(p.share[0]),
         words: sshub_sync_proto::crypto::bip39_encode(
             <&[u8; 32]>::try_from(&p.share[1..]).expect("32 bytes"),

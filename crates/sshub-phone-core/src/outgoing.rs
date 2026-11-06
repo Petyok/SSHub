@@ -13,6 +13,10 @@ pub const MAX_QR_DOC_BYTES: usize = 12_000;
 
 /// An `Outgoing` for a whole frame. `kind` is read from the frame header (`"SWR1" || version u16 || kind`).
 pub fn render(frame: Vec<u8>, with_qr: bool, note: &str) -> Result<Outgoing> {
+    #[cfg(test)]
+    if fault::FAIL_NEXT_RENDER.with(|f| f.replace(false)) {
+        return Err(crate::error::CoreError::internal("injected render failure"));
+    }
     let kind = frame.get(6).copied().unwrap_or(0);
     let too_big = frame.len() > MAX_QR_DOC_BYTES;
     let qr = if with_qr && !too_big {
@@ -35,5 +39,22 @@ pub fn render(frame: Vec<u8>, with_qr: bool, note: &str) -> Result<Outgoing> {
 
 /// A kind 5 list of ops for a terminal (QR and text), as every screen that produces signed operations shows it.
 pub fn ops_out(ops: &[SignedOpBytes], note: &str) -> Result<Outgoing> {
-    render(PhoneOpsWire { ops: ops.to_vec() }.encode(), true, note)
+    render(
+        PhoneOpsWire {
+            sender: None,
+            ops: ops.to_vec(),
+        }
+        .encode(),
+        true,
+        note,
+    )
+}
+
+/// Test hook: makes the next `render` fail, to prove a failed approval leaves the state untouched.
+#[cfg(test)]
+pub(crate) mod fault {
+    use std::cell::Cell;
+    thread_local! {
+        pub static FAIL_NEXT_RENDER: Cell<bool> = const { Cell::new(false) };
+    }
 }

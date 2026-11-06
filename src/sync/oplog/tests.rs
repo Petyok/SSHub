@@ -3764,3 +3764,49 @@ fn a_device_known_only_by_its_id_takes_the_first_name_it_is_met_with_and_keeps_i
         assert_eq!(label(&a.store), want);
     }
 }
+
+/// Two CLI processes of one device on one profile append at once: both succeed, and the chain stays gapless
+/// (the append takes the write lock up front, so the sequence number is read and used under it).
+#[test]
+fn two_connections_of_one_device_append_at_once_and_the_chain_has_no_gap() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("launcher.db");
+    let a = LauncherStore::open(&path).unwrap();
+    let id = DeviceIdentity::generate();
+    a.sync_register_device(
+        &id.public(),
+        "me",
+        DeviceRole::Holder,
+        Attendance::Attended,
+        DeviceKind::Terminal,
+        VerifiedBy::Sas,
+    )
+    .unwrap();
+    let b = LauncherStore::open(&path).unwrap();
+    let run = |store: &LauncherStore, base: u8| -> Vec<String> {
+        (0..30u8)
+            .filter_map(|i| {
+                store
+                    .sync_append_local(
+                        &id,
+                        upsert(base + i, hf(&format!("h{base}_{i}"), "10.0.0.1")),
+                    )
+                    .err()
+                    .map(|e| format!("{e:#}"))
+            })
+            .collect()
+    };
+    let (ea, eb) = std::thread::scope(|sc| {
+        let ha = sc.spawn(|| run(&a, 0));
+        let hb = sc.spawn(|| run(&b, 100));
+        (ha.join().unwrap(), hb.join().unwrap())
+    });
+    assert!(ea.is_empty() && eb.is_empty(), "{ea:?} {eb:?}");
+    let seqs: Vec<u64> = a
+        .sync_chain_tail(&id.public().device_id(), 0)
+        .unwrap()
+        .iter()
+        .map(|o| o.seq)
+        .collect();
+    assert_eq!(seqs, (1..=60).collect::<Vec<u64>>());
+}

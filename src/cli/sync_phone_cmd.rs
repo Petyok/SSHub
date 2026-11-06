@@ -20,10 +20,11 @@ use crate::sync::crypto::DeviceIdentity;
 use crate::sync::identity_store::load_or_init_identity;
 use crate::sync::phone_enroll::{admit_phone, PhoneEnroll, Step};
 
-pub const COMMANDS: [&str; 5] = [
+pub const COMMANDS: [&str; 6] = [
     "sync-phone-enroll",
     "sync-notice",
     "sync-phone-ops",
+    "sync-phone-chain",
     "sync-share-request",
     "sync-cert-request",
 ];
@@ -518,6 +519,7 @@ pub fn run(
     let bad = match cmd {
         "sync-phone-enroll" | "sync-phone-ops" => want(0, "no argument"),
         "sync-notice" => want(1, "one op id"),
+        "sync-phone-chain" => want(1, "one phone device id"),
         "sync-share-request" => want(1, "one host name"),
         "sync-cert-request" => want(0, "no argument (use --group or --host)"),
         _ => None,
@@ -545,7 +547,7 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
     // does it itself so that its output starts with it.
     if matches!(
         cmd,
-        "sync-notice" | "sync-share-request" | "sync-cert-request"
+        "sync-notice" | "sync-phone-chain" | "sync-share-request" | "sync-cert-request"
     ) {
         companion_line(&mut out, a.json);
     }
@@ -565,6 +567,22 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
             );
             if a.ble {
                 return super::sync_phone_ble::push(&unb64(&text)?, a.json, a.wait, &mut out);
+            }
+            Ok(0)
+        }
+        "sync-phone-chain" => {
+            let me = id.public().device_id();
+            let wire = crate::sync::hub::phone_chain_wire(&store, &a.pos[0], &me)?;
+            let text = b64(&wire.encode());
+            emit(
+                &mut out,
+                a.json,
+                "chain",
+                text.clone(),
+                json!({"chain": text, "sender": me, "ops": wire.ops.len()}),
+            );
+            if a.ble {
+                return super::sync_phone_ble::push(&wire.encode(), a.json, a.wait, &mut out);
             }
             Ok(0)
         }
@@ -729,6 +747,7 @@ pub fn print_help(cmd: &str) {
     let (synopsis, text) = match cmd {
         "sync-phone-enroll" => ("sync-phone-enroll [--ble] [--format plain|json]", "Enroll a phone from this terminal, as text. Prints the terminal's first frame (`frame:`); read each of the phone's frames (kind 6, 7, 8, base64) from stdin, one per line, and print the next frame to show. After the phone's reveal it prints the four words (`words:`): answer `y` or `n` on stdin. On a verified phone it registers it and proposes its admission (a Red change) and prints the last frame for the phone. Needs a ring. Exit 0 verified, 1 stopped or input ended. With --ble (a build with the `bluetooth` feature) the frames also travel over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone page's device list`, sends each frame it prints to the phone page and takes the phone's frames from Bluetooth or stdin; the four words are still answered on stdin."),
         "sync-notice" => ("sync-notice <op-id> [--wait <seconds>] [--ble] [--format plain|json]", "Print the kind 3 notice (base64) of a Red op, for the phone to read: the op as signed, so the phone can show what it is asked to approve. <op-id> is a unique prefix (4+ hex characters) of the op's hash. With --ble (a build with the `bluetooth` feature) the notice is also handed to the phone page over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone page's device list` and waits up to --wait seconds until the phone has the frame (`sent:`)."),
+        "sync-phone-chain" => ("sync-phone-chain <phone-device-id> [--wait <seconds>] [--ble] [--format plain|json]", "Print the kind 5 list (base64) of the phone's own newest ops (at most 8) that this terminal holds, for a RESTORED phone to take its chain back. The list names this terminal's device id as its sender (unsigned: it only lets the phone tell two lists apart). The phone adopts its chain only from two lists naming the same newest op that come from two DIFFERENT terminals, so run this on two terminals. Scanning one list twice is refused. <phone-device-id> is the 16 hex characters on the phone's home screen. With --ble (a build with the `bluetooth` feature) the list is also handed to the phone page over Bluetooth (`sent:`)."),
         "sync-phone-ops" => ("sync-phone-ops [--wait <seconds>] [--ble] [--format plain|json]", "Take in the ops the phone copied (kind 5, base64) from stdin, chain them into the log and print what applied, why the others were skipped (`skipped` in JSON: `chain-gap` with the first refused seq when the list starts past what the ring knows, `already-known`, `invalid`) and the ceremony of every pending Red op. A malformed text changes nothing. With --ble (a build with the `bluetooth` feature) the ops frame is received from the phone page over Bluetooth instead of stdin (`bluetooth: pick SSHub-XXXX in the phone page's device list`, up to --wait seconds)."),
         "sync-share-request" => ("sync-share-request <host> [--wait <seconds>] [--ble] [--format plain|json]", "Ask the phone for its share of <host>'s credential: prints the kind 1 challenge (base64), then reads the phone's kind 2 reply from stdin (up to --wait seconds; default and maximum 120, the challenge's life), opens it, takes in its courier ops and opens the credential with this device's share. The credential is open in this process only: run it to prove the path and to take in the phone's ops; `host connect` does its own unlock. With --ble (a build with the `bluetooth` feature) the challenge is also sent to the phone page over Bluetooth (`bluetooth: pick SSHub-XXXX in the phone page's device list`) and the reply is taken from Bluetooth or stdin, whichever comes first."),
         "sync-cert-request" => ("sync-cert-request (--group NAME | --host NAME...) [--days N] [--budget N] [--ble] [--format plain|json]", "Print the kind 9 trust-session request (base64) for the phone to approve: a group or listed hosts (at most 64, never everything), a term in days (default 30) and a budget of new hosts a day (default 10). The phone's answer goes in with sync-phone-ops. The kind 10 extension is TUI-only. With --ble (a build with the `bluetooth` feature) the request is also handed to the phone page over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone page's device list` and waits up to --wait seconds until the phone has the frame (`sent:`)."),

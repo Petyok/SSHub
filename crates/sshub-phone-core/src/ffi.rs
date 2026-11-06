@@ -17,7 +17,7 @@ use crate::cert::{self, PendingCert};
 use crate::chain;
 use crate::channels::{self, Scanner};
 use crate::ctx::Ctx;
-use crate::enroll::EnrollFlow;
+use crate::enroll::{self, EnrollFlow};
 use crate::error::{CoreError, Result};
 use crate::identity::{secret_from_words, PhoneIdentity};
 use crate::notices::{self, PendingNotice};
@@ -32,7 +32,11 @@ enum Pending {
     Notice(PendingNotice),
     Cert(PendingCert),
     Reshare(PendingReshare),
-    Chain,
+    /// Head adoption: bound to the (seq, hash) of the head the person was shown.
+    Chain {
+        seq: u64,
+        hash: Vec<u8>,
+    },
 }
 
 struct Unlocked {
@@ -67,6 +71,15 @@ pub fn create_secret() -> Vec<u8> {
     s
 }
 
+/// The problem with a name the person typed for this phone (not empty, at most 64 bytes, no control characters), or None
+/// when it is fine: show it before the scan, the same rules `Decision::EnrollName` applies.
+#[uniffi::export]
+pub fn check_enroll_name(name: String) -> Option<String> {
+    enroll::check_name(&name)
+        .err()
+        .map(|e| e.reason().to_string())
+}
+
 /// Whether `word` (any case) is a word of the BIP39 list the 24 backup words and the manual entry use: input
 /// validation while the person types (the four enrollment SAS words come from the same list). Not a check of the phrase (the checksum is checked by `restore_from_words`).
 #[uniffi::export]
@@ -85,6 +98,7 @@ fn kind_of(frame: &[u8]) -> Option<u8> {
 fn refused(reason: impl Into<String>) -> Opened {
     Opened::Refused {
         view: RefusalView {
+            kind: crate::views::RefusalKind::Other,
             reason: reason.into(),
             checks: Vec::new(),
         },
@@ -164,18 +178,24 @@ impl Inner {
         })
     }
 
-    fn open_chain(&mut self, ops: &[SignedOpBytes]) -> Result<Opened> {
+    fn open_chain(&mut self, ops: &[SignedOpBytes], sender: Option<[u8; 8]>) -> Result<Opened> {
         let t = self.token();
         let u = self.unlocked.as_mut().ok_or(CoreError::Locked)?;
         if !u.state.head_pending {
             return Ok(refused("This phone already knows its own chain; a list of its own ops needs nothing from it."));
         }
-        let r = match chain::adopt_own_chain(&mut u.state, &u.id, ops) {
+        let r = match chain::adopt_own_chain(&mut u.state, &u.id, ops, sender) {
             Ok(r) => r,
             Err(e) => return Ok(refused(e.reason().to_string())),
         };
         if r.agreed {
-            self.pending.insert(t, Pending::Chain);
+            self.pending.insert(
+                t,
+                Pending::Chain {
+                    seq: r.head_seq,
+                    hash: r.head_hash.clone(),
+                },
+            );
         }
         Ok(Opened::Chain {
             view: ChainAdopted {
@@ -185,6 +205,7 @@ impl Inner {
                 newest_at: r.newest_at,
                 ops: r.ops,
                 previous_seq: r.previous_seq,
+                sender: r.sender.clone(),
                 summary: format!(
                     "Newest op in this list: seq {}, signed {}Z ({} op(s) read).",
                     r.head_seq,
@@ -193,8 +214,9 @@ impl Inner {
                 ),
                 note: match (r.agreed, r.previous_seq) {
                     (true, _) => format!("This phone will continue after seq {}. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.", r.head_seq),
-                    (false, Some(p)) => format!("The earlier list ended at seq {p}, so one of the two is behind. Take a list from another terminal, or again after it synced."),
-                    (false, None) => "Take a second list, from another terminal or from the same one later, before this chain head is trusted.".to_string(),
+                    (false, Some(p)) => format!("The earlier list ended at seq {p}, so one of the two is behind. Take a list from another terminal that is up to date."),
+                    (false, None) if r.sender.is_none() => "This list does not say which terminal made it, so it cannot be one of the two. Take the chain from two different terminals that name themselves.".to_string(),
+                    (false, None) => "Take a second list from another terminal before this chain head is trusted.".to_string(),
                 },
             },
         })
@@ -246,8 +268,8 @@ impl Inner {
                 Ok(o)
             }
             KIND_PHONE_OPS => {
-                let ops = match PhoneOpsWire::decode(frame) {
-                    Ok(w) => w.ops,
+                let (ops, sender) = match PhoneOpsWire::decode(frame) {
+                    Ok(w) => (w.ops, w.sender),
                     Err(e) => return Ok(refused(format!("Not a list of ops: {e:#}"))),
                 };
                 let own = self
@@ -260,7 +282,7 @@ impl Inner {
                     .all(|(c, _)| op_author(c).as_deref() == Some(own.as_str()))
                     && !ops.is_empty()
                 {
-                    return self.open_chain(&ops);
+                    return self.open_chain(&ops, sender);
                 }
                 let mut ctx = self.ctx(now)?;
                 let (o, p) = reshare::open_reshare(ops, &mut ctx, t);
@@ -426,28 +448,34 @@ impl PhoneCore {
             Pending::Cert(c) => Some(Pending::Cert(c.clone())),
             _ => None,
         };
+        // A restored phone cannot sign: refuse before any work and keep the request, so it can be approved once the head
+        // is taken (the page leaves the request on screen the same way).
+        if let (Some(Pending::Release(_)), Decision::Release { .. }) = (&keep, &decision) {
+            if g.unlocked.as_ref().is_some_and(|u| u.state.head_pending) {
+                g.pending.insert(token, p);
+                return Err(CoreError::refused(crate::state::HEAD_PENDING_MESSAGE));
+            }
+        }
         let mut ctx = g.ctx(now)?;
-        let out = match (p, decision) {
+        let out = ctx.atomically(|ctx| match (p, decision) {
             (Pending::Release(p), Decision::Release { options }) => {
-                release::approve(*p, &options, &mut ctx)
+                release::approve(*p, &options, ctx)
             }
             (Pending::Notice(p), Decision::Approve { typed_id }) => {
-                notices::approve_notice(p, typed_id.as_deref(), &mut ctx)
+                notices::approve_notice(p, typed_id.as_deref(), ctx)
             }
             (Pending::Cert(p), Decision::Approve { typed_id }) => {
-                cert::approve_cert(p, typed_id.as_deref(), &mut ctx)
+                cert::approve_cert(p, typed_id.as_deref(), ctx)
             }
-            (Pending::Reshare(p), Decision::Approve { .. }) => {
-                reshare::publish_reshare(p, &mut ctx)
-            }
-            (Pending::Chain, Decision::Approve { .. }) => {
-                let (seq, n) = chain::accept_head(ctx.state)?;
+            (Pending::Reshare(p), Decision::Approve { .. }) => reshare::publish_reshare(p, ctx),
+            (Pending::Chain { seq: shown, hash }, Decision::Approve { .. }) => {
+                let (seq, n) = chain::accept_head(ctx.state, (shown, &hash))?;
                 Ok(none_outgoing(&format!(
                     "Chain taken: continuing after seq {seq} ({n} op(s) read)."
                 )))
             }
             _ => Err(CoreError::bad("that decision does not fit this request")),
-        };
+        });
         if matches!(out, Err(CoreError::BadInput { .. })) {
             if let Some(k) = keep {
                 g.pending.insert(token, k);
@@ -459,10 +487,9 @@ impl PhoneCore {
     /// The head adoption step 1 for a list given directly (the same as `open_frame` on a kind 5 list of own ops).
     pub fn take_chain(&self, ops_frame: Vec<u8>) -> Result<ChainAdopted> {
         let mut g = self.lock_inner();
-        let ops = PhoneOpsWire::decode(&ops_frame)
-            .map_err(|e| CoreError::bad(format!("Not a list of ops: {e:#}")))?
-            .ops;
-        match g.open_chain(&ops)? {
+        let wire = PhoneOpsWire::decode(&ops_frame)
+            .map_err(|e| CoreError::bad(format!("Not a list of ops: {e:#}")))?;
+        match g.open_chain(&wire.ops, wire.sender)? {
             Opened::Chain { view } => Ok(view),
             Opened::Refused { view } => Err(CoreError::bad(view.reason)),
             _ => Err(CoreError::internal("unexpected view")),
@@ -485,6 +512,7 @@ impl PhoneCore {
         }
         Ok(to_base64(
             &PhoneOpsWire {
+                sender: None,
                 ops: chain::courier_ops(&u.state, COURIER_TAIL),
             }
             .encode(),
@@ -528,7 +556,7 @@ impl PhoneCore {
     pub fn rotate_wrap_keys(&self, now: i64) -> Result<Outgoing> {
         let mut g = self.lock_inner();
         let mut ctx = g.ctx(now)?;
-        reshare::rotate_wrap_keys(&mut ctx)
+        ctx.atomically(|c| reshare::rotate_wrap_keys(c))
     }
 
     pub fn short_codes(&self, now: i64) -> Result<Vec<ShortCodeEntry>> {
@@ -658,6 +686,7 @@ mod tests {
                 sound: false,
                 audio_profile: AudioProfile::Fast,
                 issue_short_code: false,
+                by_hand: false,
             },
         }
     }
@@ -687,6 +716,94 @@ mod tests {
         assert_eq!(out.kind, 2);
         // a completed decision consumed the token
         assert!(c.decide(view.token, release(Some(&want)), now + 1).is_err());
+    }
+
+    #[test]
+    fn a_restored_phone_refuses_a_share_request_up_front_and_keeps_the_request_for_after_the_chain_is_taken(
+    ) {
+        let f = fixture();
+        let now = f["now"].as_i64().unwrap();
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.lock_inner().unlocked.as_mut().unwrap().state = PhoneState::restored();
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(view.head_pending);
+        let typed = view.type_to_approve.clone();
+        let e = c
+            .decide(view.token, release(typed.as_deref()), now + 1)
+            .unwrap_err();
+        assert!(matches!(e, CoreError::Refused { .. }), "{e}");
+        assert_eq!(e.reason(), crate::state::HEAD_PENDING_MESSAGE);
+        assert_eq!(c.status(now).unwrap().head_seq, None, "nothing was signed");
+        // the same request is still open: take the chain from two agreeing lists, accept it, then approve
+        let id = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
+        let mut live = PhoneState::default();
+        chain::head_attest(&mut live, &id, now - 10, None).unwrap();
+        let list = |sender: u8| {
+            PhoneOpsWire {
+                sender: Some([sender; 8]),
+                ops: chain::courier_ops(&live, 8),
+            }
+            .encode()
+        };
+        assert!(!c.take_chain(list(1)).unwrap().agreed);
+        let agreed = c.take_chain(list(2)).unwrap();
+        assert!(agreed.agreed);
+        c.decide(agreed.token, Decision::Approve { typed_id: None }, now)
+            .unwrap();
+        assert!(!c.status(now).unwrap().head_pending);
+        let out = c
+            .decide(view.token, release(typed.as_deref()), now + 1)
+            .unwrap();
+        assert_eq!(out.kind, 2);
+    }
+
+    #[test]
+    fn a_decision_that_fails_after_the_append_changes_nothing_and_the_next_reply_carries_no_stray_op(
+    ) {
+        let f = fixture();
+        let now = f["now"].as_i64().unwrap();
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        let typed = view.type_to_approve.clone();
+        let sealed_before = c.status(now).unwrap();
+        crate::outgoing::fault::FAIL_NEXT_RENDER.with(|f| f.set(true));
+        assert!(c
+            .decide(view.token, release(typed.as_deref()), now + 1)
+            .is_err());
+        let after = c.status(now).unwrap();
+        assert_eq!(
+            after.head_seq, sealed_before.head_seq,
+            "no op stayed in the chain"
+        );
+        assert!(c.export_ops_view().unwrap().is_empty());
+        // a later approval carries exactly its own HeadAttest
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        let out = c
+            .decide(
+                view.token,
+                release(view.type_to_approve.as_deref()),
+                now + 2,
+            )
+            .unwrap();
+        assert_eq!(out.kind, 2);
+        assert_eq!(c.export_ops_view().unwrap().len(), 1);
     }
 
     #[test]
@@ -814,20 +931,25 @@ mod tests {
         for t in 0..3 {
             chain::head_attest(&mut live, &id, 1_893_452_400 + t, None).unwrap();
         }
-        let wire = |n: usize| {
+        let wire = |n: usize, sender: Option<u8>| {
             PhoneOpsWire {
+                sender: sender.map(|s| [s; 8]),
                 ops: chain::courier_ops(&live, 8).into_iter().take(n).collect(),
             }
             .encode()
         };
-        let first = c.take_chain(wire(2)).unwrap();
+        let first = c.take_chain(wire(2, Some(1))).unwrap();
         assert!(!first.agreed);
+        assert_eq!(first.sender.as_deref(), Some("0101010101010101"));
         assert_eq!(
             first.summary,
             "Newest op in this list: seq 2, signed 2029-12-31T23:00Z (2 op(s) read)."
         );
-        assert_eq!(first.note, "Take a second list, from another terminal or from the same one later, before this chain head is trusted.");
-        let second = c.take_chain(wire(3)).unwrap();
+        assert_eq!(
+            first.note,
+            "Take a second list from another terminal before this chain head is trusted."
+        );
+        let second = c.take_chain(wire(3, Some(2))).unwrap();
         assert!(!second.agreed);
         assert!(
             second
@@ -836,7 +958,24 @@ mod tests {
             "{}",
             second.note
         );
-        let agreed = c.take_chain(wire(3)).unwrap();
+        // the same frame again (one animation scanned twice) is refused with a sentence, not agreed
+        let e = c.take_chain(wire(3, Some(2))).unwrap_err();
+        assert_eq!(e.reason(), chain::SAME_TERMINAL_MESSAGE);
+        // a list that names no terminal never agrees, and does not cost the candidate its id
+        let anon = c.take_chain(wire(3, None)).unwrap();
+        assert!(!anon.agreed);
+        assert!(
+            anon.note
+                .starts_with("This list does not say which terminal made it"),
+            "{}",
+            anon.note
+        );
+        assert_eq!(
+            c.take_chain(wire(3, Some(2))).unwrap_err().reason(),
+            chain::SAME_TERMINAL_MESSAGE
+        );
+        // another terminal naming the same head agrees
+        let agreed = c.take_chain(wire(3, Some(3))).unwrap();
         assert!(agreed.agreed);
         assert_eq!(
             agreed.summary,
@@ -870,6 +1009,24 @@ mod tests {
                 .ops
                 .len(),
             rows.len()
+        );
+    }
+
+    #[test]
+    fn the_enrollment_name_problem_is_known_before_the_scan() {
+        assert_eq!(check_enroll_name("pixel".into()), None);
+        assert_eq!(check_enroll_name("  pixel  ".into()), None);
+        assert_eq!(
+            check_enroll_name("   ".into()).as_deref(),
+            Some("Give this phone a name.")
+        );
+        assert_eq!(
+            check_enroll_name("x".repeat(65)).as_deref(),
+            Some("The name is longer than 64 bytes.")
+        );
+        assert_eq!(
+            check_enroll_name("a\tb".into()).as_deref(),
+            Some("The name has control characters.")
         );
     }
 

@@ -365,25 +365,44 @@ pub fn decode_op_list(body: &[u8]) -> Result<(Vec<SignedOpBytes>, usize)> {
     Ok((ops, at))
 }
 
+/// Tag of the optional trailing sender block of a kind 5 frame.
+pub const PHONE_OPS_SENDER_TAG: u8 = 1;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhoneOpsWire {
     pub ops: Vec<SignedOpBytes>,
+    /// The terminal that rendered the list for the phone (its device id, raw 8 bytes), as an optional trailing block
+    /// `0x01 || id(8)`. UNSIGNED: a phone restored from its words has no ring to check a signature against, so the id
+    /// only tells two lists apart (an honest terminal that is behind, or one animation scanned twice). It is not a proof
+    /// of who sent the list. Phone-to-terminal exports carry none.
+    pub sender: Option<[u8; 8]>,
 }
 
 impl PhoneOpsWire {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = frame_header(KIND_PHONE_OPS);
         out.extend_from_slice(&encode_op_list(&self.ops));
+        if let Some(id) = &self.sender {
+            out.push(PHONE_OPS_SENDER_TAG);
+            out.extend_from_slice(id);
+        }
         out
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let body = unframe(bytes, KIND_PHONE_OPS)?;
         let (ops, used) = decode_op_list(body)?;
-        if used != body.len() {
-            bail!("phone ops frame has trailing bytes");
-        }
-        Ok(Self { ops })
+        let sender = match &body[used..] {
+            [] => None,
+            [PHONE_OPS_SENDER_TAG, id @ ..] => match <[u8; 8]>::try_from(id) {
+                Ok(id) => Some(id),
+                Err(_) => {
+                    bail!("phone ops frame: the sender block is truncated or has trailing bytes")
+                }
+            },
+            _ => bail!("phone ops frame has trailing bytes"),
+        };
+        Ok(Self { ops, sender })
     }
 }
 
@@ -663,6 +682,45 @@ mod tests {
     }
 
     #[test]
+    fn the_kind_5_sender_block_is_optional_and_a_truncated_one_is_refused() {
+        let ops = vec![(b"a".to_vec(), [1; 64])];
+        let plain = PhoneOpsWire {
+            ops: ops.clone(),
+            sender: None,
+        };
+        let with = PhoneOpsWire {
+            ops,
+            sender: Some([7; 8]),
+        };
+        // without the block (every frame written before it, and every phone export): decodes, no sender
+        assert_eq!(PhoneOpsWire::decode(&plain.encode()).unwrap().sender, None);
+        // with it: round trip, and the block is the last nine bytes
+        let bytes = with.encode();
+        assert_eq!(PhoneOpsWire::decode(&bytes).unwrap(), with);
+        assert_eq!(&bytes[bytes.len() - 9..], &[1, 7, 7, 7, 7, 7, 7, 7, 7]);
+        assert_eq!(
+            bytes[..bytes.len() - 9],
+            plain.encode()[..],
+            "the list itself is unchanged"
+        );
+        // a truncated block is refused, whatever its length
+        for cut in 1..9 {
+            assert!(
+                PhoneOpsWire::decode(&bytes[..bytes.len() - cut]).is_err(),
+                "cut {cut}"
+            );
+        }
+        // a longer block, an unknown tag
+        let mut long = bytes.clone();
+        long.push(0);
+        assert!(PhoneOpsWire::decode(&long).is_err());
+        let mut tag = bytes.clone();
+        let at = tag.len() - 9;
+        tag[at] = 2;
+        assert!(PhoneOpsWire::decode(&tag).is_err());
+    }
+
+    #[test]
     fn challenge_round_trip_and_header() {
         let c = sample();
         let bytes = c.encode();
@@ -846,6 +904,7 @@ mod phone_frame_tests {
 
         let ops = PhoneOpsWire {
             ops: vec![(b"a".to_vec(), [1; 64]), (b"bb".to_vec(), [2; 64])],
+            sender: None,
         };
         assert_eq!(PhoneOpsWire::decode(&ops.encode()).unwrap(), ops);
         let mut long = ops.encode();

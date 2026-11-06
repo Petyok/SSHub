@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -24,11 +24,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.background
 import androidx.compose.runtime.collectAsState
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.navigation.NavBackStackEntry
 import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import uk.petruha.sshub.phone.ui.screens.identity.StateLostScreen
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import uk.petruha.sshub.phone.core.AppEnv
@@ -66,6 +65,11 @@ import uk.petruha.sshub.phone.core.RecoveryNoticeOpened
 import uk.petruha.sshub.phone.core.ReshareOpened
 
 /** Routes with no bottom bar: first run, lock, scan and the enroll steps 2 to 5 (spec 12, Nav column "none"). */
+/** Routes that are meant to be shown while the vault is not Unlocked. */
+private val LOCK_SAFE_ROUTES = setOf(Routes.Lock, Routes.LockRestore, Routes.Restore, Routes.FirstRun, Routes.StateLost)
+
+private val MISMATCH_SAFE_ROUTES = LOCK_SAFE_ROUTES + Routes.About
+
 private fun hidesBar(route: String?): Boolean {
     val r = route?.substringBefore("/") ?: return true
     return r in setOf(
@@ -82,8 +86,9 @@ private fun tabOf(route: String?): NavTab? = when (route?.substringBefore("/")) 
 }
 
 /** Where a decoded frame is shown, across all groups. Null: the caller (chain head, enrollment) takes the result itself. */
-class AppRouter : OpenedRouter {
-    override fun route(opened: Opened): String? = routeFor(opened) ?: when (opened) {
+class AppRouter(private val blocked: () -> Boolean = { false }) : OpenedRouter {
+    /** D17: while the signer mismatch is set no scanned frame opens a flow. */
+    override fun route(opened: Opened): String? = if (blocked()) null else routeFor(opened) ?: when (opened) {
         is OpenedTrustRequest -> trustRequestRoute(opened.view.token)
         is OpenedTrustExtend -> trustExtendRoute(opened.view.token)
         is ReshareOpened -> reshareRoute(opened.token)
@@ -96,7 +101,6 @@ class AppRouter : OpenedRouter {
 fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = AppSettings) {
     val theme by settings.theme.collectAsState()
     val mismatch by settings.signerMismatch.collectAsState()
-    val autoLock by settings.autoLockSeconds.collectAsState()
     val vault by platform.keys.state.collectAsState()
     val dark = when (theme) { ThemeChoice.Dark -> true; ThemeChoice.Light -> false; ThemeChoice.System -> isSystemInDarkTheme() }
     val reduced = platform.system.reducedMotion
@@ -108,18 +112,24 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
             val route = entry?.destination?.route
             val start = remember { if (vault == VaultState.NoKey) Routes.FirstRun else if (vault == VaultState.Unlocked) Routes.Home else lockRoute(LockReason.Started) }
 
-            // Lock when the app leaves the foreground for longer than the auto-lock time (spec 11), and at once on screen off.
-            val owner = LocalLifecycleOwner.current
-            DisposableEffect(owner, autoLock) {
-                var stoppedAt = 0L
-                val o = LifecycleEventObserver { _, e ->
-                    if (e == Lifecycle.Event.ON_STOP) stoppedAt = platform.clock.nowSeconds()
-                    if (e == Lifecycle.Event.ON_START && stoppedAt != 0L && platform.clock.nowSeconds() - stoppedAt >= autoLock && vault != VaultState.NoKey) {
-                        core.lock(); platform.keys.lock()
-                        nav.navigate(lockRoute(LockReason.Started)) { popUpTo(nav.graph.id) { inclusive = true } }
-                    }
+            // One lock path: every source (screen off, the auto-lock timer, the Lock button, a restored back stack after process death)
+            // ends as a vault that is not Unlocked, and the UI follows that state here. The platform and the vault do the locking.
+            // Security M2: an unreadable saved state stops everything until the user read the stop screen.
+            LaunchedEffect(vault, route) {
+                if (route == null || vault != VaultState.Unlocked) return@LaunchedEffect
+                if (core.stateLost() && route != Routes.StateLost) nav.navigate(Routes.StateLost) { popUpTo(nav.graph.id) { inclusive = true } }
+            }
+            // D17: with the signer mismatch set every flow except About and Lock stays closed, also after a restart.
+            LaunchedEffect(mismatch, route) {
+                if (route == null || !mismatch) return@LaunchedEffect
+                if (route.substringBefore("/") !in MISMATCH_SAFE_ROUTES) nav.navigate(Routes.About) { popUpTo(nav.graph.id) { inclusive = true } }
+            }
+            LaunchedEffect(vault, route) {
+                if (route == null) return@LaunchedEffect
+                val base = route.substringBefore("/")
+                if ((vault == VaultState.Locked || vault == VaultState.Invalidated) && base !in LOCK_SAFE_ROUTES) {
+                    nav.navigate(lockRoute(LockReason.ScreenOff)) { popUpTo(nav.graph.id) { inclusive = true } }
                 }
-                owner.lifecycle.addObserver(o); onDispose { owner.lifecycle.removeObserver(o) }
             }
 
             Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
@@ -134,7 +144,13 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
                         popExitTransition = { if (reduced) fadeOut(tween(0)) else fadeOut(tween(90)) },
                     ) {
                         identityGraph(env, settings)
-                        homeGraph(env, AppRouter())
+                        composable(Routes.StateLost) {
+                            StateLostScreen(
+                                onContinue = { core.confirmStateLost(); nav.navigate(Routes.Home) { popUpTo(nav.graph.id) { inclusive = true } } },
+                                onLock = { core.lock(); platform.keys.lock() },
+                            )
+                        }
+                        homeGraph(env, AppRouter { settings.signerMismatch.value })
                         releaseGraph(env)
                         trustGraph(env)
                         recoveryGraph(env)

@@ -265,11 +265,13 @@ class ChainHeadViewModel(private val core: IdentityApi, private val scan: ScanAp
     fun neverSigned() {
         val st = flow.value
         if (!st.canNeverSigned) return
-        try {
-            core.neverSigned(st.typedId, platform.clock.nowSeconds())
-            flow.value = st.copy(phase = ChainHeadPhase.Taken, neverSigned = true, takenSeq = null, typedId = "")
-        } catch (e: CoreException) {
-            flow.value = st.copy(notice = "Not confirmed: ${e.message}")
+        viewModelScope.launch {
+            try {
+                core.neverSigned(st.typedId, platform.clock.nowSeconds())
+                flow.value = st.copy(phase = ChainHeadPhase.Taken, neverSigned = true, takenSeq = null, typedId = "")
+            } catch (e: CoreException) {
+                flow.value = st.copy(notice = "Not confirmed: ${e.message}")
+            }
         }
     }
 
@@ -330,7 +332,7 @@ class AboutViewModel(private val core: IdentityApi, private val platform: Platfo
 
     fun toggleCompare() { ui.value = ui.value.copy(comparing = !ui.value.comparing) }
 
-    /** D17: a typed value that differs sets the app-wide block, an equal or shorter one clears it. */
+    /** D17: a typed value that differs sets the app-wide block, the block is sticky (a later matching value does not clear it; reinstalling the app does). */
     fun onReference(text: String) {
         ui.value = ui.value.copy(reference = text)
         settings.setSignerMismatch(compareFingerprint(platform.system.apkCertSha256, text) == FingerprintCompare.Differ)

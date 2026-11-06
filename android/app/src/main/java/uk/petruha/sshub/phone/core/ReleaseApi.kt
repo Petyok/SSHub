@@ -10,4 +10,7 @@ interface ReleaseApi {
      * a requester never met with a wrong `typedId` is a Refused error, whatever the UI did.
      */
     suspend fun decide(token: Long, decision: ReleaseDecision, now: Long): ReleaseOutcome
+
+    /** The outcome of the last successful Approve for `token`, kept until the phone locks, so a recreated screen can show it again. Null for none. */
+    fun lastOutcome(token: Long): ReleaseOutcome? = null
 }

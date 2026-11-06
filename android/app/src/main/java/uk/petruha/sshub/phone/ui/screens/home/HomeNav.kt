@@ -28,6 +28,7 @@ fun NavGraphBuilder.homeGraph(env: AppEnv, router: OpenedRouter = OpenedRouter {
         val vm: HomeViewModel = viewModel(factory = viewModelFactory { initializer { HomeViewModel(env.core, env.platform) } })
         val state by vm.state.collectAsState()
         LaunchedEffect(Unit) { vm.refresh() }
+        val shown = state
         val actions = remember(env) {
             HomeActions(
                 onOpenPending = { env.nav.navigate(it.route) },
@@ -37,7 +38,7 @@ fun NavGraphBuilder.homeGraph(env: AppEnv, router: OpenedRouter = OpenedRouter {
                 onTakeChain = { env.nav.navigate(Routes.ChainHead) },
             )
         }
-        RingHomeScreen(state, actions)
+        if (shown != null) RingHomeScreen(shown, actions)
     }
     composable(Routes.Approvals) {
         val vm: ApprovalsViewModel = viewModel(factory = viewModelFactory { initializer { ApprovalsViewModel(env.core, env.platform) } })

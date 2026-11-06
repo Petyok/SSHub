@@ -27,6 +27,8 @@ data class PhoneStatus(
     val enrolled: Boolean,
     val headPending: Boolean,
     val epoch: Long,
+    /** The sealed state could not be read: the core started an empty one. The old bytes are kept as `state.bin.lost` and nothing is written until the user confirms. */
+    val stateLost: Boolean = false,
 )
 
 /** Result of `openFrame`: the screen to show for a frame read from any channel. Groups add their own subtypes in their own files. */

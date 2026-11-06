@@ -18,7 +18,7 @@ object Routes {
     const val Reshare = "reshare"; const val Recovery = "recovery"; const val RecoveryNotice = "recovery-notice"; const val Export = "export"
     const val Enroll1 = "enroll-1"; const val Enroll2 = "enroll-2"; const val Enroll3 = "enroll-3"; const val Enroll4 = "enroll"
     const val Enroll5 = "enroll-5"; const val EnrollDone = "enroll-done"; const val EnrollBt = "enroll-bt"; const val EnrollPaste = "enroll-paste"; const val EnrollSound = "enroll-sound"
-    const val Menu = "menu"; const val About = "about"
+    const val Menu = "menu"; const val About = "about"; const val StateLost = "state-lost"
 }
 
 val LocalPlatform = staticCompositionLocalOf<Platform> { error("no Platform") }

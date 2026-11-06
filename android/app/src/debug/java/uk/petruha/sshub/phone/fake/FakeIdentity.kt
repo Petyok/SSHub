@@ -73,7 +73,7 @@ class FakeIdentityApi : IdentityApi {
     override fun unlock(secret: ByteArray, now: Long): PhoneStatus { unlocked = true; return status(now) }
     override fun lock() { unlocked = false }
 
-    override fun neverSigned(typedId: String, now: Long): PhoneStatus {
+    override suspend fun neverSigned(typedId: String, now: Long): PhoneStatus {
         if (typedId.trim().uppercase() != deviceId) throw CoreException(CoreException.Code.Malformed, "the typed id does not match this phone")
         neverSignedWith = typedId
         headPending = false

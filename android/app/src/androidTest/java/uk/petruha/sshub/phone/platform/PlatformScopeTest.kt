@@ -28,7 +28,7 @@ class PlatformScopeTest {
 
     @After fun cleanUp() {
         AndroidPlatform.shared(ctx).promptOverride = null
-        runBlocking { AndroidKeyVault(ctx, requireAuth = false).erase() }
+        runBlocking { AndroidPlatform.shared(ctx).keys.erase() } // the shared vault object, so its state resets too
     }
 
     @Test fun the_platform_survives_recreate_and_is_bound_to_the_new_activity() {

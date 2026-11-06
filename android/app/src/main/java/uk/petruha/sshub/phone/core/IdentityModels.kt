@@ -27,6 +27,8 @@ data class ChainAdopted(
     val summary: String = "",
     /** What to do next, in the core's words (take another list, or the warning to read before adopting); empty: no line. */
     val note: String = "",
+    /** Id of the terminal that made the list (unsigned, so a claim and not proof); null when the list did not say. */
+    val sender: String? = null,
 )
 
 /** `openFrame` of a kind 5 own-ops list that verified. Top level because `Opened` is sealed in Core.kt. */
