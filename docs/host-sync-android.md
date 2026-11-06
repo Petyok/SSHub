@@ -457,7 +457,7 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
   file in `noBackupFilesDir`, CameraX luma frames, BLE GATT central for C20 driving the Rust `BleSession`, AudioTrack FSK playback, sensitive clipboard with
   the 60 s clear, FLAG_SECURE helper), `app/AppRoot` (nav host, bottom bar, lock on stop and screen off, theme choice).
 - Debug builds run the REAL core (the debug APK, signed with the committed public debug key, is what is installed for a device session); the Kotlin
-  `FakePhoneCore` (src/debug) is a demo: `adb shell am start -n uk.petruha.sshub.phone/.MainActivity --es core fake`. Release builds always use the Rust core.
+  `FakePhoneCore` (src/debug) is for instrumented tests only (the `core=fake` extra is ignored outside instrumentation); the debug app id is `uk.petruha.sshub.phone.debug`. Release builds always use the Rust core.
 - CI (`android/ci/build.sh`): host tests of the core, `cargo ndk` with `--profile phone`, uniffi bindings, `lint.sh` (no `Color(0x` outside the theme, no
   `Ellipsis` or `maxLines` in ui, no `Log.` in platform and core), `manifest-check.sh` (permissions exactly CAMERA, BLUETOOTH_SCAN neverForLocation,
   BLUETOOTH_CONNECT, USE_BIOMETRIC; no INTERNET; backup and cleartext off), debug APK and test APK.
@@ -490,3 +490,11 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
    `src/sync/` and `#[path]`-include them from the phone core, as the phase 1 skeleton does for `crypto` and `limits`; that needs a small shim per module
    that touches `crate::store` (`oplog`, `wire`) and keeps the phone core tied to the terminal's source layout. Recommendation: extract and publish.
 5. **Page parity period**: how long the page keeps feature parity (new ceremonies land in Rust first; the page port becomes optional).
+
+## 14. Review round A1 notes
+
+- Taking a restored phone's chain: the kind 5 list names its terminal (an unsigned id); two lists from two DIFFERENT terminals naming the same head are needed; the same terminal twice is refused with the core's sentence (BadInput, the token stays); the id is not proof of who sent the list (a restored phone has no ring to verify against). `ChainAdopted.sender` is that id, null when the list did not say.
+- Per-signature system lock: `UniffiPhoneCore.vault` is set by the shell; every mutating call (decide on Approve for releases, Red, trust and reshare, revokeCert, rotateWrapKeys, decideRecoveryCancel, enrollDecide on the SAS match, adoptChain, neverSigned) asks the vault once before the core is touched. Decline and cancel paths are not gated. Title is the action, subtitle a short id or hash. A test lists every `PhoneCoreApi` method as gated or reviewed. The screens no longer prompt themselves.
+- `decide` finishes once the core is asked (NonCancellable). `ReleaseApi.lastOutcome(token)` returns the last Approve outcome until the phone locks, so a recreated screen can show it again. It holds the reply (QR frames, by-hand words) in memory until lock.
+- Unreadable saved state: unlock keeps the old bytes as `state.bin.lost`, writes nothing, and the shell stays on a stop screen until the user chooses; every core flow refuses meanwhile.
+- Known limit: core calls from view models still run on the main thread; only vault and file IO moved to `Dispatchers.IO`.

@@ -263,11 +263,13 @@ class ChainHeadViewModel(private val core: IdentityApi, private val scan: ScanAp
     fun neverSigned() {
         val st = flow.value
         if (!st.canNeverSigned) return
-        try {
-            core.neverSigned(st.typedId, platform.clock.nowSeconds())
-            flow.value = st.copy(phase = ChainHeadPhase.Taken, neverSigned = true, takenSeq = null, typedId = "")
-        } catch (e: CoreException) {
-            flow.value = st.copy(notice = "Not confirmed: ${e.message}")
+        viewModelScope.launch {
+            try {
+                core.neverSigned(st.typedId, platform.clock.nowSeconds())
+                flow.value = st.copy(phase = ChainHeadPhase.Taken, neverSigned = true, takenSeq = null, typedId = "")
+            } catch (e: CoreException) {
+                flow.value = st.copy(notice = "Not confirmed: ${e.message}")
+            }
         }
     }
 

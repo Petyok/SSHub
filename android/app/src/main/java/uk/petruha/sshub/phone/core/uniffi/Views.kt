@@ -141,6 +141,7 @@ internal fun mapRelease(v: RsShareRequestView): OpenedRelease {
             // The challenge's own lifetime: the core gives `expires_at` only.
             signedAt = v.expiresAt - CHALLENGE_SECS,
             expiresAt = v.expiresAt,
+            headPending = v.headPending,
             words = words(v.bindingWords),
             checks = v.checks.map { it.asCheck(typeGate = must != null) },
             channels = channels,
@@ -260,7 +261,7 @@ internal fun mapReshare(v: RsReshareView): ReshareView {
 }
 
 internal fun mapChain(v: RsChainAdopted) = OpenedChain(
-    ChainAdopted(v.token.toLong(), v.agreed, v.headSeq.toLong(), v.newestAt, v.ops.toInt(), v.previousSeq?.toLong(), v.summary, v.note),
+    ChainAdopted(v.token.toLong(), v.agreed, v.headSeq.toLong(), v.newestAt, v.ops.toInt(), v.previousSeq?.toLong(), v.summary, v.note, v.sender),
     emptyList<ChainCheck>(),
 )
 

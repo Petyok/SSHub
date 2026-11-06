@@ -27,14 +27,6 @@ import uk.petruha.sshub.phone.core.VaultResult
 
 private const val CLIPBOARD_LABEL = "SSHub reply"
 
-/** The system lock prompt every signing goes through (spec 11). Returns the text to show on failure, null to go on. */
-private suspend fun Platform.confirmWithSystemLock(title: String, subtitle: String): String? {
-    val r = keys.unlock(title, subtitle)
-    val failure = vaultFailure(r)
-    if (r is VaultResult.Secret) r.bytes.fill(0)
-    return failure
-}
-
 class RedViewModel(private val core: ReleaseApi, private val platform: Platform, private val token: Long) : ViewModel() {
     private val _state = MutableStateFlow<RedState?>(null)
     /** Null when the core no longer holds the notice; the screen then goes back. */
@@ -56,8 +48,6 @@ class RedViewModel(private val core: ReleaseApi, private val platform: Platform,
         if (!s.gate.enabled) return
         _state.update { it?.copy(phase = ApprovalPhase.Signing, error = null) }
         viewModelScope.launch {
-            val failure = platform.confirmWithSystemLock("Approve Red operation", hashPrefix(s.view.hash))
-            if (failure != null) { _state.update { it?.copy(phase = ApprovalPhase.Review, error = failure) }; return@launch }
             try {
                 val out = core.decide(token, ReleaseDecision.Approve(), platform.clock.nowSeconds())
                 _state.update { it?.copy(phase = ApprovalPhase.Approved, outcome = out) }
@@ -110,8 +100,6 @@ class ReleaseViewModel(private val core: ReleaseApi, private val platform: Platf
         if (!s.gate.enabled) return
         _state.update { it?.copy(phase = ApprovalPhase.Signing, error = null) }
         viewModelScope.launch {
-            val failure = platform.confirmWithSystemLock("Approve share release", nameAndId(s.view.requesterName, s.view.requesterId))
-            if (failure != null) { _state.update { it?.copy(phase = ApprovalPhase.Review, error = failure) }; return@launch }
             val on = s.channelsOn
             val decision = ReleaseDecision.Approve(
                 channels = ReleaseChannels(
