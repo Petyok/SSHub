@@ -51,13 +51,27 @@ class AndroidCamera(private val context: Context) : CameraPort {
 
     override val hasCamera: Boolean get() = context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
 
+    private var observer: LifecycleEventObserver? = null
+
+    /** Points the port at the new Activity. The previous one is let go first: its launcher and observer must not outlive it. */
     fun attach(activity: ComponentActivity) {
+        detach()
         this.activity = activity
         launcher = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             asked = true
             refresh(granted)
         }
-        activity.lifecycle.addObserver(LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) refresh() })
+        val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) refresh() }
+        observer = o
+        activity.lifecycle.addObserver(o)
+    }
+
+    fun detach() {
+        observer?.let { o -> activity?.lifecycle?.removeObserver(o) }
+        observer = null
+        runCatching { launcher?.unregister() }
+        launcher = null
+        activity = null
     }
 
     /** Re-reads the system state (the user may have changed it in Settings). */

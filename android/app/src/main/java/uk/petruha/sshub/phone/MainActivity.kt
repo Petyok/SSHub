@@ -12,8 +12,8 @@ import uk.petruha.sshub.phone.platform.AndroidPlatform
 
 /** The single Activity. FragmentActivity because BiometricPrompt needs one. */
 class MainActivity : FragmentActivity() {
-    private val platform by lazy { CoreFactoryImpl.appContext = applicationContext; AndroidPlatform(applicationContext, CoreFactoryImpl.bleLinks) }
-    private val core by lazy { CoreFactoryImpl.appContext = applicationContext; CoreFactoryImpl.create() }
+    internal val platform: AndroidPlatform get() { CoreFactoryImpl.appContext = applicationContext; return AndroidPlatform.shared(applicationContext) { CoreFactoryImpl.bleLinks } }
+    private val core get() = CoreFactoryImpl.create()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
