@@ -3787,7 +3787,10 @@ fn two_connections_of_one_device_append_at_once_and_the_chain_has_no_gap() {
         (0..30u8)
             .filter_map(|i| {
                 store
-                    .sync_append_local(&id, upsert(base + i, hf(&format!("h{base}_{i}"), "10.0.0.1")))
+                    .sync_append_local(
+                        &id,
+                        upsert(base + i, hf(&format!("h{base}_{i}"), "10.0.0.1")),
+                    )
                     .err()
                     .map(|e| format!("{e:#}"))
             })
