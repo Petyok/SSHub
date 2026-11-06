@@ -18,6 +18,7 @@ object CoreFactoryImpl : CoreFactory {
     private val real by lazy { UniffiPhoneCore(appContext) }
 
     fun configure(intent: Intent?) { fake = intent?.getStringExtra("core") == "fake" }
-    override fun create(): PhoneCoreApi = if (fake) FakePhoneCore() else real
+    private val fakeCore by lazy { FakePhoneCore() }
+    override fun create(): PhoneCoreApi = if (fake) fakeCore else real
     val bleLinks: BleLinkFactory? get() = if (fake) null else CoreBleLinkFactory(real)
 }

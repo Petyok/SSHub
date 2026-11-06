@@ -88,12 +88,28 @@ class AndroidBle(private val context: Context, private val links: BleLinkFactory
 
     init { refresh() }
 
+    private var host: ComponentActivity? = null
+    private var observer: LifecycleEventObserver? = null
+
+    /** Points the port at the new Activity; the previous launcher and observer are released first. */
     fun attach(activity: ComponentActivity) {
+        detach()
+        host = activity
         launcher = activity.registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
             denied = !res.values.all { it }
             refresh()
         }
-        activity.lifecycle.addObserver(LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) refresh() })
+        val o = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) refresh() }
+        observer = o
+        activity.lifecycle.addObserver(o)
+    }
+
+    fun detach() {
+        observer?.let { o -> host?.lifecycle?.removeObserver(o) }
+        observer = null
+        runCatching { launcher?.unregister() }
+        launcher = null
+        host = null
     }
 
     fun refresh() {
