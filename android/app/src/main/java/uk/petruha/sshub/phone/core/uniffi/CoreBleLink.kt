@@ -34,7 +34,10 @@ class CoreBleLink(private val session: RsBleSession, private val clock: () -> Lo
     override val closed: Boolean get() = session.state() is RsBleState.Closed
 
     /** Why the last frame was refused or never acknowledged, once. */
-    fun sendFailure(): String? = session.takeSendFailure()
+    override fun sendFailure(): String? = session.takeSendFailure()
+
+    /** The core's sentence for the end of the session (BYE or a timer), once [closed] is true. */
+    override val closedReason: String? get() = (session.state() as? RsBleState.Closed)?.reason
 
     /** The page after its last step: BYE and done. The BYE is in the next `takeOutbox`. `BleLink` has no `bye` yet (docs 2.3). */
     override fun bye() = session.bye(clock().toULong())
