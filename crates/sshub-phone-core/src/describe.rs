@@ -88,7 +88,7 @@ pub fn parse_op(canonical: &[u8], signature: [u8; 64]) -> Result<Op, String> {
 
 // ------------------------------------------------------------ order-preserving reader
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum J {
     Null,
     Bool(bool),
@@ -233,8 +233,20 @@ impl Reader<'_> {
 /// `{path, value}` of one leaf (`path` is empty for an empty top-level body).
 struct Leaf {
     path: String,
-    value: String,
+    value: J,
 }
+
+/// Leaf names that hold opaque blobs (keys, sealed boxes, signatures). Only these are shortened, and only on rows that
+/// are not marked danger: a person must never approve on a clipped value (an address of 60 characters, a host, an id).
+const BLOB_FIELDS: &[&str] = &[
+    "mlkem_pub",
+    "ciphertext",
+    "sealed",
+    "sealed_share",
+    "commitments",
+    "sig",
+    "paper_sig",
+];
 
 /// `^[A-Za-z0-9+/]{40,}={0,2}$`
 fn looks_like_blob(s: &str) -> bool {
@@ -246,11 +258,11 @@ fn looks_like_blob(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
 }
 
-fn fmt_leaf(v: &J) -> String {
+fn fmt_leaf(v: &J, shorten: bool) -> String {
     match v {
         J::Null => "(cleared)".to_string(),
         J::Str(s) => {
-            if looks_like_blob(s) {
+            if shorten && looks_like_blob(s) {
                 let head: String = s.chars().take(16).collect();
                 format!(
                     "{} base64 chars: {}...",
@@ -267,7 +279,7 @@ fn fmt_leaf(v: &J) -> String {
     }
 }
 
-/// Every leaf becomes a row; nothing is dropped or summarised away except long base64 blobs.
+/// Every leaf becomes a row; nothing is dropped or summarised away except long base64 blobs in the fields of `BLOB_FIELDS`.
 fn flatten(v: &J, path: &str, out: &mut Vec<Leaf>) {
     let join = |k: &str| {
         if path.is_empty() {
@@ -281,7 +293,7 @@ fn flatten(v: &J, path: &str, out: &mut Vec<Leaf>) {
             if entries.is_empty() {
                 out.push(Leaf {
                     path: path.to_string(),
-                    value: "(none)".to_string(),
+                    value: J::Str("(none)".to_string()),
                 });
             }
             for (k, x) in entries {
@@ -292,7 +304,7 @@ fn flatten(v: &J, path: &str, out: &mut Vec<Leaf>) {
             if items.is_empty() {
                 out.push(Leaf {
                     path: path.to_string(),
-                    value: "(empty list)".to_string(),
+                    value: J::Str("(empty list)".to_string()),
                 });
             }
             for (i, x) in items.iter().enumerate() {
@@ -301,7 +313,7 @@ fn flatten(v: &J, path: &str, out: &mut Vec<Leaf>) {
         }
         leaf => out.push(Leaf {
             path: path.to_string(),
-            value: fmt_leaf(leaf),
+            value: leaf.clone(),
         }),
     }
 }
@@ -412,7 +424,9 @@ pub fn describe_op(
                     } else {
                         l.path.clone()
                     };
-                    rows.push(row(safe_text(&label), l.value, hot));
+                    // a blob is clipped only in a field known to hold one and never on a dangerous row
+                    let shorten = !hot && segs.iter().any(|s| BLOB_FIELDS.contains(s));
+                    rows.push(row(safe_text(&label), fmt_leaf(&l.value, shorten), hot));
                 }
             }
             // Unreachable after a strict decode; if it ever happens the person is told, never shown a clean screen.
@@ -588,23 +602,65 @@ mod tests {
     }
 
     #[test]
+    fn a_long_alphanumeric_address_is_never_clipped() {
+        let v = vectors();
+        let (c, s) = vector(&v, "host-upsert-full");
+        let text = String::from_utf8(c).unwrap();
+        let long = "a1B2".repeat(15); // 60 characters, base64-looking
+        let c = text.replace("web1.example", &long).into_bytes();
+        let op = parse_op(&c, s).unwrap();
+        let d = describe_op(&op, &c, &BTreeMap::new(), None, 120);
+        let r = d.rows.iter().find(|r| r.label == "fields.address").unwrap();
+        assert_eq!(r.value, long);
+        assert!(r.danger);
+        // a long name is a safe field but not a blob field: also in full
+        let name = "N0".repeat(30);
+        let c = text.replace("web-1", &name).into_bytes();
+        let op = parse_op(&c, s).unwrap();
+        let d = describe_op(&op, &c, &BTreeMap::new(), None, 120);
+        assert_eq!(
+            d.rows
+                .iter()
+                .find(|r| r.label == "fields.name")
+                .unwrap()
+                .value,
+            name
+        );
+    }
+
+    #[test]
     fn cleared_empty_and_blob_leaves_are_shown_as_the_page_shows_them() {
         let d = view("host-upsert-every-field-cleared");
         assert!(d.rows.iter().any(|r| r.value == "(cleared)"));
         let d = view("host-upsert-empty-patch");
         let r = d.rows.iter().find(|r| r.label == "fields").unwrap();
         assert_eq!((r.value.as_str(), r.danger), ("(none)", false));
+        // a blob in a blob field of a row that is not dangerous is clipped
+        let d = view("red-factor");
+        let sig = d.rows.iter().find(|r| r.label == "sig").unwrap();
+        assert!(!sig.danger);
+        assert!(
+            sig.value.contains("base64 chars: ") && sig.value.ends_with("..."),
+            "{}",
+            sig.value
+        );
+        // a dangerous row is never clipped, a blob field of a dangerous kind included
         let d = view("device-add-holder");
-        let blob = d
+        let key = d
             .rows
             .iter()
             .find(|r| r.label == "device.mlkem_pub")
             .unwrap();
         assert!(
-            blob.value.contains("base64 chars: ") && blob.value.ends_with("..."),
+            key.danger && !key.value.contains("base64 chars"),
             "{}",
-            blob.value
+            key.value.len()
         );
+        assert_eq!(key.value.len(), 1580);
+        // a hash is a value to compare, not a blob: shown in full
+        let d = view("red-approve");
+        let h = d.rows.iter().find(|r| r.label == "op_hash").unwrap();
+        assert_eq!(h.value.len(), 64);
         let d = view("share-reshare-batch-empty");
         assert!(d.rows.iter().any(|r| r.value == "(empty list)"));
     }
@@ -690,9 +746,13 @@ mod tests {
         );
         let mut leaves = Vec::new();
         flatten(&J::Obj(o), "", &mut leaves);
-        let got: Vec<_> = leaves
+        let shown: Vec<(String, String)> = leaves
             .iter()
-            .map(|l| (l.path.as_str(), l.value.as_str()))
+            .map(|l| (l.path.clone(), fmt_leaf(&l.value, false)))
+            .collect();
+        let got: Vec<(&str, &str)> = shown
+            .iter()
+            .map(|(p, v)| (p.as_str(), v.as_str()))
             .collect();
         assert_eq!(
             got,
