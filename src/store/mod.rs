@@ -297,4 +297,48 @@ mod tests {
         assert!(dir.path().join("launcher.db").exists());
         std::env::remove_var("SSH_LAUNCHER_DATA_DIR");
     }
+
+    /// Several CLI processes on one profile (a script adding hosts in parallel) each open the database and write
+    /// at once: none of them may fail with "database is locked". Threads with their own connections stand in
+    /// for the processes.
+    #[test]
+    fn parallel_openers_and_writers_on_one_database_never_see_it_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("launcher.db");
+        drop(LauncherStore::open(&path).unwrap());
+        let failures: Vec<String> = std::thread::scope(|sc| {
+            let hs: Vec<_> = (0..8)
+                .map(|w| {
+                    let path = &path;
+                    sc.spawn(move || {
+                        let mut bad = Vec::new();
+                        for i in 0..25 {
+                            let one = || -> anyhow::Result<()> {
+                                let store = LauncherStore::open(path)
+                                    .map_err(|e| anyhow::anyhow!("open: {e:#}"))?;
+                                store
+                                    .create_host(&crate::store::NewHost::launcher(
+                                        &format!("g{w}_{i}"),
+                                        "10.0.0.1",
+                                    ))
+                                    .map_err(|e| anyhow::anyhow!("create_host: {e:#}"))?;
+                                Ok(())
+                            };
+                            if let Err(e) = one() {
+                                bad.push(format!("worker {w} add {i}: {e:#}"));
+                            }
+                        }
+                        bad
+                    })
+                })
+                .collect();
+            hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
+        });
+        assert!(
+            failures.is_empty(),
+            "{} of 200 adds failed, first: {:?}",
+            failures.len(),
+            failures.first()
+        );
+    }
 }
