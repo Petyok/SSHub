@@ -4,6 +4,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import uk.petruha.sshub.phone.platform.BleScanError
+import uk.petruha.sshub.phone.platform.ObservedBleChannel
 
 /*
  * Platform ports: everything Android-specific the screens need. Production adapters live in `platform/` (Keystore, BiometricPrompt, CameraX,
@@ -72,8 +74,10 @@ interface BlePort {
     fun requestPermissions()
     /** Devices advertising the SSHub service UUID, as `SSHub-<TAG>`. Never accept-all. */
     fun scan(): Flow<List<BleDevice>>
-    /** Connects, runs HELLO, and exposes whole frames in both directions until closed. */
-    suspend fun connect(device: BleDevice): BleChannel?
+    /** Why the last scan could not start or stopped (the system's scan error as a sentence), null while fine. */
+    val scanError: StateFlow<BleScanError?>
+    /** Connects, runs HELLO, and exposes whole frames in both directions until closed; the channel says where it is and why it ended. */
+    suspend fun connect(device: BleDevice): ObservedBleChannel?
 }
 enum class BleAvailability { Ready, Off, PermissionNeeded, PermissionDenied, Unsupported }
 data class BleDevice(val address: String, val name: String) { val tag: String get() = name.removePrefix("SSHub-") }

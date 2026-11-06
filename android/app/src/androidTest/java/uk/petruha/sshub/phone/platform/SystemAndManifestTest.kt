@@ -49,6 +49,7 @@ class SystemAndManifestTest {
             "android.permission.BLUETOOTH_SCAN",
             "android.permission.BLUETOOTH_CONNECT",
             "android.permission.USE_BIOMETRIC",
+            "android.permission.HIDE_OVERLAY_WINDOWS",
             target.packageName + ".DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION",
         )
         assertTrue("unexpected: " + (perms - allowed), allowed.containsAll(perms))

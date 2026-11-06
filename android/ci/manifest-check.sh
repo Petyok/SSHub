@@ -14,6 +14,7 @@ allowed="android.permission.CAMERA
 android.permission.BLUETOOTH_SCAN
 android.permission.BLUETOOTH_CONNECT
 android.permission.USE_BIOMETRIC
+android.permission.HIDE_OVERLAY_WINDOWS
 $pkg.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
 
 rc=0

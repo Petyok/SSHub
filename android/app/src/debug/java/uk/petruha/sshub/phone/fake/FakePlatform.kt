@@ -16,6 +16,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flowOf
 import uk.petruha.sshub.phone.core.*
+import uk.petruha.sshub.phone.platform.BleChannelState
+import uk.petruha.sshub.phone.platform.BleScanError
+import uk.petruha.sshub.phone.platform.ObservedBleChannel
 
 /** Deterministic in-memory Platform for Compose tests and the debug app. Every port exposes its state as a MutableStateFlow the test can drive. */
 class FakePlatform(var now: Long = 1_893_452_500L) : Platform {
@@ -70,9 +73,17 @@ class FakeBle : BlePort {
     override val availability: StateFlow<BleAvailability> get() = av.asStateFlow()
     override fun requestPermissions() {}
     override fun scan(): Flow<List<BleDevice>> = found
-    override suspend fun connect(device: BleDevice): BleChannel? = channel
+    val scanErr = MutableStateFlow<BleScanError?>(null)
+    override val scanError: StateFlow<BleScanError?> get() = scanErr.asStateFlow()
+    override suspend fun connect(device: BleDevice): ObservedBleChannel? = channel
 }
-class FakeBleChannel : BleChannel {
+class FakeBleChannel : ObservedBleChannel {
+    val st = MutableStateFlow<BleChannelState>(BleChannelState.Open(185))
+    override val state: StateFlow<BleChannelState> get() = st.asStateFlow()
+    var failure: String? = null
+    var refused = 0
+    override fun sendFailure(): String? = failure.also { failure = null }
+    override fun frameRefused() { refused++ }
     val sent = mutableListOf<ByteArray>()
     val inbox = MutableStateFlow<ByteArray?>(null)
     override val incoming: Flow<ByteArray> = flowOf()

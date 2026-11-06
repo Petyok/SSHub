@@ -856,3 +856,38 @@ fn a_failure_after_the_ops_were_appended_leaves_the_chain_the_lamport_and_the_sh
     assert_eq!(w.state.chain.len(), 1);
     assert_eq!(w.state.snapshots.len(), 1);
 }
+
+#[test]
+fn an_allocation_failure_at_the_floor_takes_the_weak_profile_and_records_it() {
+    use sshub_sync_proto::crypto::set_alloc_limit_kib;
+    let floor = Argon2Profile {
+        mem_kib: 256 * 1024,
+        iters: 4,
+    };
+    let weak = Argon2Profile {
+        mem_kib: 64,
+        iters: 1,
+    };
+    let share = [7u8; 33];
+    let mut rng = ChaCha8Rng::seed_from_u64(3);
+    // a device that cannot allocate the floor's 256 MiB: no abort, the weak profile seals and is recorded as weak
+    set_alloc_limit_kib(Some(1024));
+    let i = snapshot_issue::issue(&share, &[1; 16], 1_000, &mut rng, &[floor, weak]).unwrap();
+    assert!(i.record.weak);
+    assert_eq!((i.record.mem_kib, i.record.iters), (64, 1));
+    // when the floor is allowed, the floor wins and is not weak (a cheap stand-in for the floor here)
+    set_alloc_limit_kib(None);
+    let cheap_floor = Argon2Profile {
+        mem_kib: 128,
+        iters: 1,
+    };
+    let i = snapshot_issue::issue(&share, &[1; 16], 1_000, &mut rng, &[cheap_floor, weak]).unwrap();
+    assert!(!i.record.weak);
+    // when not even the weak profile fits: a clean refusal, never an abort
+    set_alloc_limit_kib(Some(8));
+    match snapshot_issue::issue(&share, &[1; 16], 1_000, &mut rng, &[floor, weak]) {
+        Err(e) => assert!(matches!(e, CoreError::Refused { .. }), "{e}"),
+        Ok(_) => panic!("nothing fits, yet a code was issued"),
+    }
+    set_alloc_limit_kib(None);
+}
