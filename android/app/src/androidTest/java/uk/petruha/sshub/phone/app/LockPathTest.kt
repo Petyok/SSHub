@@ -19,7 +19,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.HomeApi
+import uk.petruha.sshub.phone.core.PendingItem
+import uk.petruha.sshub.phone.core.PendingKind
 import uk.petruha.sshub.phone.core.PhoneCoreApi
+import uk.petruha.sshub.phone.core.Routes
+import uk.petruha.sshub.phone.fake.ReleaseSamples
 import uk.petruha.sshub.phone.core.VaultResult
 import uk.petruha.sshub.phone.core.VaultState
 import uk.petruha.sshub.phone.fake.FakePhoneCore
@@ -33,7 +37,7 @@ private class LockingCore(private val inner: FakePhoneCore = FakePhoneCore()) : 
     private fun <T> unlocked(block: () -> T): T = if (locked) throw CoreException(CoreException.Code.Refused, "This phone is locked.") else block()
     override fun thisPhone(now: Long) = unlocked { inner.thisPhone(now) }
     override fun ring(now: Long) = unlocked { inner.ring(now) }
-    override fun pending(now: Long) = unlocked { inner.pending(now) }
+    override fun pending(now: Long) = unlocked { listOf(PendingItem(PendingKind.Release, "db-staging", "now", Routes.Release + "/" + ReleaseSamples.TOKEN_DBS)) }
 }
 
 /** H1: every lock source ends as a vault that is not Unlocked, the UI follows it, and no `Locked` exception reaches a screen. */
@@ -45,12 +49,12 @@ class LockPathTest {
         val core = LockingCore(); val platform = FakePlatform()
         rule.setContent { AppRoot(core, platform) }
         rule.onNode(hasText("Approvals") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)).performClick()
-        rule.onNodeWithText("Revoke device laptop-old").performScrollTo().performClick()
+        rule.onNodeWithText("db-staging").performScrollTo().performClick()
         rule.onAllNodesWithText("Approve", substring = true, ignoreCase = true).onFirst().assertExists()
         platform.keys.nextResult = VaultResult.Canceled // the Lock screen asks for the system prompt at once; here the user does not answer
         rule.runOnIdle { core.lock(); platform.keys.lock() } // what the screen-off receiver does
         rule.onNodeWithText("Locked because the screen turned off.", substring = true).assertExists()
-        rule.onAllNodesWithText("Revoke device laptop-old").assertCountEquals(0)
+        rule.onAllNodesWithText("db-staging").assertCountEquals(0)
     }
 
     @Test fun a_restored_screen_with_a_locked_vault_lands_on_lock() {
@@ -58,7 +62,7 @@ class LockPathTest {
         platform.keys.nextResult = VaultResult.Canceled
         platform.keys.st.value = VaultState.Locked // the new process: unlocked in no way, but the nav state was restored on Home
         rule.setContent { AppRoot(core, platform) }
-        rule.onNodeWithText("Unlock", substring = true).assertExists()
+        rule.onAllNodesWithText("Unlock", substring = true).onFirst().assertExists()
     }
 
     @Test fun home_reading_a_locked_core_keeps_its_state_and_does_not_throw() {
