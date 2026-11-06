@@ -32,6 +32,12 @@ class MainActivity : FragmentActivity() {
     private val core get() = CoreFactoryImpl.create()
     private val settings get() = FileSettingsStore.shared(applicationContext)
 
+    /** Android lets an app read the clipboard only with window focus: a pending clear is retried here. */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        platform.clipboard.onWindowFocusChanged(hasFocus)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CoreFactoryImpl.appContext = applicationContext

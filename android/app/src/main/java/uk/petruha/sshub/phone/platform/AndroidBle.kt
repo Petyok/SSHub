@@ -177,7 +177,7 @@ class AndroidBle(private val context: Context, private val links: BleLinkFactory
     override val availability: StateFlow<BleAvailability> = _availability.asStateFlow()
     private val _scanError = MutableStateFlow<BleScanError?>(null)
     /** Why the last scan stopped (null while it runs or after a clean stop); reset when a scan starts. */
-    val scanError: StateFlow<BleScanError?> = _scanError.asStateFlow()
+    override val scanError: StateFlow<BleScanError?> = _scanError.asStateFlow()
     private var launcher: ActivityResultLauncher<Array<String>>? = null
     private var denied = false
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

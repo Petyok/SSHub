@@ -86,7 +86,7 @@ class AndroidPlatform internal constructor(
     })
     override val camera = AndroidCamera(app)
     override val ble = AndroidBle(app, bleLinks)
-    override val audio = AndroidAudio()
+    override val audio = AndroidAudio(app)
     override val system = AndroidSystem(app)
 
     /** Call from `onCreate`, before STARTED (the permission launchers must be registered then). Safe to call again for a new Activity. */
