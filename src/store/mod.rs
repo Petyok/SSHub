@@ -99,7 +99,7 @@ impl LauncherStore {
         let conn = Connection::open(path)
             .with_context(|| format!("open launcher db at {}", path.display()))?;
         crate::secure_fs::restrict_file(path);
-        migrate::run_migrations(&conn, path)?;
+        migrate::run_migrations(&conn, path).context("migrate launcher db")?;
 
         let store = Self {
             conn: Mutex::new(conn),
@@ -107,7 +107,9 @@ impl LauncherStore {
             sync_warning: Mutex::new(None),
             warn_on_stderr: std::sync::atomic::AtomicBool::new(false),
         };
-        store.seed_default_identity()?;
+        store
+            .seed_default_identity()
+            .context("seed the default identity")?;
         Ok(store)
     }
 
