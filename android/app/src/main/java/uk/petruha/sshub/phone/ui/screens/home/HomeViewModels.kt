@@ -14,7 +14,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.HomeApi
-import uk.petruha.sshub.phone.core.PhoneCoreApi
+import uk.petruha.sshub.phone.core.IdentityApi
 import uk.petruha.sshub.phone.core.Opened
 import uk.petruha.sshub.phone.core.Platform
 import uk.petruha.sshub.phone.core.CameraPermission
@@ -25,7 +25,7 @@ import uk.petruha.sshub.phone.core.ScanResult
 import uk.petruha.sshub.phone.core.ScanResults
 
 /** The "last sync" age is relative, so it is recomputed once a minute while the screen is alive. Nothing here acts on its own. */
-class HomeViewModel(private val core: PhoneCoreApi, private val platform: Platform) : ViewModel() {
+class HomeViewModel(private val core: HomeApi, private val platform: Platform) : ViewModel() {
     private val _state = MutableStateFlow(read(null))
     /** Null while the core refuses to answer (locked): the shell moves to the Lock screen on the vault state, nothing is drawn. */
     val state: StateFlow<HomeState?> = _state.asStateFlow()
@@ -41,7 +41,10 @@ class HomeViewModel(private val core: PhoneCoreApi, private val platform: Platfo
         val now = platform.clock.nowSeconds()
         return try {
             // `headPending` comes from the status, not from the ring: a restored phone has no ring and is still pending (H5).
-            HomeState(core.thisPhone(now), core.ring(now), core.pending(now), core.status(now).headPending)
+            // The real core and the fake are both IdentityApi; a HomeApi alone falls back to the ring's flag.
+            val ring = core.ring(now)
+            val pending = (core as? IdentityApi)?.status(now)?.headPending ?: ring?.headPending ?: false
+            HomeState(core.thisPhone(now), ring, core.pending(now), pending)
         } catch (e: CoreException) {
             previous
         }
