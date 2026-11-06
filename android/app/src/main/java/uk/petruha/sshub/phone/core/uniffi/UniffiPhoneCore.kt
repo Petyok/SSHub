@@ -575,8 +575,8 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     // ---------------------------------------------------------------------------------------- enrollment
 
-    /** The name rules live in the core and are applied by `enrollDecide(Name)`, which throws `Malformed` with the core's sentence. */
-    override fun nameProblem(name: String): String? = null
+    /** The name rules live in the core: the same call `enrollDecide(Name)` applies, asked before the scan (L10). */
+    override fun nameProblem(name: String): String? = uniffi.sshub_phone_core.checkEnrollName(name)
 
     /** Header of a frame is `SWR1 || version u16 || kind`: only the kind byte is read, the core judges the frame in `openFrame`. */
     override fun enrollTextKind(text: String): EnrollTextKind {

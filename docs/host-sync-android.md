@@ -320,8 +320,8 @@ compromise). Rules (C21):
 2. **Head adoption**, same as the page: ask any terminal for this phone's own newest ops (kind 5 list as QR, BLE, text or paste), `take_chain`
    verifies that every op is by this key, every signature, one chain, continues after the newest (seq + 1, lamport above, epoch
    the highest seen). Only for a key that never signed anything may the user confirm `never_signed`.
-3. **The page must stop signing before the app starts.** The app's restore screen asks the user to open the page's menu, take
-   "Show backup words", then clear the page's site data (the page lists how); after adoption the app shows a one-time warning
+3. **The page must stop signing before the app starts.** The app's restore screen asks "Did you use the companion page in a browser on this phone before?". Only on Yes it shows the steps (open the page's menu, take
+   "Show backup words", then clear the page's site data) and the required "I cleared the site data" box; on No there is no box. After adoption the app shows a one-time warning
    that any signature the old copy makes later will look like a fork. Order that is safe: (a) finish or abandon any release on the page,
    (b) read the words, (c) wipe the page's data, (d) restore in the app, (e) adopt the chain. If (c) is skipped and the page signs after (e), the terminal
    sees two chains with the same `seq`: fork evidence. The terminal cannot tell page from app; nothing in C21 changes that.
@@ -498,3 +498,16 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
 - `decide` finishes once the core is asked (NonCancellable). `ReleaseApi.lastOutcome(token)` returns the last Approve outcome until the phone locks, so a recreated screen can show it again. It holds the reply (QR frames, by-hand words) in memory until lock.
 - Unreadable saved state: unlock keeps the old bytes as `state.bin.lost`, writes nothing, and the shell stays on a stop screen until the user chooses; every core flow refuses meanwhile.
 - Known limit: core calls from view models still run on the main thread; only vault and file IO moved to `Dispatchers.IO`.
+
+## 15. Review round A2: screens and view mapping
+
+- Share release: the host uid (groups of 4, the same text as the short-code and trust lists) and every op row with its `danger` flag are drawn above the four words; the note is "Compare the host and the four words with the terminal.". A request on a restored phone (`head_pending`) shows a stop box up front and Approve names "take the chain first".
+- Release channels: QR on, one sound choice (off, fast or slow, off by default), no clipboard channel; "Copy as text" is always offered; the card says "Shown as: ...", never "Sent"; Approve is disabled with no channel and no by-hand. `ReleaseOptions.by_hand` is passed through.
+- Red: a proposer never met needs its device id typed (`typedId` goes to the core); only this phone's own proof is a state, the rule of three proofs is one sentence. Banners, tick labels, headings and the header stack their trailing text from font scale 1.3 so no word breaks inside a token (the 2.0 tests fail on a broken word).
+- Reshare: holders afterwards (this phone marked), the contributor flags (signed, known, session key) as check lines, whether a storage key is published; Adopt no longer depends on a rotation in this process.
+- Trust: the extension shows the old allowance and the new one for the next 24 hours (`N` to `N + E`), or the extra as a plain row; a declined request offers Back, not "Review again" (the core dropped the token). The review shows this phone's own proof square and says no hash exists.
+- Recovery notice: every op row with its danger flag; the sentence is "A phone recovery was proposed. If you did not start it, cancel it."; the signed state says "Cancellation signed", a revocation says "Revocation signed".
+- Home and menu: the head-pending card and "head seq: unknown, not taken yet" follow the status, with or without a ring; the Security menu lists "Take my chain from a terminal" while it is pending.
+- Enrollment: the refusal kind comes from the core (`RefusalKind`): a mismatch is the stop box (compared values only when present), other stops are titled with the core's sentence, a wrong-order or stray frame is a note. Pairing over Bluetooth is off and warned when two devices show the typed tag. The name rules are the core's `check_enroll_name`, asked before the scan; Scan stays disabled while there is a problem.
+- Export: a dangerous op carries a glyph and the word; hashes are shown in groups of 4. The 24 recovery words and the words paste box use the password input variation.
+- Tests: `RealCoreScreensTest` and `RealCoreNoticesTest` feed the screens from the real core over challenges.json, enroll.json and notices.json; `ScanRoutesTest` registers the graphs and presses every scan button; `RestoredPhoneTest` restarts a restored core; `WordsKeyboardTest` reads the EditorInfo.
