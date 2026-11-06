@@ -86,7 +86,8 @@ import uniffi.sshub_phone_core.createSecret as rsCreateSecret
 class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     constructor(context: Context) : this(SealedStateStore(File(context.applicationContext.noBackupFilesDir, "core")))
 
-    private val core = RsPhoneCore(store.read())
+    /** Replaced (never sealed) after a failed save, see `persist`. */
+    @Volatile private var core = RsPhoneCore(store.read())
 
     /**
      * Every call into the Rust core runs on this ONE thread, in order. The core holds its Mutex for a whole short-code release (about
@@ -186,7 +187,11 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
             store.write(blob)
         } catch (e: IOException) {
             reset()
-            runCatching { core.lock() }
+            // Not `core.lock()`: that seals the live state, which already holds the op this write failed to keep, and the next unlock would
+            // bring it back. Drop the core without sealing and start over from the file, which still has the last state that was saved.
+            val old = core
+            core = RsPhoneCore(store.read())
+            runCatching { old.destroy() }
             vault?.lock()
             throw CoreException(CoreException.Code.Internal, "The phone state could not be saved; the request was discarded.")
         }
@@ -318,12 +323,13 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         reset()
         if (info.stateLost) {
             // Keep the unreadable bytes, write nothing else until the user confirms (the stop screen).
-            store.keepAsLost()
+            if (!lostPending) store.keepAsLost()
             lostPending = true
-        } else {
-            lostPending = false
+        } else if (!lostPending) {
             persist()
         }
+        // lostPending survives lock and unlock: after a lock the core opens its own sealed (empty) state and no longer says stateLost,
+        // but the file on disk is still the unreadable one. Only `confirmStateLost` clears the stop.
         toStatus(guard { core.status(now) })
     }
 

@@ -130,7 +130,8 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
             }
             // D17: with the signer mismatch set every flow except About and Lock stays closed, also after a restart.
             LaunchedEffect(mismatch, route) {
-                if (route == null || !mismatch) return@LaunchedEffect
+                // The stop screen is not in the safe list but must not be fought with: it ends first, then the block applies.
+                if (route == null || !mismatch || core.stateLost()) return@LaunchedEffect
                 if (route.substringBefore("/") !in MISMATCH_SAFE_ROUTES) nav.navigate(Routes.About) { popUpTo(nav.graph.id) { inclusive = true } }
             }
             LaunchedEffect(vault, route) {
