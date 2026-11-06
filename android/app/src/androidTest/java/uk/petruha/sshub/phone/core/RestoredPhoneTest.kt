@@ -47,9 +47,12 @@ class RestoredPhoneTest {
     }
 
     private fun homeState(core: UniffiPhoneCore): HomeState {
-        lateinit var s: HomeState
-        InstrumentationRegistry.getInstrumentation().runOnMainSync { s = HomeViewModel(core, FakePlatform()).state.value!! }
-        return s
+        lateinit var vm: HomeViewModel
+        InstrumentationRegistry.getInstrumentation().runOnMainSync { vm = HomeViewModel(core, FakePlatform()) }
+        // The core answers on its own thread: wait for the state instead of reading it at once.
+        val end = System.currentTimeMillis() + 10_000
+        while (vm.state.value == null && System.currentTimeMillis() < end) Thread.sleep(25)
+        return vm.state.value!!
     }
 
     @Test fun restored_state_is_head_pending_without_a_ring_and_survives_a_restart() {
