@@ -527,7 +527,11 @@ fn the_terminal_shows_the_host_id_and_words_the_phone_describes_for_the_same_cha
         let name = ch["name"].as_str().unwrap();
         let w = ChallengeWire::decode(&unhex(&ch["frame_hex"])).unwrap();
         let shown = challenge_shown(&w).unwrap();
-        assert_eq!(shown.words, ch["binding_words"].as_str().unwrap(), "{name}: the four words");
+        assert_eq!(
+            shown.words,
+            ch["binding_words"].as_str().unwrap(),
+            "{name}: the four words"
+        );
         // The phone draws the uid in groups of 4, uppercase, separated by single spaces (the app's groupedUid).
         assert_eq!(
             shown.host_id.to_lowercase().replace(' ', ""),
@@ -536,12 +540,16 @@ fn the_terminal_shows_the_host_id_and_words_the_phone_describes_for_the_same_cha
         );
         assert!(
             shown.host_id.split(' ').all(|g| g.len() == 4
-                && g.chars().all(|c| c.is_ascii_digit() || ('A'..='F').contains(&c))),
+                && g.chars()
+                    .all(|c| c.is_ascii_digit() || ('A'..='F').contains(&c))),
             "{name}: {}",
             shown.host_id
         );
         if name == "good" {
-            assert_eq!(shown.host_uid, host_hex, "the credential id of the committed challenge");
+            assert_eq!(
+                shown.host_uid, host_hex,
+                "the credential id of the committed challenge"
+            );
             let expected: Vec<String> = host_hex
                 .as_bytes()
                 .chunks(4)
@@ -551,7 +559,10 @@ fn the_terminal_shows_the_host_id_and_words_the_phone_describes_for_the_same_cha
             compared += 1;
         }
     }
-    assert_eq!(compared, 1, "the committed challenges include the good case");
+    assert_eq!(
+        compared, 1,
+        "the committed challenges include the good case"
+    );
 }
 
 #[test]

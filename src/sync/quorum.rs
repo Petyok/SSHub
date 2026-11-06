@@ -16,9 +16,9 @@ use x25519_dalek::{PublicKey as XPublic, StaticSecret as XSecret};
 use zeroize::Zeroizing;
 
 use super::crypto::{
-    dek_open, derive_key, hybrid_unwrap, hybrid_wrap, paper_derive, vault_recipient_with,
-    sas_words, Argon2Profile, DeviceIdentity, DevicePublic, PaperDomain, Share, ALG_CURRENT,
-    ARGON2_MASTER,
+    dek_open, derive_key, hybrid_unwrap, hybrid_wrap, paper_derive, sas_words,
+    vault_recipient_with, Argon2Profile, DeviceIdentity, DevicePublic, PaperDomain, Share,
+    ALG_CURRENT, ARGON2_MASTER,
 };
 use super::oplog::{
     CredMode, DeviceId, DeviceRole, DeviceStatus, HostUid, Op, OpBody, WrappedShare,
