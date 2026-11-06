@@ -1,0 +1,948 @@
+//! The uniffi surface: one stateful object, no global state. Kotlin passes bytes and `now` in; this returns views and
+//! bytes. Every flow is `open_frame` (a view plus a token) then `decide(token, ...)` (the bytes to show or send).
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use rand_core::{OsRng, RngCore};
+use sshub_sync_proto::wire::{
+    PhoneOpsWire, SignedOpBytes, KIND_CERT_EXTEND_REQUEST, KIND_CERT_REQUEST, KIND_CHALLENGE,
+    KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_OPS,
+    KIND_RECOVERY_NOTICE, WIRE_MAGIC,
+};
+use zeroize::Zeroizing;
+
+use crate::ble::BleSession;
+use crate::cert::{self, PendingCert};
+use crate::chain;
+use crate::channels::{self, Scanner};
+use crate::ctx::Ctx;
+use crate::enroll::EnrollFlow;
+use crate::error::{CoreError, Result};
+use crate::identity::{secret_from_words, PhoneIdentity};
+use crate::notices::{self, PendingNotice};
+use crate::release::{self, PendingRelease};
+use crate::reshare::{self, PendingReshare};
+use crate::state::{PhoneState, COURIER_TAIL};
+use crate::text::{from_base64, safe_text, to_base64};
+use crate::views::*;
+
+enum Pending {
+    Release(Box<PendingRelease>),
+    Notice(PendingNotice),
+    Cert(PendingCert),
+    Reshare(PendingReshare),
+    Chain,
+}
+
+struct Unlocked {
+    id: PhoneIdentity,
+    state: PhoneState,
+    state_lost: bool,
+}
+
+struct Inner {
+    /// The sealed state as stored; opened at `unlock` with the secret.
+    sealed: Option<Vec<u8>>,
+    /// `restore_from_words` ran: the next `unlock` starts from a restored (head pending) state.
+    restored: bool,
+    unlocked: Option<Unlocked>,
+    rng: Box<dyn RngCore + Send>,
+    next_token: u64,
+    pending: HashMap<u64, Pending>,
+    enroll: Option<EnrollFlow>,
+    scanner: Scanner,
+}
+
+#[derive(uniffi::Object)]
+pub struct PhoneCore {
+    inner: Mutex<Inner>,
+}
+
+/// 32 CSPRNG bytes for a new phone: Kotlin wraps them with the Keystore key at once.
+#[uniffi::export]
+pub fn create_secret() -> Vec<u8> {
+    let mut s = vec![0u8; 32];
+    OsRng.fill_bytes(&mut s);
+    s
+}
+
+/// Whether `word` (any case) is a word of the BIP39 list the 24 backup words and the manual entry use: input
+/// validation while the person types (the four enrollment SAS words come from the same list). Not a check of the phrase (the checksum is checked by `restore_from_words`).
+#[uniffi::export]
+pub fn is_word(word: String) -> bool {
+    sshub_sync_proto::crypto::is_bip39_word(&word)
+}
+
+/// An SSHub frame: the `SWR1` magic and a kind from 1 to 10 (what `PhoneCore::open_frame` can look at).
+fn is_sshub_frame(b: &[u8]) -> bool {
+    kind_of(b).is_some_and(|k| (1..=10).contains(&k))
+}
+fn kind_of(frame: &[u8]) -> Option<u8> {
+    (frame.len() >= 7 && frame[..4] == WIRE_MAGIC).then(|| frame[6])
+}
+
+fn refused(reason: impl Into<String>) -> Opened {
+    Opened::Refused {
+        view: RefusalView {
+            reason: reason.into(),
+            checks: Vec::new(),
+        },
+    }
+}
+
+fn info(u: &Unlocked, now: i64) -> UnlockInfo {
+    UnlockInfo {
+        device_id: u.id.device_id().to_string(),
+        enrolled: u.state.enrolled.is_some(),
+        head_pending: u.state.head_pending,
+        state_lost: u.state_lost,
+        head_seq: u.state.head().map(|e| e.seq),
+        wrap_epoch: u.state.wrap_epoch,
+        live_short_codes: u
+            .state
+            .snapshots
+            .keys()
+            .filter(|k| u.state.live_snapshot(k, now).is_some())
+            .count() as u32,
+        device_name: u.state.enrolled.as_ref().map(|e| safe_text(&e.name)),
+        ring_epoch: u.state.epoch,
+        ring: u
+            .state
+            .ring
+            .iter()
+            .map(|(id, d)| RingEntry {
+                device_id: id.clone(),
+                name: d.name.clone(),
+            })
+            .collect(),
+    }
+}
+
+impl PhoneCore {
+    fn lock_inner(&self) -> MutexGuard<'_, Inner> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn build(sealed: Option<Vec<u8>>, rng: Box<dyn RngCore + Send>) -> Arc<Self> {
+        Arc::new(Self {
+            inner: Mutex::new(Inner {
+                sealed,
+                restored: false,
+                unlocked: None,
+                rng,
+                next_token: 1,
+                pending: HashMap::new(),
+                enroll: None,
+                scanner: Scanner::new(),
+            }),
+        })
+    }
+
+    /// Tests inject a seeded RNG. Not part of the exported surface.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_rng(sealed_state: Option<Vec<u8>>, rng: Box<dyn RngCore + Send>) -> Arc<Self> {
+        Self::build(sealed_state, rng)
+    }
+}
+
+impl Inner {
+    fn token(&mut self) -> u64 {
+        let t = self.next_token;
+        self.next_token += 1;
+        t
+    }
+
+    /// Splits the borrow: the unlocked identity and state, the RNG and the clock as the flows' context.
+    fn ctx(&mut self, now: i64) -> Result<Ctx<'_>> {
+        let u = self.unlocked.as_mut().ok_or(CoreError::Locked)?;
+        Ok(Ctx {
+            id: &mut u.id,
+            state: &mut u.state,
+            rng: &mut *self.rng,
+            now,
+        })
+    }
+
+    fn open_chain(&mut self, ops: &[SignedOpBytes]) -> Result<Opened> {
+        let t = self.token();
+        let u = self.unlocked.as_mut().ok_or(CoreError::Locked)?;
+        if !u.state.head_pending {
+            return Ok(refused("This phone already knows its own chain; a list of its own ops needs nothing from it."));
+        }
+        let r = match chain::adopt_own_chain(&mut u.state, &u.id, ops) {
+            Ok(r) => r,
+            Err(e) => return Ok(refused(e.reason().to_string())),
+        };
+        if r.agreed {
+            self.pending.insert(t, Pending::Chain);
+        }
+        Ok(Opened::Chain {
+            view: ChainAdopted {
+                token: t,
+                agreed: r.agreed,
+                head_seq: r.head_seq,
+                newest_at: r.newest_at,
+                ops: r.ops,
+                previous_seq: r.previous_seq,
+                summary: format!(
+                    "Newest op in this list: seq {}, signed {}Z ({} op(s) read).",
+                    r.head_seq,
+                    crate::text::iso(r.newest_at).chars().take(16).collect::<String>(),
+                    r.ops
+                ),
+                note: match (r.agreed, r.previous_seq) {
+                    (true, _) => format!("This phone will continue after seq {}. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.", r.head_seq),
+                    (false, Some(p)) => format!("The earlier list ended at seq {p}, so one of the two is behind. Take a list from another terminal, or again after it synced."),
+                    (false, None) => "Take a second list, from another terminal or from the same one later, before this chain head is trusted.".to_string(),
+                },
+            },
+        })
+    }
+
+    fn open_frame(&mut self, frame: &[u8], now: i64) -> Result<Opened> {
+        if self.unlocked.is_none() {
+            return Err(CoreError::Locked);
+        }
+        let Some(kind) = kind_of(frame) else {
+            return Ok(refused(
+                "Not a SSHub document: it does not start with the frame magic.",
+            ));
+        };
+        if frame.len() > sshub_sync_proto::limits::MAX_FRAME_BYTES {
+            return Ok(refused("This document is larger than any SSHub frame."));
+        }
+        self.pending.clear();
+        let t = self.token();
+        match kind {
+            KIND_CHALLENGE => {
+                let mut ctx = self.ctx(now)?;
+                match release::open_challenge(frame, &mut ctx, t) {
+                    Ok((view, p)) => {
+                        self.pending.insert(t, Pending::Release(Box::new(p)));
+                        Ok(Opened::ShareRequest { view })
+                    }
+                    Err(view) => Ok(Opened::Refused { view }),
+                }
+            }
+            KIND_RECOVERY_NOTICE => {
+                let ctx = self.ctx(now)?;
+                let (o, p) = notices::open_notice(frame, &ctx, t);
+                if let Some(p) = p {
+                    self.pending.insert(t, Pending::Notice(p));
+                }
+                Ok(o)
+            }
+            KIND_CERT_REQUEST | KIND_CERT_EXTEND_REQUEST => {
+                let ctx = self.ctx(now)?;
+                let (o, p) = if kind == KIND_CERT_REQUEST {
+                    cert::open_cert_request(frame, &ctx, t)
+                } else {
+                    cert::open_cert_extend(frame, &ctx, t)
+                };
+                if let Some(p) = p {
+                    self.pending.insert(t, Pending::Cert(p));
+                }
+                Ok(o)
+            }
+            KIND_PHONE_OPS => {
+                let ops = match PhoneOpsWire::decode(frame) {
+                    Ok(w) => w.ops,
+                    Err(e) => return Ok(refused(format!("Not a list of ops: {e:#}"))),
+                };
+                let own = self
+                    .unlocked
+                    .as_ref()
+                    .map(|u| u.id.device_id().to_string())
+                    .unwrap_or_default();
+                if ops
+                    .iter()
+                    .all(|(c, _)| op_author(c).as_deref() == Some(own.as_str()))
+                    && !ops.is_empty()
+                {
+                    return self.open_chain(&ops);
+                }
+                let mut ctx = self.ctx(now)?;
+                let (o, p) = reshare::open_reshare(ops, &mut ctx, t);
+                if let Some(p) = p {
+                    self.pending.insert(t, Pending::Reshare(p));
+                }
+                Ok(o)
+            }
+            KIND_ENROLL_COMMIT | KIND_ENROLL_REVEAL | KIND_ENROLL_CONFIRM => {
+                let flow = self.enroll.get_or_insert_with(EnrollFlow::new);
+                let u = self.unlocked.as_mut().ok_or(CoreError::Locked)?;
+                let mut ctx = Ctx {
+                    id: &mut u.id,
+                    state: &mut u.state,
+                    rng: &mut *self.rng,
+                    now,
+                };
+                let o = flow.on_frame(frame, &mut ctx, t);
+                if matches!(o, Opened::Refused { .. } | Opened::Enrolled { .. }) {
+                    self.enroll = None;
+                }
+                Ok(o)
+            }
+            other => Ok(refused(format!(
+                "This document (kind {other}) is not something a phone answers."
+            ))),
+        }
+    }
+}
+
+/// The device id an op names as its author, read from the received bytes without trusting anything else.
+fn op_author(canonical: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(canonical).ok()?;
+    v.get("device_id")?.as_str().map(str::to_string)
+}
+
+fn none_outgoing(note: &str) -> Outgoing {
+    Outgoing {
+        kind: 0,
+        frame: Vec::new(),
+        text: String::new(),
+        qr: Vec::new(),
+        qr_too_big: false,
+        audio_frame: None,
+        manual: None,
+        short_code: None,
+        note: note.to_string(),
+    }
+}
+
+#[uniffi::export]
+impl PhoneCore {
+    /// `sealed_state` is the blob `sealed_state()` returned last time, or None on first start.
+    #[uniffi::constructor]
+    pub fn new(sealed_state: Option<Vec<u8>>) -> Arc<Self> {
+        Self::build(sealed_state, Box::new(OsRng))
+    }
+
+    /// Opens the stored state with the secret and derives the identity. A state that does not open (damaged, or
+    /// sealed under another key) starts as a restored phone: it must take its chain from a terminal.
+    pub fn unlock(&self, secret: Vec<u8>) -> Result<UnlockInfo> {
+        let s: Zeroizing<[u8; 32]> = Zeroizing::new(
+            secret
+                .try_into()
+                .map_err(|_| CoreError::bad("the phone secret must be 32 bytes"))?,
+        );
+        let mut g = self.lock_inner();
+        let (state, lost) = if g.restored {
+            (PhoneState::restored(), false)
+        } else {
+            match g.sealed.as_deref() {
+                None => (PhoneState::default(), false),
+                Some(b) => match PhoneState::open(b, &s) {
+                    Ok(st) => (st, false),
+                    Err(_) => (PhoneState::restored(), true),
+                },
+            }
+        };
+        let id = PhoneIdentity::new(&s, state.wrap_epoch)?;
+        g.restored = false;
+        g.sealed = None;
+        g.pending.clear();
+        g.enroll = None;
+        g.unlocked = Some(Unlocked {
+            id,
+            state,
+            state_lost: lost,
+        });
+        Ok(info(g.unlocked.as_ref().unwrap(), 0))
+    }
+
+    /// Zeroizes the secret and every key.
+    pub fn lock(&self) {
+        let mut g = self.lock_inner();
+        g.unlocked = None;
+        g.pending.clear();
+        g.enroll = None;
+    }
+
+    pub fn status(&self, now: i64) -> Result<UnlockInfo> {
+        let g = self.lock_inner();
+        Ok(info(g.unlocked.as_ref().ok_or(CoreError::Locked)?, now))
+    }
+
+    pub fn backup_words(&self) -> Result<String> {
+        let g = self.lock_inner();
+        Ok(g.unlocked.as_ref().ok_or(CoreError::Locked)?.id.words())
+    }
+
+    /// The secret of 24 typed words; the next `unlock` with it starts as a restored phone (no signing until the chain
+    /// head is taken from a terminal). Kotlin wraps the returned secret like a fresh one.
+    pub fn restore_from_words(&self, words: String) -> Result<Vec<u8>> {
+        let s = secret_from_words(&words)?;
+        let mut g = self.lock_inner();
+        g.restored = true;
+        g.unlocked = None;
+        Ok(s.to_vec())
+    }
+
+    /// A frame from any channel. Kinds 1 (share request), 3 (Red notice, recovery), 5 (own chain list or a reshare),
+    /// 6 to 8 (enrollment), 9 and 10 (trust session).
+    pub fn open_frame(&self, frame: Vec<u8>, now: i64) -> Result<Opened> {
+        self.lock_inner().open_frame(&frame, now)
+    }
+
+    pub fn decide(&self, token: u64, decision: Decision, now: i64) -> Result<Outgoing> {
+        let mut guard = self.lock_inner();
+        let g = &mut *guard;
+        // enrollment decisions belong to the flow, not to the pending map
+        if let Decision::EnrollName { .. } | Decision::EnrollSas { .. } = decision {
+            let u = g.unlocked.as_mut().ok_or(CoreError::Locked)?;
+            let mut flow = g
+                .enroll
+                .take()
+                .ok_or_else(|| CoreError::bad("no enrollment is running"))?;
+            let mut ctx = Ctx {
+                id: &mut u.id,
+                state: &mut u.state,
+                rng: &mut *g.rng,
+                now,
+            };
+            let r = flow.decide(&decision, &mut ctx);
+            let ended = matches!(&decision, Decision::EnrollSas { matches: false });
+            // a refusal for what was typed leaves the enrollment where it was
+            if !ended && (r.is_ok() || matches!(r, Err(CoreError::BadInput { .. }))) {
+                g.enroll = Some(flow);
+            }
+            return r;
+        }
+        let p = g
+            .pending
+            .remove(&token)
+            .ok_or_else(|| CoreError::bad("this request is no longer pending"))?;
+        // an explicit cancel consumes the request
+        if matches!(decision, Decision::Refuse) {
+            return Ok(none_outgoing("Refused."));
+        }
+        // A decision that is refused for what the person typed (the device id) leaves the request open: only a completed
+        // decision, a refusal that ends the request (expired, blocked) or an explicit cancel consumes the token.
+        let keep = match &p {
+            Pending::Release(r) => Some(Pending::Release(r.clone())),
+            Pending::Notice(n) => Some(Pending::Notice(n.clone())),
+            Pending::Cert(c) => Some(Pending::Cert(c.clone())),
+            _ => None,
+        };
+        let mut ctx = g.ctx(now)?;
+        let out = match (p, decision) {
+            (Pending::Release(p), Decision::Release { options }) => {
+                release::approve(*p, &options, &mut ctx)
+            }
+            (Pending::Notice(p), Decision::Approve { typed_id }) => {
+                notices::approve_notice(p, typed_id.as_deref(), &mut ctx)
+            }
+            (Pending::Cert(p), Decision::Approve { typed_id }) => {
+                cert::approve_cert(p, typed_id.as_deref(), &mut ctx)
+            }
+            (Pending::Reshare(p), Decision::Approve { .. }) => {
+                reshare::publish_reshare(p, &mut ctx)
+            }
+            (Pending::Chain, Decision::Approve { .. }) => {
+                let (seq, n) = chain::accept_head(ctx.state)?;
+                Ok(none_outgoing(&format!(
+                    "Chain taken: continuing after seq {seq} ({n} op(s) read)."
+                )))
+            }
+            _ => Err(CoreError::bad("that decision does not fit this request")),
+        };
+        if matches!(out, Err(CoreError::BadInput { .. })) {
+            if let Some(k) = keep {
+                g.pending.insert(token, k);
+            }
+        }
+        out
+    }
+
+    /// The head adoption step 1 for a list given directly (the same as `open_frame` on a kind 5 list of own ops).
+    pub fn take_chain(&self, ops_frame: Vec<u8>) -> Result<ChainAdopted> {
+        let mut g = self.lock_inner();
+        let ops = PhoneOpsWire::decode(&ops_frame)
+            .map_err(|e| CoreError::bad(format!("Not a list of ops: {e:#}")))?
+            .ops;
+        match g.open_chain(&ops)? {
+            Opened::Chain { view } => Ok(view),
+            Opened::Refused { view } => Err(CoreError::bad(view.reason)),
+            _ => Err(CoreError::internal("unexpected view")),
+        }
+    }
+
+    /// "This key never signed anything": only with this phone's device id typed.
+    pub fn never_signed(&self, typed_id: String) -> Result<()> {
+        let mut g = self.lock_inner();
+        let u = g.unlocked.as_mut().ok_or(CoreError::Locked)?;
+        chain::confirm_no_chain(&mut u.state, &u.id, &typed_id)
+    }
+
+    /// The newest ops of this phone's chain as a kind 5 frame in base64, for a terminal without a camera.
+    pub fn export_ops_text(&self) -> Result<String> {
+        let g = self.lock_inner();
+        let u = g.unlocked.as_ref().ok_or(CoreError::Locked)?;
+        if u.state.chain.is_empty() {
+            return Err(CoreError::bad("This phone has not written anything yet."));
+        }
+        Ok(to_base64(
+            &PhoneOpsWire {
+                ops: chain::courier_ops(&u.state, COURIER_TAIL),
+            }
+            .encode(),
+        ))
+    }
+
+    /// The newest ops of this phone's chain (what `export_ops_text` carries), one `OpView` per op in chain order,
+    /// rendered from the signed bytes with the same rows and danger marks as an approval screen.
+    pub fn export_ops_view(&self) -> Result<Vec<OpView>> {
+        let g = self.lock_inner();
+        let u = g.unlocked.as_ref().ok_or(CoreError::Locked)?;
+        let mut aliases = u.state.aliases.clone();
+        for (id, d) in &u.state.ring {
+            aliases.insert(id.clone(), d.name.clone());
+        }
+        chain::courier_ops(&u.state, COURIER_TAIL)
+            .iter()
+            .map(|(canonical, sig)| {
+                let op = sshub_sync_proto::oplog::canonical::decode_op(canonical, *sig).map_err(
+                    |e| {
+                        CoreError::internal(format!(
+                            "an op of this phone's own chain does not parse: {e:#}"
+                        ))
+                    },
+                )?;
+                Ok(crate::describe::describe_op(
+                    &op, canonical, &aliases, None, 0,
+                ))
+            })
+            .collect()
+    }
+
+    /// The state encrypted under the secret. Call after every mutation; Kotlin writes it atomically.
+    pub fn sealed_state(&self) -> Result<Vec<u8>> {
+        let mut g = self.lock_inner();
+        let g = &mut *g;
+        let u = g.unlocked.as_mut().ok_or(CoreError::Locked)?;
+        Ok(u.state.seal(u.id.secret(), &mut *g.rng))
+    }
+
+    pub fn rotate_wrap_keys(&self, now: i64) -> Result<Outgoing> {
+        let mut g = self.lock_inner();
+        let mut ctx = g.ctx(now)?;
+        reshare::rotate_wrap_keys(&mut ctx)
+    }
+
+    pub fn short_codes(&self, now: i64) -> Result<Vec<ShortCodeEntry>> {
+        let g = self.lock_inner();
+        let u = g.unlocked.as_ref().ok_or(CoreError::Locked)?;
+        Ok(u.state
+            .snapshots
+            .iter()
+            .map(|(host, s)| ShortCodeEntry {
+                host_uid: host.clone(),
+                issued_at: s.issued_at,
+                expires_at: s.expires_at,
+                live: u.state.live_snapshot(host, now).is_some(),
+                argon_mem_mib: s.mem_kib / 1024,
+                argon_iters: s.iters,
+                weak: s.weak,
+            })
+            .collect())
+    }
+
+    /// The person declares the old code dead (never delivered, or the credential was reissued).
+    pub fn declare_short_code_dead(&self, host_uid: String) -> Result<()> {
+        let mut g = self.lock_inner();
+        g.unlocked
+            .as_mut()
+            .ok_or(CoreError::Locked)?
+            .state
+            .invalidate_snapshot(&host_uid);
+        Ok(())
+    }
+
+    pub fn issued_certs(&self, now: i64) -> Result<Vec<IssuedCertView>> {
+        let g = self.lock_inner();
+        let u = g.unlocked.as_ref().ok_or(CoreError::Locked)?;
+        let mut aliases = u.state.aliases.clone();
+        for (id, d) in &u.state.ring {
+            aliases.insert(id.clone(), d.name.clone());
+        }
+        Ok(cert::issued_certs(&u.state, &aliases, now))
+    }
+
+    pub fn revoke_cert(&self, cert_id: String, now: i64) -> Result<Outgoing> {
+        let mut g = self.lock_inner();
+        let mut ctx = g.ctx(now)?;
+        cert::revoke_cert(&cert_id, &mut ctx)
+    }
+
+    // ---------------------------------------------------------------- channels
+
+    /// One lap of a frame as QR matrices (fountain frames of the page's size, with parity).
+    pub fn qr_frames(&self, frame: Vec<u8>, parity_percent: u32) -> Result<Vec<QrFrame>> {
+        channels::qr_frames(&frame, parity_percent)
+    }
+
+    /// A camera frame (luma plane): decodes QR codes and feeds the fountain decoder.
+    pub fn scan_gray(&self, w: u32, h: u32, luma: Vec<u8>) -> Vec<ScanEvent> {
+        let mut g = self.lock_inner();
+        let events = g.scanner.push_gray(w, h, &luma);
+        let mut out = Vec::with_capacity(events.len());
+        for e in events {
+            match e {
+                // like the page's `accept`: a document that is not an SSHub frame is ignored and the collector starts over
+                ScanEvent::Document { bytes } if !is_sshub_frame(&bytes) => {
+                    g.scanner.reset();
+                    out.push(ScanEvent::Foreign {
+                        len: bytes.len() as u32,
+                    });
+                }
+                other => out.push(other),
+            }
+        }
+        out
+    }
+
+    /// Forgets a half-read document (the person left the scan screen).
+    pub fn scan_reset(&self) {
+        self.lock_inner().scanner.reset();
+    }
+
+    pub fn audio_burst(&self, frame: Vec<u8>, profile: AudioProfile) -> Result<Vec<i16>> {
+        channels::audio_burst(&frame, profile)
+    }
+
+    pub fn ble_new(&self, mtu: u32) -> Arc<BleSession> {
+        BleSession::new(mtu)
+    }
+
+    /// Base64 text of pasted/shared frames (clipboard): the frame, or None when it is not valid base64.
+    pub fn frame_from_text(&self, text: String) -> Option<Vec<u8>> {
+        from_base64(&text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand_chacha::{rand_core::SeedableRng, ChaCha8Rng};
+
+    fn core() -> Arc<PhoneCore> {
+        PhoneCore::with_rng(None, Box::new(ChaCha8Rng::seed_from_u64(5)))
+    }
+
+    fn fixture() -> serde_json::Value {
+        let p = format!(
+            "{}/../../assets/companion/test/fixtures/challenges.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
+    }
+
+    fn frame_of(f: &serde_json::Value, name: &str) -> Vec<u8> {
+        let c = f["challenges"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap();
+        hex::decode(c["frame_hex"].as_str().unwrap()).unwrap()
+    }
+
+    fn release(typed: Option<&str>) -> Decision {
+        Decision::Release {
+            options: ReleaseOptions {
+                typed_id: typed.map(str::to_string),
+                qr: false,
+                clipboard: false,
+                sound: false,
+                audio_profile: AudioProfile::Fast,
+                issue_short_code: false,
+            },
+        }
+    }
+
+    #[test]
+    fn a_decision_refused_for_the_typed_id_does_not_consume_the_token() {
+        let f = fixture();
+        let now = f["now"].as_i64().unwrap();
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!("not a share request");
+        };
+        let want = view
+            .type_to_approve
+            .clone()
+            .expect("an unmet requester needs its id typed");
+        for typed in [None, Some("0000000000000000"), Some("")] {
+            let e = c.decide(view.token, release(typed), now + 1).unwrap_err();
+            assert!(matches!(e, CoreError::BadInput { .. }), "{typed:?}");
+        }
+        // the same request is still open and the right id completes it
+        let out = c.decide(view.token, release(Some(&want)), now + 1).unwrap();
+        assert_eq!(out.kind, 2);
+        // a completed decision consumed the token
+        assert!(c.decide(view.token, release(Some(&want)), now + 1).is_err());
+    }
+
+    #[test]
+    fn an_explicit_cancel_and_an_expired_request_consume_the_token() {
+        let f = fixture();
+        let now = f["now"].as_i64().unwrap();
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        c.decide(view.token, Decision::Refuse, now).unwrap();
+        assert!(
+            c.decide(view.token, release(view.type_to_approve.as_deref()), now)
+                .is_err(),
+            "cancelled"
+        );
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        let late = view.expires_at;
+        let e = c
+            .decide(view.token, release(view.type_to_approve.as_deref()), late)
+            .unwrap_err();
+        assert!(
+            matches!(e, CoreError::Refused { .. }),
+            "an expired request is refused for good: {e}"
+        );
+        assert!(c
+            .decide(view.token, release(view.type_to_approve.as_deref()), now)
+            .is_err());
+    }
+
+    #[test]
+    fn unlock_info_carries_the_device_name_and_the_epoch() {
+        let c = core();
+        let i = c.unlock(vec![0x42; 32]).unwrap();
+        assert_eq!((i.device_name.clone(), i.ring_epoch), (None, 0));
+        {
+            let mut g = c.lock_inner();
+            let u = g.unlocked.as_mut().unwrap();
+            u.state.enrolled = Some(crate::state::Enrolled {
+                device_id: "aaaaaaaaaaaaaaaa".into(),
+                name: "my\u{202e}phone".into(),
+                at: 1,
+            });
+            u.state.epoch = 7;
+        }
+        let i = c.status(2).unwrap();
+        assert_eq!(
+            i.device_name.as_deref(),
+            Some("my\\u202ephone"),
+            "escaped like every name from a screen"
+        );
+        assert_eq!(i.ring_epoch, 7);
+    }
+
+    fn gray(f: &QrFrame, scale: usize) -> (u32, u32, Vec<u8>) {
+        let n = f.size as usize;
+        let side = (n + 8) * scale;
+        let mut px = vec![255u8; side * side];
+        for r in 0..n {
+            for c in 0..n {
+                if f.modules[r * n + c] == 1 {
+                    for y in 0..scale {
+                        for x in 0..scale {
+                            px[((r + 4) * scale + y) * side + (c + 4) * scale + x] = 0;
+                        }
+                    }
+                }
+            }
+        }
+        (side as u32, side as u32, px)
+    }
+
+    fn scan_all(c: &PhoneCore, doc: &[u8]) -> Vec<ScanEvent> {
+        let mut seen = Vec::new();
+        let frames = channels::qr_frames(doc, 25).unwrap();
+        for f in frames.iter().chain(frames.iter()) {
+            let (w, h, px) = gray(f, 6);
+            seen.extend(c.scan_gray(w, h, px));
+        }
+        seen
+    }
+
+    #[test]
+    fn a_qr_that_is_not_an_sshub_frame_is_reported_as_foreign_and_a_real_frame_is_a_document() {
+        let c = core();
+        let alien: Vec<u8> = (0..300u32).map(|i| (i * 7) as u8).collect();
+        let ev = scan_all(&c, &alien);
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, ScanEvent::Foreign { len: 300 })),
+            "{ev:?}"
+        );
+        assert!(!ev.iter().any(|e| matches!(e, ScanEvent::Document { .. })));
+        // the collector started over: a real frame (magic, version, kind 1) is handed on as a document
+        let mut real = vec![0x53, 0x57, 0x52, 0x31, 0, 1, 1];
+        real.extend((0..200u32).map(|i| (i * 3) as u8));
+        let ev = scan_all(&c, &real);
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, ScanEvent::Document { bytes } if *bytes == real)),
+            "{ev:?}"
+        );
+        assert!(is_sshub_frame(&real) && !is_sshub_frame(&alien));
+        let mut bad_kind = real.clone();
+        bad_kind[6] = 11;
+        assert!(!is_sshub_frame(&bad_kind));
+    }
+
+    #[test]
+    fn the_chain_view_says_what_the_page_says() {
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.lock_inner().unlocked.as_mut().unwrap().state = PhoneState::restored();
+        let id = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
+        let mut live = PhoneState::default();
+        for t in 0..3 {
+            chain::head_attest(&mut live, &id, 1_893_452_400 + t, None).unwrap();
+        }
+        let wire = |n: usize| {
+            PhoneOpsWire {
+                ops: chain::courier_ops(&live, 8).into_iter().take(n).collect(),
+            }
+            .encode()
+        };
+        let first = c.take_chain(wire(2)).unwrap();
+        assert!(!first.agreed);
+        assert_eq!(
+            first.summary,
+            "Newest op in this list: seq 2, signed 2029-12-31T23:00Z (2 op(s) read)."
+        );
+        assert_eq!(first.note, "Take a second list, from another terminal or from the same one later, before this chain head is trusted.");
+        let second = c.take_chain(wire(3)).unwrap();
+        assert!(!second.agreed);
+        assert!(
+            second
+                .note
+                .starts_with("The earlier list ended at seq 2, so one of the two is behind."),
+            "{}",
+            second.note
+        );
+        let agreed = c.take_chain(wire(3)).unwrap();
+        assert!(agreed.agreed);
+        assert_eq!(
+            agreed.summary,
+            "Newest op in this list: seq 3, signed 2029-12-31T23:00Z (3 op(s) read)."
+        );
+        assert_eq!(agreed.note, "This phone will continue after seq 3. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.");
+    }
+
+    #[test]
+    fn the_exported_ops_come_with_their_rows() {
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.never_signed(c.status(0).unwrap().device_id).unwrap();
+        {
+            let mut g = c.lock_inner();
+            let g = &mut *g;
+            let u = g.unlocked.as_mut().unwrap();
+            for t in 0..3 {
+                chain::head_attest(&mut u.state, &u.id, 1_900_000_000 + t, None).unwrap();
+            }
+        }
+        let rows = c.export_ops_view().unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows
+            .iter()
+            .all(|v| v.kind == "HeadAttest" && v.rows.len() >= 3));
+        let text = c.export_ops_text().unwrap();
+        assert_eq!(
+            PhoneOpsWire::decode(&from_base64(&text).unwrap())
+                .unwrap()
+                .ops
+                .len(),
+            rows.len()
+        );
+    }
+
+    #[test]
+    fn sas_words_pass_is_word() {
+        let w = sshub_sync_proto::crypto::sas_words(&[0x5a; 32]);
+        for word in w.split('-') {
+            assert!(is_word(word.into()), "{word}");
+        }
+        assert!(!is_word("harbour2".into()) && !is_word("".into()));
+    }
+
+    #[test]
+    fn a_refused_enrollment_name_leaves_the_enrollment_where_it_was() {
+        use sshub_sync_proto::wire::EnrollFrame;
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let commit = EnrollFrame::Commit {
+            role: 1,
+            commit: [7; 32],
+        }
+        .encode();
+        let Opened::Enroll { view } = c.open_frame(commit, 10).unwrap() else {
+            panic!("not an enrollment step");
+        };
+        for bad in ["", "   ", "tab\there", "line\nbreak"] {
+            let e = c
+                .decide(view.token, Decision::EnrollName { name: bad.into() }, 11)
+                .unwrap_err();
+            assert!(matches!(e, CoreError::BadInput { .. }), "{bad:?}");
+        }
+        let long = "x".repeat(65);
+        assert!(matches!(
+            c.decide(view.token, Decision::EnrollName { name: long }, 11)
+                .unwrap_err(),
+            CoreError::BadInput { .. }
+        ));
+        // the same flow still takes a good name and answers with the phone commitment (kind 6)
+        let out = c
+            .decide(
+                view.token,
+                Decision::EnrollName {
+                    name: "my phone".into(),
+                },
+                12,
+            )
+            .unwrap();
+        assert_eq!(out.kind, 6);
+        // and a SAS decision before the terminal revealed its keys is refused without ending the flow
+        let e = c
+            .decide(view.token, Decision::EnrollSas { matches: true }, 13)
+            .unwrap_err();
+        assert!(matches!(e, CoreError::BadInput { .. }));
+        assert!(
+            c.decide(
+                view.token,
+                Decision::EnrollName {
+                    name: "again".into()
+                },
+                14
+            )
+            .is_err(),
+            "the commitment step is over"
+        );
+    }
+
+    #[test]
+    fn words_are_checked_against_the_bip39_list() {
+        for w in ["abandon", "ZOO", " zoo ", "legal"] {
+            assert!(is_word(w.into()), "{w}");
+        }
+        for w in ["", "zzzz", "abandons", "ab and", "тест"] {
+            assert!(!is_word(w.into()), "{w}");
+        }
+    }
+}

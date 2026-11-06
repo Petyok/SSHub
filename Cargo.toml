@@ -43,7 +43,7 @@ exclude = [
 ]
 
 [workspace]
-members = [".", "crates/sshub-sync-proto"]
+members = [".", "crates/sshub-sync-proto", "crates/sshub-phone-core"]
 default-members = ["."]
 resolver = "2"
 
@@ -205,6 +205,14 @@ path = "tests/smoke/config_load.rs"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# The Android library: uniffi library mode reads its metadata from symbols, so no strip (AGP strips the packaged .so).
+# `cargo ndk ... --profile phone`
+[profile.phone]
+inherits = "release"
+strip = "none"
+opt-level = "s"
+lto = true
 
 [profile.dev]
 # Full DWARF for every dependency is ~40% of target/. Line tables keep
