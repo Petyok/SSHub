@@ -28,7 +28,7 @@ class StateLostScreenTest {
 
     @Test fun the_screen_offers_both_ways_out_and_says_nothing_was_written() {
         var cont = 0; var lock = 0
-        rule.setContent { StateLostScreen(onContinue = { cont++ }, onLock = { lock++ }) }
+        rule.setContent { uk.petruha.sshub.phone.ui.theme.SshubTheme(dark = true, reducedMotion = false) { StateLostScreen(onContinue = { cont++ }, onLock = { lock++ }) } }
         rule.onNodeWithText("Nothing has been overwritten yet", substring = true).assertExists()
         rule.onNodeWithText("Lock and keep the old file").performClick()
         rule.onNodeWithText("Continue with an empty state").performClick()

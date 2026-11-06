@@ -9,6 +9,8 @@
         tools:targetApi="s" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+    <!-- A normal permission (API 31): lets the window hide overlays drawn by other apps. -->
+    <uses-permission android:name="android.permission.HIDE_OVERLAY_WINDOWS" />
     <!-- Library manifests may add this; minSdk 30 never needs it. -->
     <uses-permission android:name="android.permission.USE_FINGERPRINT" tools:node="remove" />
 

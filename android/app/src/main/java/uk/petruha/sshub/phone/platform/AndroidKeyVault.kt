@@ -129,7 +129,7 @@ class AndroidKeyVault(
             atomicWrite(newFile, header + authed.iv + sealed)
             atomicMove(newFile, file)
             committed = true
-            deleteKey(old)
+            if (old != fresh) deleteKey(old)
             _state.value = VaultState.Unlocked
             VaultResult.Stored
         } catch (e: UserNotAuthenticatedException) {
