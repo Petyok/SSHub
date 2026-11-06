@@ -99,6 +99,18 @@ fn push_stderr_line(buf: &mut String, line: &str) {
     }
 }
 
+/// Feed every stderr line from `r` into `buf` until EOF. Lines are split as
+/// raw bytes and decoded lossily, so a non-UTF-8 line cannot end the read
+/// early and leave ssh writing into a closed pipe (issue #177).
+fn read_stderr_lines(r: impl std::io::BufRead, buf: &Mutex<String>) {
+    for line in r.split(b'\n').map_while(Result::ok) {
+        let line = line.strip_suffix(b"\r").unwrap_or(&line);
+        if let Ok(mut s) = buf.lock() {
+            push_stderr_line(&mut s, &String::from_utf8_lossy(line));
+        }
+    }
+}
+
 struct TunnelProcess {
     child: Child,
     started_at: Instant,
@@ -166,14 +178,7 @@ impl TunnelManager {
             let buf = Arc::clone(&stderr_tail);
             let _ = std::thread::Builder::new()
                 .name("sshub-tunnel-stderr".into())
-                .spawn(move || {
-                    use std::io::{BufRead, BufReader};
-                    for line in BufReader::new(err).lines().map_while(Result::ok) {
-                        if let Ok(mut s) = buf.lock() {
-                            push_stderr_line(&mut s, &line);
-                        }
-                    }
-                });
+                .spawn(move || read_stderr_lines(std::io::BufReader::new(err), &buf));
         }
 
         self.processes.insert(
@@ -585,6 +590,16 @@ mod tests {
         }
         assert!(buf.len() <= STDERR_TAIL_CAP);
         assert!(buf.ends_with('\n'));
+    }
+
+    #[test]
+    fn stderr_reader_survives_a_non_utf8_line() {
+        let buf = Mutex::new(String::new());
+        read_stderr_lines(&b"first\r\n\xff\xfe bad\nlast one\n"[..], &buf);
+        assert_eq!(
+            *buf.lock().unwrap(),
+            "first\n\u{fffd}\u{fffd} bad\nlast one\n"
+        );
     }
 
     #[test]
