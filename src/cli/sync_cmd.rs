@@ -1157,7 +1157,11 @@ mod tests {
     #[test]
     fn approve_all_is_a_flag_of_sync_review_only() {
         let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
-        assert!(parse_args("sync-review", &s(&["--approve-all"])).unwrap().approve_all);
+        assert!(
+            parse_args("sync-review", &s(&["--approve-all"]))
+                .unwrap()
+                .approve_all
+        );
         assert!(parse_args("sync-now", &s(&["--approve-all"])).is_err());
         assert!(!parse_args("sync-review", &s(&[])).unwrap().approve_all);
     }
@@ -1169,8 +1173,14 @@ mod tests {
             Attendance, DeviceKind, DeviceRole, HostFields, OpBody, VerifiedBy,
         };
         let (a, b) = (
-            (LauncherStore::open_in_memory().unwrap(), DeviceIdentity::generate()),
-            (LauncherStore::open_in_memory().unwrap(), DeviceIdentity::generate()),
+            (
+                LauncherStore::open_in_memory().unwrap(),
+                DeviceIdentity::generate(),
+            ),
+            (
+                LauncherStore::open_in_memory().unwrap(),
+                DeviceIdentity::generate(),
+            ),
         );
         for (store, _) in [&a, &b] {
             for (_, id) in [&a, &b] {
@@ -1187,9 +1197,8 @@ mod tests {
             }
         }
         for n in 0..3u8 {
-            let op = b
-                .0
-                .sync_append_local(
+            let op =
+                b.0.sync_append_local(
                     &b.1,
                     OpBody::HostUpsert {
                         host_uid: [n + 1; 16],
