@@ -141,6 +141,55 @@ fn sync_phone_ops_takes_the_phones_signature_in_and_it_counts_in_red_status() {
     assert!(phone_ops(&d[1].store, "AAAA").is_err());
 }
 
+fn ops_text(ops: &[&crate::sync::oplog::Op]) -> String {
+    B64.encode(
+        crate::sync::wire::PhoneOpsWire {
+            ops: ops
+                .iter()
+                .map(|o| (o.canonical_bytes(), o.signature))
+                .collect(),
+        }
+        .encode(),
+    )
+}
+
+#[test]
+fn sync_phone_ops_says_why_ops_were_skipped() {
+    let d = world();
+    ingest_all(&d[0], &d[1]);
+    let attest = |n: u8| {
+        append(
+            &d[2],
+            OpBody::HeadAttest {
+                device_id: d[2].did.clone(),
+                seq: u64::from(n),
+                chain_hash: [n; 32],
+            },
+        )
+    };
+    let (a, b, c) = (attest(1), attest(2), attest(3));
+    // A list that starts mid-chain: the ring has none of ops before `b`.
+    let (s, _) = phone_ops(&d[1].store, &ops_text(&[&b, &c])).unwrap();
+    assert_eq!((s.received, s.applied), (2, 0));
+    let k = skipped_ops(&d[1].store, &s).unwrap();
+    assert_eq!(k.len(), 1, "{k:?}");
+    assert_eq!(k[0]["reason"], "chain-gap");
+    assert_eq!(k[0]["first_seq"], b.seq);
+    assert_eq!(k[0]["count"], 2);
+    assert!(k[0]["note"].as_str().unwrap().contains("full chain"));
+    assert!(skipped_line(&k[0]).starts_with("skipped 2 chain-gap (first seq"));
+    // The whole chain applies, and a second paste is already known.
+    let (s, _) = phone_ops(&d[1].store, &ops_text(&[&a, &b, &c])).unwrap();
+    assert_eq!(s.applied, 3);
+    assert!(skipped_ops(&d[1].store, &s).unwrap().is_empty());
+    let (s, _) = phone_ops(&d[1].store, &ops_text(&[&a, &b, &c])).unwrap();
+    let k = skipped_ops(&d[1].store, &s).unwrap();
+    assert_eq!(
+        (k[0]["reason"].as_str(), k[0]["count"].as_u64()),
+        (Some("already-known"), Some(3))
+    );
+}
+
 fn lines(out: &[u8]) -> Vec<String> {
     String::from_utf8_lossy(out)
         .lines()

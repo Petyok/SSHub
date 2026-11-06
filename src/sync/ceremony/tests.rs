@@ -1467,6 +1467,32 @@ fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_en
     for x in [&b, &c, &ph] {
         setup_register(x, &a, DeviceRole::Holder, DeviceKind::Terminal);
     }
+    // Every device knows the others (the ring's table travels by anchor and ops; the roles come from the ops).
+    setup_register(&b, &c, DeviceRole::Mirror, DeviceKind::Terminal);
+    setup_register(&c, &b, DeviceRole::Mirror, DeviceKind::Terminal);
+    setup_register(&ph, &b, DeviceRole::Mirror, DeviceKind::Terminal);
+    setup_register(&ph, &c, DeviceRole::Mirror, DeviceKind::Terminal);
+    setup_register(&b, &ph, DeviceRole::Holder, DeviceKind::Phone);
+    setup_register(&c, &ph, DeviceRole::Holder, DeviceKind::Phone);
+    // b and c joined as mirrors: that is what their own tables say about themselves too.
+    setup_register(&b, &b, DeviceRole::Mirror, DeviceKind::Terminal);
+    setup_register(&c, &c, DeviceRole::Mirror, DeviceKind::Terminal);
+    setup_register(&ph, &ph, DeviceRole::Holder, DeviceKind::Phone);
+    // b and c were admitted to the ring as mirrors by ops (what a hub's admission leaves in every log): a position in
+    // the log from which a LATER promotion must not be read backwards.
+    for who in [&b, &c] {
+        append(
+            &a,
+            OpBody::DeviceAdd {
+                device: who.id.public(),
+                name: "joiner".into(),
+                role: DeviceRole::Mirror,
+                attendance: Attendance::Attended,
+                kind: DeviceKind::Terminal,
+                verified_by: VerifiedBy::Sas,
+            },
+        );
+    }
     // The phone is enrolled on a (what `sync-phone-enroll` does) and a proposes its admission.
     setup_register(&a, &ph, DeviceRole::Holder, DeviceKind::Phone);
     let add = append(
@@ -1543,4 +1569,126 @@ fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_en
         "{st:?}"
     );
     assert!(st.note.is_none(), "{st:?}");
+
+    // A later Red op (the paper registration, a bootstrap: phone and a second holder) completes, and nothing
+    // that was valid at ring setup is judged again against the ring as it is now: on every device view the
+    // phone and b stay holders, c (whose promotion is not complete) stays a mirror, proposer included.
+    let reg = append(
+        &a,
+        crate::sync::quorum::paper_registration(&bip39_encode(&[0x37; 32])).unwrap(),
+    );
+    pull(&a, &ph);
+    append(&ph, red_phone_sign_body(&reg));
+    pull(&a, &b);
+    append(&b, red_approve_body(&reg));
+    for x in [&ph, &b, &c] {
+        pull(x, &a);
+    }
+    let st = red_status(&a.store, &reg, now).unwrap();
+    assert!(st.complete, "{st:?}");
+    for x in [&b, &c, &ph] {
+        pull(&a, x);
+        pull(&ph, x);
+        pull(&b, x);
+    }
+    // Each device settles what completed (what every sync round does).
+    for x in [&a, &b, &c, &ph] {
+        settle_red_ops(&x.store, now).unwrap();
+    }
+    let roles = |on: &Dev| -> Vec<(String, DeviceRole)> {
+        let mut v: Vec<_> = effective_devices(&on.store, None)
+            .unwrap()
+            .into_iter()
+            .filter(|d| [&ph.did, &b.did, &c.did].contains(&&d.id))
+            .map(|d| (d.id, d.role))
+            .collect();
+        v.sort_by(|x, y| x.0.cmp(&y.0));
+        v
+    };
+    let mut want = vec![
+        (ph.did.clone(), DeviceRole::Holder),
+        (b.did.clone(), DeviceRole::Holder),
+        (c.did.clone(), DeviceRole::Mirror),
+    ];
+    want.sort_by(|x, y| x.0.cmp(&y.0));
+    for (name, on) in [("a", &a), ("b", &b), ("c", &c), ("phone", &ph)] {
+        assert_eq!(
+            roles(on),
+            want,
+            "the view of {name}: role {:?} third {:?} lam {} {}",
+            red_status(&on.store, &role, now),
+            red_status(&on.store, &third, now),
+            role.lamport,
+            third.lamport
+        );
+    }
+
+    // The same ops, fed to a fresh device in any arrival order, give the same roles (no verdict depends on the
+    // order or on which device proposed what).
+    let chains: Vec<(&str, Vec<Op>)> = [("a", &a), ("b", &b), ("c", &c), ("phone", &ph)]
+        .into_iter()
+        .map(|(n, d)| (n, d.store.sync_chain_tail(&d.did, 0).unwrap()))
+        .collect();
+    let orders: [&[&str]; 4] = [
+        &["a", "b", "c", "phone"],
+        &["phone", "c", "b", "a"],
+        &["b", "phone", "a", "c"],
+        &["c", "a", "phone", "b"],
+    ];
+    for order in orders {
+        let v = Dev::new();
+        crate::sync::ceremony::test_force(&v.store, false);
+        // What a device that joined through an anchor holds: the founder as holder, the joiners as mirrors.
+        setup_register(&v, &a, DeviceRole::Holder, DeviceKind::Terminal);
+        setup_register(&v, &b, DeviceRole::Mirror, DeviceKind::Terminal);
+        setup_register(&v, &c, DeviceRole::Mirror, DeviceKind::Terminal);
+        for who in order {
+            for op in &chains.iter().find(|(n, _)| n == who).unwrap().1 {
+                v.store.sync_ingest(op.clone()).unwrap();
+            }
+        }
+        for _ in 0..4 {
+            settle_red_ops(&v.store, now).unwrap();
+        }
+        if roles(&v) != want {
+            let mut dbg = String::new();
+            for (kind, who) in [
+                ("add", &add),
+                ("role", &role),
+                ("reg", &reg),
+                ("third", &third),
+            ] {
+                dbg += &format!(
+                    "{kind}: {:?} state {:?}\n",
+                    red_status(&v.store, who, now),
+                    v.store
+                        .sync_pending()
+                        .unwrap()
+                        .iter()
+                        .any(|p| p.hash() == who.hash())
+                );
+            }
+            dbg += &format!(
+                "ph={} b={} c={} a={} lam add={} role={} reg={} third={}\n{:?}",
+                ph.did,
+                b.did,
+                c.did,
+                a.did,
+                add.lamport,
+                role.lamport,
+                reg.lamport,
+                third.lamport,
+                effective_devices(&v.store, None).map(|r| r
+                    .into_iter()
+                    .map(|d| (d.id, d.role, d.kind))
+                    .collect::<Vec<_>>())
+            );
+            let rows: Vec<(String, String, String, i64, i64)> = v.store.with_conn(|conn| {
+                let mut q = conn.prepare("SELECT kind, state, coalesce(reason,''), lamport, seq FROM sync_ops WHERE device_id = ?1 ORDER BY seq")?;
+                let r = q.query_map([&ph.did], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?.collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(r)
+            }).unwrap();
+            panic!("a fresh device fed in the order {order:?}\n{dbg}\nphone ops {rows:?}");
+        }
+    }
 }

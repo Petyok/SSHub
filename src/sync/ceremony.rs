@@ -104,21 +104,21 @@ fn promoted_after(store: &LauncherStore, device: &DeviceId, l: u64) -> Result<bo
     }))
 }
 
-/// Does any credential hold Quorum shares (so a new holder means a reshare)? The mode alone is not enough: a
-/// ring switched to Quorum with no credential yet has nothing to reshare.
-fn quorum_credentials_exist(store: &LauncherStore) -> Result<bool> {
-    // The projected mode, not `effective_cred_mode`: that judges the newest ModeChange through `red_status`,
-    // which is what may be calling us. A mode change not yet in force counts as Quorum here, the safe side.
-    if store.sync_cred_mode()? != CredMode::Quorum {
-        return Ok(false);
+/// Did a Quorum credential exist BEFORE lamport `before` (so a new holder then meant a reshare)? Judged at the
+/// op's own position in the log, never against the ring as it is now: an op that was valid under ring setup
+/// must stay valid when a Quorum credential is created later. A Quorum credential has at least two wrapped
+/// shares (Vault mode wraps to the vault key alone); a reshare batch implies one too.
+fn quorum_credentials_before(store: &LauncherStore, before: u64) -> Result<bool> {
+    for op in ops_of(store, "CredUpdate", None)? {
+        if op.lamport < before
+            && matches!(&op.body, OpBody::CredUpdate { wrapped_shares, .. } if wrapped_shares.len() >= 2)
+        {
+            return Ok(true);
+        }
     }
-    store.with_conn(|c| {
-        Ok(c.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sync_cred_state WHERE wrapped_shares NOT IN ('', '[]'))",
-            [],
-            |r| r.get::<_, bool>(0),
-        )?)
-    })
+    Ok(ops_of(store, "ShareReshareBatch", None)?
+        .iter()
+        .any(|op| op.lamport < before))
 }
 
 /// Ring setup is over for good once the ring has had a phone and two terminal holders (revoked rows still
@@ -191,7 +191,12 @@ fn holder_established(store: &LauncherStore, device: &DeviceId, upto: Option<u64
         OpBody::DeviceRoleChange { to, .. } => *to == DeviceRole::Holder,
         _ => false,
     };
-    if !to_holder || upto == Some(op.lamport) {
+    if !to_holder {
+        // The newest op up to this view added or kept the device as a mirror: a promotion that comes only
+        // LATER is not part of this view (the row says holder because it is read now).
+        return Ok(!upto.is_some_and(|u| promoted_after(store, device, u).unwrap_or(false)));
+    }
+    if upto == Some(op.lamport) {
         return Ok(true);
     }
     in_force(store, &op)
@@ -449,7 +454,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         } => Some(device.device_id()),
         _ => None,
     };
-    let quorum_credentials = quorum_credentials_exist(store)?;
+    let quorum_credentials = quorum_credentials_before(store, op.lamport)?;
     let setup = !quorum_credentials && !setup_ended(&devices, op, promoted.as_ref());
     let setup_promotion = setup && promoted.is_some();
     let mut setup_waived: Vec<&str> = Vec::new();
@@ -642,7 +647,11 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
                 row.status,
                 DeviceStatus::Revoked | DeviceStatus::Compromised
             );
+        // The device being promoted never vouches for itself outside ring setup: in the view at the op's own position
+        // it already counts as a holder, so its own approval would otherwise be a second-device vote.
+        let self_vote = !own && promoted.as_ref() == Some(&p.device_id);
         if (!own && !terminal_holder(row))
+            || self_vote
             || p.device_id == *proposer
             || delegate.as_ref() == Some(&p.device_id)
         {
@@ -846,6 +855,28 @@ pub fn settle_red_ops(store: &LauncherStore, now: i64) -> Result<SettleReport> {
             store.sync_resolve_pending(&op.hash(), true)?;
             report.applied.push(op.hash());
         }
+    }
+    // An author admitted by a ceremony that just completed (the phone) may have sent ops before it was known:
+    // they waited as unverifiable, and now run through the ordinary ingest (signature, chain, tier). Without
+    // this a device that received the author's ops BEFORE its admission would never see them, and its verdicts
+    // would differ from every device that received them after.
+    let held = store.sync_pending_with_reasons()?;
+    let mut released = false;
+    let known: Vec<DeviceId> = store.sync_devices()?.into_iter().map(|d| d.id).collect();
+    let mut held: Vec<Op> = held
+        .into_iter()
+        .filter(|(_, why)| why == "unknown-author")
+        .map(|(op, _)| op)
+        .filter(|op| known.contains(&op.device_id))
+        .collect();
+    held.sort_by_key(|op| (op.device_id.clone(), op.seq));
+    for op in held {
+        released |= store.sync_resolve_pending(&op.hash(), true).is_ok();
+    }
+    if released {
+        let again = settle_red_ops(store, now)?;
+        report.applied.extend(again.applied);
+        report.rejected.extend(again.rejected);
     }
     Ok(report)
 }
