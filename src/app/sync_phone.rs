@@ -366,6 +366,43 @@ pub(crate) fn paste_ops(app: &mut App) {
     );
 }
 
+/// Menu entry: this phone's own newest ops as a kind 5 list for a RESTORED phone to take its chain back. The list names
+/// this terminal (an unsigned sender id): the phone needs the same newest op from two different terminals.
+pub(crate) fn show_chain(app: &mut App) {
+    app.sync_prompt(
+        "Show a phone's own ops",
+        "The phone's device id (16 characters, on its home screen)",
+        false,
+        |app, text| {
+            let Some(me) = app.sync.this_device.clone() else {
+                app.host_notice =
+                    Some("this device's identity is not loaded yet: try again in a moment".into());
+                return;
+            };
+            let wire = match crate::sync::hub::phone_chain_wire(&app.store, &text, &me) {
+                Ok(w) => w,
+                Err(e) => {
+                    app.host_notice = Some(format!("{e:#}"));
+                    return;
+                }
+            };
+            match qr_frames(&wire.encode()) {
+                Ok(frames) => app.sync_prompt_qr(
+                    "The phone's own ops",
+                    vec![
+                        format!("{} op(s), newest first on the phone's screen as seq of its own chain.", wire.ops.len()),
+                        "The phone takes its chain only from two lists made by two DIFFERENT terminals: show it, then do the same on another terminal.".into(),
+                    ],
+                    frames,
+                    "Press Enter to close",
+                    |_, _| {},
+                ),
+                Err(e) => app.host_notice = Some(format!("{e:#}")),
+            }
+        },
+    );
+}
+
 /// Tests stand in for the webcam: frames sent on `rx`' sender arrive as the camera's.
 #[cfg(test)]
 pub(crate) fn use_camera_channel(app: &mut App, handle: ListenHandle, rx: Receiver<MediaEvent>) {

@@ -30,6 +30,10 @@ pub(crate) fn entries() -> Vec<(String, MenuFn)> {
             super::sync_phone::start,
         ),
         item("Paste phone ops", super::sync_phone::paste_ops),
+        item(
+            "Show a restored phone's own ops (its chain)",
+            super::sync_phone::show_chain,
+        ),
         item("Recovery of a lost phone", f::recovery),
         item("Paper phrase: create and show", f::paper_setup),
         item(

@@ -46,6 +46,7 @@ const TOP_LEVEL: &[&str] = &[
     "sync-import-kit",
     "sync-phone-enroll",
     "sync-notice",
+    "sync-phone-chain",
     "sync-phone-ops",
     "sync-share-request",
     "sync-cert-request",
@@ -305,7 +306,7 @@ _sshub_completions() {{
                 COMPREPLY=( $(compgen -W "$theme_sub" -- "$cur") )
             fi
             ;;
-        tags|sync|import|export|sync-now|sync-status|sync-review|sync-revoke|sync-role|sync-approve|sync-factor|sync-factor-register|sync-recovery|sync-mode|sync-exemption|sync-export|sync-migrate|sync-import-kit|sync-phone-enroll|sync-notice|sync-phone-ops|sync-share-request|sync-cert-request)
+        tags|sync|import|export|sync-now|sync-status|sync-review|sync-revoke|sync-role|sync-approve|sync-factor|sync-factor-register|sync-recovery|sync-mode|sync-exemption|sync-export|sync-migrate|sync-import-kit|sync-phone-enroll|sync-notice|sync-phone-chain|sync-phone-ops|sync-share-request|sync-cert-request)
             COMPREPLY=( $(compgen -W "--format plain json --stdout -o --cache" -- "$cur") )
             ;;
     esac
