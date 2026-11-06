@@ -178,8 +178,9 @@ fn every_challenges_json_case_is_judged_like_the_page_and_the_rust_terminal() {
                     .find(|r| r.label == "Host credential")
                     .unwrap()
                     .value,
-                f["host_uid"].as_str().unwrap()
+                "0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A"
             );
+            assert_eq!(f["host_uid"].as_str().unwrap(), "0a".repeat(16));
             assert_eq!(view.short_code, ShortCodeOffer::Available);
             // and the approval of every ok case (hybrid and envelope) opens with the fixture ephemeral secret
             let out = approve(

@@ -123,6 +123,10 @@ function flatten(value, path, out, top) {
   }
 }
 
+// A host credential id as a person compares it (the terminal and the app show the same): 8 groups of 4 hex digits,
+// uppercase, single spaces. The one place that forms it; describe.rs `grouped_host_uid` is the same rule.
+export const groupedHostUid = (hex) => String(hex).toUpperCase().replace(/(.{4})(?=.)/g, '$1 ');
+
 export const iso = (t) => {
   try {
     return new Date(Number(t) * 1000).toISOString().replace('.000Z', 'Z');
@@ -142,9 +146,9 @@ export function describeOp(op, aliases = {}, { now = null, staleAfter = 120 } = 
   if (op.kind === 'ShareRelease') {
     const f = op.fields;
     requester = f.requester;
-    headline = `Release your share of host credential ${safeText(f.host_uid)} to ${who(f.requester)}`;
+    headline = `Release your share of host credential ${safeText(groupedHostUid(f.host_uid))} to ${who(f.requester)}`;
     rows.push({ label: 'Requesting device', value: who(f.requester), danger: true });
-    rows.push({ label: 'Host credential', value: safeText(f.host_uid), danger: true });
+    rows.push({ label: 'Host credential', value: safeText(groupedHostUid(f.host_uid)), danger: true });
     rows.push({ label: 'Request id', value: String(f.request_id), danger: false });
     rows.push({ label: 'Op signed by', value: who(op.device_id), danger: op.device_id !== f.requester });
   } else {

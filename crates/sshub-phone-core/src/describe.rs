@@ -333,6 +333,17 @@ fn body_fields(canonical: &[u8]) -> Option<J> {
 
 // ------------------------------------------------------------ describe
 
+/// A host credential id as a person compares it (the terminal and the app show the same): 8 groups of 4 hex digits,
+/// uppercase, single spaces. The one place that forms it; the page's `groupedHostUid` is the same rule.
+pub fn grouped_host_uid(hex: &str) -> String {
+    let up = hex.to_uppercase();
+    up.as_bytes()
+        .chunks(4)
+        .map(|c| String::from_utf8_lossy(c).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// `name [id]`, or `(no name known) [id]`. A name from another machine is escaped.
 pub fn who(aliases: &BTreeMap<String, String>, id: &str) -> String {
     let name = aliases.get(id).filter(|n| !n.is_empty());
@@ -378,11 +389,15 @@ pub fn describe_op(
         requester = Some(req.clone());
         headline = format!(
             "Release your share of host credential {} to {}",
-            safe_text(&host),
+            safe_text(&grouped_host_uid(&host)),
             who(aliases, req)
         );
         rows.push(row("Requesting device", who(aliases, req), true));
-        rows.push(row("Host credential", safe_text(&host), true));
+        rows.push(row(
+            "Host credential",
+            safe_text(&grouped_host_uid(&host)),
+            true,
+        ));
         rows.push(row("Request id", request_id.to_string(), false));
         rows.push(row(
             "Op signed by",
@@ -599,6 +614,31 @@ mod tests {
                 < labels.iter().position(|l| *l == "fields.address")
         );
         assert_eq!(*labels.last().unwrap(), "Op seq / epoch");
+    }
+
+    #[test]
+    fn a_host_credential_is_shown_as_eight_groups_of_four_uppercase() {
+        assert_eq!(
+            grouped_host_uid(&"0a".repeat(16)),
+            "0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A 0A0A"
+        );
+        assert_eq!(
+            grouped_host_uid("0123456789abcdef0123456789abcdef"),
+            "0123 4567 89AB CDEF 0123 4567 89AB CDEF"
+        );
+        // the ShareRelease headline and row use it
+        let d = view("share-release-u64-max");
+        let host = d
+            .rows
+            .iter()
+            .find(|r| r.label == "Host credential")
+            .unwrap();
+        assert_eq!(host.value.split(' ').count(), 8, "{}", host.value);
+        assert!(host
+            .value
+            .chars()
+            .all(|c| c == ' ' || c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
+        assert!(d.headline.contains(&host.value), "{}", d.headline);
     }
 
     #[test]

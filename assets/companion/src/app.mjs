@@ -11,7 +11,7 @@ import {
   COURIER_TAIL, HEAD_PENDING_MESSAGE, SAME_TERMINAL_MESSAGE, acceptHead, adoptOwnChain, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, confirmNoChain, courierOps, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, restoredState, saveState,
 } from './state.mjs';
 import { TIMESTAMP_SKEW_GRACE_SECS, approveRelease, evaluateChallenge } from './release.mjs';
-import { describeOp, iso, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
+import { describeOp, groupedHostUid, iso, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
 import {
   KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeCertExtendRequest, decodeCertRequest, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
   encodeEnrollConfirm, encodeEnrollReveal, encodePhoneOps, transcriptHash,
@@ -626,7 +626,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const rows = Object.entries(app.state.snapshots).map(([host, s]) => {
       const alive = liveSnapshot(app.state, host, app.now());
       return h('div', { class: 'card', 'data-host': host },
-        h('div', { class: 'v' }, host), h('div', { class: 'mut' }, `${alive ? 'live' : 'expired'}; issued ${new Date(s.issued_at * 1000).toISOString().slice(0, 16)}Z, expires ${new Date(s.expires_at * 1000).toISOString().slice(0, 16)}Z; Argon2id ${s.profile.mem_kib / 1024} MiB x ${s.profile.iters}${s.weak ? ' (weak)' : ''}`),
+        h('div', { class: 'v' }, groupedHostUid(host)), h('div', { class: 'mut' }, `${alive ? 'live' : 'expired'}; issued ${new Date(s.issued_at * 1000).toISOString().slice(0, 16)}Z, expires ${new Date(s.expires_at * 1000).toISOString().slice(0, 16)}Z; Argon2id ${s.profile.mem_kib / 1024} MiB x ${s.profile.iters}${s.weak ? ' (weak)' : ''}`),
         btn('Declare it dead (blob never arrived or the credential was reissued)', async () => { invalidateSnapshot(app.state, host); await save(); snapshotList(); }, '', `kill-${host}`));
     });
     show(title('Short codes I issued', 'One live code per credential. The code itself is never stored here.'), rows.length ? rows : h('p', { class: 'mut', id: 'no-snapshots' }, 'None.'), back());
