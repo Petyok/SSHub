@@ -36,7 +36,8 @@ if [ "$PHONE_TARGET" = android ]; then
   echo "$(date -u +%H:%M:%S) emulator booted"
 fi
 echo "$(date -u +%H:%M:%S) compose up --build"
-$C up --build -d || { echo "compose up failed"; exit 1; }
+# --no-recreate: the second up must not restart the booted emulator (the first up of an android run created it)
+$C up --build -d --no-recreate || { echo "compose up failed"; exit 1; }
 
 echo "$(date -u +%H:%M:%S) waiting for sshd on every peer and mailpit"
 for s in $PEERS; do
