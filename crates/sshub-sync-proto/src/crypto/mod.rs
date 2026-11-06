@@ -23,7 +23,8 @@ mod vectors;
 
 pub use alg::{AlgTag, SigSuite, WrapSuite, ALG_CURRENT};
 pub use argon::{
-    argon2_derive, try_argon2_derive, Argon2Profile, ARGON2_EMAIL, ARGON2_MASTER, ARGON2_SNAPSHOT,
+    argon2_derive, set_alloc_limit_kib, try_argon2_derive, Argon2Profile, ARGON2_EMAIL,
+    ARGON2_MASTER, ARGON2_SNAPSHOT,
 };
 pub use dek::{aead_open, aead_seal, dek_generate, dek_open, dek_seal};
 #[doc(hidden)]
