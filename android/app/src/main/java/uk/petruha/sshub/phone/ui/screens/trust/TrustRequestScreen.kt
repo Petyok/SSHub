@@ -14,6 +14,8 @@ import uk.petruha.sshub.phone.ui.components.Gap
 import uk.petruha.sshub.phone.ui.components.HexGroups
 import uk.petruha.sshub.phone.ui.components.MonoField
 import uk.petruha.sshub.phone.ui.components.Note
+import uk.petruha.sshub.phone.ui.components.OwnProof
+import uk.petruha.sshub.phone.ui.components.ProofKind
 import uk.petruha.sshub.phone.ui.components.RedBanner
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
 import uk.petruha.sshub.phone.ui.components.SecureWindow
@@ -134,10 +136,14 @@ private fun ReviewFrame(state: TrustRequestState, on: TrustRequestActions) {
             )
             Gap()
         }
-        if (!refused) Note(
-            "The certificate takes effect only after a second terminal and a third factor approve it. " +
-                "This signature is the phone's part: it authors the certificate.",
-        )
+        if (!refused) {
+            SshubCard { OwnProof(ProofKind.YourTurn) }
+            Gap(8.dp)
+            Note(
+                "The certificate takes effect only with three proofs: this phone, a second terminal and a third factor. " +
+                    "This signature is the phone's part: it authors the certificate. No hash is shown: the core gives none for a trust request.",
+            )
+        }
         state.error?.let { Gap(); WarnBox(it, live = true) }
     }
 }

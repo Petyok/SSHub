@@ -3,6 +3,7 @@ package uk.petruha.sshub.phone.trust
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -69,7 +70,7 @@ class TrustListTest {
     @Test fun tapping_a_card_toggles_and_expanded_shows_every_host_and_extension() {
         val toggled = mutableListOf<String>()
         rule.setScreen { TrustListScreen(list.copy(expanded = setOf("3F9A-07C2")), listActions(onToggle = { toggled += it })) }
-        rule.onNode(hasText("web-01, web-02, db-staging, bastion, nuc-lab", substring = true)).assertExists()
+        rule.onAllNodes(hasContentDescription("Host id 0 5 0 5, 0 5 0 5", substring = true), useUnmergedTree = true).assertCountEquals(1)
         rule.onNode(hasText("+10 new hosts, 2026-10-26 03:03", substring = true)).assertExists()
         rule.onNodeWithText("3F9A-07C2").assertExists()
         rule.onAllNodesWithText("laptop-main").onFirst().performClick()
@@ -95,7 +96,7 @@ class TrustListTest {
         rule.onNodeWithText("Revoke and sign").assertExists()
         rule.onNodeWithText("Keep it").assertExists()
         // collapsed list behind the sheet and a sheet without hosts, hashes or certificate bodies
-        rule.onAllNodesWithText("web-01", substring = true).assertCountEquals(0)
+        rule.onAllNodes(hasContentDescription("Host id", substring = true), useUnmergedTree = true).assertCountEquals(0)
         rule.onAllNodesWithText("7B3E-0D15", substring = true).assertCountEquals(0)
         rule.onNodeWithTag("sheet-confirm").performClick()
         assertEquals(1, revoked)

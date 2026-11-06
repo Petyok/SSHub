@@ -33,6 +33,9 @@ object TrustSamples {
     const val UNMET_ID = "E7A4-6B02"
     const val CODE = "K7Q29FMXC41T8PWD"
     val HOSTS = listOf("web-01", "web-02", "db-staging", "bastion", "nuc-lab")
+    /** Host uids as the core gives them: 64 hex digits. The real core has no host names. */
+    fun uid(n: Int) = "%02x".format(n).repeat(32)
+    val UIDS = (1..5).map { uid(it) }
     val MANY_HOSTS = (1..65).map { "web-%02d".format(it) }
 
     fun day(y: Int, m: Int, d: Int): Long = LocalDate.of(y, m, d).atStartOfDay(ZoneOffset.UTC).toEpochSecond()
@@ -117,18 +120,18 @@ object TrustSamples {
         TrustAgain(17 * 3600L + 22 * 60L, 86_400L))
 
     fun certs(): List<IssuedCert> = listOf(
-        IssuedCert("3F9A-07C2", "laptop-main", "7B3E-0D15", CertState.Active, HOSTS, null, day(2026, 10, 12), day(2026, 11, 11), PHONE_EPOCH, PHONE_EPOCH + 1, "30 days", 10,
+        IssuedCert("3F9A-07C2", "laptop-main", "7B3E-0D15", CertState.Active, UIDS, null, day(2026, 10, 12), day(2026, 11, 11), PHONE_EPOCH, PHONE_EPOCH + 1, "30 days", 10,
             listOf(CertExtensionInfo(day(2026, 10, 26) + 3 * 3600 + 3 * 60, 10)), 42),
-        IssuedCert("D41E-9A07", "workstation", "9C61-E2A8", CertState.Active, listOf("web-01", "web-02", "db-staging"), null, day(2026, 10, 20), day(2026, 11, 3), PHONE_EPOCH, PHONE_EPOCH + 1, "14 days", 10, emptyList(), 47),
-        IssuedCert("8E55-1C3B", null, "5A19-C0E4", CertState.Expired, listOf("web-01"), null, day(2026, 10, 5), day(2026, 10, 12), PHONE_EPOCH - 1, PHONE_EPOCH, "7 days", 5, emptyList(), null),
+        IssuedCert("D41E-9A07", "workstation", "9C61-E2A8", CertState.Active, UIDS.take(3), null, day(2026, 10, 20), day(2026, 11, 3), PHONE_EPOCH, PHONE_EPOCH + 1, "14 days", 10, emptyList(), 47),
+        IssuedCert("8E55-1C3B", null, "5A19-C0E4", CertState.Expired, UIDS.take(1), null, day(2026, 10, 5), day(2026, 10, 12), PHONE_EPOCH - 1, PHONE_EPOCH, "7 days", 5, emptyList(), null),
         IssuedCert("6B20-F1D5", "laptop-old", "1D88-A340", CertState.Revoked, emptyList(), "prod-web", day(2026, 9, 28), day(2026, 11, 27), PHONE_EPOCH, PHONE_EPOCH, "60 days", 20, emptyList(), 31),
     )
 
     fun codes(): List<ShortCodeRow> = listOf(
-        ShortCodeRow("deploy@db-staging", ShortCodeState.Live, day(2026, 10, 24), day(2026, 10, 31)),
-        ShortCodeRow("deploy@web-02", ShortCodeState.Live, day(2026, 10, 22), day(2026, 10, 29)),
-        ShortCodeRow("ops@bastion", ShortCodeState.Expired, day(2026, 10, 12), day(2026, 10, 19)),
-        ShortCodeRow("admin@nuc-lab", ShortCodeState.DeclaredDead, day(2026, 10, 23), day(2026, 10, 30)),
+        ShortCodeRow(uid(1), ShortCodeState.Live, day(2026, 10, 24), day(2026, 10, 31)),
+        ShortCodeRow(uid(2), ShortCodeState.Live, day(2026, 10, 22), day(2026, 10, 29)),
+        ShortCodeRow(uid(3), ShortCodeState.Expired, day(2026, 10, 12), day(2026, 10, 19)),
+        ShortCodeRow(uid(4), ShortCodeState.DeclaredDead, day(2026, 10, 23), day(2026, 10, 30)),
     )
 
     fun codeIssued() = CodeIssuedView.Issued("deploy@web-01", CODE, day(2026, 10, 26), day(2026, 11, 2))

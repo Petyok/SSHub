@@ -29,7 +29,7 @@ class ShortCodesTest {
 
     @Test fun main_path_rows_states_and_expiry_on_a_tick_scale() {
         rule.setScreen { ShortCodesScreen(list, codesActions()) }
-        rule.onNodeWithText("One live code per credential. The code itself is never stored here.").assertExists()
+        rule.onNodeWithText("One live code per credential. The terminal shows the same host id. The code itself is never stored here.").assertExists()
         rule.onNodeWithText("4 codes").assertExists()
         rule.onAllNodesWithText("live").assertCountEquals(2)
         rule.onAllNodesWithText("expired").assertCountEquals(1)
@@ -45,12 +45,12 @@ class ShortCodesTest {
         rule.setScreen { ShortCodesScreen(list, codesActions(onAskDead = { asked += it })) }
         rule.onAllNodesWithText("Declare it dead").assertCountEquals(2)
         rule.onAllNodesWithText("Declare it dead").onFirst().performClick()
-        assertEquals(listOf("deploy@db-staging"), asked)
+        assertEquals(listOf(TrustSamples.uid(1)), asked)
     }
 
     @Test fun sheet_has_a_warning_and_confirms_or_keeps() {
         var dead = 0; var kept = 0
-        rule.setScreen { ShortCodesScreen(list.copy(confirming = "deploy@db-staging"), codesActions(onDeclareDead = { dead++ }, onKeep = { kept++ })) }
+        rule.setScreen { ShortCodesScreen(list.copy(confirming = TrustSamples.uid(1)), codesActions(onDeclareDead = { dead++ }, onKeep = { kept++ })) }
         rule.onNodeWithText("Declare it dead?").assertExists()
         rule.onNodeWithText("Only when you know the sealed blob never reached the terminal, or the credential was reissued.").assertExists()
         rule.onNodeWithText("If it did arrive, the old blob stays valid until it expires.").assertExists()
@@ -69,19 +69,19 @@ class ShortCodesTest {
     }
 
     @Test fun error_is_shown() {
-        rule.setScreen { ShortCodesScreen(list.copy(error = "No live short code for deploy@web-02."), codesActions()) }
-        rule.onNodeWithText("No live short code for deploy@web-02.").assertExists()
+        rule.setScreen { ShortCodesScreen(list.copy(error = "No live short code for that host."), codesActions()) }
+        rule.onNodeWithText("No live short code for that host.").assertExists()
     }
 
     @Test fun renders_dark() {
         rule.setScreen(dark = true) { ShortCodesScreen(list, codesActions()) }
-        rule.onNodeWithText("deploy@db-staging").assertExists()
+        rule.onAllNodes(hasContentDescription("Host id 0 1 0 1, 0 1 0 1", substring = true), useUnmergedTree = true).assertCountEquals(1)
         rule.assertTargets48()
     }
 
     @Test fun renders_light() {
         rule.setScreen(dark = false) { ShortCodesScreen(list, codesActions()) }
-        rule.onNodeWithText("deploy@db-staging").assertExists()
+        rule.onAllNodes(hasContentDescription("Host id 0 1 0 1, 0 1 0 1", substring = true), useUnmergedTree = true).assertCountEquals(1)
         rule.assertTargets48()
     }
 
