@@ -135,12 +135,10 @@ fn prune_backups(launcher_path: &Path) {
 
 pub(crate) fn run_migrations(conn: &Connection, launcher_path: &Path) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
-    // Wait instead of failing with SQLITE_BUSY when another instance (or the
-    // watcher-triggered reimport) holds the write lock. SQLite's busy handler backs off with sleeps and is not
-    // fair: with several CLI processes on one profile (a script adding hosts in parallel) a process can starve
-    // for seconds, and 5 s measured as "database is locked" on one add in ten. A write that waits is the
-    // better failure mode than a lost add.
-    conn.execute_batch("PRAGMA busy_timeout = 60000;")?;
+    // Wait instead of failing with SQLITE_BUSY when another instance (or the watcher-triggered reimport) holds the
+    // write lock. The handler polls with a jitter (see `wait_for_the_lock`); SQLite's stock timeout starved a
+    // process for seconds when several CLI processes shared one profile.
+    conn.busy_handler(Some(super::wait_for_the_lock))?;
 
     // Snapshot first: a migration rewrites tables in place, and v0.17.0 proved
     // what a wrong one costs. Nothing to save for a database that does not
