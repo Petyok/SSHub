@@ -41,6 +41,11 @@ app() {
   printf '%s\n' "$APP_OUT" | pjq -r '.error // ., .screen // empty' 2>/dev/null | sed 's/^/    | /' || printf '%s\n' "$APP_OUT" | cut -c1-3000
   return 1
 }
+# appdump LABEL: the whole screen text into the log (evidence for what the app shows).
+appdump() {
+  echo "--- the app's screen: $1"
+  app '{"op":"screen"}' >/dev/null && printf '%s' "$APP_OUT" | pjq -r .screen | sed 's/^/    | /'
+}
 # appget FIELD: a field of the last answer, raw.
 appget() { printf '%s' "$APP_OUT" | pjq -r ".$1 // empty"; }
 # appclick TEXT [exact=true|false] [timeout ms]
@@ -167,8 +172,9 @@ app_signs() {
   [ "$LAST_RC" -eq 0 ] || return 1
   app_open_frame "$(pf "$LAST_OUT" notice)" || return 1
   step "app: the Red operation screen" app '{"op":"wait","text":"RED OPERATION","timeout":20000}' || return 1
+  [ -n "${APP_RED_SHOWN:-}" ] || { appdump "a Red operation (the first one)"; APP_RED_SHOWN=1; }
   step "app: approve" appclick "Approve" || return 1
-  app '{"op":"auth","timeout":15000}' >/dev/null || true
+  app '{"op":"auth","timeout":15000}' >/dev/null && echo "    (system prompt after Approve: $(appget auth))"
   step "app: signed with this phone" app '{"op":"wait","text":"Signed with this phone","timeout":60000}' || return 1
   step "app: copy as text" appclick "Copy as text" || return 1
   app '{"op":"clip"}' >/dev/null || return 1

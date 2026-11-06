@@ -43,11 +43,12 @@ CHALLENGE=$(pf "$CH" challenge)
 if [ -n "$CHALLENGE" ]; then
   app_open_frame "$CHALLENGE"
   step "app: the share release screen" app '{"op":"wait","text":"Share release","timeout":20000}'
+  appdump "the share release"
   if app '{"op":"exists","text":"Typed requester id"}' && [ "$(appget exists)" = true ]; then
     step "app: the requester id is typed (never met)" apptype "Typed requester id" "$(devid peer-a peer-a)"
   fi
   step "app: approve and release" appclick "Approve and release"
-  app '{"op":"auth","timeout":15000}' >/dev/null || true
+  app '{"op":"auth","timeout":15000}' >/dev/null && echo "    (system prompt after Approve: $(appget auth))"
   step "app: released" app '{"op":"wait","text":"Released.","timeout":60000}'
   step "app: copy as text" appclick "Copy as text"
   app '{"op":"clip"}' >/dev/null
@@ -60,7 +61,7 @@ else
   echo "FAIL no challenge from sync-share-request"; fail=$((fail + 1))
 fi
 if enr_close; then echo "ok   sync-share-request exits 0"; else echo "FAIL sync-share-request exit status"; fail=$((fail + 1)); fi
-step "app: back to the approvals" appclick "Done" || true
+step "app: back to the approvals" appclick "Back to approvals"
 
 # ---- 3. a Red approval from the app: the revocation of a holder
 C_ID=$(devid peer-a peer-c)
@@ -74,7 +75,8 @@ spread peer-b peer-a peer-b
 st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
 expect "peer-c is revoked on peer-a" "$st" '[.devices[] | select(.name=="peer-c") | .status] == ["revoked"]'
 
-step "app: the last screen, for the record" app '{"op":"screen"}' || true
+step "app: the Ring tab" appclick "Ring"
+appdump "Home (the ring as the app sees it)"
 app_stop
 dump_state "after the app's session"
 finish "$NAME"
