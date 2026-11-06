@@ -54,6 +54,7 @@ internal class FakeLink : BleLink {
     @Volatile var failure: String? = null
     @Volatile var byeCalled = false
     @Volatile var slowMs = 0L
+    @Volatile var throwOnSend = false
     // a two byte message is data that is not a whole frame (the notification-order test); every other message is a frame
 
     override fun onMessage(b: ByteArray) {
@@ -62,7 +63,7 @@ internal class FakeLink : BleLink {
         if (b.size == 1 && b[0] == 'X'.code.toByte()) { closed = true; closedReason = "The terminal ended the session." } else if (b.size != 2) frames += b
     }
     override fun takeOutbox(): List<ByteArray> = out.toList().also { out.clear() }
-    override fun sendFrame(f: ByteArray): Boolean { out += f; return true }
+    override fun sendFrame(f: ByteArray): Boolean { if (throwOnSend) throw IllegalStateException("panic in the link"); out += f; return true }
     override fun takeFrames(): List<ByteArray> = frames.toList().also { frames.clear() }
     override fun tick(nowMillis: Long) {}
     override fun bye() { byeCalled = true }
@@ -185,6 +186,15 @@ class BleChannelTest {
         waitFor("the sentence") { sentence = ch.sendFailure() ?: sentence; sentence != null }
         assertEquals("The terminal is busy.", sentence)
         assertNull(ch.sendFailure())
+    }
+
+    // N9: a link that throws while sending must not leave `send` suspended.
+    @Test fun a_link_that_throws_on_send_answers_false_and_ends_the_session() {
+        val ch = opened()
+        link.throwOnSend = true
+        val ok = runBlocking { withTimeout(2_000) { ch.send(byteArrayOf(9)) } }
+        assertFalse(ok)
+        waitFor("closed") { ch.state.value is BleChannelState.Closed }
     }
 
     // M1: every notification reaches the link exactly once, in order, across many ticks and timeouts.

@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import uk.petruha.sshub.phone.core.BleDevice
 import uk.petruha.sshub.phone.core.EnrollChannel
+import uk.petruha.sshub.phone.core.RefusalKind
 import uk.petruha.sshub.phone.ui.components.BarButtons
 import uk.petruha.sshub.phone.ui.components.ButtonKind
 import uk.petruha.sshub.phone.ui.components.ChainRow
@@ -277,7 +278,14 @@ fun EnrollConfirmScreen(state: EnrollConfirmState, on: EnrollConfirmActions) {
         },
     ) {
         when (state.status) {
-            ConfirmStatus.Bad -> StopBox("The terminal confirmation has a bad signature.", live = true) {
+            ConfirmStatus.Bad -> StopBox(
+                when (state.kind) {
+                    RefusalKind.BadSignature -> "The terminal confirmation has a bad signature."
+                    RefusalKind.Declined -> "The terminal declined."
+                    else -> "The terminal confirmation was refused."
+                },
+                live = true,
+            ) {
                 Text(
                     state.reason.ifEmpty { "Nothing was enrolled." } + " Do not retry on this channel; check the terminal first.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer,
@@ -454,6 +462,7 @@ fun EnrollPasteScreen(state: EnrollPasteState, on: EnrollPasteActions) {
                     when (state.validation.verdict) { PasteVerdict.Ok -> LineKind.Ok; PasteVerdict.Bad -> LineKind.Bad; PasteVerdict.Empty -> LineKind.Neutral },
                     state.validation.message,
                 )
+                if (state.note != null) ValidationLine(LineKind.Bad, state.note)
             } else Note("This step sends nothing to this phone.")
         }
     }

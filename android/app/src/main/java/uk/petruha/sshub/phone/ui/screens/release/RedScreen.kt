@@ -72,6 +72,10 @@ fun RedScreen(state: RedState, on: RedActions) {
             style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        if (v.mustType != null && state.phase == ApprovalPhase.Review) {
+            Note("This proposer never met this phone: type its id in the field below the proofs to enable Approve.", Modifier.padding(bottom = 12.dp))
+        }
+
         // Age on the 3 day window. Recomputed once a minute (spec 7.2): `now` is cut to the minute.
         val total = (v.lapsesAt - v.proposedAt).coerceAtLeast(1L)
         val age = (state.now - v.proposedAt).coerceAtLeast(0L).let { it - it % 60 }
@@ -168,7 +172,8 @@ private fun RedBar(state: RedState, on: RedActions) {
             BarButtons {
                 SshubButton("Decline", on.onDecline, kind = ButtonKind.Outline, enabled = state.phase == ApprovalPhase.Review)
                 SshubButton(
-                    "Approve", on.onApprove, kind = ButtonKind.Primary, subtitle = "sign with the phone",
+                    "Approve", on.onApprove, kind = ButtonKind.Primary,
+                    subtitle = if (gate.reason == TYPE_ID_FIRST) TYPE_ID_FIRST else "sign with the phone",
                     enabled = gate.enabled, disabledReason = gate.reason,
                 )
             }

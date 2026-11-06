@@ -113,7 +113,7 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
         }
 
         if (v.hostUid.isNotEmpty()) {
-            SectionHeading("Host", trailing = "the terminal shows the same id")
+            SectionHeading("Host", trailing = "from the signed request")
             HexGroups(v.hostUid, groups = null, label = "Host id")
         }
         if (v.opRows.isNotEmpty()) {
@@ -124,7 +124,7 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
         SectionHeading("Binding words", trailing = "compare with the terminal")
         BigWords(v.words)
         if (v.bindingHash.isNotEmpty()) HexGroups(v.bindingHash, Modifier.padding(top = 8.dp), groups = null, label = "Binding hash")
-        Note("Compare the host and the four words with the terminal.", Modifier.padding(top = 8.dp))
+        Note("Compare the four words with the terminal. The host id comes from the signed request; the terminal does not print it.", Modifier.padding(top = 8.dp))
 
         ChecksCard(v.checks)
 
@@ -197,6 +197,10 @@ private fun ReleasedCard(state: ReleaseState, on: ReleaseActions) {
     SshubCard(Modifier.padding(top = 12.dp)) {
         Text("Signed.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.sshub.ok)
         Note("Shown as: $shown. Check on the terminal that it took the share.")
+        if (state.restored) {
+            Note("The code was shown when you approved. It is not shown again.", Modifier.padding(top = 4.dp))
+            return@SshubCard
+        }
         val frame = out?.outgoing
         if (frame != null) {
             if (ChannelKind.Qr in state.channelsOn) QrLoop(frame.qr, QR_DESCRIPTION)

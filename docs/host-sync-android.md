@@ -127,7 +127,7 @@ is taken back from a terminal (section 5).
 - Screens mirror the page (functional parity, no more): first run and backup words, lock, home, enroll, scan or paste a request
   (release, Red notice, trust session, extension, recovery notice, reshare), approval, outputs (QR loop, clipboard text, sound, by
   hand), short codes, trust sessions, reshare and wrap keys, take my chain, export ops text, About and fingerprint.
-- Manifest permissions: `CAMERA`, `BLUETOOTH_SCAN` with `neverForLocation`, `BLUETOOTH_CONNECT`, `USE_BIOMETRIC`. **No `INTERNET`**, no
+- Manifest permissions: `CAMERA`, `BLUETOOTH_SCAN` with `neverForLocation`, `BLUETOOTH_CONNECT`, `USE_BIOMETRIC`, `HIDE_OVERLAY_WINDOWS` (a normal permission since API 31: the window hides overlays other apps draw over it, against tapjacking). **No `INTERNET`**, no
   storage, no location, no `RECORD_AUDIO` (the phone only plays sound; the terminal listens). A CI check dumps the merged
   manifest (`aapt2 dump permissions`) and fails on any other permission: this is the native counterpart of the page's
   `connect-src 'none'`.
@@ -460,7 +460,7 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
   `FakePhoneCore` (src/debug) is for instrumented tests only (the `core=fake` extra is ignored outside instrumentation); the debug app id is `uk.petruha.sshub.phone.debug`. Release builds always use the Rust core.
 - CI (`android/ci/build.sh`): host tests of the core, `cargo ndk` with `--profile phone`, uniffi bindings, `lint.sh` (no `Color(0x` outside the theme, no
   `Ellipsis` or `maxLines` in ui, no `Log.` in platform and core), `manifest-check.sh` (permissions exactly CAMERA, BLUETOOTH_SCAN neverForLocation,
-  BLUETOOTH_CONNECT, USE_BIOMETRIC; no INTERNET; backup and cleartext off), debug APK and test APK.
+  BLUETOOTH_CONNECT, USE_BIOMETRIC, HIDE_OVERLAY_WINDOWS; no INTERNET; backup and cleartext off), debug APK and test APK.
 - Tests on the emulator (`gpu-verify/android.sh <checkout> <name> test`, optional `TEST_CLASS=a.B,c.D`): 563 instrumented tests: every screen's main path and
   variants, dark and light, font scale 1.3 and 2.0 with a real-clipping check, 48 dp targets, the dangerous-field rules (D1 to D20 where they apply), the
   platform adapters, the real native core (public vectors: device id, words round trip) and every challenge fixture of the page through the adapter
@@ -511,3 +511,12 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
 - Enrollment: the refusal kind comes from the core (`RefusalKind`): a mismatch is the stop box (compared values only when present), other stops are titled with the core's sentence, a wrong-order or stray frame is a note. Pairing over Bluetooth is off and warned when two devices show the typed tag. The name rules are the core's `check_enroll_name`, asked before the scan; Scan stays disabled while there is a problem.
 - Export: a dangerous op carries a glyph and the word; hashes are shown in groups of 4. The 24 recovery words and the words paste box use the password input variation.
 - Tests: `RealCoreScreensTest` and `RealCoreNoticesTest` feed the screens from the real core over challenges.json, enroll.json and notices.json; `ScanRoutesTest` registers the graphs and presses every scan button; `RestoredPhoneTest` restarts a restored core; `WordsKeyboardTest` reads the EditorInfo.
+
+## 15. Review round 2 notes
+
+- The core seals its state on `lock()`: lock then unlock in one process opens the same ring, head and certificates (test `SealedStateRoundTripTest`). A failed save after a decide locks the core and the vault and says "The phone state could not be saved; the request was discarded."; the kept Kotlin cache follows `pending_tokens()`.
+- The gate fails closed: without an attached vault or block check every signing call is refused. `lastOutcome` keeps only the reply frames and the note (never the short code or the by-hand words), newest 8, cleared on lock.
+- D17 signer block: typing only compares. Closing the app needs the tick "I compared the value digit by digit", the button, and the system lock. While blocked, a matching value plus the system lock reopens the app (`clearSignerMismatch`). Only Lock and About stay open under the block (no first run, no restore). Reinstalling deletes the key and the saved state: the 24 words are needed.
+- `SecureWindow` never clears a FLAG_SECURE the Activity already holds. A QR keeps the screen lit for at most 2 minutes, then the normal screen timeout and the auto-lock apply; in landscape the code is capped to the screen height.
+- CI: `build` (the release APK) starts from clean cargo outputs and Gradle build dirs; the manifest check runs on the release APK too (non-debuggable, HIDE_OVERLAY_WINDOWS present) and gates the focused run; the uniffi-bindgen cache key includes the uniffi packages of Cargo.lock.
+- Not done: the blind clipboard clear can wipe a clip another app put there while the window has no focus (needs a device to confirm the changed-clip listener); `settings.txt` is still written on the calling thread (the D17 tests rely on write-then-read ordering); the platform and core are still built in `onCreate`; flows L1 to L3, L11 and L12 and the remaining low items beyond the ones listed in the commit message.

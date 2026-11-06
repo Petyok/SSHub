@@ -251,6 +251,16 @@ class ChainHeadViewModelTest {
         assertEquals(ChainHeadPhase.Read, vm.state.value.phase)
     }
 
+    @Test fun the_senders_of_the_lists_read_so_far_are_kept() {
+        val vm = vm()
+        fun list(agreed: Boolean, sender: String?) =
+            uk.petruha.sshub.phone.core.OpenedChain(IdentitySamples.chain(agreed).copy(sender = sender), emptyList())
+        onMain { vm.onOpened(list(false, "7b3e0d15")) }
+        assertEquals(listOf<String?>("7b3e0d15"), vm.state.value.senders)
+        onMain { vm.onOpened(list(true, null)) }
+        assertEquals(listOf<String?>("7b3e0d15", null), vm.state.value.senders)
+    }
+
     @Test fun an_ignored_frame_changes_nothing_but_the_notice() {
         val vm = vm()
         onMain { vm.onOpened(uk.petruha.sshub.phone.core.Opened.Ignored("wrong kind")) }
@@ -285,24 +295,64 @@ class AboutAndMenuViewModelTest {
     private val platform = FakePlatform().also { it.system.apkCertSha256 = IdentitySamples.FINGERPRINT }
     private val settings = InMemorySettingsStore()
 
-    @Test fun d17_a_mismatching_value_sets_the_app_wide_block_and_the_menu_follows() {
-        lateinit var about: AboutViewModel
-        lateinit var menu: SecurityMenuViewModel
-        onMain { about = AboutViewModel(core, platform, settings); menu = SecurityMenuViewModel(core, platform, settings) }
-        assertFalse(menu.state.value.blocked)
+    private fun about(): AboutViewModel { lateinit var a: AboutViewModel; onMain { a = AboutViewModel(core, platform, settings) }; return a }
+
+    @Test fun d17_typing_a_wrong_value_only_compares_and_blocks_nothing() {
+        val about = about()
         onMain { about.toggleCompare(); about.onReference(IdentitySamples.OTHER_FINGERPRINT) }
         assertEquals(FingerprintCompare.Differ, about.state.value.compare)
+        assertFalse(settings.signerMismatch.value)
+        onMain { about.block() } // not ticked
+        assertFalse(settings.signerMismatch.value)
+    }
+
+    @Test fun d17_a_new_value_drops_the_tick() {
+        val about = about()
+        onMain { about.toggleCompare(); about.onReference(IdentitySamples.OTHER_FINGERPRINT); about.onConfirmed(true) }
+        assertTrue(about.state.value.confirmed)
+        onMain { about.onReference(IdentitySamples.OTHER_FINGERPRINT.replaceFirst('a', 'b')) }
+        assertFalse(about.state.value.confirmed)
+    }
+
+    @Test fun d17_a_cancelled_system_lock_sets_nothing_and_says_why() {
+        val about = about()
+        platform.keys.nextResult = VaultResult.Canceled
+        onMain { about.toggleCompare(); about.onReference(IdentitySamples.OTHER_FINGERPRINT); about.onConfirmed(true); about.block() }
+        assertFalse(settings.signerMismatch.value)
+        assertEquals("The system prompt was canceled.", about.state.value.message)
+        assertFalse(about.state.value.busy)
+    }
+
+    @Test fun d17_a_ticked_differing_value_behind_the_system_lock_sets_the_block_and_the_menu_follows() {
+        val about = about()
+        lateinit var menu: SecurityMenuViewModel
+        onMain { menu = SecurityMenuViewModel(core, platform, settings) }
+        platform.keys.secret = ByteArray(32) { 1 }
+        onMain { about.toggleCompare(); about.onReference(IdentitySamples.OTHER_FINGERPRINT); about.onConfirmed(true); about.block() }
         assertTrue(settings.signerMismatch.value)
-        assertTrue(menu.state.value.blocked)
-        onMain { about.onReference(IdentitySamples.FINGERPRINT) }
-        assertEquals(FingerprintCompare.Equal, about.state.value.compare)
-        assertTrue("sticky: a later matching value does not reopen the app", settings.signerMismatch.value)
         assertTrue(menu.state.value.blocked)
     }
 
+    @Test fun d17_a_matching_value_behind_the_system_lock_clears_the_block_and_otherwise_it_is_sticky() {
+        settings.setSignerMismatch(true)
+        val about = about()
+        assertTrue(about.state.value.comparing) // the compare box stays open while blocked
+        onMain { settings.setSignerMismatch(false) }
+        assertTrue("setSignerMismatch(false) is a no-op", settings.signerMismatch.value)
+        onMain { about.onReference(IdentitySamples.OTHER_FINGERPRINT); about.unblock() }
+        assertTrue("a differing value never clears it", settings.signerMismatch.value)
+        platform.keys.secret = ByteArray(32) { 1 }
+        platform.keys.nextResult = VaultResult.Canceled
+        onMain { about.onReference(IdentitySamples.FINGERPRINT); about.unblock() }
+        assertTrue("a cancelled prompt clears nothing", settings.signerMismatch.value)
+        platform.keys.nextResult = null
+        onMain { about.unblock() }
+        assertFalse(settings.signerMismatch.value)
+    }
+
     @Test fun an_incomplete_value_does_not_block() {
-        lateinit var about: AboutViewModel
-        onMain { about = AboutViewModel(core, platform, settings); about.toggleCompare(); about.onReference(IdentitySamples.FINGERPRINT.take(30)) }
+        val about = about()
+        onMain { about.toggleCompare(); about.onReference(IdentitySamples.FINGERPRINT.take(30)); about.onConfirmed(true); about.block() }
         assertFalse(settings.signerMismatch.value)
         assertEquals(FingerprintCompare.Incomplete, about.state.value.compare)
     }

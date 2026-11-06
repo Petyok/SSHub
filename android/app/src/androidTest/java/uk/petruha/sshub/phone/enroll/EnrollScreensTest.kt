@@ -248,11 +248,22 @@ class EnrollScreensTest {
     }
 
     @Test fun confirm_bad_signature_is_a_stop_with_only_start_again() {
-        rule.setScreen { EnrollConfirmScreen(S.confirm(ConfirmStatus.Bad), EnrollConfirmActions(onStartAgain = hit("again"), onFinish = hit("finish"))) }
+        rule.setScreen { EnrollConfirmScreen(S.confirm(ConfirmStatus.Bad).copy(kind = uk.petruha.sshub.phone.core.RefusalKind.BadSignature), EnrollConfirmActions(onStartAgain = hit("again"), onFinish = hit("finish"))) }
         exists("The terminal confirmation has a bad signature.")
         absent("Finish")
         click("Start again")
         assertEquals(listOf("again"), calls)
+    }
+
+    @Test fun confirm_refusal_title_follows_the_kind() {
+        rule.setScreen { EnrollConfirmScreen(S.confirm(ConfirmStatus.Bad).copy(kind = uk.petruha.sshub.phone.core.RefusalKind.Declined), EnrollConfirmActions()) }
+        exists("The terminal declined.")
+        absent("The terminal confirmation has a bad signature.")
+    }
+
+    @Test fun confirm_refusal_of_another_kind_has_the_generic_title() {
+        rule.setScreen { EnrollConfirmScreen(S.confirm(ConfirmStatus.Bad), EnrollConfirmActions()) }
+        exists("The terminal confirmation was refused.")
     }
 
     @Test fun confirm_ok_finishes() {

@@ -21,6 +21,7 @@ import org.junit.runner.RunWith
 import uk.petruha.sshub.phone.app.AppRoot
 import uk.petruha.sshub.phone.app.AppRouter
 import uk.petruha.sshub.phone.core.AutoLockChoices
+import uk.petruha.sshub.phone.core.InMemorySettingsStore
 import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.Opened
 import uk.petruha.sshub.phone.core.ReleaseDecision
@@ -49,13 +50,30 @@ class SignerMismatchTest {
         assertTrue("the D17 block persists", again.signerMismatch.value)
     }
 
-    @Test fun the_block_is_sticky() {
+    @Test fun the_block_is_sticky_against_set_false() {
         val f = file()
         val s = FileSettingsStore(f)
         s.setSignerMismatch(true)
-        s.setSignerMismatch(false) // the user types a matching value later: the block stays
+        s.setSignerMismatch(false) // nothing but clearSignerMismatch may lower it
         assertTrue(s.signerMismatch.value)
         assertTrue(FileSettingsStore(f).signerMismatch.value)
+    }
+
+    @Test fun clear_signer_mismatch_lowers_the_block_and_the_file_remembers() {
+        val f = file()
+        val s = FileSettingsStore(f)
+        s.setTheme(ThemeChoice.Light)
+        s.setSignerMismatch(true)
+        s.clearSignerMismatch()
+        assertFalse(s.signerMismatch.value)
+        val again = FileSettingsStore(f)
+        assertFalse(again.signerMismatch.value)
+        assertEquals("other settings stay", ThemeChoice.Light, again.theme.value)
+        val mem = InMemorySettingsStore()
+        mem.setSignerMismatch(true); mem.setSignerMismatch(false)
+        assertTrue(mem.signerMismatch.value)
+        mem.clearSignerMismatch()
+        assertFalse(mem.signerMismatch.value)
     }
 
     @Test fun defaults_without_a_file_and_a_corrupt_file() {

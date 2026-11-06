@@ -120,8 +120,12 @@ internal fun RsCheck.asCheck(typeGate: Boolean = false) =
 /** The core's own class of an enrollment refusal (`RefusalView.kind`); the app picks its words by it, never by the sentence. */
 internal fun enrollRefusalKind(k: RsRefusalKind): RefusalKind = when (k) {
     RsRefusalKind.MISMATCH -> RefusalKind.Mismatch
-    RsRefusalKind.DECLINED, RsRefusalKind.BAD_SIGNATURE, RsRefusalKind.UNUSABLE_KEYS -> RefusalKind.Stopped
-    RsRefusalKind.WRONG_ORDER, RsRefusalKind.STRAY_FRAME, RsRefusalKind.OTHER -> RefusalKind.Stray
+    RsRefusalKind.DECLINED -> RefusalKind.Declined
+    RsRefusalKind.BAD_SIGNATURE -> RefusalKind.BadSignature
+    RsRefusalKind.UNUSABLE_KEYS -> RefusalKind.UnusableKeys
+    RsRefusalKind.WRONG_ORDER -> RefusalKind.WrongOrder
+    RsRefusalKind.STRAY_FRAME -> RefusalKind.StrayFrame
+    RsRefusalKind.OTHER -> RefusalKind.Other
 }
 
 internal fun mapRefused(v: RsRefusalView, enrollFrame: Boolean): Opened =
@@ -239,7 +243,7 @@ internal fun mapTrustRequest(v: RsCertRequestView): OpenedTrustRequest {
 private fun allowance(budget: String?, extra: String?): Pair<String, String>? {
     val n = budget?.trim()?.toLongOrNull() ?: return null
     val e = extra?.trim()?.toLongOrNull() ?: return null
-    return "$n new hosts per day" to "${n + e} new hosts in the next 24 hours ($n + $e)"
+    return "$n new hosts per day" to "a total of ${n + e} new hosts in the rolling day, as the terminal counts them"
 }
 
 internal fun mapTrustExtend(v: RsCertExtendView): OpenedTrustExtend {

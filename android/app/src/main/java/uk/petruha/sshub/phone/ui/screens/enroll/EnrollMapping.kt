@@ -4,6 +4,7 @@ import uk.petruha.sshub.phone.core.BleAvailability
 import uk.petruha.sshub.phone.core.BleDevice
 import uk.petruha.sshub.phone.core.CameraPermission
 import uk.petruha.sshub.phone.core.EnrollChannel
+import uk.petruha.sshub.phone.core.RefusalKind
 import uk.petruha.sshub.phone.core.EnrollTextKind
 import uk.petruha.sshub.phone.core.OpenedEnrolled
 import uk.petruha.sshub.phone.core.Outgoing
@@ -32,6 +33,7 @@ data class EnrollFlow(
     val cmp: ComparePhase = ComparePhase.Compare,
     val conf: ConfirmStatus = ConfirmStatus.Waiting,
     val confReason: String = "",
+    val confKind: RefusalKind? = null,
     val enrolled: OpenedEnrolled? = null,
     val pasteN: Int = 1,
     val pasteText: Map<Int, String> = emptyMap(),
@@ -111,7 +113,7 @@ fun EnrollUi.toCompare() = EnrollCompareState(
 )
 
 fun EnrollUi.toConfirm() = EnrollConfirmState(
-    terminal = flow.who(), status = flow.conf, reason = flow.confReason, send = sendOf(flow.confirm, 5),
+    terminal = flow.who(), status = flow.conf, reason = flow.confReason, kind = flow.confKind, send = sendOf(flow.confirm, 5),
     receive = receiveOf("Scan the terminal's confirmation"),
 )
 
@@ -159,7 +161,7 @@ internal fun validatePaste(n: Int, kind: EnrollTextKind?): PasteValidation {
 fun EnrollUi.toPaste(): EnrollPasteState {
     val n = flow.pasteN
     return EnrollPasteState(
-        n = n, terminal = flow.who(), text = flow.pasteText[n].orEmpty(), validation = validatePaste(n, flow.pasteKind[n]),
+        n = n, terminal = flow.who(), text = flow.pasteText[n].orEmpty(), validation = validatePaste(n, flow.pasteKind[n]), note = flow.note,
         send = when (n) { 2 -> sendOf(flow.commit, 2); 5 -> sendOf(flow.confirm, 5); else -> null },
     )
 }

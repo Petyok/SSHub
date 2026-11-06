@@ -39,7 +39,7 @@ class ReleaseViewModelOutcomeTest {
         val s = vm(77).state.value
         assertNotNull(s)
         assertEquals(ApprovalPhase.Approved, s!!.phase)
-        assertSame(kept, s.outcome)
+        assertSame(kept.outgoing, s.outcome!!.outgoing)
         assertEquals(setOf(ChannelKind.Qr), s.channelsOn)
     }
 

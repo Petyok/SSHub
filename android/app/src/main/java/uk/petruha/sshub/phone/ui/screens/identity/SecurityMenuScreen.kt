@@ -51,9 +51,10 @@ fun SecurityMenuScreen(state: SecurityMenuState, on: SecurityMenuActions) {
         if (state.blocked) {
             StopBox("Signing fingerprint differs", live = true) {
                 Text(
-                    "This app is not signed by the key the terminal expects. Nothing that signs or releases is open. Do not use this copy: remove it and install the app again from the source the terminal names.",
+                    "This app is not signed by the key the terminal expects. Nothing that signs or releases is open. $GET_AGAIN",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
                 )
+                Text(REINSTALL_WARNING, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
             }
         }
         if (state.headPending) {

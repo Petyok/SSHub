@@ -18,8 +18,13 @@ private fun Context.activity(): Activity? = when (this) { is Activity -> this; i
 fun SecureWindow() {
     val a = LocalContext.current.activity()
     DisposableEffect(a) {
-        if (a != null) { if (secureCount++ == 0) a.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE) }
-        onDispose { if (a != null && --secureCount == 0) a.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+        if (a != null && secureCount++ == 0) {
+            // The Activity already holds FLAG_SECURE for every screen: remember that, so the last release restores exactly the old state.
+            hadSecure = a.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
+            a.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        onDispose { if (a != null && --secureCount == 0 && !hadSecure) a.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
     }
 }
 private var secureCount = 0
+private var hadSecure = false

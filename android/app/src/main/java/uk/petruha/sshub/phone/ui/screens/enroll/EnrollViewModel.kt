@@ -190,26 +190,27 @@ class EnrollViewModel(
         if (flow.value.channel == EnrollChannel.Paste) nav.navigate(Routes.Enroll4)
     }
 
+    /** The core keeps the session after a wrong-order or stray frame; so does the screen: a note, nothing reset (M7). */
     private fun onRefusal(o: EnrollRefusal) {
+        if (o.kind == RefusalKind.WrongOrder || o.kind == RefusalKind.StrayFrame) {
+            note("That is not the code this step needs. Show the one the terminal shows now.")
+            return
+        }
         val f = flow.value
         when {
             f.confirm != null -> {
-                flow.update { it.copy(conf = ConfirmStatus.Bad, confReason = o.reason) }
+                flow.update { it.copy(conf = ConfirmStatus.Bad, confReason = o.reason, confKind = o.kind) }
                 if (f.channel == EnrollChannel.Paste) nav.navigate(Routes.Enroll5)
             }
-            f.commit != null -> when (o.kind) {
-                // A stray or out-of-order frame is a note: the session waits and the user is not told someone interferes (M7).
-                RefusalKind.Stray -> note(o.reason)
-                RefusalKind.Mismatch, RefusalKind.Stopped -> {
-                    val mismatch = o.kind == RefusalKind.Mismatch
-                    flow.update {
-                        it.copy(
-                            keys = if (mismatch) KeysStatus.Mismatch else KeysStatus.Stopped,
-                            committed = o.committed.orEmpty(), shown = o.shown.orEmpty(), keysReason = o.reason,
-                        )
-                    }
-                    if (f.channel == EnrollChannel.Paste) nav.navigate(Routes.Enroll3)
+            f.commit != null -> {
+                val mismatch = o.kind == RefusalKind.Mismatch
+                flow.update {
+                    it.copy(
+                        keys = if (mismatch) KeysStatus.Mismatch else KeysStatus.Stopped,
+                        committed = o.committed.orEmpty(), shown = o.shown.orEmpty(), keysReason = o.reason,
+                    )
                 }
+                if (f.channel == EnrollChannel.Paste) nav.navigate(Routes.Enroll3)
             }
             else -> note(o.reason)
         }

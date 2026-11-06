@@ -21,13 +21,15 @@ interface SettingsStore {
     val autoLockSeconds: StateFlow<Int>
     /** The user ticked "I wrote them on paper" at least once. */
     val backupConfirmed: StateFlow<Boolean>
-    /** The app signing fingerprint was compared with the terminal's value and differs. Sticky: `setSignerMismatch(false)` does nothing once it is true. */
+    /** The app signing fingerprint was compared with the terminal's value and differs. Sticky: only `clearSignerMismatch`, after a matching compare behind the system lock, clears it; reinstalling also does. `setSignerMismatch(false)` does nothing. */
     val signerMismatch: StateFlow<Boolean>
 
     fun setTheme(choice: ThemeChoice)
     fun setAutoLock(seconds: Int)
     fun setBackupConfirmed(confirmed: Boolean)
     fun setSignerMismatch(mismatch: Boolean)
+    /** The only way to lower the block without a reinstall. The caller must have seen an equal compare and passed the system lock. */
+    fun clearSignerMismatch()
 }
 
 class InMemorySettingsStore : SettingsStore {
@@ -43,6 +45,7 @@ class InMemorySettingsStore : SettingsStore {
     override fun setAutoLock(seconds: Int) { autoLockFlow.value = seconds.coerceIn(AutoLockChoices.seconds.first(), AutoLockChoices.seconds.last()) }
     override fun setBackupConfirmed(confirmed: Boolean) { backupFlow.value = confirmed }
     override fun setSignerMismatch(mismatch: Boolean) { if (mismatch) mismatchFlow.value = true } // sticky, like the persistent store
+    override fun clearSignerMismatch() { mismatchFlow.value = false }
 }
 
 /** Process-wide default used by `identityGraph` when the shell passes nothing. */

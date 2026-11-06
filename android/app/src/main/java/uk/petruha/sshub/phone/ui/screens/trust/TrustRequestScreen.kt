@@ -86,11 +86,11 @@ private fun ReviewFrame(state: TrustRequestState, on: TrustRequestActions) {
     val refused = v.refusal != null
     ScreenFrame(
         "Trust request", on.onBack,
-        banner = { RedBanner("TRUST CERTIFICATE", trailing = "Red: 3 proofs") },
+        banner = { RedBanner("TRUST CERTIFICATE", trailing = "Red operation") },
         bar = {
             if (refused) SshubButton("Back to approvals", on.onBack, Modifier.fillMaxWidth())
             else {
-                if (!state.gateOk) Note("Type the device id above to enable Approve.")
+                if (!state.gateOk) Note("Type the device id in the field under the warning to enable Approve.")
                 BarButtons {
                     SshubButton("Decline", on.onDecline, enabled = !state.busy)
                     SshubButton(

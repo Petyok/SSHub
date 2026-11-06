@@ -68,6 +68,20 @@ class TakeChainScreenTest {
         rule.onNodeWithText("4 of 4 pass").assertExists()
     }
 
+    @Test fun the_second_list_must_come_from_a_different_terminal() {
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadStart, ChainHeadActions()) }
+        rule.onNodeWithText("Take a second list from a different terminal. The same terminal twice does not count.", substring = true).assertExists()
+        rule.onAllNodesWithText("from the same one later", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun the_sender_of_each_list_is_shown_in_groups_of_four_or_said_to_be_missing() {
+        val s = IdentitySamples.chainHeadAgree.copy(senders = listOf("7b3e0d15aa", null))
+        rule.setScreen { TakeChainScreen(s, ChainHeadActions()) }
+        rule.onNodeWithText("List from terminal 7b3e 0d15 aa").assertExists()
+        rule.onNodeWithText("This list does not say which terminal made it.").assertExists()
+        rule.onNodeWithText("not proof of who sent it", substring = true).assertExists()
+    }
+
     @Test fun agree_variant_adopts_with_the_seq_in_the_label() {
         var adopt = 0; var home = 0
         rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadAgree, ChainHeadActions(onAdopt = { adopt++ }, onHome = { home++ })) }
@@ -247,6 +261,8 @@ class SecurityMenuScreenTest {
             SecurityMenuScreen(IdentitySamples.menuBlocked, SecurityMenuActions(onTrustList = { trust++ }, onAbout = { about++ }, onLock = { lock++ }))
         }
         rule.onNodeWithText("Signing fingerprint differs").assertExists()
+        rule.onNodeWithText("Get the app again from the release notes", substring = true).assertExists()
+        rule.onNodeWithText("you will need your 24 words", substring = true).assertExists()
         for (t in listOf("Trust sessions", "Short codes I issued", "Reshare and wrap keys", "Recovery and a new phone", "Recovery words", "Export my ops as text")) {
             rule.onNodeWithText(t).assertHasNoClickAction()
         }
@@ -329,6 +345,48 @@ class AboutSecurityScreenTest {
         rule.onAllNodesWithText("Stop comparing").assertCountEquals(0)
         rule.onAllNodesWithText("Compare with terminal").assertCountEquals(0)
         rule.onAllNodesWithText("continue", substring = true, ignoreCase = true).assertCountEquals(0)
+    }
+
+    @Test fun d17_the_block_button_needs_the_tick_and_the_warning_says_what_closing_costs() {
+        var confirmed = false
+        rule.setScreen {
+            AboutSecurityScreen(
+                IdentitySamples.aboutComparingDiffer.copy(confirmed = confirmed),
+                AboutActions(onConfirmed = { confirmed = it }),
+            )
+        }
+        rule.onNodeWithText("Closing the app means installing it again.", substring = true).assertExists()
+        rule.onNodeWithText("you will need your 24 words", substring = true).assertExists()
+        rule.onNodeWithText("Get the app again from the release notes", substring = true).assertExists()
+        rule.onNodeWithText("These differ: close the app").performScrollTo().assertIsNotEnabled()
+        rule.onNodeWithText("I compared the value digit by digit").performScrollTo().performClick()
+        assertTrue(confirmed)
+    }
+
+    @Test fun d17_a_ticked_block_button_calls_the_block() {
+        var block = 0
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.aboutComparingDiffer.copy(confirmed = true), AboutActions(onBlock = { block++ })) }
+        rule.onNodeWithText("These differ: close the app").performScrollTo().assertIsEnabled().performClick()
+        assertEquals(1, block)
+    }
+
+    @Test fun d17_while_blocked_a_matching_value_offers_the_way_out() {
+        var open = 0
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.aboutComparingEqual.copy(blocked = true), AboutActions(onUnblock = { open++ })) }
+        rule.onNodeWithText("Closing the app means installing it again.", substring = true).assertExists()
+        rule.onNodeWithText("I typed it wrong earlier: open the app again").performScrollTo().performClick()
+        assertEquals(1, open)
+    }
+
+    @Test fun d17_while_blocked_and_differing_there_is_no_way_out_and_no_block_button() {
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.aboutComparingDiffer.copy(blocked = true), AboutActions()) }
+        rule.onAllNodesWithText("I typed it wrong earlier", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("These differ: close the app").assertCountEquals(0)
+    }
+
+    @Test fun d17_a_refused_system_lock_is_shown_as_text() {
+        rule.setScreen { AboutSecurityScreen(IdentitySamples.aboutComparingDiffer.copy(message = "The system prompt was canceled."), AboutActions()) }
+        rule.onNodeWithText("The system prompt was canceled.", substring = true).performScrollTo().assertExists()
     }
 
     @Test fun d17_compare_logic() {

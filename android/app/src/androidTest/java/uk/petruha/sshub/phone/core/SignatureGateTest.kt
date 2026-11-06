@@ -17,17 +17,6 @@ import uk.petruha.sshub.phone.platform.SealedStateStore
 import java.io.File
 import java.util.UUID
 
-/** A vault that only counts the prompts it is asked for (platform H5, flows H6, security M5). */
-private class CountingVault(var result: VaultResult? = null) : KeyVault {
-    val prompts = mutableListOf<Pair<String, String>>()
-    override val state: StateFlow<VaultState> = MutableStateFlow(VaultState.Unlocked)
-    override val strongBox = false
-    override suspend fun store(secret: ByteArray) = VaultResult.Stored
-    override suspend fun unlock(title: String, subtitle: String): VaultResult { prompts += title to subtitle; return result ?: VaultResult.Secret(ByteArray(32) { 1 }) }
-    override suspend fun erase() {}
-    override fun lock() {}
-}
-
 class SignatureGateTest {
     private val ctx = InstrumentationRegistry.getInstrumentation().targetContext
     private val fixtures = JSONObject(InstrumentationRegistry.getInstrumentation().context.assets.open("challenges.json").bufferedReader().readText())
@@ -36,7 +25,7 @@ class SignatureGateTest {
     private fun newDir() = File(ctx.cacheDir, "gate-" + UUID.randomUUID()).also { it.mkdirs() }
 
     private fun core(vault: KeyVault?, dir: File = newDir()): UniffiPhoneCore =
-        UniffiPhoneCore(SealedStateStore(dir)).also { runBlocking { it.unlock(ByteArray(32) { 0x42 }, now) }; it.vault = vault }
+        UniffiPhoneCore(SealedStateStore(dir)).also { it.blocked = { false }; runBlocking { it.unlock(ByteArray(32) { 0x42 }, now) }; it.vault = vault }
 
     private fun open(c: UniffiPhoneCore): ReleaseView {
         val ch = fixtures.getJSONArray("challenges").getJSONObject(0)
@@ -47,7 +36,7 @@ class SignatureGateTest {
         ReleaseDecision.Approve(channels = ReleaseChannels(qr = true), typedId = v.mustType, byHand = byHand)
 
     @Test fun one_system_lock_prompt_before_an_approval_and_none_for_a_decline() {
-        val vault = CountingVault()
+        val vault = PassVault()
         val c = core(vault)
         val v = open(c)
         runBlocking { c.decide(v.token, ReleaseDecision.Decline, now) }
@@ -61,7 +50,7 @@ class SignatureGateTest {
     }
 
     @Test fun a_refused_prompt_stops_the_call_before_the_core_is_touched() {
-        val vault = CountingVault(VaultResult.Canceled)
+        val vault = PassVault(VaultResult.Canceled)
         val c = core(vault)
         val v = open(c)
         val e = runCatching { runBlocking { c.decide(v.token, approve(v), now) } }.exceptionOrNull() as CoreException
@@ -72,21 +61,21 @@ class SignatureGateTest {
     }
 
     @Test fun the_outcome_is_kept_until_the_phone_locks() {
-        val c = core(CountingVault())
+        val c = core(PassVault())
         val v = open(c)
         assertNull(c.lastOutcome(v.token))
         val out = runBlocking { c.decide(v.token, approve(v), now) }
-        assertEquals(out, c.lastOutcome(v.token))
+        assertEquals(out.outgoing, c.lastOutcome(v.token)?.outgoing)
         c.lock()
         assertNull("gone with the lock", c.lastOutcome(v.token))
     }
 
     @Test fun the_by_hand_choice_reaches_the_core() {
-        val c = core(CountingVault())
+        val c = core(PassVault())
         val v = open(c)
         val out = runBlocking { c.decide(v.token, approve(v, byHand = true), now) }
         assertNotNull("by-hand words come back when asked for", out.byHand)
-        val c2 = core(CountingVault())
+        val c2 = core(PassVault())
         val w = open(c2)
         assertNull(runBlocking { c2.decide(w.token, approve(w), now) }.byHand)
     }
@@ -112,7 +101,7 @@ class SignatureGateTest {
         val dir = newDir()
         val junk = ByteArray(200) { 7 }
         File(dir, "state.bin").writeBytes(junk)
-        val c = UniffiPhoneCore(SealedStateStore(dir))
+        val c = UniffiPhoneCore(SealedStateStore(dir)).also { it.blocked = { false } }
         val status = runBlocking { c.unlock(ByteArray(32) { 0x42 }, now) }
         assertTrue(status.stateLost)
         assertTrue(c.stateLost())

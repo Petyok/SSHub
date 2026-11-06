@@ -78,4 +78,31 @@ class QrViewTest {
         assertTrue(!flag())
         assertEquals(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE, window.attributes.screenBrightness, 0f)
     }
+
+    @Test
+    fun theScreenHoldEndsAfterTheBoundSoTheNormalTimeoutAndAutoLockApplyAgain() {
+        rule.setContent { QrView(matrix, "timed", holdMs = 400) }
+        val window = rule.activity.window
+        fun flag() = window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0
+        rule.waitForIdle()
+        assertTrue(flag())
+        val end = System.currentTimeMillis() + 5_000
+        while (flag() && System.currentTimeMillis() < end) Thread.sleep(50)
+        assertTrue("the hold must end after the bound", !flag())
+        assertEquals(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE, window.attributes.screenBrightness, 0f)
+    }
+
+    @Test
+    fun inLandscapeTheCodeIsNoTallerThanTheScreenCap() {
+        rule.setContent {
+            val cfg = android.content.res.Configuration(androidx.compose.ui.platform.LocalConfiguration.current).also { it.screenHeightDp = 360 }
+            CompositionLocalProvider(androidx.compose.ui.platform.LocalConfiguration provides cfg) {
+                Box(Modifier.width(700.dp)) { QrView(matrix, "wide") }
+            }
+        }
+        val node = rule.onNodeWithContentDescription("wide").fetchSemanticsNode()
+        val density = rule.activity.resources.displayMetrics.density
+        assertTrue("height ${node.size.height} must be at most 360 dp", node.size.height <= 360 * density + 1)
+        assertEquals("still square", node.size.width, node.size.height)
+    }
 }

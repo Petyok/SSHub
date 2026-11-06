@@ -29,7 +29,7 @@ class ShortCodesTest {
 
     @Test fun main_path_rows_states_and_expiry_on_a_tick_scale() {
         rule.setScreen { ShortCodesScreen(list, codesActions()) }
-        rule.onNodeWithText("One live code per credential. The terminal shows the same host id. The code itself is never stored here.").assertExists()
+        rule.onNodeWithText("One live code per credential. The host id comes from the signed request; the terminal does not print it. The code itself is never stored here.").assertExists()
         rule.onNodeWithText("4 codes").assertExists()
         rule.onAllNodesWithText("live").assertCountEquals(2)
         rule.onAllNodesWithText("expired").assertCountEquals(1)

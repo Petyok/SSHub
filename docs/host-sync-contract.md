@@ -1219,7 +1219,7 @@ it talks to. The page stays the iOS and fallback phone; where this section says 
   knows its MTU: its HELLO `chunk` is `min(negotiated MTU - 3, 512)`; the terminal's rule `min(proposal, 244, notification MTU - 3)` is unchanged. The
   app never accepts-all in a scan: it filters on the service UUID and lists `SSHub-<TAG>` for the person to pick.
 - **No network.** The app declares no `INTERNET` permission (the native counterpart of the page's `connect-src 'none'`); the permissions are
-  `CAMERA`, `BLUETOOTH_SCAN` (`neverForLocation`), `BLUETOOTH_CONNECT` and `USE_BIOMETRIC`.
+  `CAMERA`, `BLUETOOTH_SCAN` (`neverForLocation`), `BLUETOOTH_CONNECT`, `USE_BIOMETRIC` and `HIDE_OVERLAY_WINDOWS` (normal, API 31: hides overlays drawn over the window).
 - **App fingerprint.** `sha256` of the DER signing certificate of the release APK, lowercase hex (64 characters), as `apksigner verify --print-certs`
   prints it and as the app shows it on its About screen. The terminal ships `COMPANION_APK_CERT_SHA256` (`src/sync/companion.rs`, from
   `assets/companion/APK_CERT_SHA256`) and shows it beside the page fingerprint with the same compare hint, and in `sync-status` JSON as

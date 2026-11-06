@@ -5,6 +5,7 @@ import android.view.View
 import android.view.WindowManager
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -49,9 +50,9 @@ class MainActivity : FragmentActivity() {
         (core as? UniffiPhoneCore)?.let { it.blocked = { settings.signerMismatch.value }; it.vault = platform.keys }
         platform.attach(this) // before setContent: permission launchers must be registered before STARTED
         setContent {
-            Box {
-                AppRoot(core, platform, settings)
+            Column {
                 if (BuildConfig.DEBUG) DebugBanner()
+                Box(Modifier.weight(1f)) { AppRoot(core, platform, settings) }
             }
         }
         // Drop taps that arrive while another window covers ours (tapjacking); set after setContent so the content view exists.
@@ -62,7 +63,8 @@ class MainActivity : FragmentActivity() {
 /** Thin red strip so a debug install is never mistaken for the release app. */
 @Composable
 private fun DebugBanner() {
-    Box(Modifier.fillMaxWidth().background(Color.Red).statusBarsPadding().padding(vertical = 1.dp), contentAlignment = Alignment.Center) {
-        Text("debug build", color = Color.White, fontSize = 10.sp)
+    // Above the app (not over it), at the 12 sp floor, so it never covers a header or a touch target.
+    Box(Modifier.fillMaxWidth().background(Color.Red).statusBarsPadding().padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
+        Text("debug build", color = Color.White, fontSize = 12.sp)
     }
 }

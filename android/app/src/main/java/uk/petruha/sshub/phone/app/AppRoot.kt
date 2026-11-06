@@ -72,7 +72,8 @@ import uk.petruha.sshub.phone.core.ReshareOpened
 /** Routes that are meant to be shown while the vault is not Unlocked. */
 private val LOCK_SAFE_ROUTES = setOf(Routes.Lock, Routes.LockRestore, Routes.Restore, Routes.FirstRun, Routes.StateLost)
 
-private val MISMATCH_SAFE_ROUTES = LOCK_SAFE_ROUTES + Routes.About
+/** D17: only Lock and About stay open while the block is set. Restore, lock-restore, first run and the stop screen are closed too (typing the 24 words into a build that was reported as untrusted is the exposure). */
+private val MISMATCH_SAFE_ROUTES = setOf(Routes.Lock, Routes.About)
 
 private fun hidesBar(route: String?): Boolean {
     val r = route?.substringBefore("/") ?: return true

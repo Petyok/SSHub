@@ -3,6 +3,7 @@ package uk.petruha.sshub.phone.ui.screens.enroll
 import uk.petruha.sshub.phone.core.BleDevice
 import uk.petruha.sshub.phone.core.CameraPermission
 import uk.petruha.sshub.phone.core.EnrollChannel
+import uk.petruha.sshub.phone.core.RefusalKind
 import uk.petruha.sshub.phone.ui.components.QrMatrix
 
 /** State and action types of the nine enrollment screens. Screens are stateless: `XScreen(state, on)`. */
@@ -151,6 +152,8 @@ data class EnrollConfirmState(
     val reason: String = "",
     val send: EnrollSendState,
     val receive: EnrollReceiveState,
+    /** The core's kind of refusal when `status` is Bad; picks the title. */
+    val kind: RefusalKind? = null,
 )
 
 class EnrollConfirmActions(
@@ -206,6 +209,8 @@ data class EnrollPasteState(
     val validation: PasteValidation,
     /** This phone's text for the terminal at steps 2 and 5, null where nothing is sent. */
     val send: EnrollSendState?,
+    /** A refusal that does not end the step (wrong order, stray frame), shown under the text box. */
+    val note: String? = null,
 )
 
 class EnrollPasteActions(

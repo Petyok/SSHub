@@ -70,7 +70,8 @@ if [ "$mode" = connected ]; then
     [ -f gradle/verification-metadata.xml ] && cp gradle/verification-metadata.xml /out/ || true
     cp app/build/outputs/apk/debug/app-debug.apk /out/ 2>/dev/null || true
     cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk /out/ 2>/dev/null || true
-    [ -f /out/app-debug.apk ] && PATH=$ANDROID_HOME/build-tools/35.0.0:$PATH sh /work/android/ci/manifest-check.sh /out/app-debug.apk || true
+    # The check gates the run: a failure turns the result red.
+    if [ -f /out/app-debug.apk ]; then PATH=$ANDROID_HOME/build-tools/35.0.0:$PATH sh /work/android/ci/manifest-check.sh /out/app-debug.apk || { [ "$rc" -ne 0 ] || rc=1; }; fi
     exit "$rc"
 fi
 
@@ -90,6 +91,10 @@ fi
 ph cargo_ndk
 echo "== cargo-ndk"
 rm -rf android/app/src/main/jniLibs
+# `build` produces the release APK: start from clean inputs (no warm core objects, no warm Gradle outputs), never from incremental state.
+if [ "$mode" = build ]; then
+    rm -rf /target/aarch64-linux-android/phone /target/x86_64-linux-android/phone android/app/build android/build
+fi
 # Focused runs and `native` need only the emulator ABI; `build` (release, device APK) keeps both.
 if [ "$mode" = native ]; then NDK_TARGETS="-t x86_64"; else NDK_TARGETS="-t arm64-v8a -t x86_64"; fi
 RUSTFLAGS="$RF" cargo ndk $NDK_TARGETS --platform 30 -o android/app/src/main/jniLibs \
@@ -99,7 +104,8 @@ ph uniffi_bindgen
 echo "== uniffi bindings"
 # The bindgen binary only reads the .so, so it is cached by the uniffi version and its source, not rebuilt per run.
 ver=$(awk '/^name = "uniffi"$/ { getline; print $3; exit }' Cargo.lock | tr -d '"')
-key="$ver-$(sha256sum crates/sshub-phone-core/src/bin/uniffi-bindgen.rs | cut -c1-12)"
+lockhash=$(awk '/^name = "uniffi[a-z_]*"$/ { n=$0; getline v; getline s; print n v s }' Cargo.lock | sha256sum | cut -c1-12)
+key="$ver-$(sha256sum crates/sshub-phone-core/src/bin/uniffi-bindgen.rs | cut -c1-12)-$lockhash"
 bg=/cargo-home/bin/uniffi-bindgen-$key
 if [ ! -x "$bg" ]; then
     echo "building uniffi-bindgen $key"
@@ -131,6 +137,7 @@ cp app/build/outputs/apk/release/app-release-unsigned.apk /out/
 ls -l /out/*.apk
 sha256sum /out/*.apk
 PATH=$ANDROID_HOME/build-tools/35.0.0:$PATH sh /work/android/ci/manifest-check.sh /out/app-debug.apk
+PATH=$ANDROID_HOME/build-tools/35.0.0:$PATH APK_KIND=release sh /work/android/ci/manifest-check.sh /out/app-release-unsigned.apk
 unzip -l /out/app-debug.apk | grep -E '\.so$' || true
 ph end
 

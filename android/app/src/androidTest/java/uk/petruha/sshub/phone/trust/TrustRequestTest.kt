@@ -88,6 +88,14 @@ class TrustRequestTest {
         assertEquals(1, approved)
     }
 
+    @Test fun n7_n_l9_the_hint_points_at_the_field_under_the_warning_and_the_banner_counts_nothing() {
+        rule.setScreen { TrustRequestScreen(unmet, requestActions()) }
+        rule.onNodeWithText("Type the device id in the field under the warning to enable Approve.").assertExists()
+        rule.onAllNodesWithText("Type the device id above", substring = true).assertCountEquals(0)
+        rule.onNodeWithText("Red operation").assertExists()
+        rule.onAllNodesWithText("Red: 3 proofs").assertCountEquals(0)
+    }
+
     @Test fun d8_approve_enabled_iff_all_checks_pass() {
         assertTrue(ok.approveEnabled)
         val failed = ok.view.epoch!!.copy(checks = listOf(TrustCheck("starts at this phone's own epoch 7", false), TrustCheck("at most one epoch wide", true)))

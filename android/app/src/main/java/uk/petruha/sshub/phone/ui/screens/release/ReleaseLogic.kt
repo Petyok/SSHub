@@ -168,6 +168,8 @@ data class ReleaseState(
     val shortCode: Boolean = false,
     val byHand: Boolean = false,
     val outcome: ReleaseOutcome? = null,
+    /** The screen was opened on an approval made earlier: the code, the words and the reply are never shown again. */
+    val restored: Boolean = false,
     val copied: Boolean = false,
     val clearsIn: Int? = null,
     val error: String? = null,

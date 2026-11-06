@@ -30,7 +30,7 @@ class CoreOffMainTest {
 
     private fun core(): UniffiPhoneCore {
         val dir = File(ctx.cacheDir, "m6-" + UUID.randomUUID()).also { it.mkdirs() }
-        return UniffiPhoneCore(SealedStateStore(dir)).also { c -> runBlocking { c.unlock(ByteArray(32) { 0x42 }, now) } }
+        return UniffiPhoneCore(SealedStateStore(dir)).also { c -> c.blocked = { false }; runBlocking { c.unlock(ByteArray(32) { 0x42 }, now) } }
     }
 
     /** How long the main thread takes to run one posted task. */

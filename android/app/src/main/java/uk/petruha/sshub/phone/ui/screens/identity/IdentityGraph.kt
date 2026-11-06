@@ -134,6 +134,7 @@ fun NavGraphBuilder.identityGraph(env: AppEnv, settings: SettingsStore = AppSett
             state,
             AboutActions(
                 onToggleCompare = vm::toggleCompare, onReference = vm::onReference, onToggleGroup = vm::toggleGroup,
+                onConfirmed = vm::onConfirmed, onBlock = vm::block, onUnblock = vm::unblock,
                 onBackup = { nav.navigate(backupRoute(false)) }, onToggleLicences = vm::toggleLicences, onBack = { nav.popBackStack() },
             ),
         )

@@ -11,7 +11,7 @@ import java.io.File
 
 /**
  * The settings and the D17 block in one small file (`key=value` lines) in `noBackupFilesDir`, replaced atomically on every change.
- * `signerMismatch` is sticky: once set it stays set across restarts until the app is reinstalled (the file goes with it).
+ * `signerMismatch` is sticky: once set it stays set across restarts until `clearSignerMismatch` or a reinstall (the file goes with it).
  */
 class FileSettingsStore(private val file: File) : SettingsStore {
     private val values: Map<String, String> = atomicRead(file)?.toString(Charsets.UTF_8)?.lineSequence()
@@ -35,7 +35,8 @@ class FileSettingsStore(private val file: File) : SettingsStore {
     override fun setTheme(choice: ThemeChoice) { themeFlow.value = choice; save() }
     override fun setAutoLock(seconds: Int) { autoLockFlow.value = seconds.coerceIn(AutoLockChoices.seconds.first(), AutoLockChoices.seconds.last()); save() }
     override fun setBackupConfirmed(confirmed: Boolean) { backupFlow.value = confirmed; save() }
-    override fun setSignerMismatch(mismatch: Boolean) { if (mismatch == mismatchFlow.value || (!mismatch && mismatchFlow.value)) return; mismatchFlow.value = true; save() }
+    override fun setSignerMismatch(mismatch: Boolean) { if (!mismatch || mismatchFlow.value) return; mismatchFlow.value = true; save() }
+    override fun clearSignerMismatch() { if (!mismatchFlow.value) return; mismatchFlow.value = false; save() }
 
     companion object {
         const val FILE = "settings.txt"

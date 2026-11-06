@@ -39,7 +39,14 @@ class SealedStateStore(dir: File, name: String = "state.bin") {
     private val file = File(dir, name)
     fun read(): ByteArray? = atomicRead(file)
     fun write(blob: ByteArray) = atomicWrite(file, blob)
-    /** Keeps the current bytes as `<name>.lost` (an unreadable state must not be overwritten). Blocking. */
-    fun keepAsLost() { if (file.isFile) atomicWrite(File(file.parentFile, file.name + ".lost"), file.readBytes()) }
+    /** Keeps the current bytes as `<name>.lost`, or `.lost.1`, `.lost.2`... for the next free name: an earlier lost copy is never overwritten. Blocking. */
+    fun keepAsLost() {
+        if (!file.isFile) return
+        val base = File(file.parentFile, file.name + ".lost")
+        var target = base
+        var n = 0
+        while (target.exists()) target = File(file.parentFile, base.name + "." + ++n)
+        atomicWrite(target, file.readBytes())
+    }
     fun delete() { file.delete(); File(file.parentFile, file.name + ".tmp").delete() }
 }

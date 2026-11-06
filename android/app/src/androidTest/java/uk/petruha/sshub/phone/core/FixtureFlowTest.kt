@@ -29,7 +29,7 @@ class FixtureFlowTest {
 
     private fun freshCore(): UniffiPhoneCore {
         val dir = File(ctx.cacheDir, "fx-" + UUID.randomUUID()).also { it.mkdirs() }
-        return UniffiPhoneCore(SealedStateStore(dir)).also { runBlocking { it.unlock(ByteArray(32) { 0x42 }, now) } }
+        return UniffiPhoneCore(SealedStateStore(dir)).also { it.blocked = { false }; it.vault = PassVault(); runBlocking { it.unlock(ByteArray(32) { 0x42 }, now) } }
     }
 
     @Test fun every_fixture_challenge_opens_as_the_terminal_expects() {

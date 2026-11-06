@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 import uk.petruha.sshub.phone.core.ChainCheck
 import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.IdentityApi
@@ -216,6 +217,7 @@ class ChainHeadViewModel(private val core: IdentityApi, private val scan: ScanAp
         flow.value = when (opened) {
             is OpenedChain -> st.copy(
                 phase = ChainHeadPhase.Read, lists = if (opened.chain.agreed) 2 else 1, chain = opened.chain, checks = opened.checks,
+                senders = if (opened.chain.agreed) st.senders.takeLast(1) + opened.chain.sender else listOf(opened.chain.sender),
                 notice = null, refusal = null, pasteText = "", busy = false,
             )
             is OpenedRefused -> st.copy(
@@ -314,7 +316,10 @@ class SecurityMenuViewModel(private val core: IdentityApi, private val platform:
     fun lock() = core.lock()
 }
 
-private data class AboutUi(val reference: String = "", val comparing: Boolean = false, val checked: Set<Int> = emptySet(), val licencesOpen: Boolean = false)
+private data class AboutUi(
+    val reference: String = "", val comparing: Boolean = false, val checked: Set<Int> = emptySet(), val licencesOpen: Boolean = false,
+    val confirmed: Boolean = false, val busy: Boolean = false, val message: String? = null,
+)
 
 class AboutViewModel(private val core: IdentityApi, private val platform: Platform, private val settings: SettingsStore) : ViewModel() {
     private val status = MutableStateFlow<PhoneStatus?>(null)
@@ -328,22 +333,54 @@ class AboutViewModel(private val core: IdentityApi, private val platform: Platfo
         )
     }
 
-    private fun build(u: AboutUi, autoLock: Int, backup: Boolean, st: PhoneStatus?) = AboutState(
+    private fun build(u: AboutUi, autoLock: Int, backup: Boolean, blocked: Boolean, st: PhoneStatus?) = AboutState(
         versionName = platform.system.versionName, deviceName = st?.deviceName.orEmpty(), deviceId = st?.deviceId.orEmpty(),
-        fingerprint = platform.system.apkCertSha256.lowercase(), reference = u.reference, comparing = u.comparing, checked = u.checked,
+        fingerprint = platform.system.apkCertSha256.lowercase(), reference = u.reference, comparing = u.comparing || blocked, checked = u.checked,
         autoLockSeconds = autoLock, strongBox = platform.keys.strongBox, backupConfirmed = backup,
         licencesOpen = u.licencesOpen, licences = if (u.licencesOpen) licences else emptyList(),
+        blocked = blocked, confirmed = u.confirmed, busy = u.busy, message = u.message,
     )
 
-    val state: StateFlow<AboutState> = combine(ui, settings.autoLockSeconds, settings.backupConfirmed, status) { u, a, b, st -> build(u, a, b, st) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, build(ui.value, settings.autoLockSeconds.value, settings.backupConfirmed.value, null))
+    val state: StateFlow<AboutState> = combine(ui, settings.autoLockSeconds, settings.backupConfirmed, settings.signerMismatch, status) { u, a, b, m, st -> build(u, a, b, m, st) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, build(ui.value, settings.autoLockSeconds.value, settings.backupConfirmed.value, settings.signerMismatch.value, null))
 
     fun toggleCompare() { ui.value = ui.value.copy(comparing = !ui.value.comparing) }
 
-    /** D17: a typed value that differs sets the app-wide block, the block is sticky (a later matching value does not clear it; reinstalling the app does). */
-    fun onReference(text: String) {
-        ui.value = ui.value.copy(reference = text)
-        settings.setSignerMismatch(compareFingerprint(platform.system.apkCertSha256, text) == FingerprintCompare.Differ)
+    /** Typing only compares. A new value drops the "compared digit by digit" tick, so one typo cannot carry an earlier tick into the block. */
+    fun onReference(text: String) { ui.value = ui.value.copy(reference = text, confirmed = false, message = null) }
+
+    fun onConfirmed(on: Boolean) { ui.value = ui.value.copy(confirmed = on) }
+
+    /** D17: the block is set only after the tick and the system lock; a cancel or failure sets nothing. */
+    fun block() {
+        val u = ui.value
+        if (u.busy || !u.confirmed || settings.signerMismatch.value) return
+        if (compareFingerprint(platform.system.apkCertSha256, u.reference) != FingerprintCompare.Differ) return
+        gated { settings.setSignerMismatch(true) }
+    }
+
+    /** The way out without a reinstall: the typed value now equals this app's fingerprint, behind the system lock. */
+    fun unblock() {
+        val u = ui.value
+        if (u.busy || !settings.signerMismatch.value) return
+        if (compareFingerprint(platform.system.apkCertSha256, u.reference) != FingerprintCompare.Equal) return
+        gated { settings.clearSignerMismatch(); ui.value = ui.value.copy(reference = "", comparing = false, confirmed = false) }
+    }
+
+    private fun gated(action: () -> Unit) {
+        ui.value = ui.value.copy(busy = true, message = null)
+        viewModelScope.launch {
+            try {
+                when (val r = platform.keys.unlock("Confirm the fingerprint check", "Confirm it is you")) {
+                    is VaultResult.Secret -> { r.bytes.fill(0); action(); ui.value = ui.value.copy(busy = false) }
+                    else -> ui.value = ui.value.copy(busy = false, message = vaultMessage(r))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ui.value = ui.value.copy(busy = false, message = e.message ?: "The system lock failed.")
+            }
+        }
     }
 
     fun toggleGroup(index: Int) {

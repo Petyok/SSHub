@@ -19,6 +19,7 @@ import uk.petruha.sshub.phone.ui.components.KeyValue
 import uk.petruha.sshub.phone.ui.components.Note
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
 import uk.petruha.sshub.phone.ui.components.SecureWindow
+import uk.petruha.sshub.phone.ui.components.CheckboxRow
 import uk.petruha.sshub.phone.ui.components.SectionHeading
 import uk.petruha.sshub.phone.ui.components.SshubButton
 import uk.petruha.sshub.phone.ui.components.SshubCard
@@ -31,6 +32,12 @@ import uk.petruha.sshub.phone.ui.theme.sshub
 
 /** How the value typed from the terminal compares with this app's signing fingerprint. */
 enum class FingerprintCompare { None, Incomplete, Invalid, Equal, Differ }
+
+/** The way out of a copy that differs, shared by the stop box here and the banner on the Security tab. */
+internal const val GET_AGAIN =
+    "Do not use this copy. Get the app again from the release notes, check its fingerprint on this screen against the terminal, and use your 24 words to restore."
+internal const val REINSTALL_WARNING =
+    "Closing the app means installing it again. Reinstalling deletes the key and the saved state: you will need your 24 words."
 
 /** Lower case, no spaces, colons or dashes: the form both sides are compared in. */
 fun normalizeFingerprint(text: String): String = text.filter { !it.isWhitespace() && it != ':' && it != '-' }.lowercase()
@@ -64,6 +71,14 @@ data class AboutState(
     val backupConfirmed: Boolean = false,
     val licencesOpen: Boolean = false,
     val licences: List<LicenceText> = emptyList(),
+    /** The D17 block is set. */
+    val blocked: Boolean = false,
+    /** The user ticked that the value was compared digit by digit. */
+    val confirmed: Boolean = false,
+    /** The system lock prompt is open. */
+    val busy: Boolean = false,
+    /** Why the last block or unblock did not happen. */
+    val message: String? = null,
 ) {
     val compare: FingerprintCompare get() = if (comparing) compareFingerprint(fingerprint, reference) else FingerprintCompare.None
 }
@@ -74,6 +89,9 @@ class AboutActions(
     val onToggleGroup: (Int) -> Unit = {},
     val onBackup: () -> Unit = {},
     val onToggleLicences: () -> Unit = {},
+    val onConfirmed: (Boolean) -> Unit = {},
+    val onBlock: () -> Unit = {},
+    val onUnblock: () -> Unit = {},
     val onBack: () -> Unit = {},
 )
 
@@ -118,11 +136,27 @@ fun AboutSecurityScreen(state: AboutState, on: AboutActions) {
                     else -> Unit
                 }
             }
-            if (differ) {
+            if (differ || state.blocked) {
                 Gap(12.dp)
-                MismatchBox(state)
+                MismatchBox(state, differ)
             }
-            if (!differ) {
+            if (differ && !state.blocked) {
+                Gap(12.dp)
+                CheckboxRow("I compared the value digit by digit", state.confirmed, on.onConfirmed)
+                SshubButton(
+                    "These differ: close the app", on.onBlock, Modifier.fillMaxWidth(),
+                    enabled = state.confirmed && !state.busy, disabledReason = if (state.busy) "waiting for the system lock" else "tick that you compared the value digit by digit",
+                )
+            }
+            if (state.blocked && state.compare == FingerprintCompare.Equal) {
+                Gap(12.dp)
+                SshubButton("I typed it wrong earlier: open the app again", on.onUnblock, Modifier.fillMaxWidth(), enabled = !state.busy, disabledReason = "waiting for the system lock")
+            }
+            if (state.message != null) {
+                Gap(8.dp)
+                CheckLine(state.message, ok = false)
+            }
+            if (!differ && !state.blocked) {
                 Gap(12.dp)
                 SshubButton(
                     if (state.comparing) "Stop comparing" else "Compare with terminal", on.onToggleCompare, Modifier.fillMaxWidth(),
@@ -181,15 +215,17 @@ fun AboutSecurityScreen(state: AboutState, on: AboutActions) {
 
 /** D14, D17: both values in full, no way forward except Back. */
 @Composable
-private fun MismatchBox(state: AboutState) {
+private fun MismatchBox(state: AboutState, differ: Boolean) {
     val app = hexGroups(state.fingerprint)
     val ref = hexGroups(normalizeFingerprint(state.reference))
     val differing = app.indices.filter { app[it] != ref.getOrNull(it) }.map { it + 1 }
     StopBox("Signing fingerprint mismatch", live = true) {
         Text(
-            "This app is not signed by the key the terminal expects. Do not use it for anything that matters. Delete it and install the app again from the source you trust.",
+            "This app is not signed by the key the terminal expects. $GET_AGAIN",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
         )
+        Text(REINSTALL_WARNING, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+        if (!differ) return@StopBox
         Text("this app", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         HexGroups(state.fingerprint, groups = null, label = "App fingerprint")
         Text("the terminal", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

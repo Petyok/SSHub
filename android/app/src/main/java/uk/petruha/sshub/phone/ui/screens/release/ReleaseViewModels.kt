@@ -20,6 +20,7 @@ import uk.petruha.sshub.phone.core.ReleaseDecision
 import uk.petruha.sshub.phone.core.ReleaseOutcome
 import uk.petruha.sshub.phone.core.ReleaseView
 import uk.petruha.sshub.phone.core.VaultResult
+import uk.petruha.sshub.phone.core.VaultState
 
 /*
  * Thin view models: they hold the core sub-interface and the platform, tick `now` once per second and run the two decisions.
@@ -27,6 +28,10 @@ import uk.petruha.sshub.phone.core.VaultResult
  */
 
 private const val CLIPBOARD_LABEL = "SSHub reply"
+
+/** "Nothing was signed" only for a refusal; any other code (a failed save) shows the core's own sentence, which says what happened. */
+internal fun CoreException.approveError(): String =
+    (message ?: "The core refused.") + if (code == CoreException.Code.Refused) " Nothing was signed." else ""
 
 class RedViewModel(private val core: ReleaseApi, private val platform: Platform, private val token: Long) : ViewModel() {
     private val _state = MutableStateFlow<RedState?>(null)
@@ -54,7 +59,7 @@ class RedViewModel(private val core: ReleaseApi, private val platform: Platform,
                 val out = core.decide(token, ReleaseDecision.Approve(typedId = s.view.mustType?.let { s.typed.trim() }), platform.clock.nowSeconds())
                 _state.update { it?.copy(phase = ApprovalPhase.Approved, outcome = out) }
             } catch (e: CoreException) {
-                _state.update { it?.copy(phase = ApprovalPhase.Review, error = (e.message ?: "The core refused.") + " Nothing was signed.") }
+                _state.update { it?.copy(phase = ApprovalPhase.Review, error = e.approveError()) }
             }
         }
     }
@@ -85,6 +90,8 @@ internal object ReleasedViews {
     @Synchronized fun put(token: Long, v: ReleaseView, on: Set<ChannelKind>) { m[token] = v to on; if (m.size > 8) m.remove(m.keys.first()) }
     @Synchronized fun view(token: Long): ReleaseView? = m[token]?.first
     @Synchronized fun channels(token: Long): Set<ChannelKind>? = m[token]?.second
+    /** Called when the phone locks: nothing about a release outlives the unlocked session. */
+    @Synchronized internal fun clear() = m.clear()
 }
 
 class ReleaseViewModel(private val core: ReleaseApi, private val platform: Platform, private val token: Long) : ViewModel() {
@@ -97,8 +104,13 @@ class ReleaseViewModel(private val core: ReleaseApi, private val platform: Platf
         if (v != null) {
             val st = ReleaseState(v, platform.clock.nowSeconds())
             // Back on a release that was already approved: the outcome the core kept, not an Approve button (M18).
-            _state.value = if (kept != null) st.copy(phase = ApprovalPhase.Approved, outcome = kept, channelsOn = ReleasedViews.channels(token) ?: st.channelsOn) else st
+            // The code and the by-hand words were shown once at approval; a re-entry gets neither, even if the core still held them.
+            _state.value = if (kept != null) st.copy(
+                phase = ApprovalPhase.Approved, outcome = ReleaseOutcome(kept.outgoing, note = kept.note), restored = true,
+                channelsOn = ReleasedViews.channels(token) ?: st.channelsOn,
+            ) else st
         }
+        viewModelScope.launch { platform.keys.state.collect { if (it != VaultState.Unlocked) ReleasedViews.clear() } }
         viewModelScope.launch { while (true) { delay(1000); _state.update { it?.copy(now = platform.clock.nowSeconds()) } } }
         viewModelScope.launch {
             platform.clipboard.clearsInSeconds.collect { c -> _state.update { s -> s?.let { it.copy(clearsIn = c, copied = it.copied && c != null) } } }
@@ -132,7 +144,7 @@ class ReleaseViewModel(private val core: ReleaseApi, private val platform: Platf
             try {
                 out = core.decide(token, decision, platform.clock.nowSeconds())
             } catch (e: CoreException) {
-                _state.update { it?.copy(phase = ApprovalPhase.Review, error = (e.message ?: "The core refused.") + " Nothing was signed.") }
+                _state.update { it?.copy(phase = ApprovalPhase.Review, error = e.approveError()) }
                 return@launch
             }
             ReleasedViews.put(token, s.view, on)

@@ -50,6 +50,8 @@ data class ChainHeadState(
     /** Lists read so far: 0, 1, or 2 when two lists end at the same newest op. */
     val lists: Int = 0,
     val chain: ChainAdopted? = null,
+    /** The terminal id each list read so far names, oldest first (null: the list did not say). Only a claim. */
+    val senders: List<String?> = emptyList(),
     val checks: List<ChainCheck> = emptyList(),
     /** Core's literal reason for a refused list. */
     val refusal: String? = null,
@@ -184,7 +186,11 @@ private fun ReadBody(state: ChainHeadState, on: ChainHeadActions) {
         Note("Ask a terminal for this phone's own newest ops. It shows them as a QR code or as text.")
         Gap(8.dp)
         Text("One list is not enough.", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
-        Note("A terminal can be behind, and a chain continued from an old list forks it. Take a second list, from another terminal or from the same one later. The phone continues only when both end at the same newest op.")
+        Note("A terminal can be behind, and a chain continued from an old list forks it. Take a second list from a different terminal. The same terminal twice does not count. The phone continues only when both end at the same newest op.")
+    }
+    if (state.senders.isNotEmpty() && state.lists > 0) {
+        state.senders.forEach { Note(senderLine(it)) }
+        Note("The terminal id is what the list says about itself, not proof of who sent it.")
     }
     if (chain != null && state.lists == 1) {
         SshubCard {
@@ -222,6 +228,10 @@ private fun ReadBody(state: ChainHeadState, on: ChainHeadActions) {
         }
     }
 }
+
+private fun senderLine(id: String?): String =
+    if (id == null) "This list does not say which terminal made it."
+    else "List from terminal " + id.filter { it.isLetterOrDigit() }.chunked(4).joinToString(" ")
 
 @Composable
 private fun Checks(checks: List<ChainCheck>) {

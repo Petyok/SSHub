@@ -100,15 +100,31 @@ private tailrec fun Context.findWindow(): Window? = when (this) {
     else -> null
 }
 
+/** How long a QR keeps the screen lit and bright: the approval window shown on the screens is 12 minutes, but an unattended phone must lock. */
+const val QR_HOLD_MS = 120_000L
+
+/**
+ * The code fills the width in portrait; in landscape it is capped to the screen height so the whole code is visible at once.
+ * The screen hold ends after `holdMs` (platform N4): the normal screen timeout and the auto-lock then apply again.
+ */
 @Composable
-fun QrView(matrix: QrMatrix, description: String, modifier: Modifier = Modifier) {
+fun QrView(matrix: QrMatrix, description: String, modifier: Modifier = Modifier, holdMs: Long = QR_HOLD_MS) {
     val window = LocalContext.current.findWindow()
+    var held by remember(window) { mutableStateOf(window != null) }
     DisposableEffect(window) {
         window?.let(QrScreenHold::acquire)
-        onDispose { window?.let(QrScreenHold::release) }
+        onDispose { if (window != null && held) QrScreenHold.release(window) }
     }
+    LaunchedEffect(window, holdMs) {
+        delay(holdMs)
+        if (window != null && held) { held = false; QrScreenHold.release(window) }
+    }
+    val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
+    val cap = (screenH - 120).coerceAtLeast(160).dp
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier) {
+    val side = if (maxWidth < cap) maxWidth else cap
     Canvas(
-        modifier.fillMaxWidth().aspectRatio(1f).semantics { contentDescription = description },
+        Modifier.size(side).align(Alignment.Center).semantics { contentDescription = description },
     ) {
         val quiet = 4
         val total = matrix.size + 2 * quiet
@@ -119,6 +135,7 @@ fun QrView(matrix: QrMatrix, description: String, modifier: Modifier = Modifier)
             drawRect(Color.Black, Offset(origin + (x + quiet) * px, origin + (y + quiet) * px), androidx.compose.ui.geometry.Size(px, px))
         }
     }
+}
 }
 
 /** Hold-to-reveal cover (spec 7.13, D16). Reveals only while pressed; re-covers on release and ON_PAUSE; TalkBack gets "Reveal for 10 seconds". */

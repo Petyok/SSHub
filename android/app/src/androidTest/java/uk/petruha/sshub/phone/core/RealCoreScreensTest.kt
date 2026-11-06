@@ -55,7 +55,7 @@ class RealCoreScreensTest {
 
     private fun core(): UniffiPhoneCore {
         val dir = File(ctx.cacheDir, "real-" + UUID.randomUUID()).also { it.mkdirs() }
-        return UniffiPhoneCore(SealedStateStore(dir)).also { runBlocking { it.unlock(ByteArray(32) { 0x42 }, now) } }
+        return UniffiPhoneCore(SealedStateStore(dir)).also { it.blocked = { false }; it.vault = PassVault(); runBlocking { it.unlock(ByteArray(32) { 0x42 }, now) } }
     }
 
     @Test fun release_shows_the_host_and_every_op_row_of_the_real_challenge() {
@@ -131,7 +131,7 @@ class RealCoreScreensTest {
 
     @Test fun a_wrong_frame_from_the_real_core_is_a_stray_refusal_with_its_own_sentence_and_no_compared_values() {
         val r = wrongFrameRefusal()
-        assertEquals(r.reason, RefusalKind.Stray, r.kind)
+        assertEquals(r.reason, RefusalKind.WrongOrder, r.kind)
         assertEquals("Expected the terminal reveal.", r.reason)
         assertEquals(null, r.committed)
         assertEquals(null, r.shown)
@@ -152,7 +152,11 @@ class RealCoreScreensTest {
 
     @Test fun enrollment_refusal_kinds_follow_the_cores_own_kind() {
         assertEquals(RefusalKind.Mismatch, enrollRefusalKind(RsRefusalKind.MISMATCH))
-        for (k in listOf(RsRefusalKind.DECLINED, RsRefusalKind.BAD_SIGNATURE, RsRefusalKind.UNUSABLE_KEYS)) assertEquals(k.name, RefusalKind.Stopped, enrollRefusalKind(k))
-        for (k in listOf(RsRefusalKind.WRONG_ORDER, RsRefusalKind.STRAY_FRAME, RsRefusalKind.OTHER)) assertEquals(k.name, RefusalKind.Stray, enrollRefusalKind(k))
+        assertEquals(RefusalKind.Declined, enrollRefusalKind(RsRefusalKind.DECLINED))
+        assertEquals(RefusalKind.BadSignature, enrollRefusalKind(RsRefusalKind.BAD_SIGNATURE))
+        assertEquals(RefusalKind.UnusableKeys, enrollRefusalKind(RsRefusalKind.UNUSABLE_KEYS))
+        assertEquals(RefusalKind.WrongOrder, enrollRefusalKind(RsRefusalKind.WRONG_ORDER))
+        assertEquals(RefusalKind.StrayFrame, enrollRefusalKind(RsRefusalKind.STRAY_FRAME))
+        assertEquals(RefusalKind.Other, enrollRefusalKind(RsRefusalKind.OTHER))
     }
 }

@@ -524,7 +524,8 @@ internal class GattChannel(
                     val ev = events.receiveWithin(TICK_MS)
                     when (ev) {
                         is Ev.Notify -> l.onMessage(ev.value)
-                        is Ev.Send -> ev.done.complete(l.sendFrame(ev.frame))
+                        // A link that throws must not leave the caller of `send` suspended: answer false, then let the session end below.
+                        is Ev.Send -> ev.done.complete(try { l.sendFrame(ev.frame) } catch (e: Exception) { ev.done.complete(false); throw e })
                         is Ev.Refused -> if (refusals.add()) { why = REFUSED; l.bye(); return@session }
                         is Ev.Down -> { up = false; why = LOST; return@session }
                         Ev.Close -> { l.bye(); flush(l); why = CLOSED_HERE; up = false; return@session }

@@ -105,7 +105,7 @@ fun SectionHeading(text: String, modifier: Modifier = Modifier, first: Boolean =
         modifier.fillMaxWidth().padding(top = if (first) 0.dp else 20.dp, bottom = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween, verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.semantics { heading() })
+        Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(end = 12.dp).semantics { heading() }) // the gap keeps key and trailing text apart when they just fit (M10)
         if (trailing != null) Text(trailing, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

@@ -37,16 +37,17 @@ data class OpenedEnrolled(
 ) : Opened
 
 /**
- * `Mismatch`: the keys do not open the first code (stop box with both values when the core gave them). `Stopped`: another refusal that
- * ended the session (the sentence is the headline). `Stray`: a frame the session waits through, shown as a note only.
+ * The core's own class, one to one. `WrongOrder` and `StrayFrame` are frames the session goes on through: a note only, the step and its state stay.
+ * Every other kind ends the session: `Mismatch` (the keys do not open the first code; stop box with both values when the core gave them),
+ * `Declined`, `BadSignature`, `UnusableKeys`, `Other` (the sentence is the headline).
  */
-enum class RefusalKind { Mismatch, Stopped, Stray }
+enum class RefusalKind { Mismatch, Declined, BadSignature, UnusableKeys, WrongOrder, StrayFrame, Other }
 
 /**
  * A check failed inside an enrollment session. `committed` and `shown` are the two compared values in full when the keys do not
  * match the first code (otherwise null); `reason` is literal text.
  */
-data class EnrollRefusal(val reason: String, val committed: String?, val shown: String?, val kind: RefusalKind = RefusalKind.Stopped) : Opened
+data class EnrollRefusal(val reason: String, val committed: String?, val shown: String?, val kind: RefusalKind = RefusalKind.Other) : Opened
 
 sealed interface EnrollDecision {
     /** Step 1 to 2: the name this phone will have in the ring. */

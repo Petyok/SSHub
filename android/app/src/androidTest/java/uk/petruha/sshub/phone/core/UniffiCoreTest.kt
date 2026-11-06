@@ -24,7 +24,7 @@ class UniffiCoreTest {
 
     @Before fun setUp() {
         dir = File(ctx.cacheDir, "core-" + UUID.randomUUID()).also { it.mkdirs() }
-        core = UniffiPhoneCore(SealedStateStore(dir))
+        core = UniffiPhoneCore(SealedStateStore(dir)).also { it.blocked = { false } }
     }
 
     @After fun tearDown() { dir.deleteRecursively() }

@@ -49,7 +49,7 @@ class RealCoreNoticesTest {
 
     private fun core(): UniffiPhoneCore {
         val dir = File(ctx.cacheDir, "notices-" + UUID.randomUUID()).also { it.mkdirs() }
-        return UniffiPhoneCore(SealedStateStore(dir)).also { runBlocking { it.unlock(hex(fx.getJSONObject("phone").getString("secret_hex")), now) } }
+        return UniffiPhoneCore(SealedStateStore(dir)).also { it.blocked = { false }; it.vault = PassVault(); runBlocking { it.unlock(hex(fx.getJSONObject("phone").getString("secret_hex")), now) } }
     }
 
     private fun red(core: UniffiPhoneCore): Pair<RedView, Long> {
@@ -109,7 +109,7 @@ class RealCoreNoticesTest {
         assertEquals(case("trust-extension").getJSONObject("expect").getString("headline"), v.headline)
         assertNull(v.refusal)
         assertNotNull(v.fields.firstOrNull { it.danger })
-        assertTrue("old and new allowance as a pair", v.diffFrom.isNotEmpty() && v.diffTo.contains("("))
+        assertTrue("old and new allowance as a pair", v.diffFrom.isNotEmpty() && v.diffTo.startsWith("a total of ") && v.diffTo.contains("rolling day"))
         rule.setScreen { TrustExtendScreen(TrustExtendState(v), TrustExtendActions({}, {}, {}, {}, {})) }
         rule.onNode(hasContentDescription("Field ${v.diffKey} changes from ${v.diffFrom} to ${v.diffTo}")).assertExists()
         rule.assertTargets48()

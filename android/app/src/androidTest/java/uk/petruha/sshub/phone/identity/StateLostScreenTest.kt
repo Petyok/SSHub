@@ -30,8 +30,11 @@ class StateLostScreenTest {
         var cont = 0; var lock = 0
         rule.setContent { uk.petruha.sshub.phone.ui.theme.SshubTheme(dark = true, reducedMotion = false) { StateLostScreen(onContinue = { cont++ }, onLock = { lock++ }) } }
         rule.onNodeWithText("Nothing has been overwritten yet", substring = true).assertExists()
-        rule.onNodeWithText("Lock and keep the old file").performClick()
-        rule.onNodeWithText("Continue with an empty state").performClick()
+        rule.onNodeWithText("stays on this phone (app private)", substring = true).assertExists()
+        rule.onNodeWithText("does not sign until it has taken its chain from two terminals", substring = true).assertExists()
+        rule.onNodeWithText("terminals met before are met again", substring = true).assertExists()
+        rule.onNodeWithText("Lock and leave it as it is").performClick()
+        rule.onNodeWithText("Continue as a restored phone").performClick()
         assertEquals(1, lock); assertEquals(1, cont)
     }
 
@@ -39,7 +42,7 @@ class StateLostScreenTest {
         val core = LostCore()
         rule.setContent { AppRoot(core, FakePlatform()) }
         rule.onNodeWithText("Saved state not readable", substring = true).assertExists()
-        rule.onNodeWithText("Continue with an empty state").performClick()
+        rule.onNodeWithText("Continue as a restored phone").performClick()
         assertEquals(1, core.confirmed)
         rule.onNodeWithText("Saved state not readable", substring = true).assertDoesNotExist()
     }

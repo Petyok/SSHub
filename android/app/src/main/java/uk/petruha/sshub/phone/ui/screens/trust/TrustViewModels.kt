@@ -28,7 +28,8 @@ class TrustHandoffHolder { var current: TrustHandoff? = null }
 private val holders = WeakHashMap<AppEnv, TrustHandoffHolder>()
 internal fun trustHandoffs(env: AppEnv): TrustHandoffHolder = holders.getOrPut(env) { TrustHandoffHolder() }
 
-private fun Throwable.shown(): String = (this as? CoreException)?.message?.takeIf { it.isNotBlank() } ?: "Something went wrong. Nothing was signed."
+private fun Throwable.shown(): String = (this as? CoreException)?.message?.takeIf { it.isNotBlank() }
+    ?: ("Something went wrong." + if ((this as? CoreException)?.code == CoreException.Code.Refused) " Nothing was signed." else "")
 
 class TrustRequestViewModel(
     private val core: TrustApi,

@@ -32,6 +32,7 @@ import uk.petruha.sshub.phone.ui.components.SshubRow
 import uk.petruha.sshub.phone.ui.components.WarnBox
 import uk.petruha.sshub.phone.ui.theme.SshubText
 
+const val ADOPTED_NOTE = "Terminals become known again when they contact this phone."
 const val NOT_MET = "not met"
 const val HEAD_PENDING_TITLE = "This phone does not sign yet."
 const val HEAD_PENDING_BODY = "A restored phone has lost its chain. Take it from a terminal first, or the ring will see a fork."
@@ -46,7 +47,7 @@ fun RingHomeScreen(state: HomeState, on: HomeActions) {
     ScreenFrame(
         title = "SSHub", onBack = null,
         headerTrailing = { Text(state.phone.name + " " + state.phone.id, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) },
-        bar = if (ring == null) ({
+        bar = if (ring == null && !state.restoredAdopted) ({
             BarButtons {
                 SshubButton("Restore", on.onRestore, kind = ButtonKind.Outline)
                 SshubButton("Enroll with a terminal", on.onEnroll, kind = ButtonKind.Primary)
@@ -61,7 +62,11 @@ fun RingHomeScreen(state: HomeState, on: HomeActions) {
             }
             Gap()
         }
-        if (ring == null) EmptyHomeBody(state.phone, state.headPending) else RingBody(state.phone, ring, state.pending, state.headPending, on)
+        when {
+            ring != null -> RingBody(state.phone, ring, state.pending, state.headPending, on)
+            state.restoredAdopted -> AdoptedBody(state.phone)
+            else -> EmptyHomeBody(state.phone, state.headPending)
+        }
     }
 }
 
@@ -136,6 +141,21 @@ private fun DeviceRow(d: RingDevice, first: Boolean, last: Boolean) {
         chip = if (d.self) "this phone" else null,
         description = description,
     )
+}
+
+/** Restored and chain adopted but no ring known: the terminals are not lost, they reappear when they contact this phone (N9). */
+@Composable
+private fun AdoptedBody(p: HomePhoneView) {
+    SshubCard {
+        Text("this phone", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(p.id, Modifier.padding(top = 2.dp, bottom = 8.dp), style = MaterialTheme.typography.displaySmall, color = MaterialTheme.colorScheme.onSurface)
+        KvRow("name", p.name)
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        KvRow("head seq", p.headSeq.toString())
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        KvRow("live short codes", p.liveShortCodes.toString())
+    }
+    Note(ADOPTED_NOTE, Modifier.padding(top = 12.dp))
 }
 
 @Composable
