@@ -104,6 +104,7 @@ fun NavGraphBuilder.enrollGraph(env: AppEnv) {
         val vm = rememberEnrollViewModel(env)
         val ui by vm.ui.collectAsStateWithLifecycle()
         DisposableEffect(Unit) { onDispose { vm.soundStop() } }
+        LaunchedEffect(Unit) { vm.soundOpened() }
         EnrollSoundScreen(
             ui.toSound(),
             EnrollSoundActions(onBack = vm::back, onContinue = { vm.soundStop(); vm.go(Routes.Enroll3) }, send = vm.sendActions(ui.flow.soundStep)),

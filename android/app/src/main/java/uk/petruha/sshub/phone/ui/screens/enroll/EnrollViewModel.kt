@@ -14,7 +14,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import uk.petruha.sshub.phone.core.BleChannel
+import uk.petruha.sshub.phone.platform.AndroidAudio
+import uk.petruha.sshub.phone.platform.AudioStatus
+import uk.petruha.sshub.phone.platform.BleChannelState
+import uk.petruha.sshub.phone.platform.ObservedBleChannel
 import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.EnrollChannel
 import uk.petruha.sshub.phone.core.EnrollDecision
@@ -53,7 +56,8 @@ class EnrollViewModel(
     )
 
     private var lastFrame: ByteArray? = null
-    private var link: BleChannel? = null
+    private var link: ObservedBleChannel? = null
+    private val audio = platform.audio as? AndroidAudio
     private var linkJob: Job? = null
     private var connectJob: Job? = null
     private var scanJob: Job? = null
@@ -63,6 +67,12 @@ class EnrollViewModel(
         // The core drops its enrollment when it locks; the flow shown here must not outlive it.
         viewModelScope.launch {
             platform.keys.state.collect { if (it != VaultState.Unlocked) runCatching { restart() } }
+        }
+        // Why a scan could not start, as the system's sentence, shown in the device list.
+        viewModelScope.launch { platform.ble.scanError.collect { e -> flow.update { it.copy(btScanError = e?.text) } } }
+        audio?.let { a ->
+            viewModelScope.launch { a.status.collect { s -> flow.update { it.copy(soundProblem = (s as? AudioStatus.Failed)?.reason) } } }
+            viewModelScope.launch { a.mediaVolumeZero.collect { z -> flow.update { it.copy(volumeZero = z) } } }
         }
     }
 
@@ -76,7 +86,12 @@ class EnrollViewModel(
         closeLink(); soundStop(); scanJob?.cancel()
         lastFrame = null
         core.resetScan()
-        flow.update { EnrollFlow(channel = it.channel, name = it.name, nameProblem = it.nameProblem, btTag = it.btTag) }
+        flow.update {
+            EnrollFlow(
+                channel = it.channel, name = it.name, nameProblem = it.nameProblem, btTag = it.btTag,
+                btScanError = it.btScanError, soundProblem = it.soundProblem, volumeZero = it.volumeZero,
+            )
+        }
     }
 
     fun startAgain() {
@@ -124,8 +139,16 @@ class EnrollViewModel(
 
     // ---- frames from any channel -----------------------------------------------------------------------------------
 
-    private suspend fun receive(bytes: ByteArray) {
-        try { handle(core.openFrame(bytes, now())) } catch (e: CoreException) { note(e.message ?: "The frame was not accepted.") }
+    /** `viaLink`: the frame came over Bluetooth; a frame the core refuses is reported to the channel (a hostile peripheral gets cut off). */
+    private suspend fun receive(bytes: ByteArray, viaLink: Boolean = false) {
+        try {
+            val o = core.openFrame(bytes, now())
+            handle(o)
+            if (viaLink && (o is Opened.Ignored || o is EnrollRefusal)) link?.frameRefused()
+        } catch (e: CoreException) {
+            note(e.message ?: "The frame was not accepted.")
+            if (viaLink) link?.frameRefused()
+        }
         core.resetScan()
         flow.update { it.copy(have = 0, need = 0) }
     }
@@ -294,7 +317,12 @@ class EnrollViewModel(
             if (!isActive) { ch?.close(); return@launch }
             if (ch == null) { flow.update { it.copy(btConnecting = false, btFailed = true) }; return@launch }
             link = ch
-            linkJob = launch { ch.incoming.collect { receive(it) } }
+            linkJob = launch {
+                ch.incoming.collect { receive(it, viaLink = true) }
+                // `incoming` completed: the session is over and the state says why (BYE, timeout, link lost, Bluetooth off, flood).
+                val why = (ch.state.value as? BleChannelState.Closed)?.reason ?: "The Bluetooth link ended."
+                flow.update { it.copy(btLinkEnded = why, btConnecting = false, note = why) }
+            }
         }
     }
 
@@ -302,7 +330,10 @@ class EnrollViewModel(
 
     private suspend fun sendLink(o: Outgoing) {
         val ch = link ?: return
-        if (!ch.send(o.frame)) note("The frame could not be sent over Bluetooth.")
+        val sent = ch.send(o.frame)
+        // The terminal's own refusal sentence (busy, too large, ...) wins over a generic one.
+        val refused = ch.sendFailure()
+        if (refused != null) note(refused) else if (!sent) note("The frame could not be sent over Bluetooth.")
     }
 
     private fun closeLink() { connectJob?.cancel(); connectJob = null; linkJob?.cancel(); linkJob = null; link?.close(); link = null }
@@ -324,6 +355,9 @@ class EnrollViewModel(
             flow.update { it.copy(soundPhase = SoundPhase.Done, soundElapsed = it.soundTotal) }
         }
     }
+
+    /** The sound screen opened: the media volume may have changed since the last look. */
+    fun soundOpened() { audio?.refreshVolume() }
 
     fun soundStop() {
         soundJob?.cancel(); soundJob = null

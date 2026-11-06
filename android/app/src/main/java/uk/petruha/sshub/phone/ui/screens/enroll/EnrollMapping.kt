@@ -43,6 +43,12 @@ data class EnrollFlow(
     val btTimedOut: Boolean = false,
     val btConnecting: Boolean = false,
     val btFailed: Boolean = false,
+    /** The system's sentence for a scan that could not start; the reason a Bluetooth link ended (BYE, timeout, link lost, ...). */
+    val btScanError: String? = null,
+    val btLinkEnded: String? = null,
+    /** AudioTrack failed (the reason), and the media volume is zero: both shown on the sound screen. */
+    val soundProblem: String? = null,
+    val volumeZero: Boolean = false,
     val soundProfile: SoundProfile = SoundProfile.Fast,
     val soundPhase: SoundPhase = SoundPhase.Idle,
     val soundElapsed: Int = 0,
@@ -123,7 +129,7 @@ fun EnrollUi.toBt(): EnrollBtState {
         f.btTimedOut -> BtPhase.None
         else -> BtPhase.Searching
     }
-    return EnrollBtState(f.who(), f.btTag, phase, f.btDevices, f.btSel)
+    return EnrollBtState(f.who(), f.btTag, phase, f.btDevices, f.btSel, problem = f.btLinkEnded ?: f.btScanError)
 }
 
 internal fun pasteWhat(n: Int): String = when (n) {
@@ -161,4 +167,5 @@ fun EnrollUi.toPaste(): EnrollPasteState {
 fun EnrollUi.toSound() = EnrollSoundScreenState(
     step = flow.soundStep, terminal = flow.who(),
     send = sendOf(when (flow.soundStep) { 2 -> flow.commit; 4 -> flow.reveal; else -> flow.confirm }, flow.soundStep),
+    problem = flow.soundProblem, volumeZero = flow.volumeZero,
 )

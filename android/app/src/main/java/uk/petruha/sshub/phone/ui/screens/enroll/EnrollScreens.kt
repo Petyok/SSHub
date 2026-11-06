@@ -372,6 +372,7 @@ fun EnrollBtScreen(state: EnrollBtState, on: EnrollBtActions) {
         ) {
             Box(Modifier.align(Alignment.CenterHorizontally).width(36.dp).size(width = 36.dp, height = 4.dp).background(cs.onSurfaceVariant, RoundedCornerShape(2.dp)).clearAndSetSemantics { })
             Text("Nearby SSHub devices", style = MaterialTheme.typography.bodyLarge, color = cs.onSurface)
+            state.problem?.let { p -> WarnBox("Bluetooth problem", live = true) { Note(p) } }
             when (state.phase) {
                 BtPhase.Searching -> { Text("Looking for devices nearby", style = SshubText.monoBody, color = cs.onSurface); WaitingDots(word = "searching") }
                 BtPhase.Found -> {
@@ -486,6 +487,10 @@ fun EnrollSoundScreen(state: EnrollSoundScreenState, on: EnrollSoundActions) {
     EnrollFrame(state.terminal, state.step, on.onBack, bar = { SshubButton("Next", on.onContinue, Modifier.fillMaxWidth(), ButtonKind.Primary) }) {
         SectionHeading("Play this phone's reply", first = true, trailing = "Sound")
         Note("Hold the phone near ${state.terminal} while it plays, then tap Next. This phone never records: the terminal does the listening.", Modifier.padding(bottom = 12.dp))
+        state.problem?.let { p -> WarnBox("The sound could not be played", Modifier.padding(bottom = 12.dp), live = true) { Note(p) } }
+        if (state.volumeZero) WarnBox("The media volume is zero", Modifier.padding(bottom = 12.dp), live = true) {
+            Note("Raise the media volume with the volume keys, or the terminal hears nothing.")
+        }
         SendBlock(state.send, on.send, title = "To the terminal")
     }
 }

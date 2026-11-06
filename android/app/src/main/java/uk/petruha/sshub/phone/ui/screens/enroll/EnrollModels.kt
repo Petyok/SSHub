@@ -178,6 +178,8 @@ data class EnrollBtState(
     val devices: List<BleDevice> = emptyList(),
     /** Index into `devices`, -1 for none. */
     val selected: Int = -1,
+    /** A scan error or the reason the link ended, as a sentence; shown above the list. */
+    val problem: String? = null,
 )
 
 class EnrollBtActions(
@@ -223,6 +225,10 @@ data class EnrollSoundScreenState(
     val step: Int,
     val terminal: String,
     val send: EnrollSendState,
+    /** AudioTrack failed: the reason. */
+    val problem: String? = null,
+    /** The media volume is zero: the terminal would hear nothing. */
+    val volumeZero: Boolean = false,
 )
 
 class EnrollSoundActions(

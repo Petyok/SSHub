@@ -22,6 +22,7 @@ import uk.petruha.sshub.phone.core.ScanApi
 import uk.petruha.sshub.phone.core.ScanEvent
 import uk.petruha.sshub.phone.core.ScanPurpose
 import uk.petruha.sshub.phone.core.ScanResult
+import uk.petruha.sshub.phone.platform.AndroidCamera
 import uk.petruha.sshub.phone.core.ScanResults
 
 /** The "last sync" age is relative, so it is recomputed once a minute while the screen is alive. Nothing here acts on its own. */
@@ -102,7 +103,12 @@ class ScanViewModel(private val core: ScanApi, private val platform: Platform, v
 
     private val local = MutableStateFlow(Local())
     private var opened: Opened? = null
-    @Volatile private var busy = false
+    @Volatile private var busyFlag = false
+
+    /** While a frame is being opened the camera delivers no more frames to the analysis (`AndroidCamera.wantsFrames`). */
+    private var busy: Boolean
+        get() = busyFlag
+        set(v) { busyFlag = v; (platform.camera as? AndroidCamera)?.wantsFrames = !v }
 
     private fun build(l: Local, p: CameraPermission) = ScanState(
         title = scanTitle(purpose), hint = scanHint(purpose), camera = scanCameraOf(p, platform.camera.hasCamera),
@@ -161,5 +167,5 @@ class ScanViewModel(private val core: ScanApi, private val platform: Platform, v
         return o
     }
 
-    override fun onCleared() { core.resetScan() }
+    override fun onCleared() { core.resetScan(); (platform.camera as? AndroidCamera)?.wantsFrames = true }
 }

@@ -18,6 +18,7 @@ import uk.petruha.sshub.phone.core.ReleaseApi
 import uk.petruha.sshub.phone.core.ReleaseChannels
 import uk.petruha.sshub.phone.core.ReleaseDecision
 import uk.petruha.sshub.phone.core.ReleaseOutcome
+import uk.petruha.sshub.phone.core.ReleaseView
 import uk.petruha.sshub.phone.core.VaultResult
 
 /*
@@ -78,13 +79,26 @@ class RedViewModel(private val core: ReleaseApi, private val platform: Platform,
     }
 }
 
+/** The view and channels of releases approved in this process, so a screen opened again can show the kept outcome (the core drops the request on Approve). */
+internal object ReleasedViews {
+    private val m = LinkedHashMap<Long, Pair<ReleaseView, Set<ChannelKind>>>()
+    @Synchronized fun put(token: Long, v: ReleaseView, on: Set<ChannelKind>) { m[token] = v to on; if (m.size > 8) m.remove(m.keys.first()) }
+    @Synchronized fun view(token: Long): ReleaseView? = m[token]?.first
+    @Synchronized fun channels(token: Long): Set<ChannelKind>? = m[token]?.second
+}
+
 class ReleaseViewModel(private val core: ReleaseApi, private val platform: Platform, private val token: Long) : ViewModel() {
     private val _state = MutableStateFlow<ReleaseState?>(null)
     val state: StateFlow<ReleaseState?> = _state.asStateFlow()
 
     init {
-        val v = (core.pendingView(token) as? OpenedRelease)?.view
-        if (v != null) _state.value = ReleaseState(v, platform.clock.nowSeconds())
+        val kept = core.lastOutcome(token)
+        val v = (core.pendingView(token) as? OpenedRelease)?.view ?: ReleasedViews.view(token)
+        if (v != null) {
+            val st = ReleaseState(v, platform.clock.nowSeconds())
+            // Back on a release that was already approved: the outcome the core kept, not an Approve button (M18).
+            _state.value = if (kept != null) st.copy(phase = ApprovalPhase.Approved, outcome = kept, channelsOn = ReleasedViews.channels(token) ?: st.channelsOn) else st
+        }
         viewModelScope.launch { while (true) { delay(1000); _state.update { it?.copy(now = platform.clock.nowSeconds()) } } }
         viewModelScope.launch {
             platform.clipboard.clearsInSeconds.collect { c -> _state.update { s -> s?.let { it.copy(clearsIn = c, copied = it.copied && c != null) } } }
@@ -121,6 +135,7 @@ class ReleaseViewModel(private val core: ReleaseApi, private val platform: Platf
                 _state.update { it?.copy(phase = ApprovalPhase.Review, error = (e.message ?: "The core refused.") + " Nothing was signed.") }
                 return@launch
             }
+            ReleasedViews.put(token, s.view, on)
             _state.update { it?.copy(phase = ApprovalPhase.Approved, outcome = out) }
             val frame = out.outgoing ?: return@launch
             if (ChannelKind.SoundFast in on) frame.audioFast?.let { platform.audio.play(it, frame.audioRate) }
