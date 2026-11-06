@@ -6,10 +6,10 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
-- **Tunnel no longer panics on non-ASCII ssh errors** - trimming the kept ssh
-  stderr of a tunnel cut at a byte offset, so a multibyte character on the
-  boundary panicked the reader thread once the output passed 8 KB. It now cuts
-  on a character boundary.
+- **Tunnel no longer panics on non-ASCII ssh errors** (PR #176 by @56steve) -
+  trimming the kept ssh stderr of a tunnel cut at a byte offset, so a multibyte
+  character on the boundary panicked the reader thread once the output passed
+  8 KB. It now cuts on a character boundary.
 
 ## [0.21.0] - 2026-10-28
 
