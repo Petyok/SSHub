@@ -39,6 +39,7 @@ done
 show "peer-a devices" sq peer-a 'SELECT substr(device_id,1,8), role, kind, attendance, status FROM sync_devices'
 show "peer-a op kinds after the rounds" sq peer-a 'SELECT kind, count(*) FROM sync_ops GROUP BY kind'
 show "peer-a sync_meta keys" sq peer-a 'SELECT key FROM sync_meta WHERE key NOT LIKE "bytes:%" AND key NOT LIKE "pair:%"'
+show "peer-a why no checkpoint was proposed" sq peer-a 'SELECT key, cast(value as text) FROM sync_meta WHERE key LIKE "checkpoint%"'
 show "peer-a checkpoints" sq peer-a 'SELECT status, state_len FROM sync_checkpoints'
 show "peer-b checkpoints" sq peer-b 'SELECT status, state_len FROM sync_checkpoints'
 show "peer-b op states" sq peer-b 'SELECT state, reason, count(*) FROM sync_ops GROUP BY state, reason'
