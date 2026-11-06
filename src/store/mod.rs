@@ -349,8 +349,12 @@ mod tests {
                                     .map_err(|e| anyhow::anyhow!("create_host: {e:#}"))?;
                                 Ok(())
                             };
+                            let t0 = std::time::Instant::now();
                             if let Err(e) = one() {
-                                bad.push(format!("worker {w} add {i}: {e:#}"));
+                                bad.push(format!(
+                                    "worker {w} add {i} after {:?}: {e:#}",
+                                    t0.elapsed()
+                                ));
                             }
                         }
                         bad
