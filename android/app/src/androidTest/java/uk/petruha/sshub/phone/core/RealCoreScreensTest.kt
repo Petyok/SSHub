@@ -15,6 +15,7 @@ import org.junit.Rule
 import org.junit.Test
 import uk.petruha.sshub.phone.core.uniffi.UniffiPhoneCore
 import uk.petruha.sshub.phone.core.uniffi.enrollRefusalKind
+import uniffi.sshub_phone_core.RefusalKind as RsRefusalKind
 import uk.petruha.sshub.phone.fake.EnrollSamples
 import uk.petruha.sshub.phone.platform.SealedStateStore
 import uk.petruha.sshub.phone.release.descStartsWith
@@ -149,12 +150,9 @@ class RealCoreScreensTest {
         rule.assertTargets48()
     }
 
-    @Test fun enrollment_refusal_kinds_follow_the_cores_sentences() {
-        assertEquals(RefusalKind.Mismatch, enrollRefusalKind("The terminal reveal does not open the commitment it showed first. Enrollment stopped: someone is interfering."))
-        assertEquals(RefusalKind.Stopped, enrollRefusalKind("The terminal presented unusable keys."))
-        for (stray in listOf(
-            "Expected the terminal commitment first.", "Name this phone first.", "Expected the terminal reveal.",
-            "Compare the four words and answer on this phone first.", "Not an enrollment document: x",
-        )) assertEquals(stray, RefusalKind.Stray, enrollRefusalKind(stray))
+    @Test fun enrollment_refusal_kinds_follow_the_cores_own_kind() {
+        assertEquals(RefusalKind.Mismatch, enrollRefusalKind(RsRefusalKind.MISMATCH))
+        for (k in listOf(RsRefusalKind.DECLINED, RsRefusalKind.BAD_SIGNATURE, RsRefusalKind.UNUSABLE_KEYS)) assertEquals(k.name, RefusalKind.Stopped, enrollRefusalKind(k))
+        for (k in listOf(RsRefusalKind.WRONG_ORDER, RsRefusalKind.STRAY_FRAME, RsRefusalKind.OTHER)) assertEquals(k.name, RefusalKind.Stray, enrollRefusalKind(k))
     }
 }

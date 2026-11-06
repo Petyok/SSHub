@@ -191,6 +191,12 @@ class ShareReleaseScreenTest {
         rule.onNodeWithText("Type E7A4-6B02", substring = true).assertExists()
     }
 
+    @Test fun m4_a_request_on_a_phone_that_has_not_taken_its_chain_shows_the_stop_box_and_no_approve() {
+        rule.show(ReleaseSamples.releaseState(ReleaseSamples.releaseDbs.copy(headPending = true)))
+        rule.onNodeWithText("This phone does not sign yet.").assertExists()
+        rule.onNodeWithText("Approve").assertIsNotEnabled()
+        rule.onNodeWithText("Approve").assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Disabled, take the chain first"))
+    }
     @Test fun a_met_requester_has_no_typed_id_gate() {
         rule.show(dbs)
         rule.onAllNodesWithText("This requester has never met this phone.").assertCountEquals(0)

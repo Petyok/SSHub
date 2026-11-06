@@ -74,6 +74,8 @@ data class ReleaseView(
     val channels: List<ReleaseChannel>,
     val mustType: String?,
     val shortCodeOffer: String?,
+    /** This phone was restored and has not taken its chain: the core refuses Approve, so the screen says so up front (M4). */
+    val headPending: Boolean = false,
     val hostUid: String = "",
     val bindingHash: String = "",
     val opRows: List<RedField> = emptyList(),

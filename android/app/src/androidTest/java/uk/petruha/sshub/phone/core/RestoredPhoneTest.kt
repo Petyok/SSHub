@@ -47,7 +47,7 @@ class RestoredPhoneTest {
 
     private fun homeState(core: UniffiPhoneCore): HomeState {
         lateinit var s: HomeState
-        InstrumentationRegistry.getInstrumentation().runOnMainSync { s = HomeViewModel(core, FakePlatform()).state.value }
+        InstrumentationRegistry.getInstrumentation().runOnMainSync { s = HomeViewModel(core, FakePlatform()).state.value!! }
         return s
     }
 

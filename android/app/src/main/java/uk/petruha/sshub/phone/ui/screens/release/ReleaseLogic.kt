@@ -21,6 +21,7 @@ val ANNOUNCE_AT = listOf(120, 60, 30, 10, 0)
 
 const val TYPE_ID_FIRST = "type the id first"
 const val NO_CHANNEL = "choose how to show the answer"
+const val HEAD_PENDING_REASON = "take the chain first"
 
 fun windowLeft(openedAt: Long, now: Long): Long = (openedAt + APPROVAL_WINDOW_SECONDS - now).coerceIn(0L, APPROVAL_WINDOW_SECONDS)
 
@@ -112,7 +113,8 @@ fun typedIdMatches(required: String?, typed: String): Boolean = required == null
  * D8 + D13 for a share release. A check with `needsTypedId` stops blocking once the typed id equals the requester id; it keeps
  * blocking when the view names no id to type. Every other failing check, an expired challenge or a closed window blocks for good.
  */
-fun releaseGate(checks: List<ReleaseCheck>, left: Long, closed: Boolean, mustType: String?, typed: String, busy: Boolean, noChannel: Boolean = false): Gate {
+fun releaseGate(checks: List<ReleaseCheck>, left: Long, closed: Boolean, mustType: String?, typed: String, busy: Boolean, noChannel: Boolean = false, headPending: Boolean = false): Gate {
+    if (headPending) return Gate(false, HEAD_PENDING_REASON)
     if (closed) return Gate(false, "window closed")
     if (busy) return Gate(false, "signing")
     if (left <= 0L) return Gate(false, "the request expired")
@@ -172,5 +174,5 @@ data class ReleaseState(
 ) {
     val left: Long get() = releaseLeft(view, now)
     val closed: Boolean get() = phase == ApprovalPhase.Review && windowClosed(openedAt, now)
-    val gate: Gate get() = releaseGate(view.checks, left, closed, view.mustType, typed, phase == ApprovalPhase.Signing, channelsOn.isEmpty() && !byHand)
+    val gate: Gate get() = releaseGate(view.checks, left, closed, view.mustType, typed, phase == ApprovalPhase.Signing, channelsOn.isEmpty() && !byHand, view.headPending)
 }

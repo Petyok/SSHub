@@ -59,6 +59,7 @@ import uniffi.sshub_phone_core.Outgoing as RsOutgoing
 import uniffi.sshub_phone_core.QrFrame as RsQrFrame
 import uniffi.sshub_phone_core.RedNoticeView as RsRedNoticeView
 import uniffi.sshub_phone_core.ReenrollNoticeView as RsReenrollNoticeView
+import uniffi.sshub_phone_core.RefusalKind as RsRefusalKind
 import uniffi.sshub_phone_core.RefusalView as RsRefusalView
 import uniffi.sshub_phone_core.ReshareView as RsReshareView
 import uniffi.sshub_phone_core.Row as RsRow
@@ -116,21 +117,15 @@ internal fun mapShortCode(c: RsIssuedCode) = IssuedShortCode(c.code, c.validUnti
 internal fun RsCheck.asCheck(typeGate: Boolean = false) =
     ReleaseCheck(text, ok = ok && !(warn && typeGate), needsTypedId = warn && typeGate)
 
-/*
- * The core's enrollment refusals carry a sentence and no kind. The two that end the session (enroll.rs `on_reveal`) are told apart by
- * their sentence, which the tests pin; every other refusal is a stray or out-of-order frame the core waits through.
- */
-internal const val ENROLL_MISMATCH_REASON = "The terminal reveal does not open the commitment it showed first."
-internal const val ENROLL_UNUSABLE_KEYS_REASON = "The terminal presented unusable keys."
-
-internal fun enrollRefusalKind(reason: String) = when {
-    reason.startsWith(ENROLL_MISMATCH_REASON) -> RefusalKind.Mismatch
-    reason == ENROLL_UNUSABLE_KEYS_REASON -> RefusalKind.Stopped
-    else -> RefusalKind.Stray
+/** The core's own class of an enrollment refusal (`RefusalView.kind`); the app picks its words by it, never by the sentence. */
+internal fun enrollRefusalKind(k: RsRefusalKind): RefusalKind = when (k) {
+    RsRefusalKind.MISMATCH -> RefusalKind.Mismatch
+    RsRefusalKind.DECLINED, RsRefusalKind.BAD_SIGNATURE, RsRefusalKind.UNUSABLE_KEYS -> RefusalKind.Stopped
+    RsRefusalKind.WRONG_ORDER, RsRefusalKind.STRAY_FRAME, RsRefusalKind.OTHER -> RefusalKind.Stray
 }
 
 internal fun mapRefused(v: RsRefusalView, enrollFrame: Boolean): Opened =
-    if (enrollFrame) EnrollRefusal(v.reason, null, null, enrollRefusalKind(v.reason))
+    if (enrollFrame) EnrollRefusal(v.reason, null, null, enrollRefusalKind(v.kind))
     else OpenedRefused(RefusalReason("refused", "refused", v.reason, "", emptyList(), false), v.checks.map { it.asCheck() })
 
 /** QR and one sound choice. There is no clipboard channel: the core renders none, "Copy as text" is always offered. */
@@ -164,6 +159,7 @@ internal fun mapRelease(v: RsShareRequestView): OpenedRelease {
                 is RsShortCodeOffer.Available -> "Also issue a short code (repeat access for 7 days)"
                 is RsShortCodeOffer.LiveUntil -> null
             },
+            headPending = v.headPending,
             hostUid = v.hostUid,
             bindingHash = v.bindingHash,
             opRows = v.op.rows.map { RedField(it.label, null, it.value, danger = it.danger) },

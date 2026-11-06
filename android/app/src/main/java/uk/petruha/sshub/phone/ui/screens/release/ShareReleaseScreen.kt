@@ -36,6 +36,7 @@ import uk.petruha.sshub.phone.ui.components.SectionHeading
 import uk.petruha.sshub.phone.ui.components.SshubButton
 import uk.petruha.sshub.phone.ui.components.SshubCard
 import uk.petruha.sshub.phone.ui.components.TickScale
+import uk.petruha.sshub.phone.ui.components.StopBox
 import uk.petruha.sshub.phone.ui.components.ToggleRow
 import uk.petruha.sshub.phone.ui.components.WarnBox
 import uk.petruha.sshub.phone.ui.components.WordGrid
@@ -70,6 +71,14 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
             return@ScreenFrame
         }
         if (review) WindowLine(windowLeft(state.openedAt, state.now))
+        if (v.headPending && review) {
+            StopBox("This phone does not sign yet.", Modifier.padding(bottom = 12.dp), live = true) {
+                Text(
+                    "It was restored and has not taken its chain from a terminal. Approve stays off until it has; the request waits here. Take the chain from the Security menu, then open this request again.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        }
 
         SshubCard {
             Text("requester", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
