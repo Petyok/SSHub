@@ -107,8 +107,19 @@ pub fn after_round(
     if due(store, now, policy)? {
         // Not building (pending ops, a running recovery, not an attended terminal)
         // just means: not now.
-        if let Ok((op, _)) = store.sync_checkpoint_propose(id, None, now) {
-            report.proposed = Some(op.hash());
+        match store.sync_checkpoint_propose(id, None, now) {
+            Ok((op, _)) => {
+                report.proposed = Some(op.hash());
+                let _ = crate::sync::quorum::meta_set(store, "checkpoint_propose_error", b"");
+            }
+            // Not a failure of the round, but never silent: the reason is kept where support can read it.
+            Err(e) => {
+                let _ = crate::sync::quorum::meta_set(
+                    store,
+                    "checkpoint_propose_error",
+                    format!("{now}: {e:#}").as_bytes(),
+                );
+            }
         }
     }
     report.pruned = store.sync_prune(now)?;
