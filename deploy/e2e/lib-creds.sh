@@ -171,7 +171,7 @@ enroll_phone() {
 # Complete the Red op $1 proposed on peer-a: the phone signs it, peer-b votes, the paper signs (unless $2 = nofactor,
 # for the first factor registration, which needs only the phone and a second device).
 red_complete() {
-  phone_signs peer-a "$1" || return 1
+  ${PHONE_SIGNS:-phone_signs} peer-a "$1" || return 1
   spread peer-b peer-a peer-b
   show "peer-b is given the phone's ops text too" sh -c "printf '%s\n' '$PHONE_OPS' | $C exec -T peer-b $SSHUB sync-phone-ops --format json"
   snow peer-b >/dev/null
@@ -183,17 +183,22 @@ red_complete() {
   fi
 }
 
+# The page phone before a ring: answers, forgets its site data (a new ring meets a phone with an empty chain), restores.
+phone_prep_page() {
+  check "the phone daemon answers" phone_ready
+  show "the phone forgets its site data (a new ring meets a phone with an empty chain)" phone reset
+  show "the phone restores its fixed test identity" phone setup
+}
+
 # A ring ($1 = ring2 or ring3) whose phone and holders are in force, in the order ring setup allows: the phone enrolls
 # first and signs its own admission (no factor exists yet); then each terminal is promoted with sync-role (the promoted
 # device approves, the phone signs, the factor is waived); then the paper is registered (phone + a second holder) and
 # from then on every Red op wants phone, second holder and paper (red_complete).
 ring_with_phone() {
-  check "the phone daemon answers" phone_ready
-  show "the phone forgets its site data (a new ring meets a phone with an empty chain)" phone reset
-  show "the phone restores its fixed test identity" phone setup
+  ${PHONE_PREP:-phone_prep_page}
   "$1"
-  enroll_phone peer-a
-  phone_signs peer-a "$ADD"
+  ${PHONE_ENROLL:-enroll_phone} peer-a
+  ${PHONE_SIGNS:-phone_signs} peer-a "$ADD"
   st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
   expect "the phone is a holder in force on peer-a" "$st" '[.devices[] | select(.name=="my phone") | .role] == ["holder"]'
   promote() { # $1 = terminal, $2 = setup (own approval, no paper) or full (phone, second holder, paper)
@@ -201,7 +206,7 @@ ring_with_phone() {
     show "peer-a sync-role $1 holder" peer peer-a $SSHUB sync-role "$(devid peer-a "$1")" holder --format json
     ROLEOP=$(opid "$LAST_OUT")
     if [ "$2" = setup ]; then
-      phone_signs peer-a "$ROLEOP"
+      ${PHONE_SIGNS:-phone_signs} peer-a "$ROLEOP"
       spread peer-a "$1" peer-a
       show "$1 sync-approve its own promotion" peer "$1" $SSHUB sync-approve "$ROLEOP" --format json
     else

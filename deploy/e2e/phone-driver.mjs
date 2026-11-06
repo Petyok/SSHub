@@ -302,6 +302,10 @@ const commands = {
     await home();
     return { device_id: await text('#device-id') };
   },
+  // The 24 backup words of the fixed test identity (what the native app restores from; the same key as the page's).
+  async words() {
+    return { words: S.words };
+  },
   async screen() {
     return { heading: await heading(), text: await page.evaluate(() => document.body.innerText) };
   },

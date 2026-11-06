@@ -10,10 +10,13 @@ P=sshub-hostsync-e2e
 # The phone's browser: desktop (headless Chromium in the phone service) or android (Chrome on the emulator service).
 # A file next to this script picks it, because the runner passes no environment (gpu-verify/e2e.sh).
 PHONE_TARGET=$(cat "$HERE/phone-target" 2>/dev/null || echo desktop)
+# native: the emulator boots for the NATIVE app (scenario 66 drives it); the phone service then stays the desktop page.
+EMU=0
+case $PHONE_TARGET in android) EMU=1 ;; native) EMU=1; PHONE_TARGET=desktop ;; esac
 export PHONE_TARGET
 # An android-target run takes only e2e.lock (held by gpu-verify/e2e.sh): its emulator lives in this compose project.
 C="docker compose -p $P -f docker-compose.yml"
-[ "$PHONE_TARGET" = android ] && C="$C --profile android"
+[ "$EMU" = 1 ] && C="$C --profile android"
 PEERS="peer-a peer-b peer-c hub"
 E2E_DIR=$HERE
 export E2E_DIR C PEERS
@@ -24,7 +27,7 @@ cleanup() {
 trap cleanup EXIT
 
 cleanup
-if [ "$PHONE_TARGET" = android ]; then
+if [ "$EMU" = 1 ]; then
   echo "$(date -u +%H:%M:%S) compose up --build android (the emulator boots first, the phone driver attaches to it)"
   $C up --build -d android || { echo "compose up android failed"; exit 1; }
   i=0
