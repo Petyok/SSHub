@@ -234,13 +234,15 @@ impl Inner {
         if frame.len() > sshub_sync_proto::limits::MAX_FRAME_BYTES {
             return Ok(refused("This document is larger than any SSHub frame."));
         }
-        self.pending.clear();
+        // The pending requests are replaced only when a frame has parsed as a request that replaces them (below): a
+        // garbage, truncated or refused frame, or a frame that is not a request at all, leaves the queue alone.
         let t = self.token();
         match kind {
             KIND_CHALLENGE => {
                 let mut ctx = self.ctx(now)?;
                 match release::open_challenge(frame, &mut ctx, t) {
                     Ok((view, p)) => {
+                        self.pending.clear();
                         self.pending.insert(t, Pending::Release(Box::new(p)));
                         Ok(Opened::ShareRequest { view })
                     }
@@ -251,6 +253,7 @@ impl Inner {
                 let ctx = self.ctx(now)?;
                 let (o, p) = notices::open_notice(frame, &ctx, t);
                 if let Some(p) = p {
+                    self.pending.clear();
                     self.pending.insert(t, Pending::Notice(p));
                 }
                 Ok(o)
@@ -263,6 +266,7 @@ impl Inner {
                     cert::open_cert_extend(frame, &ctx, t)
                 };
                 if let Some(p) = p {
+                    self.pending.clear();
                     self.pending.insert(t, Pending::Cert(p));
                 }
                 Ok(o)
@@ -287,6 +291,7 @@ impl Inner {
                 let mut ctx = self.ctx(now)?;
                 let (o, p) = reshare::open_reshare(ops, &mut ctx, t);
                 if let Some(p) = p {
+                    self.pending.clear();
                     self.pending.insert(t, Pending::Reshare(p));
                 }
                 Ok(o)
@@ -804,6 +809,131 @@ mod tests {
             .unwrap();
         assert_eq!(out.kind, 2);
         assert_eq!(c.export_ops_view().unwrap().len(), 1);
+    }
+
+    /// Measurement, not a check: how long one short-code release holds the core Mutex with the real floor profile.
+    /// `cargo test --profile phone -p sshub-phone-core --lib -- --ignored --nocapture mutex_hold_time`
+    #[test]
+    #[ignore]
+    fn mutex_hold_time_of_one_short_code_release() {
+        let f = fixture();
+        let now = f["now"].as_i64().unwrap();
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        let typed = view.type_to_approve.clone();
+        let mut opts = ReleaseOptions {
+            typed_id: typed,
+            qr: false,
+            clipboard: false,
+            sound: false,
+            audio_profile: AudioProfile::Fast,
+            issue_short_code: true,
+            by_hand: false,
+        };
+        opts.issue_short_code = true;
+        let worker = {
+            let c = c.clone();
+            let token = view.token;
+            std::thread::spawn(move || {
+                let t = std::time::Instant::now();
+                let out = c
+                    .decide(token, Decision::Release { options: opts }, now + 1)
+                    .unwrap();
+                (
+                    t.elapsed(),
+                    out.short_code
+                        .map(|s| (s.argon_mem_mib, s.argon_iters, s.weak)),
+                )
+            })
+        };
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let t = std::time::Instant::now();
+        let _ = c.status(now + 1).unwrap();
+        let blocked = t.elapsed();
+        let (decide, sc) = worker.join().unwrap();
+        println!(
+            "MUTEX decide_total_ms={} status_blocked_ms={} short_code(mem_mib,iters,weak)={sc:?}",
+            decide.as_millis(),
+            blocked.as_millis()
+        );
+    }
+
+    #[test]
+    fn a_garbage_or_refused_frame_leaves_the_pending_requests_intact_and_a_valid_request_replaces_them(
+    ) {
+        let f = fixture();
+        let now = f["now"].as_i64().unwrap();
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let Opened::ShareRequest { view } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        let typed = view.type_to_approve.clone();
+        let magic = WIRE_MAGIC;
+        let with_magic = |kind: u8, tail: &[u8]| {
+            let mut v = magic.to_vec();
+            v.extend_from_slice(&[0, 1, kind]);
+            v.extend_from_slice(tail);
+            v
+        };
+        // a garbage frame of each request kind, an unknown kind, a frame without the magic, an enrollment frame
+        for bad in [
+            with_magic(1, &[9, 9, 9]),
+            with_magic(3, &[9, 9, 9]),
+            with_magic(5, &[9, 9, 9]),
+            with_magic(9, &[9, 9, 9]),
+            with_magic(10, &[9, 9, 9]),
+            with_magic(99, &[1, 2, 3]),
+            vec![1, 2, 3, 4, 5, 6, 7, 8],
+            with_magic(6, &[9]),
+        ] {
+            let o = c.open_frame(bad.clone(), now).unwrap();
+            assert!(matches!(o, Opened::Refused { .. }), "{bad:?}: {o:?}");
+        }
+        // a refused challenge (the page's bad cases) does not wipe it either
+        let o = c.open_frame(frame_of(&f, "expired"), now);
+        assert!(!matches!(o, Ok(Opened::ShareRequest { .. })), "{o:?}");
+        // the first request is still there and completes
+        let out = c
+            .decide(view.token, release(typed.as_deref()), now + 1)
+            .unwrap();
+        assert_eq!(out.kind, 2);
+        // a valid new request replaces the older one
+        let Opened::ShareRequest { view: first } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        let Opened::ShareRequest { view: second } = c
+            .open_frame(frame_of(&f, "unknown-requester"), now)
+            .unwrap()
+        else {
+            panic!()
+        };
+        assert!(c
+            .decide(
+                first.token,
+                release(second.type_to_approve.as_deref()),
+                now + 1
+            )
+            .is_err());
+        assert!(c
+            .decide(
+                second.token,
+                release(second.type_to_approve.as_deref()),
+                now + 1
+            )
+            .is_ok());
     }
 
     #[test]
