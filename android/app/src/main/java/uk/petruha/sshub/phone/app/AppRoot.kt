@@ -66,6 +66,8 @@ import uk.petruha.sshub.phone.core.ReshareOpened
 /** Routes that are meant to be shown while the vault is not Unlocked. */
 private val LOCK_SAFE_ROUTES = setOf(Routes.Lock, Routes.LockRestore, Routes.Restore, Routes.FirstRun)
 
+private val MISMATCH_SAFE_ROUTES = LOCK_SAFE_ROUTES + Routes.About
+
 private fun hidesBar(route: String?): Boolean {
     val r = route?.substringBefore("/") ?: return true
     return r in setOf(
@@ -82,8 +84,9 @@ private fun tabOf(route: String?): NavTab? = when (route?.substringBefore("/")) 
 }
 
 /** Where a decoded frame is shown, across all groups. Null: the caller (chain head, enrollment) takes the result itself. */
-class AppRouter : OpenedRouter {
-    override fun route(opened: Opened): String? = routeFor(opened) ?: when (opened) {
+class AppRouter(private val blocked: () -> Boolean = { false }) : OpenedRouter {
+    /** D17: while the signer mismatch is set no scanned frame opens a flow. */
+    override fun route(opened: Opened): String? = if (blocked()) null else routeFor(opened) ?: when (opened) {
         is OpenedTrustRequest -> trustRequestRoute(opened.view.token)
         is OpenedTrustExtend -> trustExtendRoute(opened.view.token)
         is ReshareOpened -> reshareRoute(opened.token)
@@ -109,6 +112,11 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
 
             // One lock path: every source (screen off, the auto-lock timer, the Lock button, a restored back stack after process death)
             // ends as a vault that is not Unlocked, and the UI follows that state here. The platform and the vault do the locking.
+            // D17: with the signer mismatch set every flow except About and Lock stays closed, also after a restart.
+            LaunchedEffect(mismatch, route) {
+                if (route == null || !mismatch) return@LaunchedEffect
+                if (route.substringBefore("/") !in MISMATCH_SAFE_ROUTES) nav.navigate(Routes.About) { popUpTo(nav.graph.id) { inclusive = true } }
+            }
             LaunchedEffect(vault, route) {
                 if (route == null) return@LaunchedEffect
                 val base = route.substringBefore("/")
@@ -129,7 +137,7 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
                         popExitTransition = { if (reduced) fadeOut(tween(0)) else fadeOut(tween(90)) },
                     ) {
                         identityGraph(env, settings)
-                        homeGraph(env, AppRouter())
+                        homeGraph(env, AppRouter { settings.signerMismatch.value })
                         releaseGraph(env)
                         trustGraph(env)
                         recoveryGraph(env)

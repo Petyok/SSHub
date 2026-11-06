@@ -72,4 +72,19 @@ class LockPathTest {
             assertEquals(null, HomeViewModel(core as HomeApi, FakePlatform()).state.value)
         }
     }
+
+    @Test fun a_locked_vault_resets_the_enrollment_flow_the_core_dropped() {
+        val platform = FakePlatform(); val core = FakePhoneCore()
+        val inst = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+        lateinit var vm: uk.petruha.sshub.phone.ui.screens.enroll.EnrollViewModel
+        inst.runOnMainSync {
+            vm = uk.petruha.sshub.phone.ui.screens.enroll.EnrollViewModel(core, platform, androidx.navigation.NavHostController(inst.targetContext), "laptop")
+            vm.startScan()
+        }
+        assertEquals(true, vm.ui.value.flow.scanning)
+        inst.runOnMainSync { platform.keys.lock() }
+        inst.waitForIdleSync()
+        assertEquals("the flow state follows the core that dropped its enrollment", false, vm.ui.value.flow.scanning)
+        assertEquals("laptop", vm.ui.value.flow.name)
+    }
 }

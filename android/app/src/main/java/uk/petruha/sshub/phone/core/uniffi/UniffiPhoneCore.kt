@@ -74,6 +74,12 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     constructor(context: Context) : this(SealedStateStore(File(context.applicationContext.noBackupFilesDir, "core")))
 
     private val core = RsPhoneCore(store.read())
+
+    /** D17: true while the app signing fingerprint was reported as different. Every operation that opens a frame or signs refuses then. */
+    @Volatile var blocked: () -> Boolean = { false }
+    private fun requireOpen() {
+        if (blocked()) throw CoreException(CoreException.Code.Refused, "Closed: this app's signing fingerprint differs from the one the terminal shows. Do not use it.")
+    }
     private val persistLock = Any()
 
     /** Guards everything below. */
@@ -172,6 +178,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     override fun frameFromText(text: String): ByteArray? = core.frameFromText(text)
 
     override suspend fun openFrame(frame: ByteArray, now: Long): Opened = withContext(Dispatchers.Default) {
+        requireOpen()
         // "SWR1" || version u16 || kind: the core drops its pending requests only for a frame that has the magic.
         val magic = frame.size >= 7 && frame[0] == 'S'.code.toByte() && frame[1] == 'W'.code.toByte() &&
             frame[2] == 'R'.code.toByte() && frame[3] == '1'.code.toByte()
@@ -249,6 +256,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     }
 
     override suspend fun adoptChain(token: Long, now: Long): ChainTaken = withContext(Dispatchers.Default) {
+        requireOpen()
         val head = (entry(token)?.raw as? RsOpened.Chain)?.view?.headSeq?.toLong()
         rsDecide(token, RsDecision.Approve(null), now)
         persist()
@@ -292,6 +300,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     override fun pendingView(token: Long): Opened? = entry(token)?.opened?.takeIf { it is OpenedRed || it is OpenedRelease }
 
     override suspend fun decide(token: Long, decision: ReleaseDecision, now: Long): ReleaseOutcome = withContext(Dispatchers.Default) {
+        requireOpen()
         val e = entry(token) ?: throw badInput("This request is no longer pending.")
         when (val raw = e.raw) {
             is RsOpened.ShareRequest -> decideRelease(token, raw, decision, now)
@@ -361,6 +370,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     override suspend fun trustExtend(token: Long): TrustExtendView? = (entry(token)?.opened as? OpenedTrustExtend)?.view
 
     override suspend fun decideTrust(token: Long, decision: TrustDecision, now: Long): Outgoing? = withContext(Dispatchers.Default) {
+        requireOpen()
         val e = entry(token) ?: throw badInput("This request is no longer pending.")
         if (e.raw !is RsOpened.CertRequest && e.raw !is RsOpened.CertExtend) throw badInput("This is not a trust request.")
         when (decision) {
@@ -382,6 +392,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     }
 
     override suspend fun revokeCert(certId: String, now: Long): Outgoing = withContext(Dispatchers.Default) {
+        requireOpen()
         val o = guard { core.revokeCert(certId, now) }
         persist()
         mapOutgoing(o)
@@ -432,6 +443,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     override suspend fun wrapKeyState(now: Long): WrapKeyState = withContext(Dispatchers.Default) { wrapState(guard { core.status(now) }) }
 
     override suspend fun rotateWrapKeys(now: Long): Outgoing = withContext(Dispatchers.Default) {
+        requireOpen()
         val o = guard { core.rotateWrapKeys(now) }
         synchronized(lock) { rotated = true }
         persist()
@@ -445,6 +457,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
      * ops to hand to a terminal. They are mapped and returned here, never held, so no restart can lose them between two calls.
      */
     override suspend fun decideReshare(token: Long, now: Long): ReshareOutcome = withContext(Dispatchers.Default) {
+        requireOpen()
         val view = (entry(token)?.opened as? ReshareOpened)?.view ?: throw badInput("This reshare is no longer pending.")
         val o = rsDecide(token, RsDecision.Approve(null), now)
         persist()
@@ -483,6 +496,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     override suspend fun recoveryNotice(token: Long, now: Long): RecoveryNoticeView? = (entry(token)?.opened as? RecoveryNoticeOpened)?.view
 
     override suspend fun decideRecoveryCancel(token: Long, now: Long): Outgoing = withContext(Dispatchers.Default) {
+        requireOpen()
         if (entry(token)?.raw !is RsOpened.ReenrollNotice) throw badInput("This recovery notice is no longer pending.")
         val o = rsDecide(token, RsDecision.Approve(null), now)
         persist()
@@ -508,6 +522,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     }
 
     override suspend fun enrollDecide(token: Long, decision: EnrollDecision, now: Long): Outgoing = withContext(Dispatchers.Default) {
+        requireOpen()
         val d = when (decision) {
             is EnrollDecision.Name -> RsDecision.EnrollName(decision.name)
             is EnrollDecision.Sas -> RsDecision.EnrollSas(decision.matches)
