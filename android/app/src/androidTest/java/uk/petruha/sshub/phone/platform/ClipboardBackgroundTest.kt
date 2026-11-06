@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.PersistableBundle
+import androidx.activity.ComponentActivity
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -17,8 +18,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assume.assumeTrue
 import org.junit.Test
-import uk.petruha.sshub.phone.MainActivity
 
+/**
+ * Runs in the plain ComponentActivity of ui-test-manifest: any resumed window gives the process the clipboard focus these cases
+ * need, and the test does not depend on the app's own Activity.
+ */
 class ClipboardBackgroundTest {
     private val inst = InstrumentationRegistry.getInstrumentation()
     private val ctx: Context get() = inst.targetContext
@@ -50,7 +54,7 @@ class ClipboardBackgroundTest {
     @Test fun a_clip_another_app_put_there_is_left_alone() {
         var now = 0L
         val job = Job()
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             scenario.onActivity {
                 val clip = AndroidClipboard(ctx, nowMs = { now }, scope = CoroutineScope(job))
                 clip.copySensitive("Words", "abc def")
@@ -67,7 +71,7 @@ class ClipboardBackgroundTest {
     @Test fun an_expiry_while_away_is_cleared_when_the_window_has_focus_again() {
         var now = 0L
         val job = Job()
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             lateinit var clip: AndroidClipboard
             scenario.onActivity {
                 clip = AndroidClipboard(ctx, nowMs = { now }, scope = CoroutineScope(job))
@@ -78,7 +82,7 @@ class ClipboardBackgroundTest {
             clip.onStop()
             now = 61_000
             clip.tick() // the expiry, while the app is in the background
-            ctx.startActivity(Intent(ctx, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+            ctx.startActivity(Intent(ctx, ComponentActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
             waitUntil("the activity to resume") { scenario.state == Lifecycle.State.RESUMED }
             waitUntil("window focus") {
                 var focused = false

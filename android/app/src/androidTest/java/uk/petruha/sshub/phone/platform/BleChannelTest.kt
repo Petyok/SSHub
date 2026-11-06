@@ -190,6 +190,7 @@ class BleChannelTest {
     @Test fun no_notification_is_lost_across_ticks() {
         val ops = FakeGattOps()
         val ch = opened(ops)
+        scope.launch { ch.incoming.collect { } } // the consumer: the inbox is bounded, a channel nobody reads is a flood
         val n = 3_000
         for (i in 0 until n) {
             ops.events!!.notified(byteArrayOf((i shr 8).toByte(), i.toByte()))
