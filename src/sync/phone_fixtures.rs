@@ -526,7 +526,14 @@ fn the_terminal_shows_the_host_id_and_words_the_phone_describes_for_the_same_cha
     for ch in main["challenges"].as_array().unwrap() {
         let name = ch["name"].as_str().unwrap();
         let w = ChallengeWire::decode(&unhex(&ch["frame_hex"])).unwrap();
-        let shown = challenge_shown(&w).unwrap();
+        let Ok(shown) = challenge_shown(&w) else {
+            // A frame that is not a share release is one the phone refuses too.
+            assert_ne!(
+                ch["expect"], "ok",
+                "{name}: the phone accepts it, the terminal cannot show it"
+            );
+            continue;
+        };
         assert_eq!(
             shown.words,
             ch["binding_words"].as_str().unwrap(),
