@@ -1,7 +1,5 @@
 package uk.petruha.sshub.phone
 
-import android.content.Intent
-import android.content.IntentFilter
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -27,10 +25,6 @@ class MainActivity : FragmentActivity() {
         platform.lockPolicy = LockPolicy({ settings.autoLockSeconds.value }, { core.lock() })
         (core as? UniffiPhoneCore)?.blocked = { settings.signerMismatch.value }
         platform.attach(this) // before setContent: permission launchers must be registered before STARTED
-        // Screen off locks the app at once (spec 11).
-        registerReceiver(object : android.content.BroadcastReceiver() {
-            override fun onReceive(c: android.content.Context?, i: Intent?) { platform.onScreenOff() }
-        }, IntentFilter(Intent.ACTION_SCREEN_OFF), RECEIVER_NOT_EXPORTED)
         setContent { AppRoot(core, platform, settings) }
     }
 }

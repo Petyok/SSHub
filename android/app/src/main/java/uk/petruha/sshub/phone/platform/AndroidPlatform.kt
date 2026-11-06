@@ -1,6 +1,9 @@
 package uk.petruha.sshub.phone.platform
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +65,12 @@ class AndroidPlatform internal constructor(
         val seconds = lockPolicy?.autoLockSeconds?.invoke() ?: return
         if (elapsedMs() - at >= seconds * 1000L) lockNow()
     }
+
+    // One receiver for the life of the process, on the application context: it never captures an Activity and cannot leak.
+    private val screenOff = object : BroadcastReceiver() {
+        override fun onReceive(c: Context?, i: Intent?) { onScreenOff() }
+    }
+    init { app.registerReceiver(screenOff, IntentFilter(Intent.ACTION_SCREEN_OFF), Context.RECEIVER_NOT_EXPORTED) }
 
     /** Tests only: answers the prompt instead of the BiometricGate. */
     @Volatile internal var promptOverride: VaultPrompt? = null
