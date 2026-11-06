@@ -34,9 +34,9 @@ import uk.petruha.sshub.phone.ui.screens.home.HomeViewModel
 private class LockingCore(private val inner: FakePhoneCore = FakePhoneCore()) : PhoneCoreApi by inner {
     @Volatile var locked = false
     override fun lock() { locked = true; inner.lock() }
-    private fun <T> unlocked(block: () -> T): T = if (locked) throw CoreException(CoreException.Code.Refused, "This phone is locked.") else block()
-    override fun thisPhone(now: Long) = unlocked { inner.thisPhone(now) }
-    override fun ring(now: Long) = unlocked { inner.ring(now) }
+    private inline fun <T> unlocked(block: () -> T): T = if (locked) throw CoreException(CoreException.Code.Refused, "This phone is locked.") else block()
+    override suspend fun thisPhone(now: Long) = unlocked { inner.thisPhone(now) }
+    override suspend fun ring(now: Long) = unlocked { inner.ring(now) }
     override fun pending(now: Long) = unlocked { listOf(PendingItem(PendingKind.Release, "db-staging", "now", Routes.Release + "/" + ReleaseSamples.TOKEN_DBS)) }
 }
 

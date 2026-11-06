@@ -25,7 +25,7 @@ class FakePhoneCore(
      */
     override fun scanGray(width: Int, height: Int, luma: ByteArray): ScanEvent = ScanEvent.None
     override fun resetScan() {}
-    override fun frameFromText(text: String): ByteArray? = text.trim().takeIf { it.length >= 3 }?.toByteArray()
+    override suspend fun frameFromText(text: String): ByteArray? = text.trim().takeIf { it.length >= 3 }?.toByteArray()
     override suspend fun openFrame(frame: ByteArray, now: Long): Opened {
         val t = String(frame)
         return when {

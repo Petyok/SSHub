@@ -27,18 +27,20 @@ import uk.petruha.sshub.phone.core.ScanResults
 
 /** The "last sync" age is relative, so it is recomputed once a minute while the screen is alive. Nothing here acts on its own. */
 class HomeViewModel(private val core: HomeApi, private val platform: Platform) : ViewModel() {
-    private val _state = MutableStateFlow(read(null))
+    private val _state = MutableStateFlow<HomeState?>(null)
     /** Null while the core refuses to answer (locked): the shell moves to the Lock screen on the vault state, nothing is drawn. */
     val state: StateFlow<HomeState?> = _state.asStateFlow()
 
     init {
+        refresh()
         viewModelScope.launch { while (isActive) { delay(60_000); refresh() } }
     }
 
-    fun refresh() { _state.value = read(_state.value) }
+    /** The core is read off the main thread (the adapter's dispatcher); the state follows when it answers. */
+    fun refresh() { viewModelScope.launch { _state.value = read(_state.value) } }
 
     /** A locked core throws; a refused read keeps what was shown. */
-    private fun read(previous: HomeState?): HomeState? {
+    private suspend fun read(previous: HomeState?): HomeState? {
         val now = platform.clock.nowSeconds()
         return try {
             // `headPending` comes from the status, not from the ring: a restored phone has no ring and is still pending (H5).
@@ -119,7 +121,7 @@ class ScanViewModel(private val core: ScanApi, private val platform: Platform, v
     val state: StateFlow<ScanState> = combine(local, platform.camera.permission, ::build)
         .stateIn(viewModelScope, SharingStarted.Eagerly, build(local.value, platform.camera.permission.value))
 
-    init { core.resetScan() }
+    init { core.resetScan() } // queued on the core's thread, returns at once
 
     fun onLuma(width: Int, height: Int, luma: ByteArray) {
         if (busy) return
@@ -142,10 +144,14 @@ class ScanViewModel(private val core: ScanApi, private val platform: Platform, v
 
     fun usePasted() {
         if (busy) return
-        val bytes = core.frameFromText(local.value.pasteText)
-        if (bytes == null) { local.update { Local(it.have, it.need, it.ignored, it.done, it.paste, it.pasteText, SCAN_BAD_TEXT) }; return }
         busy = true
-        viewModelScope.launch { open(bytes) }
+        viewModelScope.launch {
+            val bytes = core.frameFromText(local.value.pasteText)
+            if (bytes == null) {
+                local.update { Local(it.have, it.need, it.ignored, it.done, it.paste, it.pasteText, SCAN_BAD_TEXT) }
+                busy = false
+            } else open(bytes)
+        }
     }
 
     private suspend fun open(bytes: ByteArray) {

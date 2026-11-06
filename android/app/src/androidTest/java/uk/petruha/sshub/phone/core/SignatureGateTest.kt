@@ -36,7 +36,7 @@ class SignatureGateTest {
     private fun newDir() = File(ctx.cacheDir, "gate-" + UUID.randomUUID()).also { it.mkdirs() }
 
     private fun core(vault: KeyVault?, dir: File = newDir()): UniffiPhoneCore =
-        UniffiPhoneCore(SealedStateStore(dir)).also { it.unlock(ByteArray(32) { 0x42 }, now); it.vault = vault }
+        UniffiPhoneCore(SealedStateStore(dir)).also { runBlocking { it.unlock(ByteArray(32) { 0x42 }, now) }; it.vault = vault }
 
     private fun open(c: UniffiPhoneCore): ReleaseView {
         val ch = fixtures.getJSONArray("challenges").getJSONObject(0)
@@ -113,14 +113,14 @@ class SignatureGateTest {
         val junk = ByteArray(200) { 7 }
         File(dir, "state.bin").writeBytes(junk)
         val c = UniffiPhoneCore(SealedStateStore(dir))
-        val status = c.unlock(ByteArray(32) { 0x42 }, now)
+        val status = runBlocking { c.unlock(ByteArray(32) { 0x42 }, now) }
         assertTrue(status.stateLost)
         assertTrue(c.stateLost())
         assertArrayEquals("a copy of the unreadable bytes", junk, File(dir, "state.bin.lost").readBytes())
         assertArrayEquals("nothing was written over it", junk, File(dir, "state.bin").readBytes())
         val e = runCatching { runBlocking { c.openFrame(ByteArray(8), now) } }.exceptionOrNull() as? CoreException
         assertEquals(CoreException.Code.Refused, e?.code)
-        c.confirmStateLost()
+        runBlocking { c.confirmStateLost() }
         assertFalse(c.stateLost())
         assertFalse("the replacement was written", junk.contentEquals(File(dir, "state.bin").readBytes()))
         assertArrayEquals("the old copy stays", junk, File(dir, "state.bin.lost").readBytes())

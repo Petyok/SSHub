@@ -1,5 +1,6 @@
 package uk.petruha.sshub.phone.identity
 
+import kotlinx.coroutines.runBlocking
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -321,7 +322,7 @@ class AboutAndMenuViewModelTest {
 
     @Test fun menu_settings_flow_through_the_store_and_lock_wipes_the_core() {
         lateinit var menu: SecurityMenuViewModel
-        onMain { menu = SecurityMenuViewModel(core, platform, settings); core.unlock(ByteArray(32), 0) }
+        onMain { menu = SecurityMenuViewModel(core, platform, settings); runBlocking { core.unlock(ByteArray(32), 0) } }
         assertTrue(core.unlocked)
         onMain { menu.setTheme(ThemeChoice.Light); menu.setAutoLock(300); menu.lock() }
         assertEquals(ThemeChoice.Light, menu.state.value.theme)

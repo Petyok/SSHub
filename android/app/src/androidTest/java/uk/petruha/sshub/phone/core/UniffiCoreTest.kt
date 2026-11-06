@@ -38,59 +38,59 @@ class UniffiCoreTest {
     }
 
     @Test fun unlock_gives_the_fixture_device_id_and_a_never_enrolled_status() {
-        val s = core.unlock(fixedSecret(), now)
+        val s = runBlocking { core.unlock(fixedSecret(), now) }
         assertEquals("ee8a1d5cf97016a7", s.deviceId)
         assertFalse(s.enrolled)
-        assertEquals(s, core.status(now))
-        assertNull(core.ring(now))
+        assertEquals(s, runBlocking { core.status(now) })
+        assertNull(runBlocking { core.ring(now) })
         assertTrue(File(dir, "state.bin").isFile)
     }
 
     @Test fun the_state_survives_a_new_core_over_the_same_store() {
-        core.unlock(fixedSecret(), now)
+        runBlocking { core.unlock(fixedSecret(), now) }
         val again = UniffiPhoneCore(SealedStateStore(dir))
-        assertEquals("ee8a1d5cf97016a7", again.unlock(fixedSecret(), now).deviceId)
-        assertFalse(again.status(now).headPending)
+        assertEquals("ee8a1d5cf97016a7", runBlocking { again.unlock(fixedSecret(), now) }.deviceId)
+        assertFalse(runBlocking { again.status(now) }.headPending)
     }
 
     @Test fun backup_words_are_24_and_restore_gives_the_same_secret() {
-        core.unlock(fixedSecret(), now)
-        val chars = core.backupWords()
+        runBlocking { core.unlock(fixedSecret(), now) }
+        val chars = runBlocking { core.backupWords() }
         val words = chars.map { String(it) }
         chars.forEach { it.fill('\u0000') }
         assertEquals(24, words.size)
-        assertArrayEquals(fixedSecret(), core.restoreFromWords(words))
+        assertArrayEquals(fixedSecret(), runBlocking { core.restoreFromWords(words) })
     }
 
     @Test fun a_restored_phone_has_its_head_pending() {
-        core.unlock(fixedSecret(), now)
-        val secret = core.restoreFromWords(core.backupWords().map { String(it) })
-        val s = core.unlock(secret, now)
+        runBlocking { core.unlock(fixedSecret(), now) }
+        val secret = runBlocking { core.restoreFromWords(core.backupWords().map { String(it) }) }
+        val s = runBlocking { core.unlock(secret, now) }
         assertTrue(s.headPending)
         assertEquals("ee8a1d5cf97016a7", s.deviceId)
     }
 
     @Test fun a_wrong_word_is_a_malformed_error() {
-        core.unlock(fixedSecret(), now)
-        val e = runCatching { core.restoreFromWords(List(24) { "zzzz" }) }.exceptionOrNull() as CoreException
+        runBlocking { core.unlock(fixedSecret(), now) }
+        val e = runCatching { runBlocking { core.restoreFromWords(List(24) { "zzzz" }) } }.exceptionOrNull() as CoreException
         assertEquals(CoreException.Code.Malformed, e.code)
     }
 
     @Test fun validateWord_uses_the_core_word_list() {
-        val words = runBlocking { core.unlock(fixedSecret(), now); core.backupWords().map { String(it) } }
+        val words = runBlocking { runBlocking { core.unlock(fixedSecret(), now) }; runBlocking { core.backupWords() }.map { String(it) } }
         assertTrue(words.all { core.validateWord(it) == WordState.Ok })
         assertEquals(WordState.Bad, core.validateWord("zzzz"))
         assertEquals(WordState.Empty, core.validateWord("  "))
     }
 
     @Test fun a_fresh_phone_has_no_name_and_ring_epoch_zero() {
-        val s = core.unlock(fixedSecret(), now)
+        val s = runBlocking { core.unlock(fixedSecret(), now) }
         assertEquals("", s.deviceName)
         assertEquals(0L, s.epoch)
     }
 
     @Test fun garbage_is_a_value_not_an_exception() = runBlocking {
-        core.unlock(fixedSecret(), now)
+        runBlocking { core.unlock(fixedSecret(), now) }
         val o = core.openFrame(byteArrayOf(1, 2, 3), now)
         assertTrue(o is OpenedRefused || o is Opened.Ignored)
         assertTrue(core.pending(now).isEmpty())
@@ -102,14 +102,14 @@ class UniffiCoreTest {
     }
 
     @Test fun frameFromText_of_text_that_is_not_base64_is_null() {
-        assertNull(core.frameFromText("!!"))
-        assertArrayEquals("hi".toByteArray(), core.frameFromText(" aGk= \n"))
+        assertNull(runBlocking { core.frameFromText("!!") })
+        assertArrayEquals("hi".toByteArray(), runBlocking { core.frameFromText(" aGk= \n") })
     }
 
     @Test fun lock_wipes_the_unlocked_state() {
-        core.unlock(fixedSecret(), now)
+        runBlocking { core.unlock(fixedSecret(), now) }
         core.lock()
-        val e = runCatching { core.status(now) }.exceptionOrNull() as CoreException
+        val e = runCatching { runBlocking { core.status(now) } }.exceptionOrNull() as CoreException
         assertEquals(CoreException.Code.Refused, e.code)
     }
 }

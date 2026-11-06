@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import uk.petruha.sshub.phone.core.ChainCheck
 import uk.petruha.sshub.phone.core.CoreException
@@ -17,6 +18,7 @@ import uk.petruha.sshub.phone.core.OpenedChain
 import uk.petruha.sshub.phone.core.OpenedRefused
 import uk.petruha.sshub.phone.core.Platform
 import uk.petruha.sshub.phone.core.ScanApi
+import uk.petruha.sshub.phone.core.PhoneStatus
 import uk.petruha.sshub.phone.core.SettingsStore
 import uk.petruha.sshub.phone.core.ThemeChoice
 import uk.petruha.sshub.phone.core.VaultResult
@@ -203,8 +205,10 @@ class ReplaceKeyViewModel : ViewModel() {
 }
 
 class ChainHeadViewModel(private val core: IdentityApi, private val scan: ScanApi, private val platform: Platform) : ViewModel() {
-    private val flow = MutableStateFlow(ChainHeadState(deviceId = core.status(platform.clock.nowSeconds()).deviceId))
+    private val flow = MutableStateFlow(ChainHeadState())
     val state: StateFlow<ChainHeadState> = flow.asStateFlow()
+
+    init { viewModelScope.launch { val id = core.status(platform.clock.nowSeconds()).deviceId; flow.update { it.copy(deviceId = id) } } }
 
     /** A result of the scan screen or of the paste box: every list goes through `openFrame`, the core says what it is. */
     fun onOpened(opened: Opened) {
@@ -283,23 +287,25 @@ class ChainHeadViewModel(private val core: IdentityApi, private val scan: ScanAp
 }
 
 class SecurityMenuViewModel(private val core: IdentityApi, private val platform: Platform, private val settings: SettingsStore) : ViewModel() {
-    private val status = core.status(platform.clock.nowSeconds())
-    private val headPending = MutableStateFlow(status.headPending)
+    /** Read from the core's thread; the menu shows without the name and id until it answers. */
+    private val status = MutableStateFlow<PhoneStatus?>(null)
 
     val state: StateFlow<SecurityMenuState> = combine(
-        settings.theme, settings.autoLockSeconds, settings.backupConfirmed, settings.signerMismatch, headPending,
-    ) { theme, autoLock, backup, blocked, pending ->
-        SecurityMenuState(status.deviceName, status.deviceId, theme, autoLock, backup, blocked, pending)
+        settings.theme, settings.autoLockSeconds, settings.backupConfirmed, settings.signerMismatch, status,
+    ) { theme, autoLock, backup, blocked, st ->
+        SecurityMenuState(st?.deviceName.orEmpty(), st?.deviceId.orEmpty(), theme, autoLock, backup, blocked, st?.headPending ?: false)
     }.stateIn(
         viewModelScope, SharingStarted.Eagerly,
         SecurityMenuState(
-            status.deviceName, status.deviceId, settings.theme.value, settings.autoLockSeconds.value,
-            settings.backupConfirmed.value, settings.signerMismatch.value, status.headPending,
+            "", "", settings.theme.value, settings.autoLockSeconds.value,
+            settings.backupConfirmed.value, settings.signerMismatch.value, false,
         ),
     )
 
+    init { refresh() }
+
     /** The chain may have been taken since this model was made (Take chain, then back to the menu). */
-    fun refresh() { headPending.value = core.status(platform.clock.nowSeconds()).headPending }
+    fun refresh() { viewModelScope.launch { status.value = core.status(platform.clock.nowSeconds()) } }
 
     fun setTheme(choice: ThemeChoice) = settings.setTheme(choice)
     fun setAutoLock(seconds: Int) = settings.setAutoLock(seconds)
@@ -311,8 +317,10 @@ class SecurityMenuViewModel(private val core: IdentityApi, private val platform:
 private data class AboutUi(val reference: String = "", val comparing: Boolean = false, val checked: Set<Int> = emptySet(), val licencesOpen: Boolean = false)
 
 class AboutViewModel(private val core: IdentityApi, private val platform: Platform, private val settings: SettingsStore) : ViewModel() {
-    private val status = core.status(platform.clock.nowSeconds())
+    private val status = MutableStateFlow<PhoneStatus?>(null)
     private val ui = MutableStateFlow(AboutUi())
+
+    init { viewModelScope.launch { status.value = core.status(platform.clock.nowSeconds()) } }
     private val licences: List<LicenceText> by lazy {
         listOf(
             LicenceText("JetBrains Mono 2.304", "Copyright 2020 The JetBrains Mono Project Authors", "https://github.com/JetBrains/JetBrainsMono", platform.system.licenceText("JetBrainsMono-OFL.txt")),
@@ -320,15 +328,15 @@ class AboutViewModel(private val core: IdentityApi, private val platform: Platfo
         )
     }
 
-    private fun build(u: AboutUi, autoLock: Int, backup: Boolean) = AboutState(
-        versionName = platform.system.versionName, deviceName = status.deviceName, deviceId = status.deviceId,
+    private fun build(u: AboutUi, autoLock: Int, backup: Boolean, st: PhoneStatus?) = AboutState(
+        versionName = platform.system.versionName, deviceName = st?.deviceName.orEmpty(), deviceId = st?.deviceId.orEmpty(),
         fingerprint = platform.system.apkCertSha256.lowercase(), reference = u.reference, comparing = u.comparing, checked = u.checked,
         autoLockSeconds = autoLock, strongBox = platform.keys.strongBox, backupConfirmed = backup,
         licencesOpen = u.licencesOpen, licences = if (u.licencesOpen) licences else emptyList(),
     )
 
-    val state: StateFlow<AboutState> = combine(ui, settings.autoLockSeconds, settings.backupConfirmed) { u, a, b -> build(u, a, b) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, build(ui.value, settings.autoLockSeconds.value, settings.backupConfirmed.value))
+    val state: StateFlow<AboutState> = combine(ui, settings.autoLockSeconds, settings.backupConfirmed, status) { u, a, b, st -> build(u, a, b, st) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, build(ui.value, settings.autoLockSeconds.value, settings.backupConfirmed.value, null))
 
     fun toggleCompare() { ui.value = ui.value.copy(comparing = !ui.value.comparing) }
 

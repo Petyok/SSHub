@@ -58,10 +58,10 @@ class FakeIdentityApi : IdentityApi {
     var neverSignedWith: String? = null
     val secret = ByteArray(32) { 0x42 }
 
-    override fun status(now: Long) = PhoneStatus(deviceId, deviceName, enrolled, headPending, 7)
+    override suspend fun status(now: Long) = PhoneStatus(deviceId, deviceName, enrolled, headPending, 7)
     override fun createSecret(): ByteArray = secret.copyOf()
 
-    override fun restoreFromWords(words: List<String>): ByteArray {
+    override suspend fun restoreFromWords(words: List<String>): ByteArray {
         if (rejectRestore || words.size != 24 || words.any { DemoWords.stateOf(it) != WordState.Ok }) throw CoreException(CoreException.Code.Malformed, "these words are not a valid recovery phrase")
         restoredWith = words
         headPending = true
@@ -69,8 +69,8 @@ class FakeIdentityApi : IdentityApi {
     }
 
     override fun validateWord(word: String): WordState = DemoWords.stateOf(word)
-    override fun backupWords(): List<CharArray> = DemoWords.backup.map { it.toCharArray() }
-    override fun unlock(secret: ByteArray, now: Long): PhoneStatus { unlocked = true; return status(now) }
+    override suspend fun backupWords(): List<CharArray> = DemoWords.backup.map { it.toCharArray() }
+    override suspend fun unlock(secret: ByteArray, now: Long): PhoneStatus { unlocked = true; return status(now) }
     override fun lock() { unlocked = false }
 
     override suspend fun neverSigned(typedId: String, now: Long): PhoneStatus {
@@ -95,7 +95,7 @@ class FakeChainScan : ScanApi {
     var listsRead = 0
     override fun scanGray(width: Int, height: Int, luma: ByteArray): ScanEvent = ScanEvent.None
     override fun resetScan() {}
-    override fun frameFromText(text: String): ByteArray? = text.trim().takeIf { it.length >= 16 }?.toByteArray()
+    override suspend fun frameFromText(text: String): ByteArray? = text.trim().takeIf { it.length >= 16 }?.toByteArray()
 
     override suspend fun openFrame(frame: ByteArray, now: Long): Opened {
         val text = String(frame)

@@ -16,6 +16,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -114,6 +118,10 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
 
             // One lock path: every source (screen off, the auto-lock timer, the Lock button, a restored back stack after process death)
             // ends as a vault that is not Unlocked, and the UI follows that state here. The platform and the vault do the locking.
+            // The badge is read when the screen or the lock changes, never during composition (the core answers on its own thread).
+            var pendingN by remember { mutableIntStateOf(0) }
+            LaunchedEffect(route, vault) { pendingN = runCatching { core.pending(platform.clock.nowSeconds()).size }.getOrDefault(0) }
+            val scope = rememberCoroutineScope()
             // Security M2: an unreadable saved state stops everything until the user read the stop screen.
             LaunchedEffect(vault, route) {
                 if (route == null || vault != VaultState.Unlocked) return@LaunchedEffect
@@ -146,7 +154,7 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
                         identityGraph(env, settings)
                         composable(Routes.StateLost) {
                             StateLostScreen(
-                                onContinue = { core.confirmStateLost(); nav.navigate(Routes.Home) { popUpTo(nav.graph.id) { inclusive = true } } },
+                                onContinue = { scope.launch { core.confirmStateLost(); nav.navigate(Routes.Home) { popUpTo(nav.graph.id) { inclusive = true } } } },
                                 onLock = { core.lock(); platform.keys.lock() },
                             )
                         }
@@ -159,7 +167,7 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
                 }
                 if (!hidesBar(route) && !mismatch) {
                     SshubNavBar(
-                        tabOf(route), pending = pendingCount(core, platform), modifier = Modifier.fillMaxWidth(),
+                        tabOf(route), pending = pendingN, modifier = Modifier.fillMaxWidth(),
                         onSelect = { tab ->
                             val dest = when (tab) { NavTab.Ring -> Routes.Home; NavTab.Approvals -> Routes.Approvals; NavTab.Enroll -> Routes.Enroll1; NavTab.Security -> Routes.Menu }
                             nav.navigate(dest) { popUpTo(Routes.Home); launchSingleTop = true }
@@ -170,6 +178,3 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
         }
     }
 }
-
-private fun pendingCount(core: PhoneCoreApi, platform: Platform): Int =
-    runCatching { core.pending(platform.clock.nowSeconds()).size }.getOrDefault(0)

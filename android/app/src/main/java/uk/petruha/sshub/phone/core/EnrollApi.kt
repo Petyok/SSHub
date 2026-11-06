@@ -61,6 +61,6 @@ enum class EnrollTextKind { Empty, Step1Code, Step3Keys, Step5Confirm, OwnText, 
 interface EnrollApi {
     /** Null when the name is acceptable; otherwise the literal reason to show. */
     fun nameProblem(name: String): String?
-    fun enrollTextKind(text: String): EnrollTextKind
+    suspend fun enrollTextKind(text: String): EnrollTextKind
     suspend fun enrollDecide(token: Long, decision: EnrollDecision, now: Long): Outgoing
 }

@@ -75,8 +75,8 @@ class FakeHomeApi(
     var headPending: Boolean = false,
     var items: List<PendingItem> = HomeSamples.pending,
 ) : HomeApi {
-    override fun ring(now: Long): RingView? = if (enrolled) HomeSamples.ring.copy(headPending = headPending) else null
-    override fun thisPhone(now: Long): HomePhoneView = HomeSamples.phone
+    override suspend fun ring(now: Long): RingView? = if (enrolled) HomeSamples.ring.copy(headPending = headPending) else null
+    override suspend fun thisPhone(now: Long): HomePhoneView = HomeSamples.phone
     override fun pending(now: Long): List<PendingItem> = items
 }
 
@@ -88,7 +88,7 @@ class HomeScanFake : ScanApi {
     val opened = mutableListOf<ByteArray>()
     override fun scanGray(width: Int, height: Int, luma: ByteArray): ScanEvent = events.removeFirstOrNull() ?: ScanEvent.None
     override fun resetScan() { resets++ }
-    override fun frameFromText(text: String): ByteArray? =
+    override suspend fun frameFromText(text: String): ByteArray? =
         text.trim().takeIf { it.length >= 8 && it.all { c -> c.isLetterOrDigit() || c == '+' || c == '/' || c == '=' } }?.toByteArray()
     override suspend fun openFrame(frame: ByteArray, now: Long): Opened { opened += frame; return openResult }
 }

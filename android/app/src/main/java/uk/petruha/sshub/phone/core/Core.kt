@@ -65,7 +65,7 @@ interface ScanApi {
     fun scanGray(width: Int, height: Int, luma: ByteArray): ScanEvent
     fun resetScan()
     /** Frame text pasted by the user (base64, whitespace tolerated). */
-    fun frameFromText(text: String): ByteArray?
+    suspend fun frameFromText(text: String): ByteArray?
     suspend fun openFrame(frame: ByteArray, now: Long): Opened
 }
 

@@ -26,7 +26,7 @@ data class PendingItem(val kind: PendingKind, val title: String, val age: String
 
 interface HomeApi {
     /** Null when the phone is not enrolled. */
-    fun ring(now: Long): RingView?
-    fun thisPhone(now: Long): HomePhoneView
+    suspend fun ring(now: Long): RingView?
+    suspend fun thisPhone(now: Long): HomePhoneView
     fun pending(now: Long): List<PendingItem>
 }

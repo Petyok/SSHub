@@ -49,7 +49,7 @@ class RealCoreNoticesTest {
 
     private fun core(): UniffiPhoneCore {
         val dir = File(ctx.cacheDir, "notices-" + UUID.randomUUID()).also { it.mkdirs() }
-        return UniffiPhoneCore(SealedStateStore(dir)).also { it.unlock(hex(fx.getJSONObject("phone").getString("secret_hex")), now) }
+        return UniffiPhoneCore(SealedStateStore(dir)).also { runBlocking { it.unlock(hex(fx.getJSONObject("phone").getString("secret_hex")), now) } }
     }
 
     private fun red(core: UniffiPhoneCore): Pair<RedView, Long> {

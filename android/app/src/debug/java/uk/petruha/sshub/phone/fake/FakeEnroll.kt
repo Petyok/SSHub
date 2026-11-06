@@ -46,7 +46,7 @@ class FakeEnrollApi : EnrollApi {
         else -> null
     }
 
-    override fun enrollTextKind(text: String): EnrollTextKind = when (val t = text.trim()) {
+    override suspend fun enrollTextKind(text: String): EnrollTextKind = when (val t = text.trim()) {
         "" -> EnrollTextKind.Empty
         EnrollSamples.codeText -> EnrollTextKind.Step1Code
         EnrollSamples.keysText -> EnrollTextKind.Step3Keys

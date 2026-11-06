@@ -249,8 +249,11 @@ class EnrollViewModel(
 
     // ---- paste -----------------------------------------------------------------------------------------------------
 
-    private fun setPaste(text: String) = flow.update {
-        it.copy(pasteText = it.pasteText + (it.pasteN to text), pasteKind = it.pasteKind + (it.pasteN to core.enrollTextKind(text)))
+    private fun setPaste(text: String) {
+        val n = flow.value.pasteN
+        flow.update { it.copy(pasteText = it.pasteText + (n to text)) }
+        // The kind is read from the core's thread; the text shows at once.
+        viewModelScope.launch { val kind = core.enrollTextKind(text); flow.update { it.copy(pasteKind = it.pasteKind + (n to kind)) } }
     }
 
     fun setPasteText(t: String) = setPaste(t)
@@ -259,9 +262,10 @@ class EnrollViewModel(
 
     fun pasteUse() {
         val n = flow.value.pasteN
-        val bytes = core.frameFromText(flow.value.pasteText[n].orEmpty())
-        if (bytes == null) { flow.update { it.copy(pasteKind = it.pasteKind + (n to EnrollTextKind.NotEnrollment)) }; return }
-        viewModelScope.launch { receive(bytes) }
+        viewModelScope.launch {
+            val bytes = core.frameFromText(flow.value.pasteText[n].orEmpty())
+            if (bytes == null) flow.update { it.copy(pasteKind = it.pasteKind + (n to EnrollTextKind.NotEnrollment)) } else receive(bytes)
+        }
     }
 
     fun pasteNext() { flow.update { it.copy(pasteN = 3) } }

@@ -1,5 +1,6 @@
 package uk.petruha.sshub.phone.core
 
+import kotlinx.coroutines.runBlocking
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -35,13 +36,13 @@ class RestoredPhoneTest {
     /** A restored phone: words of one core restored into a fresh store, then unlocked. */
     private fun restoredIn(d: File): UniffiPhoneCore {
         val donor = UniffiPhoneCore(SealedStateStore(dir()))
-        donor.unlock(ByteArray(32) { 0x42 }, now)
-        val chars = donor.backupWords()
+        runBlocking { donor.unlock(ByteArray(32) { 0x42 }, now) }
+        val chars = runBlocking { donor.backupWords() }
         val words = chars.map { String(it) }
         chars.forEach { it.fill('\u0000') }
         val core = UniffiPhoneCore(SealedStateStore(d))
-        val secret = core.restoreFromWords(words)
-        core.unlock(secret, now)
+        val secret = runBlocking { core.restoreFromWords(words) }
+        runBlocking { core.unlock(secret, now) }
         return core
     }
 
@@ -54,15 +55,15 @@ class RestoredPhoneTest {
     @Test fun restored_state_is_head_pending_without_a_ring_and_survives_a_restart() {
         val d = dir()
         val first = restoredIn(d)
-        assertTrue(first.status(now).headPending)
-        assertNull(first.ring(now))
+        assertTrue(runBlocking { first.status(now) }.headPending)
+        assertNull(runBlocking { first.ring(now) })
         val s1 = homeState(first)
         assertTrue(s1.headPending)
         assertNull(s1.ring)
 
         // kill and start again: a new core over the same store, unlocked with the same secret
         val again = UniffiPhoneCore(SealedStateStore(d))
-        again.unlock(ByteArray(32) { 0x42 }, now)
+        runBlocking { again.unlock(ByteArray(32) { 0x42 }, now) }
         val s2 = homeState(again)
         assertTrue("head pending survives the restart", s2.headPending)
         assertNull(s2.ring)
@@ -72,7 +73,7 @@ class RestoredPhoneTest {
     @Test fun home_shows_the_card_and_the_button_for_that_state_and_the_menu_offers_take_chain() {
         val d = dir()
         val core = restoredIn(d)
-        val again = UniffiPhoneCore(SealedStateStore(d)).also { it.unlock(ByteArray(32) { 0x42 }, now) }
+        val again = UniffiPhoneCore(SealedStateStore(d)).also { runBlocking { it.unlock(ByteArray(32) { 0x42 }, now) } }
         val taken = mutableListOf<String>()
         val st = homeState(again)
         rule.setScreen { RingHomeScreen(st, HomeActions(onTakeChain = { taken += "chain" })) }
@@ -86,6 +87,6 @@ class RestoredPhoneTest {
             menu = SecurityMenuViewModel(again, FakePlatform(), InMemorySettingsStore())
         }
         assertTrue(menu.state.value.headPending)
-        check(core.status(now).headPending)
+        check(runBlocking { core.status(now) }.headPending)
     }
 }

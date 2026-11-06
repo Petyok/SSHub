@@ -18,7 +18,7 @@ private class LostCore(private val inner: FakePhoneCore = FakePhoneCore()) : Pho
     var lost = true
     var confirmed = 0
     override fun stateLost() = lost
-    override fun confirmStateLost() { confirmed++; lost = false }
+    override suspend fun confirmStateLost() { confirmed++; lost = false }
 }
 
 /** Security M2: the stop screen and its place in the shell. */

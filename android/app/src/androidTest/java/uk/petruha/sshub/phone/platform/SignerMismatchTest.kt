@@ -82,7 +82,7 @@ class SignerMismatchTest {
 
     @Test fun the_core_refuses_to_open_frames_and_sign_while_blocked() {
         val dir = File(ctx.cacheDir, "blk-" + UUID.randomUUID()).also { it.mkdirs() }
-        val core = UniffiPhoneCore(SealedStateStore(dir)).also { it.unlock(ByteArray(32) { 0x42 }, 1L) }
+        val core = UniffiPhoneCore(SealedStateStore(dir)).also { runBlocking { it.unlock(ByteArray(32) { 0x42 }, 1L) } }
         core.blocked = { true }
         for (call in listOf<suspend () -> Any?>(
             { core.openFrame(ByteArray(8), 1L) },

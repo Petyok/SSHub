@@ -55,7 +55,7 @@ class RealCoreScreensTest {
 
     private fun core(): UniffiPhoneCore {
         val dir = File(ctx.cacheDir, "real-" + UUID.randomUUID()).also { it.mkdirs() }
-        return UniffiPhoneCore(SealedStateStore(dir)).also { it.unlock(ByteArray(32) { 0x42 }, now) }
+        return UniffiPhoneCore(SealedStateStore(dir)).also { runBlocking { it.unlock(ByteArray(32) { 0x42 }, now) } }
     }
 
     @Test fun release_shows_the_host_and_every_op_row_of_the_real_challenge() {

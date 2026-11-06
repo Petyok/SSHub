@@ -1,7 +1,15 @@
 package uk.petruha.sshub.phone.core.uniffi
 
 import android.content.Context
-import kotlinx.coroutines.Dispatchers
+import android.os.Looper
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import uk.petruha.sshub.phone.BuildConfig
+import java.util.concurrent.Executors
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import uk.petruha.sshub.phone.core.CodeIssuedView
@@ -80,6 +88,14 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     private val core = RsPhoneCore(store.read())
 
+    /**
+     * Every call into the Rust core runs on this ONE thread, in order. The core holds its Mutex for a whole short-code release (about
+     * 0.7 s on a server CPU, seconds on a phone), so a call from Main would freeze the UI: debug builds throw when `guard` sees Main.
+     * Reads that need the core are `suspend`; `lock` and `resetScan` are queued here and return at once.
+     */
+    internal val coreDispatcher: CoroutineDispatcher = Executors.newSingleThreadExecutor { r -> Thread(r, "sshub-core").apply { isDaemon = true } }.asCoroutineDispatcher()
+    private val coreScope = CoroutineScope(SupervisorJob() + coreDispatcher)
+
     /** D17: true while the app signing fingerprint was reported as different. Every operation that opens a frame or signs refuses then. */
     @Volatile var blocked: () -> Boolean = { false }
 
@@ -101,7 +117,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     override fun stateLost(): Boolean = lostPending
 
-    override fun confirmStateLost() {
+    override suspend fun confirmStateLost() = withContext(coreDispatcher) {
         lostPending = false
         persist()
     }
@@ -142,6 +158,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     // ---------------------------------------------------------------------------------------- plumbing
 
     private inline fun <T> guard(block: () -> T): T = try {
+        if (BuildConfig.DEBUG) check(Looper.myLooper() != Looper.getMainLooper()) { "a core call on the main thread" }
         block()
     } catch (e: RsCoreException) {
         throw coreException(e)
@@ -209,8 +226,14 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     // ---------------------------------------------------------------------------------------- scan
 
+    /** Called from the camera analysis thread (never Main); it queues behind a running decide like everything else. */
     override fun scanGray(width: Int, height: Int, luma: ByteArray): ScanEvent {
-        val events = core.scanGray(width.toUInt(), height.toUInt(), luma)
+        if (BuildConfig.DEBUG) check(Looper.myLooper() != Looper.getMainLooper()) { "scanGray called on the main thread" }
+        return runBlocking(coreDispatcher) { scanGrayOnCore(width, height, luma) }
+    }
+
+    private fun scanGrayOnCore(width: Int, height: Int, luma: ByteArray): ScanEvent {
+        val events = guard { core.scanGray(width.toUInt(), height.toUInt(), luma) }
         events.filterIsInstance<RsScanEvent.Document>().firstOrNull()?.let { return ScanEvent.Frame(it.bytes) }
         // A completed document that is not one of ours: the page ignores it, the screen says so.
         if (events.any { it is RsScanEvent.Foreign }) return ScanEvent.Foreign
@@ -218,11 +241,11 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         return ScanEvent.Progress(p.have.toInt(), p.total.toInt())
     }
 
-    override fun resetScan() = core.scanReset()
+    override fun resetScan() { coreScope.launch { guard { core.scanReset() } } }
 
-    override fun frameFromText(text: String): ByteArray? = core.frameFromText(text)
+    override suspend fun frameFromText(text: String): ByteArray? = withContext(coreDispatcher) { guard { core.frameFromText(text) } }
 
-    override suspend fun openFrame(frame: ByteArray, now: Long): Opened = withContext(Dispatchers.Default) {
+    override suspend fun openFrame(frame: ByteArray, now: Long): Opened = withContext(coreDispatcher) {
         requireOpen()
         // "SWR1" || version u16 || kind: the core drops its pending requests only for a frame that has the magic.
         val magic = frame.size >= 7 && frame[0] == 'S'.code.toByte() && frame[1] == 'W'.code.toByte() &&
@@ -259,14 +282,14 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     // ---------------------------------------------------------------------------------------- identity
 
-    override fun status(now: Long): PhoneStatus = toStatus(guard { core.status(now) })
+    override suspend fun status(now: Long): PhoneStatus = withContext(coreDispatcher) { toStatus(guard { core.status(now) }) }
 
     override fun createSecret(): ByteArray = rsCreateSecret()
 
-    override fun restoreFromWords(words: List<String>): ByteArray {
+    override suspend fun restoreFromWords(words: List<String>): ByteArray = withContext(coreDispatcher) {
         val secret = guard { core.restoreFromWords(words.joinToString(" ")) }
         reset()
-        return secret
+        secret
     }
 
     /** The BIP39 list lives in the core (`isWord`): backup words, manual entry and SAS words are judged by it. */
@@ -279,10 +302,11 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         }
     }
 
-    override fun backupWords(): List<CharArray> =
+    override suspend fun backupWords(): List<CharArray> = withContext(coreDispatcher) {
         guard { core.backupWords() }.split(' ').filter { it.isNotEmpty() }.map { it.toCharArray() }
+    }
 
-    override fun unlock(secret: ByteArray, now: Long): PhoneStatus {
+    override suspend fun unlock(secret: ByteArray, now: Long): PhoneStatus = withContext(coreDispatcher) {
         val info = guard { core.unlock(secret) }
         reset()
         if (info.stateLost) {
@@ -293,12 +317,13 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
             lostPending = false
             persist()
         }
-        return toStatus(guard { core.status(now) })
+        toStatus(guard { core.status(now) })
     }
 
+    /** The Kotlin state is dropped now; the core's own lock is queued behind whatever it is doing and runs next. */
     override fun lock() {
-        core.lock()
         reset()
+        coreScope.launch { guard { core.lock() } }
     }
 
     override suspend fun neverSigned(typedId: String, now: Long): PhoneStatus {
@@ -309,7 +334,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         return toStatus(guard { core.status(now) })
     }
 
-    override suspend fun adoptChain(token: Long, now: Long): ChainTaken = withContext(Dispatchers.Default) {
+    override suspend fun adoptChain(token: Long, now: Long): ChainTaken = withContext(coreDispatcher) {
         requireOpen()
         val head = (entry(token)?.raw as? RsOpened.Chain)?.view?.headSeq?.toLong()
         confirm("Take this chain", "seq ${head ?: 0}")
@@ -320,8 +345,9 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     // ---------------------------------------------------------------------------------------- home
 
-    override fun ring(now: Long): RingView? {
-        val i = guard { core.status(now) }
+    override suspend fun ring(now: Long): RingView? = withContext(coreDispatcher) { ringOf(guard { core.status(now) }) }
+
+    private fun ringOf(i: RsUnlockInfo): RingView? {
         if (!i.enrolled) return null
         val devices = i.ring.map { RingDevice(it.name.takeIf { n -> n.isNotBlank() }, it.deviceId, self = it.deviceId == i.deviceId) }
             .let { list ->
@@ -331,9 +357,9 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         return RingView(epoch = i.ringEpoch.toLong(), devices = devices, headPending = i.headPending)
     }
 
-    override fun thisPhone(now: Long): HomePhoneView {
+    override suspend fun thisPhone(now: Long): HomePhoneView = withContext(coreDispatcher) {
         val i = guard { core.status(now) }
-        return HomePhoneView(i.deviceId, selfName(i), i.headSeq?.toLong(), i.liveShortCodes.toInt())
+        HomePhoneView(i.deviceId, selfName(i), i.headSeq?.toLong(), i.liveShortCodes.toInt())
     }
 
     override fun pending(now: Long): List<PendingItem> = synchronized(lock) {
@@ -362,7 +388,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
             confirm(if (e.raw is RsOpened.RedNotice) "Approve Red operation" else "Approve share release", subtitleOf(e.opened))
         }
         // Once the core is asked it finishes: leaving the screen must not cancel a half-done signature.
-        val out = withContext(NonCancellable + Dispatchers.Default) {
+        val out = withContext(NonCancellable + coreDispatcher) {
             when (val raw = e.raw) {
                 is RsOpened.ShareRequest -> decideRelease(token, raw, decision, now)
                 else -> decideRed(token, decision, now)
@@ -433,7 +459,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     override suspend fun trustExtend(token: Long): TrustExtendView? = (entry(token)?.opened as? OpenedTrustExtend)?.view
 
-    override suspend fun decideTrust(token: Long, decision: TrustDecision, now: Long): Outgoing? = withContext(Dispatchers.Default) {
+    override suspend fun decideTrust(token: Long, decision: TrustDecision, now: Long): Outgoing? = withContext(coreDispatcher) {
         requireOpen()
         val e = entry(token) ?: throw badInput("This request is no longer pending.")
         if (e.raw !is RsOpened.CertRequest && e.raw !is RsOpened.CertExtend) throw badInput("This is not a trust request.")
@@ -451,12 +477,12 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         }
     }
 
-    override suspend fun issuedCerts(now: Long): List<IssuedCert> = withContext(Dispatchers.Default) {
+    override suspend fun issuedCerts(now: Long): List<IssuedCert> = withContext(coreDispatcher) {
         // The core lists them in chain order, oldest first.
         guard { core.issuedCerts(now) }.reversed().map(::mapCert)
     }
 
-    override suspend fun revokeCert(certId: String, now: Long): Outgoing = withContext(Dispatchers.Default) {
+    override suspend fun revokeCert(certId: String, now: Long): Outgoing = withContext(coreDispatcher) {
         requireOpen()
         confirm("Revoke certificate", certId.take(16))
         val o = guard { core.revokeCert(certId, now) }
@@ -464,11 +490,11 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         mapOutgoing(o)
     }
 
-    override suspend fun shortCodes(now: Long): List<ShortCodeRow> = withContext(Dispatchers.Default) {
+    override suspend fun shortCodes(now: Long): List<ShortCodeRow> = withContext(coreDispatcher) {
         guard { core.shortCodes(now) }.map { mapShortCodeRow(it, now) }
     }
 
-    override suspend fun declareShortCodeDead(host: String) = withContext(Dispatchers.Default) {
+    override suspend fun declareShortCodeDead(host: String) = withContext(coreDispatcher) {
         guard { core.declareShortCodeDead(host) }
         persist()
     }
@@ -506,9 +532,9 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         )
     }
 
-    override suspend fun wrapKeyState(now: Long): WrapKeyState = withContext(Dispatchers.Default) { wrapState(guard { core.status(now) }) }
+    override suspend fun wrapKeyState(now: Long): WrapKeyState = withContext(coreDispatcher) { wrapState(guard { core.status(now) }) }
 
-    override suspend fun rotateWrapKeys(now: Long): Outgoing = withContext(Dispatchers.Default) {
+    override suspend fun rotateWrapKeys(now: Long): Outgoing = withContext(coreDispatcher) {
         requireOpen()
         confirm("Rotate wrap keys", "")
         val o = guard { core.rotateWrapKeys(now) }
@@ -523,7 +549,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
      * The core adopts and signs in one step: `decide(Approve)` on a reshare token appends the new shares to the chain and returns the
      * ops to hand to a terminal. They are mapped and returned here, never held, so no restart can lose them between two calls.
      */
-    override suspend fun decideReshare(token: Long, now: Long): ReshareOutcome = withContext(Dispatchers.Default) {
+    override suspend fun decideReshare(token: Long, now: Long): ReshareOutcome = withContext(coreDispatcher) {
         requireOpen()
         val view = (entry(token)?.opened as? ReshareOpened)?.view ?: throw badInput("This reshare is no longer pending.")
         confirm("Adopt reshare", "epoch ${view.epoch}")
@@ -536,7 +562,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         ReshareOutcome(wrapState(guard { core.status(now) }), mapOutgoing(o))
     }
 
-    override suspend fun exportOps(now: Long): ExportedOps = withContext(Dispatchers.Default) {
+    override suspend fun exportOps(now: Long): ExportedOps = withContext(coreDispatcher) {
         val head = guard { core.status(now) }.headSeq ?: return@withContext ExportedOps(emptyList(), 0, null)
         val text = guard { core.exportOpsText() }
         val frame = guard { core.frameFromText(text) } ?: throw CoreException(CoreException.Code.Internal, "The exported ops are not valid text.")
@@ -563,7 +589,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     override suspend fun recoveryNotice(token: Long, now: Long): RecoveryNoticeView? = (entry(token)?.opened as? RecoveryNoticeOpened)?.view
 
-    override suspend fun decideRecoveryCancel(token: Long, now: Long): Outgoing = withContext(Dispatchers.Default) {
+    override suspend fun decideRecoveryCancel(token: Long, now: Long): Outgoing = withContext(coreDispatcher) {
         requireOpen()
         val notice = entry(token)
         if (notice?.raw !is RsOpened.ReenrollNotice) throw badInput("This recovery notice is no longer pending.")
@@ -579,9 +605,9 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
     override fun nameProblem(name: String): String? = uniffi.sshub_phone_core.checkEnrollName(name)
 
     /** Header of a frame is `SWR1 || version u16 || kind`: only the kind byte is read, the core judges the frame in `openFrame`. */
-    override fun enrollTextKind(text: String): EnrollTextKind {
+    override suspend fun enrollTextKind(text: String): EnrollTextKind {
         if (text.isBlank()) return EnrollTextKind.Empty
-        val frame = core.frameFromText(text) ?: return EnrollTextKind.NotEnrollment
+        val frame = frameFromText(text) ?: return EnrollTextKind.NotEnrollment
         if (frame.size < 7) return EnrollTextKind.NotEnrollment
         return when (frame[6].toInt()) {
             6 -> EnrollTextKind.Step1Code
@@ -591,7 +617,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         }
     }
 
-    override suspend fun enrollDecide(token: Long, decision: EnrollDecision, now: Long): Outgoing = withContext(Dispatchers.Default) {
+    override suspend fun enrollDecide(token: Long, decision: EnrollDecision, now: Long): Outgoing = withContext(coreDispatcher) {
         requireOpen()
         if (decision is EnrollDecision.Sas && decision.matches) confirm("Enroll this terminal", "the four words match")
         val d = when (decision) {
