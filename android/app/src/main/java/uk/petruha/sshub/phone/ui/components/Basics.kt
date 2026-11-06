@@ -121,8 +121,16 @@ fun SshubHeader(title: String, onBack: (() -> Unit)?, modifier: Modifier = Modif
                     contentAlignment = Alignment.CenterStart,
                 ) { Glyph(GlyphKind.Back, MaterialTheme.colorScheme.onSurface) }
             }
-            Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f).semantics { heading() })
-            trailing?.invoke()
+            // From font scale 1.3 the trailing text goes under the title so a name like "laptop-main" is never broken to make room (M10).
+            if (fontScale() >= 1.3f) {
+                Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                    Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.semantics { heading() })
+                    trailing?.invoke()
+                }
+            } else {
+                Text(title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f).semantics { heading() })
+                trailing?.invoke()
+            }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }

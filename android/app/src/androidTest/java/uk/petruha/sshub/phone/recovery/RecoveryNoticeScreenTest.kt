@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -57,7 +58,7 @@ class RecoveryNoticeScreenTest {
         show(review)
         val hash = onHash()
         assertEquals(listOf("Notice hash ${spokenHex(listOf("a3f9", "007c", "4e1b"))}"), hash.fetchSemanticsNode().config[SemanticsProperties.ContentDescription])
-        hash.performClick()
+        hash.performScrollTo().performClick()
         val full = onHash().fetchSemanticsNode().config[SemanticsProperties.ContentDescription].single()
         assertEquals(16, full.removePrefix("Notice hash ").split(", ").size)
         rule.onNodeWithText("All 16 groups. Tap to show the prefix again.").assertExists()

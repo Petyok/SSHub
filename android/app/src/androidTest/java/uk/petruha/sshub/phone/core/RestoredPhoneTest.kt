@@ -74,7 +74,8 @@ class RestoredPhoneTest {
         val core = restoredIn(d)
         val again = UniffiPhoneCore(SealedStateStore(d)).also { it.unlock(ByteArray(32) { 0x42 }, now) }
         val taken = mutableListOf<String>()
-        rule.setScreen { RingHomeScreen(homeState(again), HomeActions(onTakeChain = { taken += "chain" })) }
+        val st = homeState(again)
+        rule.setScreen { RingHomeScreen(st, HomeActions(onTakeChain = { taken += "chain" })) }
         rule.onNodeWithText("This phone does not sign yet.").assertExists()
         rule.onNodeWithText("unknown, not taken yet").assertExists()
         rule.onNodeWithText("Take my chain from a terminal").performClick()

@@ -118,7 +118,8 @@ class RealCoreScreensTest {
         rule.assertNoVisualOverflow()
     }
 
-    private fun mismatchRefusal(): EnrollRefusal {
+    /** The fixtures hold the existing terminal's commit and a PHONE-role reveal: the core refuses it as the wrong frame ("Expected the terminal reveal."). */
+    private fun wrongFrameRefusal(): EnrollRefusal {
         val core = core()
         val commit = hex(json("enroll.json").getJSONArray("frames_hex").getString(0))
         val opened = runBlocking { core.openFrame(commit, now) } as OpenedEnroll
@@ -127,12 +128,21 @@ class RealCoreScreensTest {
         return runBlocking { core.openFrame(reveal, now) } as EnrollRefusal
     }
 
-    @Test fun enrollment_refusal_of_a_reveal_that_does_not_open_the_commitment_is_a_mismatch_without_compared_values() {
-        val r = mismatchRefusal()
-        assertEquals(RefusalKind.Mismatch, r.kind)
+    @Test fun a_wrong_frame_from_the_real_core_is_a_stray_refusal_with_its_own_sentence_and_no_compared_values() {
+        val r = wrongFrameRefusal()
+        assertEquals(r.reason, RefusalKind.Stray, r.kind)
+        assertEquals("Expected the terminal reveal.", r.reason)
         assertEquals(null, r.committed)
+        assertEquals(null, r.shown)
+    }
+
+    /** No public fixture makes the core stop a session, so the stop screens use the core's own sentences (enroll.rs) in a state the view model builds for them. */
+    @Test fun the_mismatch_screen_without_compared_values_draws_no_empty_boxes() {
         rule.setScreen {
-            EnrollKeysScreen(EnrollSamples.keys(KeysStatus.Mismatch).copy(committed = "", shown = "", reason = r.reason), EnrollKeysActions())
+            EnrollKeysScreen(
+                EnrollSamples.keys(KeysStatus.Mismatch).copy(committed = "", shown = "", reason = "The terminal reveal does not open the commitment it showed first. Enrollment stopped: someone is interfering."),
+                EnrollKeysActions(),
+            )
         }
         rule.onNodeWithText("The keys do not match the first code.").assertExists()
         rule.onAllNodesWithText("first code committed to").assertCountEquals(0)

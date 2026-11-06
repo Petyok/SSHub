@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -85,7 +86,7 @@ class TrustListTest {
     @Test fun revoke_button_asks_with_the_cert_id() {
         val asked = mutableListOf<String>()
         rule.setScreen { TrustListScreen(list.copy(expanded = setOf("3F9A-07C2")), listActions(onAskRevoke = { asked += it })) }
-        rule.onNodeWithText("Revoke this trust session").performClick()
+        rule.onNodeWithText("Revoke this trust session").performScrollTo().performClick()
         assertEquals(listOf("3F9A-07C2"), asked)
     }
 
