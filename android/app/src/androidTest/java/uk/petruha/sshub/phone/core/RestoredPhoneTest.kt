@@ -89,6 +89,8 @@ class RestoredPhoneTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             menu = SecurityMenuViewModel(again, FakePlatform(), InMemorySettingsStore())
         }
+        val end = System.currentTimeMillis() + 10_000
+        while (!menu.state.value.headPending && System.currentTimeMillis() < end) Thread.sleep(25)
         assertTrue(menu.state.value.headPending)
         check(runBlocking { core.status(now) }.headPending)
     }
