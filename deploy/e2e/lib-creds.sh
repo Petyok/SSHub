@@ -14,7 +14,7 @@ ring2() {
   reset_peers
   check "peer-a founds the ring with hub" "enroll_peer peer-a hub || enroll_peer peer-a hub"
   check "peer-b joins via hub" "enroll_peer peer-b hub"
-  check "peer-a approves peer-b's admission" "approve_all peer-a"
+  check "peer-a approves peer-b's admission" "snow peer-a >/dev/null; approve_all peer-a"
   check "peer-b records peer-a directly" "enroll_peer peer-b peer-a"
 }
 
@@ -22,7 +22,7 @@ ring2() {
 ring3() {
   ring2
   check "peer-c joins via hub" "enroll_peer peer-c hub"
-  check "peer-a approves peer-c's admission" "approve_all peer-a"
+  check "peer-a approves peer-c's admission" "snow peer-a >/dev/null; approve_all peer-a"
   check "peer-c records peer-a directly" "enroll_peer peer-c peer-a"
   check "peer-b records peer-c directly" "enroll_peer peer-b peer-c"
 }
@@ -49,7 +49,7 @@ gap() {
 }
 
 # Id of the op a JSON admin verb just proposed.
-opid() { printf '%s' "$1" | pjq -r '.op'; }
+opid() { printf '%s' "$1" | pjq -r '.op // empty'; }
 
 # Sync every attended peer with the others once, quietly.
 spread() {
@@ -97,12 +97,13 @@ enr_open() {
   exec 9> "$ENR_DIR/in"
 }
 # enr_send LINE: one line to the verb (a phone frame, or y/n for the four words).
-enr_send() { printf '%s\n' "$1" >&9; }
+# (a verb that already gave up closed the fifo: a write then must fail, not kill the scenario shell with SIGPIPE)
+enr_send() { ( trap '' PIPE; printf '%s\n' "$1" >&9 ) || echo "the verb no longer reads its stdin"; }
 # enr_get N: the Nth event line the verb has printed (waits up to 60 s).
 enr_get() {
   i=0
   while :; do
-    l=$(sed -n "${1}p" "$ENR_DIR/out")
+    l=$(grep -v '"event":"companion"' "$ENR_DIR/out" | sed -n "${1}p")
     if [ -n "$l" ]; then printf '%s\n' "$l"; return 0; fi
     i=$((i + 1)); [ "$i" -le 240 ] || { echo "no event $1 from the verb; so far:"; cat "$ENR_DIR/out" "$ENR_DIR/err"; return 1; }
     sleep 0.25
@@ -117,7 +118,8 @@ enr_close() {
   return $rc
 }
 # pf JSON KEY: one field of a JSON line, raw.
-pf() { printf '%s' "$1" | pjq -r ".$2"; }
+# (the phone verbs print a first {"event":"companion"} line; // empty drops the null it gives for other keys)
+pf() { printf '%s' "$1" | pjq -r ".$2 // empty"; }
 
 # Id (full hash, hex) of the newest op of kind $2 that peer $1 stores. Read only.
 lastop() { sq "$1" "SELECT lower(hex(op_hash)) FROM sync_ops WHERE kind='$2' ORDER BY lamport DESC, rowid DESC LIMIT 1"; }
@@ -133,6 +135,10 @@ phone_signs() {
   [ "$LAST_RC" -eq 0 ] || return 1
   PHONE_OPS=$(pf "$LAST_OUT" ops)
   show "$1 sync-phone-ops takes the phone's ops in" sh -c "printf '%s\n' '$PHONE_OPS' | $C exec -T $1 $SSHUB sync-phone-ops --format json"
+  keep=$LAST_OUT; rc=$LAST_RC
+  snow "$1" >/dev/null  # a device settles what it ingested in its next sync round, not at ingest
+  LAST_OUT=$keep; LAST_RC=$rc
+  [ "$rc" -eq 0 ]
 }
 
 # The whole phone enrollment to PEER as text, with its checks. Sets ADD (the phone's admission op).
@@ -165,9 +171,10 @@ enroll_phone() {
 # Complete the Red op $1 proposed on peer-a: the phone signs it, peer-b votes, the paper signs (unless $2 = nofactor,
 # for the first factor registration, which needs only the phone and a second device).
 red_complete() {
-  phone_signs peer-a "$1" || return 1
+  ${PHONE_SIGNS:-phone_signs} peer-a "$1" || return 1
   spread peer-b peer-a peer-b
   show "peer-b is given the phone's ops text too" sh -c "printf '%s\n' '$PHONE_OPS' | $C exec -T peer-b $SSHUB sync-phone-ops --format json"
+  snow peer-b >/dev/null
   show "peer-b sync-approve $1" peer peer-b $SSHUB sync-approve "$1" --format json
   spread peer-a peer-b peer-a
   if [ "${2:-}" != nofactor ]; then
@@ -176,18 +183,50 @@ red_complete() {
   fi
 }
 
-# A ring ($1 = ring2 or ring3) whose phone is in force on peer-a: the paper factor registration is proposed first (a
-# factor must be registered before the op it signs), the phone enrolls over text, then phone + peer-b complete the
-# registration and the phone's own admission (plus the paper).
-ring_with_phone() {
+# The page phone before a ring: answers, forgets its site data (a new ring meets a phone with an empty chain), restores.
+phone_prep_page() {
   check "the phone daemon answers" phone_ready
+  show "the phone forgets its site data (a new ring meets a phone with an empty chain)" phone reset
   show "the phone restores its fixed test identity" phone setup
+}
+
+# A ring ($1 = ring2 or ring3) whose phone and holders are in force, in the order ring setup allows: the phone enrolls
+# first and signs its own admission (no factor exists yet); then each terminal is promoted with sync-role (the promoted
+# device approves, the phone signs, the factor is waived); then the paper is registered (phone + a second holder) and
+# from then on every Red op wants phone, second holder and paper (red_complete).
+ring_with_phone() {
+  ${PHONE_PREP:-phone_prep_page}
   "$1"
-  show "peer-a registers the paper factor (Red)" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-a $SSHUB sync-factor-register paper --format json"
-  REG=$(opid "$LAST_OUT")
-  enroll_phone peer-a
-  red_complete "$REG" nofactor
-  red_complete "$ADD"
+  ${PHONE_ENROLL:-enroll_phone} peer-a
+  ${PHONE_SIGNS:-phone_signs} peer-a "$ADD"
   st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
   expect "the phone is a holder in force on peer-a" "$st" '[.devices[] | select(.name=="my phone") | .role] == ["holder"]'
+  promote() { # $1 = terminal, $2 = setup (own approval, no paper) or full (phone, second holder, paper)
+    spread "$1" peer-a "$1"
+    show "peer-a sync-role $1 holder" peer peer-a $SSHUB sync-role "$(devid peer-a "$1")" holder --format json
+    ROLEOP=$(opid "$LAST_OUT")
+    if [ "$2" = setup ]; then
+      ${PHONE_SIGNS:-phone_signs} peer-a "$ROLEOP"
+      spread peer-a "$1" peer-a
+      show "$1 sync-approve its own promotion" peer "$1" $SSHUB sync-approve "$ROLEOP" --format json
+    else
+      red_complete "$ROLEOP"
+    fi
+    spread peer-a "$1" peer-a
+  }
+  promote peer-b setup
+  show "peer-a registers the paper factor (Red)" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-a $SSHUB sync-factor-register paper --format json"
+  REG=$(opid "$LAST_OUT")
+  red_complete "$REG" nofactor
+  [ "$1" = ring3 ] && promote peer-c full
+  spread peer-b peer-c peer-a peer-b peer-c peer-a
+  ring_view
+}
+
+# Evidence: every peer's table and the op rows that decide who is a holder in force.
+ring_view() {
+  for p in peer-a peer-b peer-c hub; do
+    echo "$p sees: $(peer $p $SSHUB sync-status --format json 2>&1 | pjq -c '[.devices[] | {name, role, status}]')"
+    echo "$p ops (kind|state|reason|n): $(sq $p "SELECT kind||'|'||state||'|'||coalesce(reason,'')||'|'||count(*) FROM sync_ops WHERE kind IN ('DeviceAdd','DeviceRoleChange','FactorRegister','RedPhoneSign','RedApprove','RedFactor') GROUP BY kind,state,reason" | tr '\n' ';')"
+  done
 }

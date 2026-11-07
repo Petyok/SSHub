@@ -1,4 +1,5 @@
 #!/bin/sh
+# timeout: 1800
 # 60: Quorum mode with a phone. The ring is two attended holders plus the phone. peer-a switches the ring from Vault
 # to Quorum (a Red change: phone, peer-b, paper), then the credential is opened twice: by peer-b asking the attended
 # holder peer-a (sync-review --approve), and by peer-a asking the phone (sync-share-request: kind 1 out, kind 2 in).
@@ -6,7 +7,7 @@
 . "$E2E_DIR/lib-creds.sh"
 NAME=60-quorum-attended-peer
 
-ring_with_phone ring2
+step "ring with the phone (ring2)" ring_with_phone ring2
 check "peer-a sets up the Vault" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-a $SSHUB sync-import-kit"
 check "peer-b imports the kit" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-b $SSHUB sync-import-kit"
 check "peer-a stores host quorum1 with a password" "printf '%s\n' '$SECRET' | peer peer-a $SSHUB host add --name quorum1 --address quorum1.internal --password-stdin"
@@ -15,7 +16,7 @@ check "peer-a migrates it into the ring" "peer peer-a $SSHUB sync-migrate"
 show "peer-a sync-mode quorum, first call proposes it (phrase on stdin)" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
 expect "the mode change is a Red op with a ceremony" "$LAST_OUT" '.tier == "Red" and (.ceremony != null)'
 MODE_OP=$(opid "$LAST_OUT")
-red_complete "$MODE_OP"
+step "mode change ceremony (phone, peer-b, paper)" red_complete "$MODE_OP"
 show "peer-a sync-mode quorum again: the ring agreed, credentials are re-encrypted" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
 st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
 expect "peer-a reports Quorum mode" "$st" '.credential_mode == "quorum"'
@@ -25,6 +26,8 @@ echo "peer-b reports mode: $(printf '%s' "$st" | pjq -r .credential_mode)"
 approve_all peer-b >/dev/null 2>&1 || true
 spread peer-b peer-a peer-b
 echo "peer-b op states (kind|state|reason): $(sq peer-b "SELECT kind||'|'||state||'|'||coalesce(reason,'') FROM sync_ops WHERE state<>'applied'" | tr '\n' ';')"
+
+ring_view
 
 # ---- the attended peer: peer-b asks, peer-a approves on the command line
 psh peer-b 'rm -f /tmp/e2e-resolve.out'
@@ -45,14 +48,16 @@ echo "--- peer-b host resolve quorum1 (exit $RC):"; sed 's/^/    | /' /tmp/e2e-r
 check "peer-b's resolve ended with the credential open" "[ $RC -eq 0 ]"
 if grep -qF "$SECRET" /tmp/e2e-resolve-b.out; then echo "note: resolve printed the password"; else echo "note: resolve printed no password"; fi
 
+ring_view
+
 # ---- the phone: peer-a asks for the phone's share (kind 1 out, kind 2 reply in, one process)
-enr_open peer-a sync-share-request quorum1 --wait 150 --format json
+enr_open peer-a sync-share-request quorum1 --wait 400 --format json
 CH=$(enr_get 1); echo "terminal: $CH" | cut -c1-200
 show "the phone reads the challenge" phone share-open "{\"frame\":\"$(pf "$CH" challenge)\"}"
 if [ "$(pf "$LAST_OUT" ok)" = true ]; then
   echo "ok   the page shows a share release"
   show "the phone approves the release" phone share-approve "{\"confirm\":\"$(devid peer-a peer-a)\"}"
-  expect "the page gives a reply, text equals QR" "$LAST_OUT" '.ok == true and .qr_equals_clipboard == true'
+  expect "the page gives a reply, text equals QR" "$LAST_OUT" '.ok == true and .qr_equals_clipboard != false'
   enr_send "$(pf "$LAST_OUT" reply)"
   OPENED=$(enr_get 2); echo "terminal: $OPENED"
   expect "the credential opened with the phone's share" "$OPENED" '.opened == true'

@@ -5,8 +5,9 @@ fingerprint checked on every start; refresh with `phone-refresh.sh <phone-worktr
 driven by `phone-driver.mjs` in the compose service `phone` (`phone-Dockerfile`). The driver adds no hook to the page:
 it presses buttons, pastes text into the scan screen's paste box, reads the text the page shows or copies (ops text,
 clipboard) and reads the QR the page draws back from the canvas like a camera. Scenarios call it through `phone CMD [JSON]`
-(lib-creds.sh). The browser sits behind one small target table (`targets` in the driver); `PHONE_TARGET=desktop` is the
-only one so far.
+(lib-creds.sh). The browser sits behind one small target table (`targets` in the driver); `PHONE_TARGET` picks `desktop` (default) or `android` (Chrome on the emulator service, adb server android:5037, the page
+fulfilled by a route for https://phone.e2e.test). run.sh reads the target from the file `phone-target` next to it and
+starts the emulator first when it says `android`.
 
 Proofs: `phone-selftest.sh` (tools image, no peers: restore, describe a Red notice, RedPhoneSign, text equals QR) and
 scenarios 60, 65, 70 and 95 (compose, real CLI peers; run with `gpu-verify/e2e.sh` on a copy that holds only them).

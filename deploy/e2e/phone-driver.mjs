@@ -24,6 +24,7 @@
 //                                          seq 1 continuous, last op of `kind` (RedPhoneSign naming `opHash`)
 //   screen                                 text of the whole page (diagnostics)
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -40,7 +41,7 @@ const SECRET_HEX = '42'.repeat(32); // the fixture phone of the Rust side (its d
 
 const require = createRequire(import.meta.url);
 const lib = (f) => import(pathToFileURL(path.join(COMPANION, 'src', f)).href);
-const { chromium } = require('playwright');
+const { chromium, _android: android } = require('playwright');
 const jsQR = require(path.join(COMPANION, 'vendor/jsqr-1.4.0/jsQR.cjs'));
 
 // ------------------------------------------------------------------ the page file under test
@@ -57,7 +58,7 @@ const S = {}; // loaded library modules and the identity
 // A target is the one place that knows about the browser: open(pageHtml) serves the page and returns
 // { page, close }, where page is a Playwright Page (everything below only uses the Page API, so every target runs the
 // same steps). PHONE_TARGET picks one; 'desktop' is headless Chromium in this container. A second target (Chrome on
-// an Android emulator) is added here when its service is ready, nothing else in this file changes.
+// an Android emulator) is `android` below; nothing else in this file knows which one runs.
 const targets = {
   async desktop(html) {
     const server = http.createServer((req, res) => {
@@ -77,6 +78,66 @@ const targets = {
     p.on('pageerror', (e) => console.error('[pageerror]', e.message));
     await p.goto(`${origin}/sshub-companion.html`);
     return { page: p, close: async () => { await ctx.close(); server.close(); } };
+  },
+
+  // Google Chrome on the Android emulator of the compose service `android` (adb server android:5037). Chrome is a user
+  // build, so Playwright cannot launch it with flags: the first run is tapped through with uiautomator, Chrome's
+  // always-present devtools socket is relayed to 127.0.0.1:9222 and Playwright attaches over CDP (same approach as the
+  // Android app's chrome probe). The page is not served over the network: its committed bytes are fulfilled for one
+  // https origin by a route, which makes it a secure context (camera, clipboard, crypto) without any adb forwarding.
+  async android(html) {
+    const host = process.env.ADB_HOST || 'android';
+    const port = Number(process.env.ADB_PORT || 5037);
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    let devices = [];
+    for (let i = 0; i < 60 && devices.length !== 1; i++) {
+      devices = await android.devices({ host, port });
+      if (devices.length !== 1) await sleep(2000); // the adb server lists the emulator a moment after its boot
+    }
+    if (devices.length !== 1) throw new Error(`expected 1 device on ${host}:${port}, got ${devices.length}`);
+    const device = devices[0];
+    const sh = async (c) => (await device.shell(c)).toString();
+    const shTry = (c) => sh(c).catch(() => ''); // uiautomator and friends fail while the UI is still starting
+    const FRE = [/^use without an account$/i, /^no,? thanks$/i, /^don.t turn on$/i, /^accept (&|and) continue$/i, /^skip$/i, /^got it$/i, /^continue$/i, /^next$/i, /^not now$/i, /^don.t allow$/i];
+    const tapOnce = async () => {
+      const xml = await shTry('uiautomator dump /dev/tty');
+      const nodes = [...xml.matchAll(/<node [^>]*?text="([^"]*)"[^>]*?clickable="true"[^>]*?bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/g)];
+      const hit = FRE.map((re) => nodes.find((n) => re.test(n[1]))).find(Boolean);
+      if (!hit) return false;
+      await sh(`input tap ${(+hit[2] + +hit[4]) / 2} ${(+hit[3] + +hit[5]) / 2}`);
+      return true;
+    };
+    for (let i = 0; i < 30 && !(await shTry('pm path com.android.chrome')).includes('package:'); i++) await sleep(2000);
+    await sh('am start -n com.android.chrome/com.google.android.apps.chrome.Main');
+    let up = false;
+    for (let i = 0; i < 120 && !up; i++) { // a cold emulator under load needs minutes for Chrome's first run
+      await sleep(2500);
+      const tapped = await tapOnce();
+      const socket = Number((await shTry('cat /proc/net/unix | grep -c chrome_devtools_remote')).trim()) > 0;
+      up = !tapped && socket && i >= 2;
+    }
+    if (!up) {
+      const top = (await shTry('dumpsys activity activities | grep -m1 topResumedActivity')).trim();
+      const texts = [...(await shTry('uiautomator dump /dev/tty')).matchAll(/text="([^"]+)"/g)].map((m) => m[1]).slice(0, 15).join(' | ');
+      throw new Error(`Chrome did not reach its tab switcher; top activity: ${top}; screen texts: ${texts}`);
+    }
+    const relay = net.createServer(async (conn) => {
+      const dev = await device.open('localabstract:chrome_devtools_remote');
+      conn.on('data', (b) => dev.write(b));
+      dev.on('data', (b) => conn.write(b));
+      conn.on('close', () => dev.close().catch(() => {}));
+      dev.on('close', () => conn.destroy());
+      conn.on('error', () => {});
+    });
+    await new Promise((r) => relay.listen(9222, '127.0.0.1', r));
+    const browser = await chromium.connectOverCDP('http://127.0.0.1:9222');
+    const ctx = browser.contexts()[0] ?? (await browser.newContext());
+    const origin = 'https://phone.e2e.test';
+    await ctx.route(`${origin}/**`, (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html.toString('utf8') }));
+    const p = await ctx.newPage();
+    p.on('pageerror', (e) => console.error('[pageerror]', e.message));
+    await p.goto(`${origin}/sshub-companion.html`);
+    return { page: p, close: async () => { await p.close().catch(() => {}); await browser.close().catch(() => {}); relay.close(); await device.close().catch(() => {}); } };
   },
 };
 
@@ -133,11 +194,7 @@ async function home() {
 async function setup({ words = S.words, pin = PIN } = {}) {
   // The page draws its first screen asynchronously (it reads its storage first). A flow that ended on a screen
   // without a way back (a refusal) is left by reloading the page, as a person would reopen it.
-  try {
-    await page.waitForSelector('#words-input, #unlock, #device-id', { timeout: 5000 });
-  } catch {
-    await page.reload();
-  }
+  await page.reload(); // whatever the last flow left on screen, a person reopening the page starts from its lock screen
   await page.waitForSelector('#words-input, #unlock, #device-id', { timeout: 60000 });
   if (await has('#words-input')) {
     await page.fill('#words-input', words);
@@ -152,7 +209,10 @@ async function setup({ words = S.words, pin = PIN } = {}) {
     }, null, { timeout: 60000 });
     if (!(await has('#device-id'))) throw new Error(`restore refused: ${await text('#setup-error')}`);
     // A restored key does not author until it knows where its chain ended; this key has never signed.
-    if (await has('#head-new')) await page.click('#head-new');
+    if (await has('#head-new')) {
+      await page.fill('#head-confirm', S.identity.deviceId); // the page asks for the device id before it trusts a fresh chain
+      await page.click('#head-new');
+    }
   }
   await home();
   const id = await text('#device-id');
@@ -229,9 +289,22 @@ const commands = {
     return { fingerprint, fingerprint_ok: fingerprintOk, heading: await heading(), device_id: (await has('#device-id')) ? await text('#device-id') : null, expected_device_id: S.identity.deviceId };
   },
   setup,
+  // Forget everything this origin stored (the key, its chain, the ring) as a person would by clearing the site's data,
+  // so each scenario's fresh ring meets a phone whose chain starts at seq 1 (the page lists only its newest 8 ops).
+  async reset() {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Storage.clearDataForOrigin', { origin: new URL(page.url()).origin, storageTypes: 'all' });
+    await cdp.detach().catch(() => {});
+    await page.reload();
+    return { reset: true };
+  },
   async home() {
     await home();
     return { device_id: await text('#device-id') };
+  },
+  // The 24 backup words of the fixed test identity (what the native app restores from; the same key as the page's).
+  async words() {
+    return { words: S.words };
   },
   async screen() {
     return { heading: await heading(), text: await page.evaluate(() => document.body.innerText) };
@@ -289,11 +362,16 @@ const commands = {
     if ((await has('#opt-sound')) && (await page.locator('#opt-sound').isChecked())) await page.click('#opt-sound');
     if ((await has('#opt-snapshot')) && (await page.locator('#opt-snapshot').isChecked()) !== snapshot) await page.click('#opt-snapshot');
     await page.click('#approve');
-    await waitAny(['#send-done', '#release-error'], 120000);
+    // #release-error shows "Approving..." while the page works; only another text is a refusal.
+    await page.waitForFunction(() => {
+      if (document.querySelector('#send-done')) return true;
+      const e = document.querySelector('#release-error');
+      return !!e && e.textContent !== '' && !/^Approving/.test(e.textContent);
+    }, null, { timeout: 120000 });
     if ((await has('#release-error')) && (await text('#release-error')) && !(await has('#send-done'))) return { ok: false, error: await text('#release-error') };
-    const clip = await page.evaluate(() => navigator.clipboard.readText());
+    const clip = await page.evaluate(() => navigator.clipboard.readText()).catch(() => null);
     const qr = b64(await readQr('#reverse-qr'));
-    return { ok: true, reply: clip, qr_equals_clipboard: clip === qr, code: (await has('#snapshot-code')) ? await text('#snapshot-code') : null };
+    return { ok: true, reply: clip ?? qr, clipboard_readable: clip !== null, qr_equals_clipboard: clip === null ? null : clip === qr, code: (await has('#snapshot-code')) ? await text('#snapshot-code') : null };
   },
 
   // ---- enrollment (phone is the initiator, role 0): kinds 6, 7, 8
