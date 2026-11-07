@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.21.1] - 2026-11-07
+
 ### Fixed
 
 - **Tunnel no longer panics on non-ASCII ssh errors** (PR #176 by @56steve) -
