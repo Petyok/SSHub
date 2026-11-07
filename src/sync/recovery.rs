@@ -342,11 +342,7 @@ pub fn liveness_set(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Ve
 }
 
 fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
-    fresh_in(
-        store,
-        super::ceremony::effective_devices(store, None)?,
-        now,
-    )
+    fresh_in(store, super::ceremony::effective_devices(store, None)?, now)
 }
 
 /// The devices known to be alive AT `t`, the same on every device that holds the log: a device this store was in
