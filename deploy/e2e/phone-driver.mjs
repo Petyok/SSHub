@@ -328,11 +328,13 @@ const commands = {
     };
   },
   async 'red-approve'() {
-    // Chrome on Android hides its toolbar when the long Red screen first scrolls, which moves the page under the point Playwright
-    // computed (another row then "intercepts" the click): bring the button to the middle, let the toolbar settle, then click.
-    await page.locator('#red-approve').evaluate((e) => e.scrollIntoView({ block: 'center' }));
-    await page.waitForTimeout(1500);
-    await page.click('#red-approve');
+    // Chrome on Android moves the page under the point Playwright computed when the long Red screen scrolls (a row of the
+    // description then "intercepts" the click). A real tap first; the element's own click event when the hit test is wrong.
+    try {
+      await page.click('#red-approve', { timeout: 5000 });
+    } catch {
+      await page.locator('#red-approve').dispatchEvent('click');
+    }
     await waitAny(['#ops-b64', '#red-error']);
     if (await has('#red-error') && (await text('#red-error'))) return { ok: false, error: await text('#red-error') };
     const ops = await page.locator('#ops-b64').inputValue();
