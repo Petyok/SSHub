@@ -1687,7 +1687,7 @@ pub(crate) fn build_join_anchor(
     now: i64,
 ) -> Result<CheckpointBundle> {
     let me = id.public().device_id();
-    let mut cut = local_heads(conn)?;
+    let cut = local_heads(conn)?;
     // The state carries only what this device APPLIED. An op it holds pending (a Yellow change nobody reviewed
     // here: on an unattended Hub that is every one of them) is in no state, so a cut that covered it would make
     // the joiner believe it already has it and never fetch it. Each chain is cut just before its first pending
