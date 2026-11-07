@@ -46,9 +46,15 @@ authoritative copy, and does not vote. Your devices keep working without it.
    ```
 
    Then point sshub at it in `config.toml` (uncomment the mount in
-   `docker-compose.yml` and create that file):
+   `docker-compose.yml` and create that file). Keep `unattended = true`: it tells
+   the ring that nobody sits at the hub's screen, so the hub never votes and no
+   checkpoint or Red change waits for it (without a mounted file the container
+   writes that setting itself):
 
    ```toml
+   [sync]
+   unattended = true
+
    [sync.notify]
    command = "/usr/sbin/sendmail -t -i"
    to = ["you@example.com"]
