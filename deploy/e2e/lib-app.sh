@@ -3,7 +3,7 @@
 # external files directory. Sourced after lib.sh and lib-creds.sh. The scenario moves the frames of the real terminals (CLI verbs in
 # the peers) by paste text into the app and by the clipboard text its Copy buttons fill; QR, sound and Bluetooth are not used.
 
-APP_PKG=uk.petruha.sshub.phone
+APP_PKG=uk.petruha.sshub.phone.debug
 APP_LIVE=/sdcard/Android/data/$APP_PKG/files/live
 # android.sh builds use the fixed run name hs-e2e2-app (a warm cargo target); hs-e2e-live is the older name of the first builds.
 APK_DIR=${APK_DIR:-$([ -d /root/sshub-ci/android-app/out/hs-e2e2-app ] && echo /root/sshub-ci/android-app/out/hs-e2e2-app || echo /root/sshub-ci/android-app/out/hs-e2e-live)}
@@ -72,7 +72,7 @@ app_boot() {
   done
   echo "android: $($C exec -T android adb shell getprop ro.build.version.release | tr -d '\r') sdk $($C exec -T android adb shell getprop ro.build.version.sdk | tr -d '\r'), $(sha256sum "$APK_DIR/app-debug.apk" | cut -c1-16) $(sha256sum "$APK_DIR/app-debug-androidTest.apk" | cut -c1-16)"
   $C exec -T android adb shell am instrument -w -r -e live true -e class uk.petruha.sshub.phone.live.LiveTerminalTest \
-    uk.petruha.sshub.phone.test/androidx.test.runner.AndroidJUnitRunner > /tmp/app-instr.log 2>&1 &
+    uk.petruha.sshub.phone.debug.test/androidx.test.runner.AndroidJUnitRunner > /tmp/app-instr.log 2>&1 &
   APP_INSTR=$!
   j=0
   until $C exec -T android adb shell "cat $APP_LIVE/ready" 2>/dev/null | grep -q /; do
