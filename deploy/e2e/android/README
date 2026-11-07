@@ -1,0 +1,33 @@
+Headless Android 15 emulator with Google Play Chrome for the e2e page tests.
+
+Image: sshub-hostsync-android:local (built from this directory)
+System image: system-images;android-35;google_apis_playstore;x86_64
+Base: ubuntu:24.04 pinned by digest in the Dockerfile
+Pinned: cmdline-tools 13114758 (sha256 in Dockerfile). Resolved platform-tools and
+emulator versions are written to /opt/android-sdk/VERSIONS.txt at build time.
+
+Run (compose, separate project, never the e2e project):
+
+  flock /root/sshub-ci/e2e.lock docker compose -p sshub-hostsync-android --profile android up -d android
+
+adb is reachable only on the compose network at `android:5555`. No host port is published.
+The container needs /dev/kvm (root:kvm on gpu-serv). Capped at 4 CPUs and 6 GB.
+
+Connect from another container (for example the Android build worker):
+
+  docker network connect sshub-hostsync-android_e2e <client-container>
+  docker exec <client-container> adb connect android:5555
+
+Or declare `sshub-hostsync-android_e2e` as an external network in the client's compose file.
+Then use `adb -s android:5555 install app.apk` and the other adb commands as usual.
+
+Reuse across runs: the emulator boots once and stays up. `-no-snapshot` makes each container
+start a cold boot, not each test run. Clients run `adb connect android:5555` at the start of
+every run and never restart the container. Do not `down` between runs. Restart only if the
+emulator is wedged: `flock /root/sshub-ci/e2e.lock docker compose -p sshub-hostsync-android --profile android restart android`.
+
+Ready when the healthcheck reports healthy (sys.boot_completed=1).
+
+Tear down:
+
+  flock /root/sshub-ci/e2e.lock docker compose -p sshub-hostsync-android --profile android down -v --rmi local --remove-orphans

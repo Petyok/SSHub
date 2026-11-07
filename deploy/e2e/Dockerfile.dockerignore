@@ -1,0 +1,7 @@
+# Read by BuildKit for deploy/e2e/Dockerfile (a file named .dockerignore in deploy/e2e would not be read: the context is the repository root).
+.git
+.codegraph
+**/target
+**/node_modules
+android
+deploy/e2e/phone-page

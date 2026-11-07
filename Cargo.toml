@@ -221,3 +221,10 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+# The e2e peer image (deploy/e2e/Dockerfile): the same code as release, built in a fraction of the time (no LTO, parallel codegen).
+# Nothing that ships uses it.
+[profile.e2e]
+inherits = "release"
+lto = false
+codegen-units = 16

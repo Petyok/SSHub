@@ -1,0 +1,105 @@
+name: sshub-hostsync-e2e
+
+# Host-sync e2e stack: three attended peers, a hub mirror, and a mail catcher.
+# Everything lives on one internal network with no published host ports.
+# Run through deploy/e2e/run.sh; do not run it on a laptop (builds happen on gpu-serv).
+
+x-peer: &peer
+  image: sshub-hostsync-e2e-peer:local
+  pull_policy: never
+  networks: [e2e]
+  volumes:
+    - mesh:/mesh
+  # Scenario 90 appends thousands of ops through the CLI; on the overlay filesystem every sqlite commit costs
+  # several fsyncs (0.4 s per host add). Durability is not what the e2e tests, so the data root of every peer is
+  # tmpfs (a parent of .local/share/sshub, so reset_peers can still remove the profile directory).
+  tmpfs:
+    - /home/ci/.local/share:uid=10001,gid=10001,mode=0700
+  environment: &peer-env
+    PEERS: "peer-a peer-b peer-c hub"
+    HOPS: "jump dest"
+  depends_on:
+    mailpit:
+      condition: service_started
+
+services:
+  peer-a:
+    <<: *peer
+    build:
+      context: ../..
+      dockerfile: deploy/e2e/Dockerfile
+    hostname: peer-a
+    environment:
+      <<: *peer-env
+      PEER_NAME: peer-a
+
+  peer-b:
+    <<: *peer
+    hostname: peer-b
+    environment:
+      <<: *peer-env
+      PEER_NAME: peer-b
+
+  peer-c:
+    <<: *peer
+    hostname: peer-c
+    environment:
+      <<: *peer-env
+      PEER_NAME: peer-c
+
+  hub:
+    <<: *peer
+    hostname: hub
+    environment:
+      <<: *peer-env
+      PEER_NAME: hub
+
+  jump:
+    <<: *peer
+    hostname: jump
+    environment:
+      <<: *peer-env
+      PEER_NAME: jump
+
+  dest:
+    <<: *peer
+    hostname: dest
+    environment:
+      <<: *peer-env
+      PEER_NAME: dest
+
+  # The ring's phone: the committed companion page in headless Chromium, driven by phone-driver.mjs.
+  phone:
+    build:
+      context: ../..
+      dockerfile: deploy/e2e/phone-Dockerfile
+    image: sshub-hostsync-e2e-phone:local
+    pull_policy: never
+    hostname: phone
+    networks: [e2e]
+
+  mailpit:
+    image: axllent/mailpit:v1.32.0
+    hostname: mailpit
+    networks: [e2e]
+
+  # Android emulator with Google Play Chrome, for the page tests. Opt-in: `--profile android`, see android/README.md.
+  android:
+    build:
+      context: ./android
+    image: sshub-hostsync-android:local
+    pull_policy: never
+    profiles: [android]
+    hostname: android
+    devices:
+      - /dev/kvm
+    cpus: 4
+    mem_limit: 6g
+    networks: [e2e]
+
+networks:
+  e2e:
+    internal: true
+
+volumes:
+  mesh:
