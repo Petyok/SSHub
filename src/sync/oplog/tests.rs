@@ -3821,7 +3821,11 @@ fn a_join_anchor_stops_before_what_the_inviter_holds_pending_so_the_joiner_still
     b.append(upsert(1, hf("web", "10.0.0.1")));
     b.append(upsert(2, hf("db", "10.0.0.2")));
     pull(a, b);
-    assert_eq!(a.pending(), 2, "the addresses wait for review on the inviter");
+    assert_eq!(
+        a.pending(),
+        2,
+        "the addresses wait for review on the inviter"
+    );
     let joiner = Peer::new();
     a.append(add_device_body(&joiner, DeviceRole::Mirror));
     let bundle = a.store.sync_join_anchor_build(&a.id).unwrap();
@@ -3837,7 +3841,11 @@ fn a_join_anchor_stops_before_what_the_inviter_holds_pending_so_the_joiner_still
         .sync_join_adopt(&bundle, &BootstrapTrust::Enrollment { inviter: a.dev() })
         .unwrap();
     pull(&joiner, a);
-    assert_eq!(joiner.pending(), 2, "the joiner receives the held changes and reviews them itself");
+    assert_eq!(
+        joiner.pending(),
+        2,
+        "the joiner receives the held changes and reviews them itself"
+    );
     joiner.approve_all();
     assert_eq!(joiner.store.list_hosts().unwrap().len(), 2);
 }
