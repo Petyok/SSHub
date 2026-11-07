@@ -1,2 +1,2 @@
-poc/phone 7fb1091 (assets/companion/sshub-companion.html and FINGERPRINT, byte for byte)
-Refresh: deploy/e2e/phone-refresh.sh <phone-worktree> <commit>
+feature/host-sync (assets/companion/sshub-companion.html and FINGERPRINT, byte for byte)
+Refresh: copy both files from assets/companion after any page change; deploy/e2e/phone-refresh.sh pins a commit of another worktree
