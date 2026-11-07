@@ -52,7 +52,7 @@ if [ -n "$CHALLENGE" ]; then
   fi
   step "app: approve and release" appclick "Approve"
   app '{"op":"auth","timeout":15000}' >/dev/null && echo "    (system prompt after Approve: $(appget auth))"
-  step "app: released" app '{"op":"wait","text":"Released.","timeout":60000}'
+  step "app: released" app '{"op":"wait","text":"Check on the terminal that it took the share","timeout":60000}'
   step "app: copy as text" appclick "Copy as text"
   app '{"op":"clip"}' >/dev/null
   REPLY=$(appget text)
