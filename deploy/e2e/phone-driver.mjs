@@ -328,6 +328,10 @@ const commands = {
     };
   },
   async 'red-approve'() {
+    // Chrome on Android hides its toolbar when the long Red screen first scrolls, which moves the page under the point Playwright
+    // computed (another row then "intercepts" the click): bring the button to the middle, let the toolbar settle, then click.
+    await page.locator('#red-approve').evaluate((e) => e.scrollIntoView({ block: 'center' }));
+    await page.waitForTimeout(1500);
     await page.click('#red-approve');
     await waitAny(['#ops-b64', '#red-error']);
     if (await has('#red-error') && (await text('#red-error'))) return { ok: false, error: await text('#red-error') };
