@@ -14,6 +14,7 @@ import uk.petruha.sshub.phone.core.nameAndId
 import uk.petruha.sshub.phone.core.OpenedRed
 import uk.petruha.sshub.phone.core.OpenedRelease
 import uk.petruha.sshub.phone.core.Platform
+import uk.petruha.sshub.phone.core.SettingsStore
 import uk.petruha.sshub.phone.core.ReleaseApi
 import uk.petruha.sshub.phone.core.ReleaseChannels
 import uk.petruha.sshub.phone.core.ReleaseDecision
@@ -33,7 +34,11 @@ private const val CLIPBOARD_LABEL = "SSHub reply"
 internal fun CoreException.approveError(): String =
     (message ?: "The core refused.") + if (code == CoreException.Code.Refused) " Nothing was signed." else ""
 
-class RedViewModel(private val core: ReleaseApi, private val platform: Platform, private val token: Long) : ViewModel() {
+/** The removed device as the notice names it: the op's `device_id` leaf (an id: the phone has no alias for a device it never met). */
+internal fun removedDeviceOf(v: RedView): String =
+    v.fields.firstOrNull { it.key == "device_id" }?.to?.takeIf { it.isNotBlank() } ?: "a device"
+
+class RedViewModel(private val core: ReleaseApi, private val platform: Platform, private val token: Long, private val settings: SettingsStore? = null) : ViewModel() {
     private val _state = MutableStateFlow<RedState?>(null)
     /** Null when the core no longer holds the notice; the screen then goes back. */
     val state: StateFlow<RedState?> = _state.asStateFlow()
@@ -57,6 +62,8 @@ class RedViewModel(private val core: ReleaseApi, private val platform: Platform,
         viewModelScope.launch {
             try {
                 val out = core.decide(token, ReleaseDecision.Approve(typedId = s.view.mustType?.let { s.typed.trim() }), platform.clock.nowSeconds())
+                // After a removal this phone is left out of the new sharing until it is updated by hand (U13-23): Home says so.
+                if (s.view.kind == "DeviceRevoke") settings?.setUpdateNeededAfter(removedDeviceOf(s.view))
                 _state.update { it?.copy(phase = ApprovalPhase.Approved, outcome = out) }
             } catch (e: CoreException) {
                 _state.update { it?.copy(phase = ApprovalPhase.Review, error = e.approveError()) }

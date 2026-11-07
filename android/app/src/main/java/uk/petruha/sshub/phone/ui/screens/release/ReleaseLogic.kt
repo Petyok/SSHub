@@ -33,9 +33,17 @@ fun redLapsed(view: RedView, now: Long): Boolean = now >= view.lapsesAt
 
 fun releaseLeft(view: ReleaseView, now: Long): Long = (view.expiresAt - now).coerceAtLeast(0L)
 
-fun mmss(seconds: Long): String {
+/** "expires in 1:58" under an hour, "expires in 5 h 12 min" under a day, "expires in 2 days 4 h" beyond: the one timer of a request screen. */
+fun expiresText(seconds: Long): String {
     val s = seconds.coerceAtLeast(0L)
-    return "%02d:%02d".format(s / 60, s % 60)
+    val d = s / 86_400
+    val h = s % 86_400 / 3_600
+    val m = s % 3_600 / 60
+    return "expires in " + when {
+        d > 0 -> plural(d, "day") + " $h h"
+        h > 0 -> "$h h $m min"
+        else -> "%d:%02d".format(m, s % 60)
+    }
 }
 
 private fun plural(n: Long, one: String) = if (n == 1L) "$n $one" else "$n ${one}s"
@@ -129,7 +137,7 @@ fun vaultFailure(r: VaultResult): String? = when (r) {
     is VaultResult.Secret -> null
     VaultResult.Canceled -> "The system lock was canceled. Nothing was signed."
     VaultResult.LockedOut -> "The system lock is locked out for now. Nothing was signed. Try again later."
-    VaultResult.Invalidated -> "The key was invalidated by a change of the system lock. Nothing was signed. Restore this phone from its 24 words."
+    VaultResult.Invalidated -> "Android removed the key because the screen lock was removed or reset. Nothing was signed. Restore this phone from its 24 words."
     VaultResult.NoSecureLock -> "This device has no screen lock. Nothing was signed."
     VaultResult.Stored -> "The system lock gave no key. Nothing was signed."
     is VaultResult.Failed -> "The system lock failed: ${r.message}. Nothing was signed."
@@ -153,6 +161,9 @@ data class RedState(
     val typed: String = "",
 ) {
     val lapsed: Boolean get() = redLapsed(view, now)
+    /** The one timer: the notice's own lapse, or the 12 minute screen window when that runs out first (then `windowIsTimer`). */
+    val timerLeft: Long get() = minOf((view.lapsesAt - now).coerceAtLeast(0L), windowLeft(openedAt, now))
+    val windowIsTimer: Boolean get() = windowLeft(openedAt, now) < (view.lapsesAt - now).coerceAtLeast(0L)
     val closed: Boolean get() = phase == ApprovalPhase.Review && windowClosed(openedAt, now)
     val gate: Gate get() = redGate(view.checks, lapsed, closed, phase == ApprovalPhase.Signing, view.mustType, typed)
 }
@@ -175,6 +186,9 @@ data class ReleaseState(
     val error: String? = null,
 ) {
     val left: Long get() = releaseLeft(view, now)
+    /** The one timer: the challenge's own expiry, or the 12 minute screen window when that runs out first (then `windowIsTimer`). */
+    val timerLeft: Long get() = minOf(left, windowLeft(openedAt, now))
+    val windowIsTimer: Boolean get() = windowLeft(openedAt, now) < left
     val closed: Boolean get() = phase == ApprovalPhase.Review && windowClosed(openedAt, now)
     val gate: Gate get() = releaseGate(view.checks, left, closed, view.mustType, typed, phase == ApprovalPhase.Signing, channelsOn.isEmpty() && !byHand, view.headPending)
 }

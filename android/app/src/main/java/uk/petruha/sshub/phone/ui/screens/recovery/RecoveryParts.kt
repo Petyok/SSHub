@@ -72,7 +72,7 @@ fun formatAgo(seconds: Long): String = when {
     else -> "${seconds / 86_400} d ago"
 }
 
-/** One big value over a small key (`.grid3` cell). One merged node: "wrap key gen 3". */
+/** One big value over a small key (`.grid3` cell). One merged node: "phone key generation 3". */
 @Composable
 internal fun StatCell(key: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier.padding(vertical = 4.dp).semantics(mergeDescendants = true) {}) {
@@ -124,18 +124,18 @@ internal fun ContributorLines(contributors: List<ReshareContributor>, note: Stri
     Note(note, Modifier.padding(top = 6.dp))
 }
 
-/** Who holds a share afterwards, one merged node per holder (this phone marked), and whether a storage key is published with the shares. */
+/** Who holds a share afterwards (the full devices), one merged node each (this phone marked), and whether a storage key is published with the shares. */
 @Composable
 internal fun HolderLines(holders: List<ReshareHolder>, storageKeyNew: Boolean) {
     holders.forEach { h ->
         val line = "${h.name} [${h.id}]" + if (h.isThisPhone) " (this phone)" else ""
         Text(
-            line, Modifier.fillMaxWidth().heightIn(min = 32.dp).padding(vertical = 4.dp).semantics(mergeDescendants = true) { contentDescription = "Holder afterwards: $line" },
+            line, Modifier.fillMaxWidth().heightIn(min = 32.dp).padding(vertical = 4.dp).semantics(mergeDescendants = true) { contentDescription = "Full device afterwards: $line" },
             style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface,
         )
     }
     Note(
-        if (storageKeyNew) "A storage key of this epoch is published with the new shares." else "A storage key of this epoch was already published.",
+        if (storageKeyNew) "A storage key of this sharing round is published with the new shares." else "A storage key of this sharing round was already published.",
         Modifier.padding(top = 6.dp),
     )
 }

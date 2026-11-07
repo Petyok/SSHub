@@ -34,15 +34,23 @@ class ReshareScreenTest {
 
     private fun sample(stage: ReshareStage) = RecoverySamples.reshareState(stage)
 
-    @Test fun start_shows_facts_and_rotate_is_the_current_step() {
+    @Test fun start_shows_plain_facts_and_rotate_is_the_current_step() {
         var rotated = 0
         show(sample(ReshareStage.Start), ReshareActions(onRotate = { rotated++ }))
-        rule.onNodeWithText("wrap key gen").assertExists()
-        rule.onNodeWithText("#3", substring = false).assertExists()
-        rule.onNodeWithText("0 of 9").assertExists()
+        rule.onNodeWithText("Passwords ready for this phone: 0 of 9").assertExists()
         rule.onNodeWithText("0 of 2 done").assertExists()
-        rule.button("Rotate wrap keys").assertIsEnabled().performScrollTo().performClick()
+        rule.button("Renew the phone keys").assertIsEnabled().performScrollTo().performClick()
         assertEquals(1, rotated)
+    }
+
+    @Test fun u13_23_design_numbers_sit_in_a_collapsed_technical_details() {
+        show(sample(ReshareStage.Start))
+        rule.onNodeWithText("sharing round").assertDoesNotExist()
+        rule.onNodeWithText("phone key generation").assertDoesNotExist()
+        rule.button("Technical details").performClick()
+        rule.onNodeWithText("phone key generation").assertExists()
+        rule.onNodeWithText("sharing round").assertExists()
+        rule.onNodeWithText("#3", substring = false).assertExists()
     }
 
     @Test fun m1_adopt_is_enabled_before_any_rotation_in_this_process() {
@@ -63,9 +71,9 @@ class ReshareScreenTest {
     @Test fun rotated_shows_done_text_and_adopt_opens_the_scanner() {
         var scans = 0
         show(sample(ReshareStage.Rotated), ReshareActions(onScan = { scans++ }))
-        rule.onNodeWithText("Done: generation 4. Old generations stay readable: they derive from the same 24 words.").assertExists()
+        rule.onNodeWithText("Done: phone key generation 4. Older keys stay readable: they derive from the same 24 words.").assertExists()
         rule.onNodeWithText("1 of 2 done").assertExists()
-        rule.onNodeWithText("Rotate wrap keys", substring = false).assertDoesNotExist()
+        rule.onNodeWithText("Renew the phone keys", substring = false).assertDoesNotExist()
         rule.button("Adopt a reshare").assertIsEnabled().performScrollTo().performClick()
         assertEquals(1, scans)
     }
@@ -73,7 +81,7 @@ class ReshareScreenTest {
     @Test fun candidate_lists_contributors_and_one_tap_adopts_and_publishes() {
         var adopted = 0
         show(sample(ReshareStage.Candidate), ReshareActions(onAdoptPublish = { adopted++ }))
-        rule.onNodeWithText("Reshare for epoch 8").assertExists()
+        rule.onNodeWithText("New shares from a terminal").assertExists()
         rule.onNodeWithText("laptop-main [7B3E-0D15]: signature verified").assertExists()
         rule.onNodeWithText("not met [E7A4-6B02]: signature not checked").assertExists()
         // H3: the flags are lines of their own, a missing session key is a failing one
@@ -81,11 +89,11 @@ class ReshareScreenTest {
         rule.onNodeWithText("laptop-main [7B3E-0D15]: session key for this phone").assertExists()
         rule.onNodeWithContentDescription("Failed: not met [E7A4-6B02]: not known to this phone").assertExists()
         rule.onNodeWithContentDescription("Failed: not met [E7A4-6B02]: no session key for this phone").assertExists()
-        // the holders afterwards, this phone marked, one node each
-        rule.onNodeWithContentDescription("Holder afterwards: laptop-main [7B3E-0D15]").assertExists()
-        rule.onNodeWithContentDescription("Holder afterwards: pixel-8 [4F2A-91C0] (this phone)").assertExists()
-        rule.onAllNodes(descStartsWith("Holder afterwards: ")).assertCountEquals(RecoverySamples.holders.size)
-        rule.onNodeWithText("A storage key of this epoch is published with the new shares.").assertExists()
+        // the full devices afterwards, this phone marked, one node each
+        rule.onNodeWithContentDescription("Full device afterwards: laptop-main [7B3E-0D15]").assertExists()
+        rule.onNodeWithContentDescription("Full device afterwards: pixel-8 [4F2A-91C0] (this phone)").assertExists()
+        rule.onAllNodes(descStartsWith("Full device afterwards: ")).assertCountEquals(RecoverySamples.holders.size)
+        rule.onNodeWithText("A storage key of this sharing round is published with the new shares.").assertExists()
         rule.button("Adopt and publish the new shares").assertIsEnabled().performScrollTo().performClick()
         assertEquals(1, adopted)
     }
@@ -118,7 +126,7 @@ class ReshareScreenTest {
         rule.onNodeWithText("Contributors").assertExists()
         rule.onNodeWithText("3 counted").assertExists()
         rule.onNodeWithText("not met [E7A4-6B02]: signature not checked").assertExists()
-        rule.onNodeWithText("9 of 9").assertExists()
+        rule.onNodeWithText("Passwords ready for this phone: 9 of 9").assertExists()
         rule.onNode(hasContentDescription("QR code with the signed new shares", substring = true)).performScrollTo().assertExists()
         rule.onNodeWithContentDescription("Signed text", substring = true).assertExists()
         rule.onNodeWithText("Copying marks the text as sensitive. It leaves the clipboard after 60 s.").assertExists()
@@ -138,7 +146,7 @@ class ReshareScreenTest {
         var exported = 0
         var done = 0
         show(sample(ReshareStage.Published), ReshareActions(onExport = { exported++ }, onDone = { done++ }))
-        rule.onNodeWithText("Done: reshare for epoch 8 adopted", substring = true).assertExists()
+        rule.onNodeWithText("Done: the new shares are adopted", substring = true).assertExists()
         rule.onNodeWithContentDescription("Signed text", substring = true).assertDoesNotExist()
         rule.button("Export my ops").performClick()
         rule.button("Done").performClick()
@@ -149,9 +157,9 @@ class ReshareScreenTest {
     @Test fun empty_says_no_reshare_is_waiting_and_has_no_steps() {
         show(sample(ReshareStage.Empty))
         rule.onNodeWithText("No reshare is waiting.").assertExists()
-        rule.onNodeWithText("9 of 9").assertExists()
+        rule.onNodeWithText("Passwords ready for this phone: 9 of 9").assertExists()
         rule.onNodeWithText("Steps").assertDoesNotExist()
-        rule.onNodeWithText("Rotate wrap keys", substring = false).assertDoesNotExist()
+        rule.onNodeWithText("Renew the phone keys", substring = false).assertDoesNotExist()
     }
 
     @Test fun consequence_warning_is_on_every_variant() {
@@ -159,8 +167,8 @@ class ReshareScreenTest {
         rule.setScreen { ReshareScreen(sample(stage), ReshareActions()) }
         for (s in ReshareStage.entries) {
             rule.runOnIdle { stage = s }
-            rule.onNodeWithText("A ring of two terminals plus this phone cannot revoke a terminal by resharing.", substring = true).assertExists()
-            rule.onNodeWithText("This phone only receives a new share: it never contributes a sub-share and keeps none of the old ones.").assertExists()
+            rule.onNodeWithText("Two terminals plus this phone cannot remove a device by updating the shares.", substring = true).assertExists()
+            rule.onNodeWithText("This phone only receives new shares: it never contributes any and keeps none of the old ones.").assertExists()
         }
     }
 
@@ -171,7 +179,7 @@ class ReshareScreenTest {
 
     @Test fun while_busy_the_signing_buttons_are_off() {
         show(sample(ReshareStage.Start).copy(busy = true))
-        rule.button("Rotate wrap keys").assertIsNotEnabled()
+        rule.button("Renew the phone keys").assertIsNotEnabled()
     }
 
     @Test fun d18_window_is_secure() {
@@ -181,19 +189,19 @@ class ReshareScreenTest {
 
     @Test fun dark_theme() {
         show(sample(ReshareStage.Rotated), dark = true)
-        rule.onNodeWithText("Reshare and wrap keys").assertExists()
+        rule.onNodeWithText("Update this phone after a device was removed").assertExists()
         rule.assertTargets48()
     }
 
     @Test fun light_theme() {
         show(sample(ReshareStage.Rotated), dark = false)
-        rule.onNodeWithText("Reshare and wrap keys").assertExists()
+        rule.onNodeWithText("Update this phone after a device was removed").assertExists()
         rule.assertTargets48()
     }
 
     @Test fun font_scale_2_has_no_overflow_and_keeps_targets() {
         show(sample(ReshareStage.Candidate), fontScale = 2f)
-        rule.onNodeWithText("Reshare and wrap keys").assertExists()
+        rule.onNodeWithText("Update this phone after a device was removed").assertExists()
         rule.assertNoVisualOverflow()
         rule.assertTargets48()
     }
@@ -206,7 +214,8 @@ class ReshareScreenTest {
 
     @Test fun font_scale_1_3_stacks_the_facts() {
         show(sample(ReshareStage.Start), fontScale = 1.3f)
-        rule.onNodeWithText("holder no.").assertExists()
+        rule.button("Technical details").performScrollTo().performClick()
+        rule.onNodeWithText("full device no.").assertExists()
         rule.assertNoVisualOverflow()
     }
 }

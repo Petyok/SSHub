@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.Platform
+import uk.petruha.sshub.phone.core.SettingsStore
 import uk.petruha.sshub.phone.core.RecoveryApi
 import uk.petruha.sshub.phone.core.ReshareStage
 import uk.petruha.sshub.phone.core.ReshareView
@@ -17,7 +18,7 @@ import uk.petruha.sshub.phone.core.WrapKeyState
 private fun CoreException.text() = message?.takeIf { it.isNotBlank() } ?: code.name
 
 /** `token` is set when the screen was opened for a reshare that `openFrame` returned. */
-class ReshareViewModel(private val core: RecoveryApi, private val platform: Platform, private val token: Long?) : ViewModel() {
+class ReshareViewModel(private val core: RecoveryApi, private val platform: Platform, private val token: Long?, private val settings: SettingsStore? = null) : ViewModel() {
     private val _state = MutableStateFlow(ReshareState())
     val state: StateFlow<ReshareState> = _state.asStateFlow()
 
@@ -55,6 +56,7 @@ class ReshareViewModel(private val core: RecoveryApi, private val platform: Plat
         guarded {
             val out = core.decideReshare(t, platform.clock.nowSeconds())
             apply(out.state, null)
+            settings?.setUpdateNeededAfter(null) // the new shares are adopted: the Home notice ends
             _state.update { it.copy(outgoing = out.outgoing, copied = false) }
         }
     }

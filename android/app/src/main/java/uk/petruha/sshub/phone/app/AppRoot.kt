@@ -106,13 +106,14 @@ class AppRouter(private val blocked: () -> Boolean = { false }) : OpenedRouter {
 fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = AppSettings) {
     val theme by settings.theme.collectAsState()
     val mismatch by settings.signerMismatch.collectAsState()
+    val verified by settings.backupVerified.collectAsState()
     val vault by platform.keys.state.collectAsState()
     val dark = when (theme) { ThemeChoice.Dark -> true; ThemeChoice.Light -> false; ThemeChoice.System -> isSystemInDarkTheme() }
     val reduced = platform.system.reducedMotion
     SshubTheme(dark = dark, reducedMotion = reduced) {
         CompositionLocalProvider(LocalPlatform provides platform) {
             val nav = rememberNavController()
-            val env = remember(core, platform, nav) { AppEnv(core, platform, nav) }
+            val env = remember(core, platform, nav) { AppEnv(core, platform, nav, settings) }
             val entry by nav.currentBackStackEntryAsState()
             val route = entry?.destination?.route
             val start = remember { if (vault == VaultState.NoKey) Routes.FirstRun else if (vault == VaultState.Unlocked) Routes.Home else lockRoute(LockReason.Started) }
@@ -141,6 +142,11 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
                     nav.navigate(lockRoute(LockReason.ScreenOff)) { popUpTo(nav.graph.id) { inclusive = true } }
                 }
             }
+            // The paper words are checked once, before the first approval: an approval screen opens the two-word check on top of itself (the back stack stays, so Back reaches the list).
+            LaunchedEffect(vault, route, verified, mismatch) {
+                if (route == null || verified || mismatch || vault != VaultState.Unlocked) return@LaunchedEffect
+                if (route.substringBefore("/") in Routes.approvalBases) nav.navigate(Routes.BackupVerify)
+            }
 
             Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
                 Box(Modifier.weight(1f)) {
@@ -160,7 +166,7 @@ fun AppRoot(core: PhoneCoreApi, platform: Platform, settings: SettingsStore = Ap
                                 onLock = { core.lock(); platform.keys.lock() },
                             )
                         }
-                        homeGraph(env, AppRouter { settings.signerMismatch.value })
+                        homeGraph(env, AppRouter { settings.signerMismatch.value }, settings.updateNeededAfter)
                         releaseGraph(env)
                         trustGraph(env)
                         recoveryGraph(env)

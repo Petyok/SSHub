@@ -4,7 +4,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.navigation.NavHostController
 
 /** Everything a screen group's nav builder needs. */
-class AppEnv(val core: PhoneCoreApi, val platform: Platform, val nav: NavHostController)
+class AppEnv(val core: PhoneCoreApi, val platform: Platform, val nav: NavHostController, val settings: SettingsStore = AppSettings)
 
 /** Route ids are the screen ids of spec-A section 12. Argument routes are written by the owning group as `Routes.X + "/{arg}"`. */
 object Routes {
@@ -19,6 +19,10 @@ object Routes {
     const val Enroll1 = "enroll-1"; const val Enroll2 = "enroll-2"; const val Enroll3 = "enroll-3"; const val Enroll4 = "enroll"
     const val Enroll5 = "enroll-5"; const val EnrollDone = "enroll-done"; const val EnrollBt = "enroll-bt"; const val EnrollPaste = "enroll-paste"; const val EnrollSound = "enroll-sound"
     const val Menu = "menu"; const val About = "about"; const val StateLost = "state-lost"
+    const val BackupVerify = "backup-verify"; const val NewPhone = "new-phone"
+
+    /** Screens that approve something. Before the paper words were checked (backupVerified) none of them stays open. */
+    val approvalBases: Set<String> = setOf(Red, Release, TrustRequest, TrustExtend, Reshare, RecoveryNotice, Enroll4)
 }
 
 val LocalPlatform = staticCompositionLocalOf<Platform> { error("no Platform") }

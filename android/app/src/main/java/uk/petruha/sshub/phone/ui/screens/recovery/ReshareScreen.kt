@@ -25,6 +25,12 @@ import uk.petruha.sshub.phone.ui.components.SshubButton
 import uk.petruha.sshub.phone.ui.components.SshubCard
 import uk.petruha.sshub.phone.ui.components.WarnBox
 import uk.petruha.sshub.phone.ui.components.fontScale
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 
 /**
  * `reshare` is the reshare that was adopted and published (stage Published); `candidate` is one just opened and not yet adopted.
@@ -59,8 +65,9 @@ data class ReshareActions(
     val onDone: () -> Unit = {},
 )
 
+const val RESHARE_TITLE = "Update this phone after a device was removed"
 
-/** Spec 12 `reshare`: wrap keys, rotate, adopt a reshare and publish the new shares in one signing, and what resharing cannot do. */
+/** Spec 12 `reshare`, user name per the glossary: update the shares. Renew the phone keys, adopt the new shares and publish them in one signing, and what updating cannot do. */
 @Composable
 fun ReshareScreen(state: ReshareState, on: ReshareActions) {
     SecureWindow()
@@ -76,7 +83,7 @@ fun ReshareScreen(state: ReshareState, on: ReshareActions) {
         })
         else -> null
     }
-    ScreenFrame("Reshare and wrap keys", on.onBack, bar = bar) {
+    ScreenFrame(RESHARE_TITLE, on.onBack, bar = bar) {
         Facts(state)
         if (state.error != null) {
             Gap()
@@ -86,7 +93,7 @@ fun ReshareScreen(state: ReshareState, on: ReshareActions) {
             Gap()
             SshubCard {
                 Text("No reshare is waiting.", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
-                Note("A reshare starts after a holder is revoked on a terminal. Rotate wrap keys first when it does.")
+                Note("This update starts after a device was removed on a terminal. Renew the phone keys first when it does.")
             }
         } else {
             Steps(state, on)
@@ -95,7 +102,7 @@ fun ReshareScreen(state: ReshareState, on: ReshareActions) {
                 SectionHeading("Contributors", trailing = "${shown.contributors.size} counted")
                 SshubCard { ContributorLines(shown.contributors, shown.note) }
                 if (shown.holdersAfter.isNotEmpty()) {
-                    SectionHeading("Holders afterwards", trailing = "${shown.holdersAfter.size} holders")
+                    SectionHeading("Full devices afterwards", trailing = "${shown.holdersAfter.size} full devices")
                     SshubCard { HolderLines(shown.holdersAfter, shown.storageKeyNew) }
                 }
             }
@@ -103,15 +110,15 @@ fun ReshareScreen(state: ReshareState, on: ReshareActions) {
                 SectionHeading("Signed ops")
                 HandoffCard(
                     outgoing, "QR code with the signed new shares of this phone chain. Use the text below if the terminal has no camera",
-                    "Hold the QR code to a terminal, or paste the text into it. It carries the new shares, sealed, and the head of this phone chain.",
+                    "Hold the QR code to a terminal, or paste the text into it. It carries the new shares, sealed, and the last change of this phone chain.",
                     state.copied, state.clearsIn,
                 )
             }
         }
-        Note("This phone only receives a new share: it never contributes a sub-share and keeps none of the old ones.", Modifier.padding(vertical = 12.dp))
-        WarnBox("A ring of two terminals plus this phone cannot revoke a terminal by resharing.") {
+        Note("This phone only receives new shares: it never contributes any and keeps none of the old ones.", Modifier.padding(vertical = 12.dp))
+        WarnBox("Two terminals plus this phone cannot remove a device by updating the shares.") {
             Text(
-                "A revocation needs at least two other terminal holders to contribute. The paper phrase is offline and cannot contribute either. Add a third terminal first.",
+                "Removing a device needs at least two other full devices with a person at the keyboard to contribute. The paper phrase is offline and cannot contribute either. Add a third terminal first.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
             )
         }
@@ -120,12 +127,24 @@ fun ReshareScreen(state: ReshareState, on: ReshareActions) {
 
 @Composable
 private fun Facts(s: ReshareState) {
+    var open by remember { mutableStateOf(false) }
     SshubCard {
-        val cells = listOf("wrap key gen" to s.generation.toString(), "epoch" to s.epoch.toString(), "holder no." to "#${s.holderNumber}")
-        if (fontScale() >= 1.3f) cells.forEach { (k, v) -> StatCell(k, v, Modifier.fillMaxWidth()) }
-        else Row(Modifier.fillMaxWidth()) { cells.forEach { (k, v) -> StatCell(k, v, Modifier.weight(1f)) } }
+        Text("Passwords ready for this phone: ${s.ready} of ${s.total}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
         HorizontalDivider(Modifier.padding(vertical = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
-        KeyValue("credentials ready", "${s.ready} of ${s.total}")
+        // The design numbers are facts, not decisions: kept, but behind a toggle so the first read is plain.
+        SshubButton(
+            "Technical details", { open = !open }, Modifier.fillMaxWidth().semantics { stateDescription = if (open) "Expanded" else "Collapsed" },
+            ButtonKind.Outline,
+        )
+        if (open) {
+            val cells = listOf("phone key generation" to s.generation.toString(), "sharing round" to s.epoch.toString(), "full device no." to "#${s.holderNumber}")
+            if (fontScale() >= 1.3f) cells.forEach { (k, v) -> StatCell(k, v, Modifier.fillMaxWidth()) }
+            else Row(Modifier.fillMaxWidth()) { cells.forEach { (k, v) -> StatCell(k, v, Modifier.weight(1f)) } }
+            (s.candidate ?: s.reshare)?.let {
+                KeyValue("sharing round of the new shares", it.epoch.toString())
+                KeyValue("full device no. in the new shares", "#${it.holderNumber}")
+            }
+        }
     }
 }
 
@@ -141,30 +160,29 @@ private fun Steps(s: ReshareState, on: ReshareActions) {
     val fill = Modifier.fillMaxWidth()
 
     StepRow(
-        square(0), "1 Rotate wrap keys", status(0),
-        if (rotated) "Done: generation ${s.generation}. Old generations stay readable: they derive from the same 24 words."
-        else "Old generations stay readable: they derive from the same 24 words.",
+        square(0), "1 Renew the phone keys", status(0),
+        if (rotated) "Done: phone key generation ${s.generation}. Older keys stay readable: they derive from the same 24 words."
+        else "Older keys stay readable: they derive from the same 24 words.",
         first = true, last = false,
     ) {
-        if (!rotated) SshubButton("Rotate wrap keys", on.onRotate, fill, ButtonKind.Primary, "old generations stay readable", enabled = !s.busy)
+        if (!rotated) SshubButton("Renew the phone keys", on.onRotate, fill, ButtonKind.Primary, "old keys stay readable", enabled = !s.busy)
     }
 
     val candidate = s.candidate
     StepRow(
         square(1), "2 Adopt and publish the new shares", status(1),
-        if (published) "Done: reshare for epoch ${s.reshare?.epoch ?: s.epoch} adopted, ${s.ready} credentials ready. The new shares, sealed, are in this phone chain for a terminal to take."
+        if (published) "Done: the new shares are adopted, ${s.ready} passwords ready for this phone. The new shares, sealed, are in this phone chain for a terminal to take."
         else "Scan or paste the reshare ops a terminal shows for this phone. Adopting signs the new shares into this phone chain in one step.",
         first = false, last = true,
     ) {
         if (!published) {
             if (candidate != null) {
                 SshubCard {
-                    Text("Reshare for epoch ${candidate.epoch}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
-                    KeyValue("holder no.", "#${candidate.holderNumber}")
-                    KeyValue("credentials", "${candidate.credentialsReady} of ${candidate.credentialsTotal}")
+                    Text("New shares from a terminal", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Passwords in these shares: ${candidate.credentialsReady} of ${candidate.credentialsTotal}", Modifier.padding(vertical = 4.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
                     ContributorLines(candidate.contributors, candidate.note)
                     if (candidate.holdersAfter.isNotEmpty()) {
-                        Text("Holders afterwards (${candidate.holdersAfter.size})", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Full devices afterwards (${candidate.holdersAfter.size})", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
                         HolderLines(candidate.holdersAfter, candidate.storageKeyNew)
                     }
                 }

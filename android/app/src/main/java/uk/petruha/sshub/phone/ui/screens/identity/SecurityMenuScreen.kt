@@ -34,6 +34,7 @@ class SecurityMenuActions(
     val onCodes: () -> Unit = {},
     val onReshare: () -> Unit = {},
     val onRecovery: () -> Unit = {},
+    val onNewPhone: () -> Unit = {},
     val onBackup: () -> Unit = {},
     val onExport: () -> Unit = {},
     val onAbout: () -> Unit = {},
@@ -42,7 +43,7 @@ class SecurityMenuActions(
     val onAutoLock: (Int) -> Unit = {},
 )
 
-/** Hub of the Security tab (spec 12 `menu`): holder flows, safety, app settings. */
+/** Hub of the Security tab (spec 12 `menu`): full-device flows, safety, app settings. */
 @Composable
 fun SecurityMenuScreen(state: SecurityMenuState, on: SecurityMenuActions) {
     val closed = "closed: signing fingerprint differs"
@@ -63,15 +64,16 @@ fun SecurityMenuScreen(state: SecurityMenuState, on: SecurityMenuActions) {
                 SshubRow(TAKE_CHAIN_LABEL, secondary = if (state.blocked) closed else "This phone does not sign until it has taken its chain", onClick = go(on.onTakeChain))
             }
         }
-        SectionHeading("Holder", first = !state.blocked && !state.headPending, trailing = "${state.deviceName} ${state.deviceId}")
+        SectionHeading("Full device", first = !state.blocked && !state.headPending, trailing = "${state.deviceName} ${state.deviceId}")
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SshubRow("Trust sessions", secondary = if (state.blocked) closed else "Certificates this phone issued", onClick = go(on.onTrustList))
+            SshubRow("Trust sessions", secondary = if (state.blocked) closed else "Computers this phone lets open some hosts without asking", onClick = go(on.onTrustList))
             SshubRow("Short codes I issued", secondary = if (state.blocked) closed else "One live code per credential", onClick = go(on.onCodes))
-            SshubRow("Reshare and wrap keys", secondary = if (state.blocked) closed else "After a holder is revoked", onClick = go(on.onReshare))
+            SshubRow("Update the shares", secondary = if (state.blocked) closed else "After a device was removed", onClick = go(on.onReshare))
         }
         SectionHeading("Safety")
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            SshubRow("Recovery and a new phone", secondary = if (state.blocked) closed else "A recovery you did not start can be cancelled here", onClick = go(on.onRecovery))
+            SshubRow("I am getting a new phone", secondary = if (state.blocked) closed else "Move to a new phone with your 24 paper words", onClick = go(on.onNewPhone))
+            SshubRow("I lost my phone", secondary = if (state.blocked) closed else "A recovery you did not start can be cancelled here", onClick = go(on.onRecovery))
             SshubRow(
                 "Recovery words",
                 secondary = if (state.blocked) closed else if (state.backupConfirmed) "24 words, confirmed on paper. Shown after a fresh unlock." else "24 words, needs your fingerprint, face or screen lock",

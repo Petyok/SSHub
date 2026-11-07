@@ -155,7 +155,7 @@ private fun TakenBody(state: ChainHeadState) {
         Gap(6.dp)
         Note(
             if (state.neverSigned) "This phone may sign from the first sequence number."
-            else "The wrap key generation is read from the adopted chain. The red card on Home is gone.",
+            else "The phone key generation is read from the adopted chain. The red card on Home is gone.",
         )
     }
     Gap(12.dp)
@@ -219,7 +219,7 @@ private fun ReadBody(state: ChainHeadState, on: ChainHeadActions) {
         SectionHeading("Only if this key never signed anything")
         WarnBox("A brand new key restored from its words.") {
             Text(
-                "If this key ever signed, a new op could reuse a seq the ring already holds.",
+                "If this key ever signed, a new op could reuse a seq your devices already hold.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
             )
             Text("type ${state.deviceId} to confirm", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -44,7 +44,7 @@ data class RecoveryActions(
 @Composable
 fun RecoveryScreen(state: RecoveryState, on: RecoveryActions) {
     ScreenFrame(
-        "Recovery and a new phone", on.onBack,
+        "I lost my phone", on.onBack,
         bar = { SshubButton("Scan a recovery notice", on.onScan, Modifier.fillMaxWidth(), ButtonKind.Primary) },
     ) {
         Note("If someone starts replacing your phone, it shows on every device for seven days. A terminal can show a recovery notice as a QR code: scan it here to read it, and cancel it if you did not start it.")
@@ -61,12 +61,12 @@ fun RecoveryScreen(state: RecoveryState, on: RecoveryActions) {
         Gap()
         Guidance(
             "I still have the 24 words",
-            "Restore them on a new phone and take the phone's own chain from a terminal before it signs anything. No recovery is needed. Anyone who holds the lost phone and can unlock it can still approve requests: revoke it from a terminal.",
+            "Restore them on a new phone and take the phone's own history from a terminal before it signs anything. No recovery is needed. Anyone who holds the lost phone and can unlock it can still approve requests: remove it from a terminal.",
         )
         Gap()
         Guidance(
             "I lost the phone and the words",
-            "On a terminal start phone recovery. It needs two other attended devices or the paper phrase, a third factor, and a seven day timelock shown on every device. Afterwards enroll the new phone as usual: the ring reissues shares to it and clears short codes.",
+            "On a terminal start phone recovery. It needs two other devices with a person at the keyboard or the paper phrase, a third approval, and a seven day wait shown on every device. Afterwards add the new phone as usual: your devices reissue its shares and clear the short codes.",
         )
         Gap()
         Guidance(

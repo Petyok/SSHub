@@ -3,7 +3,6 @@ package uk.petruha.sshub.phone.ui.screens.release
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -11,6 +10,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -18,15 +18,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import uk.petruha.sshub.phone.core.DeviceIdScanned
 import uk.petruha.sshub.phone.core.ReleaseCheck
+import uk.petruha.sshub.phone.core.ScanPurpose
+import uk.petruha.sshub.phone.core.ScanResults
 import uk.petruha.sshub.phone.ui.components.ButtonKind
 import uk.petruha.sshub.phone.ui.components.CheckLine
+import uk.petruha.sshub.phone.ui.components.MonoField
 import uk.petruha.sshub.phone.ui.components.Note
 import uk.petruha.sshub.phone.ui.components.QrMatrix
 import uk.petruha.sshub.phone.ui.components.QrView
@@ -36,17 +39,39 @@ import uk.petruha.sshub.phone.ui.components.SshubCard
 import uk.petruha.sshub.phone.ui.components.StopBox
 import uk.petruha.sshub.phone.ui.components.WarnBox
 import uk.petruha.sshub.phone.ui.theme.SshubText
+import uk.petruha.sshub.phone.ui.theme.sshub
 
-/** The 12 minute window (D10): visible mm:ss, spoken in 10 second steps through a polite live region. */
+/**
+ * The one timer of a request screen (D10): "expires in ..." with the request's own time, or the 12 minute screen window when that
+ * ends first. Spoken through a polite live region (`spoken` changes in coarse steps, so it is not read every second).
+ */
 @Composable
-internal fun WindowLine(left: Long, modifier: Modifier = Modifier) {
-    Row(
-        modifier.fillMaxWidth().heightIn(min = 32.dp).padding(bottom = 8.dp)
-            .clearAndSetSemantics { contentDescription = spokenWindow(left); liveRegion = LiveRegionMode.Polite },
-        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text("approval window", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(mmss(left), style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
+internal fun ExpiryLine(left: Long, spoken: String, modifier: Modifier = Modifier, danger: Boolean = false) {
+    Text(
+        if (left > 0) expiresText(left) else "expired", modifier.heightIn(min = 32.dp).semantics { contentDescription = spoken; liveRegion = LiveRegionMode.Polite },
+        style = SshubText.monoBody, color = if (danger) MaterialTheme.sshub.dangerText else MaterialTheme.colorScheme.onSurface,
+    )
+}
+
+/** The typed id field of a never-met device with a second way in: the camera reads the id off the terminal (`ScanPurpose.DeviceId`). */
+@Composable
+internal fun TypedIdField(
+    value: String, onValueChange: (String) -> Unit, onScan: () -> Unit, modifier: Modifier = Modifier,
+    placeholder: String, error: String?, label: String,
+) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        MonoField(value, onValueChange, placeholder = placeholder, error = error, capitalize = true, label = label)
+        SshubButton("Scan its QR", onScan, Modifier.fillMaxWidth(), kind = ButtonKind.Outline)
+    }
+}
+
+/** Takes the id the scan screen published (once) and hands it to the typed field, upper case like the field's own input. */
+@Composable
+internal fun ConsumeScannedDeviceId(onId: (String) -> Unit) {
+    val latest by ScanResults.latest.collectAsState()
+    LaunchedEffect(latest) {
+        val id = (ScanResults.take(ScanPurpose.DeviceId)?.opened as? DeviceIdScanned)?.id ?: return@LaunchedEffect
+        onId(id.uppercase())
     }
 }
 
@@ -55,7 +80,7 @@ internal fun WindowLine(left: Long, modifier: Modifier = Modifier) {
 internal fun WindowClosedBox() {
     StopBox("Window closed", live = true) {
         Text(
-            "The approval window of 12 minutes ran out. Nothing was signed. Go back to the list and open the request again.",
+            "The 12 minutes for this screen ran out. Nothing was signed. Go back to the list and open the request again.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
         )
     }

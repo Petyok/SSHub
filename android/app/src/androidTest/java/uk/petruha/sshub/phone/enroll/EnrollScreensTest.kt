@@ -45,6 +45,8 @@ import uk.petruha.sshub.phone.ui.screens.enroll.EnrolledActions
 import uk.petruha.sshub.phone.ui.screens.enroll.EnrolledScreen
 import uk.petruha.sshub.phone.ui.screens.enroll.KeysStatus
 import uk.petruha.sshub.phone.ui.screens.enroll.PasteVerdict
+import uk.petruha.sshub.phone.ui.components.hexGroups
+import uk.petruha.sshub.phone.ui.components.spokenHex
 import uk.petruha.sshub.phone.ui.screens.enroll.QR_DESCRIPTION
 import uk.petruha.sshub.phone.ui.screens.enroll.SoundPhase
 import uk.petruha.sshub.phone.ui.screens.enroll.SoundProfile
@@ -70,7 +72,7 @@ class EnrollScreensTest {
         }
         exists("This phone will be called pixel-8. The phone checks the name again when the terminal's code is read.")
         absent("Name accepted: pixel-8")
-        rule.onNodeWithContentDescription("Name this phone will have in the ring").assertExists()
+        rule.onNodeWithContentDescription("Name this phone will have among your devices").assertExists()
         click("Bluetooth")
         click("Paste text")
         click("Sound")
@@ -167,8 +169,8 @@ class EnrollScreensTest {
         exists("The keys do not match the first code.")
         absent("Compare the words")
         absent("Next")
-        rule.onNodeWithContentDescription("First code committed to", substring = true).assertExists()
-        rule.onNodeWithContentDescription("Keys shown now open to", substring = true).assertExists()
+        rule.onNodeWithContentDescription("The terminal showed first", substring = true).assertExists()
+        rule.onNodeWithContentDescription("The terminal now shows", substring = true).assertExists()
         click("Start again")
         assertEquals(listOf("again"), calls)
     }
@@ -176,9 +178,18 @@ class EnrollScreensTest {
     @Test fun m7_a_mismatch_without_compared_values_draws_no_empty_boxes() {
         rule.setScreen { EnrollKeysScreen(S.keys(KeysStatus.Mismatch).copy(committed = "", shown = ""), EnrollKeysActions(onStartAgain = hit("again"))) }
         exists("The keys do not match the first code.")
-        rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("First code committed to", substring = true)).assertCountEquals(0)
-        rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("Keys shown now open to", substring = true)).assertCountEquals(0)
-        absent("first code committed to")
+        rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("The terminal showed first", substring = true)).assertCountEquals(0)
+        rule.onAllNodes(androidx.compose.ui.test.hasContentDescription("The terminal now shows", substring = true)).assertCountEquals(0)
+        absent("The terminal showed first")
+    }
+
+    @Test fun m7_the_mismatch_box_draws_both_values_in_full_in_groups_of_4_and_says_what_it_means() {
+        rule.setScreen { EnrollKeysScreen(S.keys(KeysStatus.Mismatch), EnrollKeysActions()) }
+        exists("The terminal showed first")
+        exists("The terminal now shows")
+        rule.onNodeWithContentDescription("The terminal showed first " + spokenHex(hexGroups(S.committed))).assertExists()
+        rule.onNodeWithContentDescription("The terminal now shows " + spokenHex(hexGroups(S.shown))).assertExists()
+        exists("These two values must be the same. They are not: someone may be interfering. Nothing was enrolled. Do not retry on this channel; start again on the terminal.")
     }
 
     @Test fun m7_another_stop_is_titled_with_the_cores_sentence_not_as_a_mismatch() {
@@ -278,7 +289,7 @@ class EnrollScreensTest {
     @Test fun done_says_promotion_is_a_separate_step() {
         rule.setScreen { EnrolledScreen(S.enrolled(), EnrolledActions(onDone = hit("done"))) }
         exists("This phone is now known to laptop-main [7B3E-0D15] as pixel-8.")
-        exists("Promotion to holder is a separate step on the terminal. Until then the terminal knows this phone but does not yet count it as a holder.")
+        exists("Making this phone a full device is a separate step on the terminal. Until then the terminal knows this phone but does not yet count it as a full device.")
         click("Done")
         assertEquals(listOf("done"), calls)
     }
@@ -373,7 +384,7 @@ class EnrollScreensTest {
         rule.onNodeWithText("Use this text").assertIsNotEnabled()
     }
 
-    @Test fun paste_step_2_copies_the_commitment_and_goes_next() {
+    @Test fun paste_step_2_copies_the_phone_code_and_goes_next() {
         rule.setScreen { EnrollPasteScreen(S.paste(2), EnrollPasteActions(onNext = hit("next"), send = EnrollSendActions(onCopy = hit("copy")))) }
         exists("This step sends nothing to this phone.")
         click("Copy the text")
@@ -460,5 +471,15 @@ class EnrollScreensTest {
         rule.setScreen(fontScale = 2f) { EnrollCompareScreen(S.compare(), EnrollCompareActions(onMatch = hit("match"))) }
         click("The words match")
         assertEquals(listOf("match"), calls)
+    }
+
+    @Test fun glossary_every_screen_says_step_n_of_5_with_the_glossary_names() {
+        rule.setScreen { EnrollShowScreen(S.show(), EnrollShowActions()) }
+        exists("Connect to laptop-main")
+        exists("Step 2 of 5")
+        rule.onNodeWithContentDescription("Step 2 of 5, Phone code").assertExists()
+        rule.onNode(hasText("Terminal code"), useUnmergedTree = true).assertExists()
+        rule.onNode(hasText("Compare the words"), useUnmergedTree = true).assertExists()
+        rule.onNode(hasText("Finish"), useUnmergedTree = true).assertExists()
     }
 }

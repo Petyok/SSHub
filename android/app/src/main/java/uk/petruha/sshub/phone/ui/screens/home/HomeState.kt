@@ -6,7 +6,14 @@ import uk.petruha.sshub.phone.core.PendingKind
 import uk.petruha.sshub.phone.core.RingView
 
 /** Home before enrollment is `ring == null`. `headPending` is the status's, so a restored phone without a ring still shows the card. */
-data class HomeState(val phone: HomePhoneView, val ring: RingView?, val pending: List<PendingItem>, val headPending: Boolean = ring?.headPending ?: false) {
+data class HomeState(
+    val phone: HomePhoneView,
+    val ring: RingView?,
+    val pending: List<PendingItem>,
+    val headPending: Boolean = ring?.headPending ?: false,
+    /** Name of the device that was removed while this phone has not yet got the new shares; null when nothing is owed. */
+    val updateNeededAfter: String? = null,
+) {
     /** Restored phone whose chain was adopted but that has no ring yet: not a fresh phone, so no Enroll offer (N9). */
     val restoredAdopted: Boolean get() = phone.headSeq != null && !headPending && ring == null
 }
@@ -17,6 +24,7 @@ class HomeActions(
     val onEnroll: () -> Unit = {},
     val onRestore: () -> Unit = {},
     val onTakeChain: () -> Unit = {},
+    val onUpdateShares: () -> Unit = {},
 )
 
 /** The three segments of the approvals list. */

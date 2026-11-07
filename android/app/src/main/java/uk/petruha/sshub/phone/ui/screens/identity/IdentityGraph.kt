@@ -3,6 +3,7 @@ package uk.petruha.sshub.phone.ui.screens.identity
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,14 +73,16 @@ fun NavGraphBuilder.identityGraph(env: AppEnv, settings: SettingsStore = AppSett
         )
     }
 
-    composable(Routes.Restore) { RestoreDestination(env, replaces = false) }
-    composable(Routes.Restore + "/over") { RestoreDestination(env, replaces = true) }
+    composable(Routes.Restore) { RestoreDestination(env, settings, replaces = false) }
+    composable(Routes.Restore + "/over") { RestoreDestination(env, settings, replaces = true) }
 
     composable(Routes.Backup) { BackupDestination(env, settings, firstRun = false) }
     composable(Routes.Backup + "/{origin}", arguments = listOf(navArgument("origin") { type = NavType.StringType })) { entry ->
         BackupDestination(env, settings, firstRun = entry.arguments?.getString("origin") == "first")
     }
 
+    composable(Routes.BackupVerify) { BackupVerifyDestination(env, settings) }
+    composable(Routes.NewPhone) { NewPhoneScreen(onBack = { nav.popBackStack() }) }
     composable(Routes.Lock) { LockDestination(env, LockReason.Started) }
     composable(Routes.Lock + "/{reason}", arguments = listOf(navArgument("reason") { type = NavType.StringType })) { entry ->
         val reason = LockReason.entries.firstOrNull { it.name.lowercase() == entry.arguments?.getString("reason") } ?: LockReason.Started
@@ -119,7 +122,8 @@ fun NavGraphBuilder.identityGraph(env: AppEnv, settings: SettingsStore = AppSett
             SecurityMenuActions(
                 onTakeChain = { nav.navigate(Routes.ChainHead) },
                 onTrustList = { nav.navigate(Routes.TrustList) }, onCodes = { nav.navigate(Routes.Codes) }, onReshare = { nav.navigate(Routes.Reshare) },
-                onRecovery = { nav.navigate(Routes.Recovery) }, onBackup = { nav.navigate(backupRoute(false)) }, onExport = { nav.navigate(Routes.Export) },
+                onRecovery = { nav.navigate(Routes.Recovery) }, onNewPhone = { nav.navigate(Routes.NewPhone) },
+                onBackup = { nav.navigate(backupRoute(false)) }, onExport = { nav.navigate(Routes.Export) },
                 onAbout = { nav.navigate(Routes.About) },
                 onLock = { vm.lock(); clearTo(lockRoute(LockReason.Manual)) },
                 onTheme = vm::setTheme, onAutoLock = vm::setAutoLock,
@@ -142,8 +146,8 @@ fun NavGraphBuilder.identityGraph(env: AppEnv, settings: SettingsStore = AppSett
 }
 
 @Composable
-private fun RestoreDestination(env: AppEnv, replaces: Boolean) {
-    val vm: RestoreViewModel = viewModel(factory = factory { RestoreViewModel(env.core, env.platform, replaces) })
+private fun RestoreDestination(env: AppEnv, settings: SettingsStore, replaces: Boolean) {
+    val vm: RestoreViewModel = viewModel(factory = factory { RestoreViewModel(env.core, env.platform, replaces, settings) })
     val state by vm.state.collectAsStateWithLifecycle()
     val openSettings = rememberOpenSecuritySettings()
     RestoreScreen(
@@ -166,7 +170,12 @@ private fun BackupDestination(env: AppEnv, settings: SettingsStore, firstRun: Bo
             onPaperChecked = vm::onPaperChecked, onAuthenticate = vm::authenticate, onBack = { env.nav.popBackStack() },
             onDone = {
                 vm.done {
-                    if (firstRun) env.nav.navigate(Routes.Home) { popUpTo(env.nav.graph.id) { inclusive = true } } else env.nav.popBackStack()
+                    val nav = env.nav
+                    // The words were shown and ticked: the first approval still needs the two-word check.
+                    if (!settings.backupVerified.value) {
+                        if (nav.previousBackStackEntry?.destination?.route == Routes.BackupVerify) nav.popBackStack()
+                        else nav.navigate(Routes.BackupVerify) { if (firstRun) popUpTo(nav.graph.id) { inclusive = true } }
+                    } else if (firstRun) nav.navigate(Routes.Home) { popUpTo(nav.graph.id) { inclusive = true } } else nav.popBackStack()
                 }
             },
         ),
@@ -182,4 +191,31 @@ private fun LockDestination(env: AppEnv, reason: LockReason) {
         if (unlocked) env.nav.navigate(Routes.Home) { popUpTo(env.nav.graph.id) { inclusive = true } }
     }
     LockScreen(state, LockActions(onUnlock = vm::unlock, onRestore = { env.nav.navigate(Routes.LockRestore) }))
+}
+
+@Composable
+private fun BackupVerifyDestination(env: AppEnv, settings: SettingsStore) {
+    val vm: BackupVerifyViewModel = viewModel(factory = factory { BackupVerifyViewModel(env.core, env.platform, settings) })
+    val state by vm.state.collectAsStateWithLifecycle()
+    val nav = env.nav
+    val hasBack = nav.previousBackStackEntry != null
+    // The shell opened this screen on top of an approval screen. Back must reach the list, not that screen again (it would reopen this one).
+    val back: (() -> Unit)? = if (!hasBack) null else {
+        {
+            val from = nav.previousBackStackEntry?.destination?.route?.substringBefore("/")
+            nav.popBackStack()
+            if (from != null && from in Routes.approvalBases) nav.popBackStack()
+        }
+    }
+    if (back != null) BackHandler(onBack = back)
+    BackupVerifyScreen(
+        state,
+        BackupVerifyActions(
+            onTyped = vm::onTyped,
+            onCheck = { vm.check { if (hasBack) nav.popBackStack() else nav.navigate(Routes.Home) { popUpTo(nav.graph.id) { inclusive = true } } } },
+            onShowAgain = { nav.navigate(backupRoute(false)) },
+            onAuthenticate = vm::authenticate,
+            onBack = back,
+        ),
+    )
 }

@@ -129,7 +129,7 @@ class ReleaseRound2Test {
         rule.setScreen { RedScreen(ReleaseSamples.redState(ReleaseSamples.redUnknownProposer), RedActions()) }
         rule.onNodeWithText("Approve").assertIsNotEnabled()
         rule.onNodeWithText("type the id first").assertExists()
-        rule.onNodeWithText("This proposer never met this phone: type its id in the field below the proofs to enable Approve.").assertExists()
+        rule.onNodeWithText("This proposer never met this phone: type its id in the field below the approvals to enable Approve.").assertExists()
     }
 
     @Test fun n6_a_met_proposer_has_no_such_note() {

@@ -18,6 +18,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import uk.petruha.sshub.phone.core.CoreException
+import uk.petruha.sshub.phone.core.InMemorySettingsStore
 import uk.petruha.sshub.phone.core.HomeApi
 import uk.petruha.sshub.phone.core.PendingItem
 import uk.petruha.sshub.phone.core.PendingKind
@@ -47,7 +48,7 @@ class LockPathTest {
 
     @Test fun the_vault_locking_on_a_release_screen_shows_lock_without_a_core_exception() {
         val core = LockingCore(); val platform = FakePlatform()
-        rule.setContent { AppRoot(core, platform) }
+        rule.setContent { AppRoot(core, platform, InMemorySettingsStore(verified = true)) }
         rule.onNode(hasText("Approvals") and SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Tab)).performClick()
         rule.onNodeWithText("db-staging").performScrollTo().performClick()
         rule.onAllNodesWithText("Approve", substring = true, ignoreCase = true).onFirst().assertExists()

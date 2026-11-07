@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import uk.petruha.sshub.phone.core.AutoLockChoices
+import uk.petruha.sshub.phone.core.cleanDeviceName
 import uk.petruha.sshub.phone.core.SettingsStore
 import uk.petruha.sshub.phone.core.ThemeChoice
 import java.io.File
@@ -20,21 +21,28 @@ class FileSettingsStore(private val file: File) : SettingsStore {
     private val themeFlow = MutableStateFlow(values["theme"]?.let { v -> ThemeChoice.entries.firstOrNull { it.name == v } } ?: ThemeChoice.Dark)
     private val autoLockFlow = MutableStateFlow(values["autolock"]?.toIntOrNull()?.takeIf { it in AutoLockChoices.seconds } ?: AutoLockChoices.DEFAULT)
     private val backupFlow = MutableStateFlow(values["backup"] == "1")
+    private val verifiedFlow = MutableStateFlow(values["verified"] == "1")
+    private val updateFlow = MutableStateFlow(cleanDeviceName(values["updatefor"]))
     private val mismatchFlow = MutableStateFlow(values["mismatch"] == "1")
 
     override val theme: StateFlow<ThemeChoice> get() = themeFlow.asStateFlow()
     override val autoLockSeconds: StateFlow<Int> get() = autoLockFlow.asStateFlow()
     override val backupConfirmed: StateFlow<Boolean> get() = backupFlow.asStateFlow()
+    override val backupVerified: StateFlow<Boolean> get() = verifiedFlow.asStateFlow()
+    override val updateNeededAfter: StateFlow<String?> get() = updateFlow.asStateFlow()
     override val signerMismatch: StateFlow<Boolean> get() = mismatchFlow.asStateFlow()
 
     @Synchronized private fun save() {
-        val text = "theme=${themeFlow.value.name}\nautolock=${autoLockFlow.value}\nbackup=${if (backupFlow.value) 1 else 0}\nmismatch=${if (mismatchFlow.value) 1 else 0}\n"
+        val text = "theme=${themeFlow.value.name}\nautolock=${autoLockFlow.value}\nbackup=${if (backupFlow.value) 1 else 0}\nverified=${if (verifiedFlow.value) 1 else 0}\nmismatch=${if (mismatchFlow.value) 1 else 0}\n" +
+            "updatefor=${updateFlow.value.orEmpty()}\n"
         atomicWrite(file, text.toByteArray(Charsets.UTF_8))
     }
 
     override fun setTheme(choice: ThemeChoice) { themeFlow.value = choice; save() }
     override fun setAutoLock(seconds: Int) { autoLockFlow.value = seconds.coerceIn(AutoLockChoices.seconds.first(), AutoLockChoices.seconds.last()); save() }
     override fun setBackupConfirmed(confirmed: Boolean) { backupFlow.value = confirmed; save() }
+    override fun setBackupVerified(v: Boolean) { if (!v || verifiedFlow.value) return; verifiedFlow.value = true; save() }
+    override fun setUpdateNeededAfter(deviceName: String?) { updateFlow.value = cleanDeviceName(deviceName); save() }
     override fun setSignerMismatch(mismatch: Boolean) { if (!mismatch || mismatchFlow.value) return; mismatchFlow.value = true; save() }
     override fun clearSignerMismatch() { if (!mismatchFlow.value) return; mismatchFlow.value = false; save() }
 

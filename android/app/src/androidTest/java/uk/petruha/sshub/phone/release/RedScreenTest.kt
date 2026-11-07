@@ -52,6 +52,7 @@ class RedScreenTest {
                     onToggleHash = { st.value = st.value.copy(showHash = !st.value.showHash) },
                     onCopy = { log += "copy"; st.value = st.value.copy(copied = true, clearsIn = 60) },
                     onTyped = { st.value = st.value.copy(typed = it) },
+                    onScanId = { log += "scan-id" },
                 ),
             )
         }
@@ -67,7 +68,9 @@ class RedScreenTest {
         rule.onNodeWithText("Revoke device laptop-old").assertExists()
         rule.onNodeWithText("proposed by laptop-main 7B3E-0D15, lamport 1042, seq 57").assertExists()
         rule.onNodeWithText("6 min ago").assertExists()
-        rule.onNodeWithText("lapses in 2 d 23 h").assertExists()
+        rule.onNodeWithText("expires in 12:00").assertExists()
+        rule.onAllNodesWithText("lapses in", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("approval window", substring = true).assertCountEquals(0)
         rule.onNodeWithText("Approve").assertIsEnabled().performClick()
         rule.onNodeWithText("Decline").performClick()
         assertEquals(listOf("approve", "decline"), log)
@@ -80,7 +83,7 @@ class RedScreenTest {
 
     @Test fun d1_red_banner_is_the_first_element_under_the_header() {
         rule.show(ReleaseSamples.redState())
-        val header = rule.onNodeWithText("Red operation").fetchSemanticsNode().boundsInRoot
+        val header = rule.onNodeWithText("Big change").fetchSemanticsNode().boundsInRoot
         val banner = rule.onNodeWithText("RED OPERATION").fetchSemanticsNode().boundsInRoot
         val title = rule.onNodeWithText("Revoke device laptop-old").fetchSemanticsNode().boundsInRoot
         assertTrue("banner below header", banner.top >= header.bottom - 1f)
@@ -109,8 +112,8 @@ class RedScreenTest {
         val s = rule.show(ReleaseSamples.redState())
         rule.onAllNodes(descStartsWith("Proof of ")).assertCountEquals(1)
         rule.onNodeWithContentDescription("Proof of this phone, your turn").assertExists()
-        rule.onNodeWithText("A Red operation takes effect only with three proofs: this phone, a second attended device and a third factor.").assertExists()
-        rule.onAllNodesWithText("second attended device", substring = true).assertCountEquals(1)
+        rule.onNodeWithText("A big change takes effect only with three approvals: this phone, a second device with a person at the keyboard and the paper phrase or the emailed code.").assertExists()
+        rule.onAllNodesWithText("second device with a person at the keyboard", substring = true).assertCountEquals(1)
         rule.runOnIdle { s.value = signed }
         rule.onNodeWithContentDescription("Proof of this phone, signed").assertExists()
         rule.runOnIdle { s.value = declined }
@@ -298,5 +301,21 @@ class RedScreenTest {
         rule.show(ReleaseSamples.redState(ReleaseSamples.redFailing))
         rule.onAllNodes(hasText("continue anyway", ignoreCase = true, substring = true)).assertCountEquals(0)
         rule.onAllNodes(hasContentDescription("Approve all", substring = true, ignoreCase = true)).assertCountEquals(0)
+    }
+
+    @Test fun u13_16_the_typed_id_field_has_a_scan_button_and_a_scanned_id_enables_approve() {
+        val log = mutableListOf<String>()
+        val view = ReleaseSamples.redUnknownProposer
+        val st = rule.show(ReleaseSamples.redState(view), log = log)
+        rule.onNodeWithText("Scan its QR").performScrollTo().performClick()
+        assertEquals(listOf("scan-id"), log)
+        rule.onNodeWithText("Approve").assertIsNotEnabled()
+        rule.runOnIdle { st.value = st.value.copy(typed = view.mustType!!) } // what the scan screen hands to `typed`
+        rule.onNodeWithText("Approve").assertIsEnabled()
+    }
+
+    @Test fun u13_17_red_shows_one_timer_the_screen_window_since_it_ends_long_before_the_3_days() {
+        rule.show(ReleaseSamples.redState())
+        rule.onAllNodesWithText("expires in", substring = true).assertCountEquals(1)
     }
 }

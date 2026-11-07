@@ -57,11 +57,11 @@ fun FirstRunScreen(state: FirstRunState, on: FirstRunActions) {
         Gap(14.dp)
         SshubCard {
             Text("what this app is", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Bullet(GlyphKind.Check, "A share holder of your SSHub ring: one share of every Quorum credential. It approves dangerous changes and releases shares.")
+            Bullet(GlyphKind.Check, "A full device of your devices: it holds one piece of every saved password. It approves big changes and releases passwords.")
             Bullet(GlyphKind.Check, "No account and no network. It works in airplane mode.")
             Gap(6.dp)
             Text("what it is not", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Bullet(GlyphKind.Cross, "Not a sync peer and not a password manager: no copy of your hosts, no password to read.")
+            Bullet(GlyphKind.Cross, "Not a copy of your host list and not a password manager. With one computer there is no backup of your host list: this phone and the paper words hold pieces of passwords, not your hosts. Add a second computer, or a view-only copy on a server at a permanent address, before you rely on sync.")
         }
         SectionHeading("Screen lock of this phone", trailing = "no PIN in the app")
         Note("The secret of this phone is wrapped by a key inside the Android Keystore. Every unlock asks for your fingerprint, face or screen lock. The app has no PIN of its own.")

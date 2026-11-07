@@ -39,6 +39,10 @@ const val HEAD_PENDING_BODY = "A restored phone has lost its chain. Take it from
 const val TAKE_CHAIN_LABEL = "Take my chain from a terminal"
 const val NOTHING_WAITING_TITLE = "Nothing waiting"
 const val NOTHING_WAITING_BODY = "Requests arrive when a terminal shows a code and you scan it. Nothing is pushed to this phone, and it keeps no connection open."
+const val UPDATE_NEEDED_BODY = "This phone has not received the new shares yet. Until it does, it cannot release passwords. Open the update and read the list a terminal shows."
+const val UPDATE_SHARES_LABEL = "Update this phone"
+const val CONNECT_LABEL = "Connect to a terminal"
+fun updateNeededTitle(device: String) = "Update needed after removing $device"
 
 /** `home` and `empty-home` of spec 12: the ring when enrolled, the "no ring yet" card otherwise. */
 @Composable
@@ -50,7 +54,7 @@ fun RingHomeScreen(state: HomeState, on: HomeActions) {
         bar = if (ring == null && !state.restoredAdopted) ({
             BarButtons {
                 SshubButton("Restore", on.onRestore, kind = ButtonKind.Outline)
-                SshubButton("Enroll with a terminal", on.onEnroll, kind = ButtonKind.Primary)
+                SshubButton(CONNECT_LABEL, on.onEnroll, kind = ButtonKind.Primary)
             }
         }) else null,
     ) {
@@ -59,6 +63,13 @@ fun RingHomeScreen(state: HomeState, on: HomeActions) {
             WarnBox(HEAD_PENDING_TITLE) {
                 Note(HEAD_PENDING_BODY)
                 SshubButton(TAKE_CHAIN_LABEL, on.onTakeChain, Modifier.fillMaxWidth(), kind = ButtonKind.Outline)
+            }
+            Gap()
+        }
+        state.updateNeededAfter?.let {
+            WarnBox(updateNeededTitle(it)) {
+                Note(UPDATE_NEEDED_BODY)
+                SshubButton(UPDATE_SHARES_LABEL, on.onUpdateShares, Modifier.fillMaxWidth(), kind = ButtonKind.Outline)
             }
             Gap()
         }
@@ -181,7 +192,7 @@ private fun EmptyHomeBody(p: HomePhoneView, headPending: Boolean) {
     )
     SectionHeading("How it starts")
     SshubCard {
-        Note("On a terminal start phone enrollment, then tap Enroll with a terminal here. Both screens show four words; if they are identical you tap The words match.")
+        Note("On a terminal start phone enrollment, then tap $CONNECT_LABEL here. Both screens show the four check words; if they are identical you tap The words match.")
     }
 }
 

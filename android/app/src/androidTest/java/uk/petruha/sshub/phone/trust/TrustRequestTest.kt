@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
@@ -43,7 +44,7 @@ class TrustRequestTest {
     @Test fun main_path_approve_and_decline_call_back() {
         var approved = 0; var declined = 0
         rule.setScreen { TrustRequestScreen(ok, requestActions(onApprove = { approved++ }, onDecline = { declined++ })) }
-        rule.onNodeWithText("TRUST CERTIFICATE").assertExists()
+        rule.onNodeWithText("TRUST SESSION").assertExists()
         rule.onNodeWithText("sign with the phone").assertExists()
         rule.onNodeWithText("Approve").assertIsEnabled().performClick()
         rule.onNodeWithText("Decline").performClick()
@@ -92,8 +93,21 @@ class TrustRequestTest {
         rule.setScreen { TrustRequestScreen(unmet, requestActions()) }
         rule.onNodeWithText("Type the device id in the field under the warning to enable Approve.").assertExists()
         rule.onAllNodesWithText("Type the device id above", substring = true).assertCountEquals(0)
-        rule.onNodeWithText("Red operation").assertExists()
+        rule.onNodeWithText("big change").assertExists()
         rule.onAllNodesWithText("Red: 3 proofs").assertCountEquals(0)
+    }
+
+    @Test fun u13_16_the_typed_id_field_has_a_scan_button() {
+        var scans = 0
+        rule.setScreen { TrustRequestScreen(unmet, requestActions(onScanId = { scans++ })) }
+        rule.onNodeWithText("Scan its QR").performScrollTo().performClick()
+        assertEquals(1, scans)
+        rule.onNodeWithText("Approve").assertIsNotEnabled()
+    }
+
+    @Test fun u13_16_a_met_requester_has_no_scan_button() {
+        rule.setScreen { TrustRequestScreen(ok, requestActions()) }
+        rule.onAllNodesWithText("Scan its QR").assertCountEquals(0)
     }
 
     @Test fun d8_approve_enabled_iff_all_checks_pass() {

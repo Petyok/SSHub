@@ -59,6 +59,7 @@ class ShareReleaseScreenTest {
                     onByHand = { st.value = st.value.copy(byHand = it) },
                     onCopy = { log += "copy"; st.value = st.value.copy(copied = true, clearsIn = 60) },
                     onAskAgain = { log += "again" },
+                    onScanId = { log += "scan-id" },
                 ),
             )
         }
@@ -80,7 +81,7 @@ class ShareReleaseScreenTest {
         rule.show(dbs, log = log)
         rule.onNodeWithText("workstation").assertExists()
         rule.onNodeWithText("9C61-E2A8").assertExists()
-        rule.onNodeWithText("hybrid, epoch 7, share 2").assertExists()
+        rule.onNodeWithText("hybrid, sharing round 7, share 2").assertExists()
         rule.onNodeWithText("signed 38 s ago", substring = true, useUnmergedTree = true).assertExists()
         rule.onNodeWithText("Compare the host and the four words with the terminal.").assertExists()
         // H1: the host id in groups of 4 and every row of the signed op, danger rows with the red gutter
@@ -133,10 +134,34 @@ class ShareReleaseScreenTest {
         assertEquals(listOf("back"), log)
     }
 
-    @Test fun d10_window_countdown_is_visible_to_talkback_in_10_second_steps() {
+    @Test fun d10_the_screen_window_is_the_one_timer_only_when_it_ends_before_the_request() {
         val t0 = ReleaseSamples.T0
-        rule.show(ReleaseSamples.releaseState(now = t0, openedAt = t0 - 10))
-        rule.onNodeWithContentDescription("11 minutes 50 seconds left").assertExists()
+        rule.show(ReleaseSamples.releaseState(now = t0, openedAt = t0 - 700)) // 20 s of screen window left, the request has 82
+        rule.onAllNodesWithText("expires in", substring = true).assertCountEquals(1)
+        rule.onNodeWithText("expires in 0:20").assertExists()
+        rule.onNodeWithContentDescription("20 seconds left").assertExists()
+    }
+
+    @Test fun u13_17_one_timer_with_the_requests_own_time_and_no_approval_window() {
+        val v = ReleaseSamples.releaseDbs
+        rule.show(ReleaseSamples.releaseState(now = v.expiresAt - 120)) // 120 s left, a fresh 12 minute screen window
+        rule.onAllNodesWithText("expires in", substring = true).assertCountEquals(1)
+        rule.onNodeWithText("expires in 2:00").assertExists()
+        rule.onAllNodesWithText("approval window", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("s left", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("expires after", substring = true).assertCountEquals(0)
+        rule.onAllNodesWithText("12:00").assertCountEquals(0)
+    }
+
+    @Test fun u13_16_the_typed_id_field_has_a_scan_button_and_a_scanned_id_enables_approve() {
+        val log = mutableListOf<String>()
+        val v = ReleaseSamples.releaseBastion
+        val st = rule.show(ReleaseSamples.releaseState(v), log = log)
+        rule.onNodeWithText("Scan its QR").performScrollTo().performClick()
+        assertEquals(listOf("scan-id"), log)
+        rule.onNodeWithText("Approve").assertIsNotEnabled()
+        rule.runOnIdle { st.value = st.value.copy(typed = v.mustType!!) } // what the scan screen hands to `typed`
+        rule.onNodeWithText("Approve").assertIsEnabled()
     }
 
     @Test fun d15_four_binding_words_whole_both_buttons_enabled_none_preselected() {
@@ -187,7 +212,7 @@ class ShareReleaseScreenTest {
         rule.show(bastion)
         rule.onNodeWithText("not met E7A4-6B02", substring = true).assertExists()
         rule.onAllNodes(descStartsWith("Requester key"), useUnmergedTree = true).assertCountEquals(0)
-        rule.onNodeWithText("envelope, epoch 7, share 1").assertExists()
+        rule.onNodeWithText("envelope, sharing round 7, share 1").assertExists()
         rule.onNodeWithText("Type E7A4-6B02", substring = true).assertExists()
     }
 

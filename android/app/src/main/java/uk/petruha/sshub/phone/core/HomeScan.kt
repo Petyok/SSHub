@@ -6,7 +6,9 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /** What the generic scan screen is for. Route: `Routes.Scan + "/" + purpose.arg` (see `scanRoute`). */
 enum class ScanPurpose(val arg: String) {
-    Request("request"), EnrollStep("enroll-step"), Chain("chain"), Recovery("recovery"), Reshare("reshare");
+    Request("request"), EnrollStep("enroll-step"), Chain("chain"), Recovery("recovery"), Reshare("reshare"),
+    /** The id of the other device, read from the terminal's QR (`sshub:dev:1:<16 hex>`); the core knows nothing of it. */
+    DeviceId("device-id");
 
     companion object {
         fun fromArg(arg: String?): ScanPurpose = entries.firstOrNull { it.arg == arg } ?: Request
@@ -20,6 +22,9 @@ fun scanRoute(purpose: ScanPurpose): String = Routes.Scan + "/" + purpose.arg
  * `Opened` subtype); passed to `homeGraph`.
  */
 fun interface OpenedRouter { fun route(opened: Opened): String? }
+
+/** The result of a `ScanPurpose.DeviceId` scan: the 16 lowercase hex digits. Built by the scan screen, never by the core. */
+class DeviceIdScanned(val id: String) : Opened
 
 class ScanResult(val purpose: ScanPurpose, val opened: Opened)
 

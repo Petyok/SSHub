@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.coroutines.cancellation.CancellationException
+import uk.petruha.sshub.phone.core.AppSettings
 import uk.petruha.sshub.phone.core.ChainCheck
 import uk.petruha.sshub.phone.core.CoreException
 import uk.petruha.sshub.phone.core.IdentityApi
@@ -55,7 +56,9 @@ class FirstRunViewModel(private val core: IdentityApi, private val platform: Pla
     }
 }
 
-class RestoreViewModel(private val core: IdentityApi, private val platform: Platform, replaces: Boolean) : ViewModel() {
+class RestoreViewModel(
+    private val core: IdentityApi, private val platform: Platform, replaces: Boolean, private val settings: SettingsStore = AppSettings,
+) : ViewModel() {
     private val flow = MutableStateFlow(RestoreState(replaces = replaces))
     val state: StateFlow<RestoreState> = flow.asStateFlow()
 
@@ -97,6 +100,7 @@ class RestoreViewModel(private val core: IdentityApi, private val platform: Plat
                 when (val r = platform.keys.store(secret)) {
                     VaultResult.Stored -> {
                         core.unlock(secret, platform.clock.nowSeconds())
+                        settings.setBackupVerified(true) // the user typed all 24 words just now
                         wipe()
                         onRestored()
                     }
@@ -389,4 +393,61 @@ class AboutViewModel(private val core: IdentityApi, private val platform: Platfo
     }
 
     fun toggleLicences() { ui.value = ui.value.copy(licencesOpen = !ui.value.licencesOpen) }
+}
+
+/** Asks for two random words of the 24 after the system lock. Only those two words are kept, and only until the check passes. */
+class BackupVerifyViewModel(
+    private val core: IdentityApi, private val platform: Platform, private val settings: SettingsStore,
+    random: (Int) -> Int = { kotlin.random.Random.nextInt(it) },
+) : ViewModel() {
+    private val flow = MutableStateFlow(BackupVerifyState(numbers = pickCheckWords(random)))
+    val state: StateFlow<BackupVerifyState> = flow.asStateFlow()
+    private var real: List<String> = emptyList()
+    private var busy = false
+
+    init { authenticate() }
+
+    fun authenticate() {
+        if (busy) return
+        busy = true
+        flow.value = flow.value.copy(phase = VerifyPhase.Authenticating, message = null)
+        viewModelScope.launch {
+            try {
+                when (val r = platform.keys.unlock("Check the recovery words", "Confirm it is you")) {
+                    is VaultResult.Secret -> {
+                        r.bytes.fill(0)
+                        val chars = core.backupWords()
+                        real = flow.value.numbers.map { String(chars[it - 1]) }
+                        chars.forEach { it.fill('\u0000') }
+                        flow.value = flow.value.copy(phase = VerifyPhase.Ready)
+                    }
+                    VaultResult.Canceled -> flow.value = flow.value.copy(phase = VerifyPhase.Canceled, message = "Unlock was canceled. The check needs it.")
+                    else -> flow.value = flow.value.copy(phase = VerifyPhase.Failed, message = vaultMessage(r))
+                }
+            } catch (e: CoreException) {
+                flow.value = flow.value.copy(phase = VerifyPhase.Failed, message = "The core could not give the words: ${e.message}")
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun onTyped(index: Int, text: String) {
+        val st = flow.value
+        flow.value = st.copy(typed = st.typed.mapIndexed { i, t -> if (i == index) text else t }, wrong = st.wrong - st.numbers[index])
+    }
+
+    /** Both right: the flag is set for good and `onVerified` runs. Otherwise the wrong numbers are marked. */
+    fun check(onVerified: () -> Unit) {
+        val st = flow.value
+        if (st.phase != VerifyPhase.Ready || real.size != st.numbers.size) return
+        val wrong = st.numbers.filterIndexed { i, _ -> !sameWord(st.typed[i], real[i]) }.toSet()
+        if (wrong.isNotEmpty()) { flow.value = st.copy(wrong = wrong); return }
+        settings.setBackupVerified(true)
+        real = emptyList()
+        flow.value = st.copy(typed = listOf("", ""), wrong = emptySet())
+        onVerified()
+    }
+
+    override fun onCleared() { real = emptyList(); flow.value = flow.value.copy(typed = listOf("", "")) }
 }

@@ -216,9 +216,10 @@ class EnrollViewModel(
         }
     }
 
+    /** Paste too ends on the Finish screen (step 5): the terminal's confirmation is shown as received and the user taps Finish, as on QR. */
     private fun onEnrolled(o: OpenedEnrolled) {
         flow.update { it.copy(conf = ConfirmStatus.Ok, enrolled = o, note = null) }
-        if (flow.value.channel == EnrollChannel.Paste) nav.navigate(Routes.EnrollDone)
+        if (flow.value.channel == EnrollChannel.Paste) nav.navigate(Routes.Enroll5)
     }
 
     // ---- step 4 ----------------------------------------------------------------------------------------------------

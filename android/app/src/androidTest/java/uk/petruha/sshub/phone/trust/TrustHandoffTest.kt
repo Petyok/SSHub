@@ -37,7 +37,7 @@ class TrustHandoffTest {
         rule.setScreen { TrustSignedScreen(signed, handoffActions(onCopy = { copied++ }, onDone = { done++ })) }
         rule.onNodeWithText("SIGNED").assertExists()
         rule.onNodeWithText("laptop-main [7B3E-0D15], 5 hosts, 30 days, ends 2026-11-25").assertExists()
-        rule.onNode(hasContentDescription("QR code with the signed certificate", substring = true)).assertExists()
+        rule.onNode(hasContentDescription("QR code with the signed trust session", substring = true)).assertExists()
         rule.onNode(hasContentDescription("Signed text")).assertExists()
         rule.onNode(hasContentDescription("Proof 1 of 3, phone, signed")).assertExists()
         rule.onNode(hasContentDescription("Proof 2 of 3, second, waiting")).assertExists()

@@ -24,8 +24,8 @@ internal fun SemanticsNodeInteraction.description(): String =
     fetchSemanticsNode().config[SemanticsProperties.ContentDescription].joinToString(" ")
 
 internal fun requestActions(
-    onTyped: (String) -> Unit = {}, onApprove: () -> Unit = {}, onDecline: () -> Unit = {}, onBack: () -> Unit = {},
-) = TrustRequestActions(onTyped, onApprove, onDecline, onBack)
+    onTyped: (String) -> Unit = {}, onApprove: () -> Unit = {}, onDecline: () -> Unit = {}, onBack: () -> Unit = {}, onScanId: () -> Unit = {},
+) = TrustRequestActions(onTyped, onApprove, onDecline, onBack, onScanId)
 
 internal fun extendActions(
     onApprove: () -> Unit = {}, onDecline: () -> Unit = {}, onCopy: () -> Unit = {}, onDone: () -> Unit = {}, onBack: () -> Unit = {},

@@ -12,7 +12,6 @@ import uk.petruha.sshub.phone.ui.components.BarButtons
 import uk.petruha.sshub.phone.ui.components.ButtonKind
 import uk.petruha.sshub.phone.ui.components.Gap
 import uk.petruha.sshub.phone.ui.components.HexGroups
-import uk.petruha.sshub.phone.ui.components.MonoField
 import uk.petruha.sshub.phone.ui.components.Note
 import uk.petruha.sshub.phone.ui.components.OwnProof
 import uk.petruha.sshub.phone.ui.components.ProofKind
@@ -23,6 +22,7 @@ import uk.petruha.sshub.phone.ui.components.SshubButton
 import uk.petruha.sshub.phone.ui.components.SshubCard
 import uk.petruha.sshub.phone.ui.components.StopBox
 import uk.petruha.sshub.phone.ui.components.WarnBox
+import uk.petruha.sshub.phone.ui.screens.release.TypedIdField
 import uk.petruha.sshub.phone.ui.theme.SshubText
 
 /** Review: the request as the core describes it. Declined and Closed end without a signature; Signed is the hand-off (request: own screen). */
@@ -48,16 +48,17 @@ class TrustRequestActions(
     val onApprove: () -> Unit,
     val onDecline: () -> Unit,
     val onBack: () -> Unit,
+    val onScanId: () -> Unit = {},
 )
 
-/** Spec 12 `trust-request`: Red certificate request, variants ok / unmet / refused (0..8, never an Approve) / closed. */
+/** Spec 12 `trust-request`: big change, trust session request, variants ok / unmet / refused (0..8, never an Approve) / closed. */
 @Composable
 fun TrustRequestScreen(state: TrustRequestState, on: TrustRequestActions) {
     SecureWindow()
     when (state.phase) {
         TrustPhase.Declined -> ScreenFrame(
             "Trust request", on.onBack,
-            banner = { RedBanner("DECLINED", kind = BannerKind.Neutral, trailing = "trust certificate") },
+            banner = { RedBanner("DECLINED", kind = BannerKind.Neutral, trailing = "trust session") },
             bar = { SshubButton("Back to approvals", on.onBack, Modifier.fillMaxWidth()) },
         ) {
             SshubCard {
@@ -67,12 +68,12 @@ fun TrustRequestScreen(state: TrustRequestState, on: TrustRequestActions) {
         }
         TrustPhase.Closed -> ScreenFrame(
             "Trust request", on.onBack,
-            banner = { RedBanner("WINDOW CLOSED", kind = BannerKind.Neutral, trailing = "trust certificate") },
+            banner = { RedBanner("WINDOW CLOSED", kind = BannerKind.Neutral, trailing = "trust session") },
             bar = { SshubButton("Back to approvals", on.onBack, Modifier.fillMaxWidth()) },
         ) {
             SshubCard {
                 Text("Window closed.", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
-                Note("The approval window of 12 minutes ended. Nothing was signed. Open the request again.")
+                Note("The 12 minutes for this screen ended. Nothing was signed. Open the request again.")
             }
         }
         // Signed is shown by TrustSignedScreen; a request state never stays here.
@@ -86,7 +87,7 @@ private fun ReviewFrame(state: TrustRequestState, on: TrustRequestActions) {
     val refused = v.refusal != null
     ScreenFrame(
         "Trust request", on.onBack,
-        banner = { RedBanner("TRUST CERTIFICATE", trailing = "Red operation") },
+        banner = { RedBanner("TRUST SESSION", trailing = "big change") },
         bar = {
             if (refused) SshubButton("Back to approvals", on.onBack, Modifier.fillMaxWidth())
             else {
@@ -129,8 +130,8 @@ private fun ReviewFrame(state: TrustRequestState, on: TrustRequestActions) {
                 HexGroups(v.device.id, groups = null, label = "Device id")
             }
             Gap(8.dp)
-            MonoField(
-                state.typed, on.onTyped, placeholder = "Type ${v.device.id}", capitalize = true,
+            TypedIdField(
+                state.typed, on.onTyped, on.onScanId, placeholder = "Type ${v.device.id}",
                 label = "Type the device id of the requester",
                 error = if (state.typed.length >= v.device.id.length && !state.gateOk) "That is not the id of the requester" else null,
             )
@@ -140,8 +141,8 @@ private fun ReviewFrame(state: TrustRequestState, on: TrustRequestActions) {
             SshubCard { OwnProof(ProofKind.YourTurn) }
             Gap(8.dp)
             Note(
-                "The certificate takes effect only with three proofs: this phone, a second terminal and a third factor. " +
-                    "This signature is the phone's part: it authors the certificate. No hash is shown: the core gives none for a trust request.",
+                "The trust session takes effect only with three approvals: this phone, a second device with a person at the keyboard and the paper phrase or the emailed code. " +
+                    "This signature is the phone's part: it authors the trust session. No hash is shown: the core gives none for a trust request.",
             )
         }
         state.error?.let { Gap(); WarnBox(it, live = true) }

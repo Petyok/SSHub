@@ -16,7 +16,7 @@ import uk.petruha.sshub.phone.ui.screens.release.announceStep
 import uk.petruha.sshub.phone.ui.screens.release.announcement
 import uk.petruha.sshub.phone.ui.screens.release.durationText
 import uk.petruha.sshub.phone.ui.screens.release.hashPrefix
-import uk.petruha.sshub.phone.ui.screens.release.mmss
+import uk.petruha.sshub.phone.ui.screens.release.expiresText
 import uk.petruha.sshub.phone.ui.screens.release.redGate
 import uk.petruha.sshub.phone.ui.screens.release.redLapsed
 import uk.petruha.sshub.phone.ui.screens.release.releaseGate
@@ -134,7 +134,9 @@ class ReleaseLogicTest {
         assertEquals("1 minute left", spokenWindow(60))
         assertEquals("50 seconds left", spokenWindow(59))
         assertEquals("0 seconds left", spokenWindow(0))
-        assertEquals("11:50", mmss(710)); assertEquals("00:00", mmss(-5))
+        assertEquals("expires in 1:58", expiresText(118)); assertEquals("expires in 0:00", expiresText(-5))
+        assertEquals("expires in 59:59", expiresText(3599)); assertEquals("expires in 1 h 0 min", expiresText(3600))
+        assertEquals("expires in 2 days 4 h", expiresText(2 * 86_400 + 4 * 3_600 + 59)); assertEquals("expires in 1 day 0 h", expiresText(86_400))
     }
 
     @Test fun durations_read_like_the_prototype() {
@@ -177,5 +179,18 @@ class ReleaseLogicTest {
         listOf(ReleaseSamples.redRevoke, ReleaseSamples.redMode).forEach { assertEquals(64, it.hash.length) }
         assertEquals(18, ReleaseSamples.refusals.size)
         assertEquals(18, ReleaseSamples.refusals.map { it.reason.key }.distinct().size)
+    }
+
+    @Test fun u13_17_the_one_timer_is_the_screen_window_only_when_it_ends_first() {
+        val t0 = ReleaseSamples.T0
+        val v = ReleaseSamples.releaseDbs
+        val fresh = ReleaseSamples.releaseState(now = v.expiresAt - 120)
+        assertEquals(120L, fresh.timerLeft); assertFalse(fresh.windowIsTimer)
+        val late = ReleaseSamples.releaseState(now = t0, openedAt = t0 - 700)
+        assertEquals(20L, late.timerLeft); assertTrue(late.windowIsTimer)
+        val red = ReleaseSamples.redState(now = t0, openedAt = t0)
+        assertEquals(720L, red.timerLeft); assertTrue(red.windowIsTimer)
+        val soon = ReleaseSamples.redState(now = red.view.lapsesAt - 90, openedAt = red.view.lapsesAt - 90)
+        assertEquals(90L, soon.timerLeft); assertFalse(soon.windowIsTimer)
     }
 }

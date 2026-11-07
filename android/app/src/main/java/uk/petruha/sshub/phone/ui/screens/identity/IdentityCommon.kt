@@ -74,7 +74,7 @@ internal fun vaultMessage(result: VaultResult): String = when (result) {
     VaultResult.NoSecureLock -> "This phone has no screen lock."
     VaultResult.Canceled -> "The system prompt was canceled."
     VaultResult.LockedOut -> "Android blocked the unlock for now after too many wrong tries."
-    VaultResult.Invalidated -> "Android removed the key because the fingerprints or the screen lock changed."
+    VaultResult.Invalidated -> "Android removed the key because the screen lock was removed or reset."
     is VaultResult.Failed -> result.message
     is VaultResult.Secret -> "The key was released when it was not asked for."
     VaultResult.Stored -> "The key was stored when it was not asked for."
