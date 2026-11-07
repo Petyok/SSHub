@@ -154,11 +154,6 @@ pub struct SyncConfig {
     pub auto_sync_on_start: bool,
     #[serde(default)]
     pub notify: NotifyConfig,
-    /// This device has no human at a screen (a Hub, a server): it enrolls as an UNATTENDED device. It then
-    /// never votes, never counts toward a Red ceremony or a checkpoint's signers, and releases a share only
-    /// under a trust certificate. Read when the device enrolls; a ring remembers what it was told then.
-    #[serde(default)]
-    pub unattended: bool,
 }
 
 impl Default for SyncConfig {
@@ -166,7 +161,6 @@ impl Default for SyncConfig {
         Self {
             auto_sync_on_start: true,
             notify: NotifyConfig::default(),
-            unattended: false,
         }
     }
 }
@@ -1387,17 +1381,6 @@ confirm_quit = false
         assert!(config.sync.notify.command.is_none());
         assert!(config.sync.notify.to.is_empty());
         assert!(config.sync.notify.from.is_none());
-    }
-
-    #[test]
-    fn a_device_is_attended_unless_its_config_says_it_has_nobody_at_the_screen() {
-        assert!(!parse_config_str("").unwrap().sync.unattended);
-        assert!(
-            parse_config_str("[sync]\nunattended = true\n")
-                .unwrap()
-                .sync
-                .unattended
-        );
     }
 
     #[test]

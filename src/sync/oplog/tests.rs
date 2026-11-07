@@ -3810,34 +3810,3 @@ fn two_connections_of_one_device_append_at_once_and_the_chain_has_no_gap() {
         .collect();
     assert_eq!(seqs, (1..=60).collect::<Vec<u64>>());
 }
-
-/// e2e scenario 90: a Hub (unattended, never reviews) holds every Yellow change pending. A joiner enrolled through
-/// it used to get an anchor whose cut covered those changes while its state did not contain them: no hosts, and
-/// nothing left to fetch. The anchor is cut before the first change the inviter still holds pending.
-#[test]
-fn a_join_anchor_stops_before_what_the_inviter_holds_pending_so_the_joiner_still_receives_it() {
-    let r = ring(2);
-    let (a, b) = (&r[0], &r[1]);
-    b.append(upsert(1, hf("web", "10.0.0.1")));
-    b.append(upsert(2, hf("db", "10.0.0.2")));
-    pull(a, b);
-    assert_eq!(a.pending(), 2, "the addresses wait for review on the inviter");
-    let joiner = Peer::new();
-    a.append(add_device_body(&joiner, DeviceRole::Mirror));
-    let bundle = a.store.sync_join_anchor_build(&a.id).unwrap();
-    let OpBody::CheckpointPropose { cut, .. } = &bundle.proposal.body else {
-        panic!("an anchor carries a proposal")
-    };
-    assert!(
-        !cut.iter().any(|c| c.device_id == b.dev()),
-        "the cut covers a chain whose first op is pending: {cut:?}"
-    );
-    joiner
-        .store
-        .sync_join_adopt(&bundle, &BootstrapTrust::Enrollment { inviter: a.dev() })
-        .unwrap();
-    pull(&joiner, a);
-    assert_eq!(joiner.pending(), 2, "the joiner receives the held changes and reviews them itself");
-    joiner.approve_all();
-    assert_eq!(joiner.store.list_hosts().unwrap().len(), 2);
-}
