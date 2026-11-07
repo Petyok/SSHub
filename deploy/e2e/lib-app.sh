@@ -100,7 +100,7 @@ app_prep() {
   must "first run offers the restore" appclick "Restore from 24 words"
   must "the 24 words are pasted" apptype "Pasted words" "$WORDS"
   must "the grid is filled" appclick "Fill the grid"
-  must "the page's site data is declared cleared" appclick "I cleared the site data" false
+  must "the page was never used on this phone" appclick "No, never"
   must "restore this phone" appclick "Restore this phone"
   must "the system prompt is answered with the PIN" app '{"op":"auth"}'
   must "the chain screen shows the device id to type" appfind 'type ([0-9A-Fa-f]{16}) to confirm' 60000
