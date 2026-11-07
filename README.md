@@ -668,6 +668,7 @@ adb reverse tcp:8443 tcp:8443
 ```toml
 [sync]
 auto_sync_on_start = true   # one sync round with every device that has a known host when sshub starts
+unattended = false          # true on a device nobody sits at (the Hub): it enrolls as unattended, never votes and no checkpoint or Red change waits for it; read at enrollment, so an already enrolled Hub must re-enroll
 
 [sync.notify]               # off until `command` is set; mails a recovery announcement or a third-factor code
 command = "/usr/sbin/sendmail -t -i"   # split without a shell; needs -t (recipients from the headers) and -i (a lone "." must not end the body)
@@ -779,6 +780,7 @@ config_path = "~/.ssh/config"   # this profile's ssh_config source (profile mode
 
 [sync]
 auto_sync_on_start = true       # host sync: one round with known devices at start (see "Sync (tab 7)")
+# unattended = true             # a device nobody sits at (the Hub): enrolls as unattended; an already enrolled Hub must re-enroll
 # [sync.notify] command = "/usr/sbin/sendmail -t -i" ... mails recovery announcements and codes
 
 [keybinds]
