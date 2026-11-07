@@ -10,10 +10,11 @@ All notable changes to SSHub are documented in this file.
   trimming the kept ssh stderr of a tunnel cut at a byte offset, so a multibyte
   character on the boundary panicked the reader thread once the output passed
   8 KB. It now cuts on a character boundary.
-- **Tunnel keeps ssh errors after a non-UTF-8 line** (issue #177) - the
-  reader of a tunnel's ssh stderr stopped at the first line that was not valid
-  UTF-8, so later errors were lost and ssh could fail writing to the closed
-  pipe. It now reads to the end and shows invalid bytes as `�`.
+- **Tunnels and network sharing keep ssh errors after a non-UTF-8 line**
+  (issue #177) - the reader of a tunnel's ssh stderr, and of the ssh behind
+  "Share my network with this host", stopped at the first line that was not
+  valid UTF-8, so later errors were lost and ssh could die on its next error
+  message. It now reads to the end and shows invalid bytes as `�`.
 
 ## [0.21.0] - 2026-10-28
 

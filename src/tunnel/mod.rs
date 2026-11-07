@@ -99,14 +99,21 @@ fn push_stderr_line(buf: &mut String, line: &str) {
     }
 }
 
-/// Feed every stderr line from `r` into `buf` until EOF. Lines are split as
-/// raw bytes and decoded lossily, so a non-UTF-8 line cannot end the read
-/// early and leave ssh writing into a closed pipe (issue #177).
-fn read_stderr_lines(r: impl std::io::BufRead, buf: &Mutex<String>) {
-    for line in r.split(b'\n').map_while(Result::ok) {
+/// Lines of a child's stderr until EOF, split as raw bytes and decoded
+/// lossily, so a non-UTF-8 line cannot end the read early and leave ssh
+/// writing into a closed pipe (issue #177). A trailing `\r` is stripped.
+pub(crate) fn lossy_lines(r: impl std::io::BufRead) -> impl Iterator<Item = String> {
+    r.split(b'\n').map_while(Result::ok).map(|line| {
         let line = line.strip_suffix(b"\r").unwrap_or(&line);
+        String::from_utf8_lossy(line).into_owned()
+    })
+}
+
+/// Feed every stderr line from `r` into `buf` until EOF.
+fn read_stderr_lines(r: impl std::io::BufRead, buf: &Mutex<String>) {
+    for line in lossy_lines(r) {
         if let Ok(mut s) = buf.lock() {
-            push_stderr_line(&mut s, &String::from_utf8_lossy(line));
+            push_stderr_line(&mut s, &line);
         }
     }
 }
