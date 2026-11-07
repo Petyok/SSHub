@@ -99,10 +99,13 @@ export function parseOp(bytes) {
 }
 
 const BLOB = /^[A-Za-z0-9+/]{40,}={0,2}$/;
-function fmtLeaf(v) {
+// Leaf names that hold opaque blobs (keys, sealed boxes, signatures). Only these are shortened, and only on rows that are
+// not marked danger: a person must never approve on a clipped value (an address of 60 characters, a host, an id).
+const BLOB_FIELDS = new Set(['mlkem_pub', 'ciphertext', 'sealed', 'sealed_share', 'commitments', 'sig', 'paper_sig']);
+function fmtLeaf(v, shorten) {
   if (v === null) return '(cleared)';
   if (typeof v === 'string') {
-    if (BLOB.test(v)) return `${v.length} base64 chars: ${safeText(v.slice(0, 16))}...`;
+    if (shorten && BLOB.test(v)) return `${v.length} base64 chars: ${safeText(v.slice(0, 16))}...`;
     return safeText(v);
   }
   return String(v);
@@ -113,12 +116,16 @@ function fmtLeaf(v) {
 function flatten(value, path, out, top) {
   if (value !== null && typeof value === 'object') {
     const entries = Array.isArray(value) ? value.map((x, i) => [String(i), x]) : Object.entries(value);
-    if (entries.length === 0) out.push({ path, leaf: top, value: Array.isArray(value) ? '(empty list)' : '(none)' });
+    if (entries.length === 0) out.push({ path, leaf: top, raw: Array.isArray(value) ? '(empty list)' : '(none)' });
     for (const [k, x] of entries) flatten(x, path ? `${path}.${k}` : k, out, top ?? k);
   } else {
-    out.push({ path, leaf: path.split('.').pop(), top, value: fmtLeaf(value) });
+    out.push({ path, leaf: path.split('.').pop(), top, raw: value });
   }
 }
+
+// A host credential id as a person compares it (the terminal and the app show the same): 8 groups of 4 hex digits,
+// uppercase, single spaces. The one place that forms it; describe.rs `grouped_host_uid` is the same rule.
+export const groupedHostUid = (hex) => String(hex).toUpperCase().replace(/(.{4})(?=.)/g, '$1 ');
 
 export const iso = (t) => {
   try {
@@ -139,9 +146,9 @@ export function describeOp(op, aliases = {}, { now = null, staleAfter = 120 } = 
   if (op.kind === 'ShareRelease') {
     const f = op.fields;
     requester = f.requester;
-    headline = `Release your share of host credential ${safeText(f.host_uid)} to ${who(f.requester)}`;
+    headline = `Release your share of host credential ${safeText(groupedHostUid(f.host_uid))} to ${who(f.requester)}`;
     rows.push({ label: 'Requesting device', value: who(f.requester), danger: true });
-    rows.push({ label: 'Host credential', value: safeText(f.host_uid), danger: true });
+    rows.push({ label: 'Host credential', value: safeText(groupedHostUid(f.host_uid)), danger: true });
     rows.push({ label: 'Request id', value: String(f.request_id), danger: false });
     rows.push({ label: 'Op signed by', value: who(op.device_id), danger: op.device_id !== f.requester });
   } else {
@@ -155,7 +162,8 @@ export function describeOp(op, aliases = {}, { now = null, staleAfter = 120 } = 
       const segs = l.path.split('.');
       let hot = danger === '*' || (danger instanceof Set && segs.some((x) => danger.has(x)));
       if (known && segs[0] === 'fields' && segs.length > 1 && !known.has(segs[1])) hot = true;
-      rows.push({ label: safeText(l.path || op.kind), value: l.value, danger: !!hot });
+      // a blob is clipped only in a field known to hold one and never on a dangerous row
+      rows.push({ label: safeText(l.path || op.kind), value: fmtLeaf(l.raw, !hot && segs.some((x) => BLOB_FIELDS.has(x))), danger: !!hot });
     }
   }
   // A signed op much older than its request is highlighted (the caller passes the phone clock).

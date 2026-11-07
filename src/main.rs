@@ -260,7 +260,8 @@ HOST SYNC (headless; encrypted peer-to-peer over ssh):
     sshub sync-recovery start|approve|ack|cancel|status | sync-mode vault|quorum
     sshub sync-exemption on|off <device> | sync-export --window <s> --out <path>
     sshub sync-migrate [--remove-local] | sync-import-kit   (sshub <verb> --help for each)
-    sshub sync-phone-enroll | sync-notice <op-id> | sync-phone-ops | sync-share-request <host>
+    sshub sync-phone-enroll | sync-notice <op-id> | sync-phone-chain <phone-id> | sync-phone-ops
+    sshub sync-share-request <host>
     sshub sync-cert-request (--group G | --host H...)   The phone's terminal side, frames as base64 text
                                            (--ble on each: carry the frames over Bluetooth too)
     sshub sync-serve | sync-enroll           Run by a peer over ssh (frames on stdin/stdout)

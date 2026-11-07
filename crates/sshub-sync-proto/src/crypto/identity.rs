@@ -168,6 +168,28 @@ impl DeviceIdentity {
         self.public()
     }
 
+    /// Makes the wrapping keys derived from these seeds the CURRENT generation (the old current one moves to the
+    /// previous generations, newest first). For identities whose wrap generations are DERIVED from a secret and a
+    /// generation number (the phone), not drawn at random like [`Self::rotate_wrap_keys`].
+    #[doc(hidden)]
+    pub fn push_wrap_generation(
+        &mut self,
+        x_secret: &[u8; 32],
+        mlkem_d: &[u8; 32],
+        mlkem_z: &[u8; 32],
+    ) {
+        let (ek, dk) = mlkem::generate_deterministic(mlkem_d, mlkem_z);
+        let old = std::mem::replace(
+            &mut self.current,
+            WrapKeys {
+                x_secret: XSecret::from(*x_secret),
+                mlkem_dk: Zeroizing::new(dk),
+                mlkem_pub: ek,
+            },
+        );
+        self.previous.insert(0, old);
+    }
+
     /// Drops (and zeroizes) every wrapping generation but the current one; returns how many
     /// were dropped. Call only after every credential has been reshared to the current keys.
     pub fn retire_previous_wrap_keys(&mut self) -> usize {

@@ -202,3 +202,41 @@ fn utc_formats_known_instants() {
     assert_eq!(utc(1_709_210_096), "2024-02-29 12:34 UTC");
     assert_eq!(utc(-86_400), "1969-12-31 00:00 UTC");
 }
+
+#[test]
+fn the_phone_chain_list_carries_the_terminals_own_id_and_the_newest_eight_ops() {
+    // 0 = the phone's chain, 1 = a terminal that holds it
+    let d = ring(2);
+    all_to_all(&d);
+    for _ in 0..10 {
+        d[0].append_host();
+    }
+    all_to_all(&d);
+    let wire = phone_chain_wire(&d[1].store, &d[0].did, &d[1].did).unwrap();
+    // the terminal's own id, as the raw 8 bytes
+    assert_eq!(
+        wire.sender,
+        Some(hex::decode(&d[1].did).unwrap().try_into().unwrap())
+    );
+    // the newest 8 ops of the phone, in seq order, ending at its head
+    assert_eq!(wire.ops.len(), MAX_COURIER_OPS);
+    let head = d[1]
+        .store
+        .sync_chain_heads()
+        .unwrap()
+        .into_iter()
+        .find(|(x, _, _)| *x == d[0].did)
+        .unwrap()
+        .1;
+    let seqs: Vec<u64> = wire
+        .ops
+        .iter()
+        .map(|(c, s)| Op::from_canonical(c, *s).unwrap().seq)
+        .collect();
+    assert_eq!(seqs, (head - 7..=head).collect::<Vec<_>>());
+    // and it survives the wire: the sender is still there after a decode of the encoded frame
+    let back = PhoneOpsWire::decode(&wire.encode()).unwrap();
+    assert_eq!(back, wire);
+    // a terminal that holds nothing of that phone says so
+    assert!(phone_chain_wire(&d[1].store, "0123456789abcdef", &d[1].did).is_err());
+}

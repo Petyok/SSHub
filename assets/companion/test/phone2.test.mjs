@@ -71,6 +71,16 @@ test('ops travel as an ops frame in both directions, capped by the courier', () 
   const frame = encodePhoneOps(courierOps(state));
   assert.deepEqual(decodePhoneOps(frame).map((o) => hexOf(o.canonical)), courierOps(state).map((o) => hexOf(o.canonical)));
   assert.throws(() => decodePhoneOps(Uint8Array.of(...frame, 0)), /trailing/);
+  // the optional sender block (unsigned terminal id): without it none, with it the 8 bytes, truncated or longer is refused
+  assert.equal(decodePhoneOps(frame).sender, null);
+  const sender = Uint8Array.of(7, 7, 7, 7, 7, 7, 7, 7);
+  const withSender = encodePhoneOps(courierOps(state), sender);
+  assert.deepEqual(Array.from(decodePhoneOps(withSender).sender), Array.from(sender));
+  assert.deepEqual(Array.from(withSender.slice(0, frame.length)), Array.from(frame), 'the list itself is unchanged');
+  assert.deepEqual(Array.from(withSender.slice(frame.length)), [1, 7, 7, 7, 7, 7, 7, 7, 7]);
+  for (let cut = 1; cut < 9; cut++) assert.throws(() => decodePhoneOps(withSender.slice(0, withSender.length - cut)), /trailing|truncated/, `cut ${cut}`);
+  assert.throws(() => decodePhoneOps(Uint8Array.of(...withSender, 0)), /truncated or has trailing/);
+  assert.throws(() => encodePhoneOps(courierOps(state), Uint8Array.of(1, 2, 3)), /8 bytes/);
 });
 
 test('wrap key generations: rotation derives new keys, every generation still unwraps', () => {
@@ -189,4 +199,23 @@ test('every final op vector (all body variants incl. the Red ceremony ops) parse
   const v = finalVectors.vectors.find((x) => x.id === 'red-phone-sign');
   const o = parseOp(h(v.canonical_hex));
   assert.equal(hexOf(encodeRedPhoneSign(hdr(o), o.fields.op_hash)), v.canonical_hex, 'RedPhoneSign bytes equal the vector');
+});
+
+test('C-L2 a long base64-looking address is never clipped; only blob fields on non-danger rows are', () => {
+  const long = 'a1B2'.repeat(15); // 60 characters, base64-looking
+  const text = new TextDecoder().decode(h(vec('host-upsert-full').canonical_hex)).replace('web1.example', long);
+  const d = describeOp(parseOp(new TextEncoder().encode(text)));
+  const addr = d.rows.find((r) => r.label === 'fields.address');
+  assert.equal(addr.value, long);
+  assert.equal(addr.danger, true);
+  // a clipped blob: a non-danger row in a blob field (RedFactor.sig)
+  const sig = describeOp(exact('red-factor')).rows.find((r) => r.label === 'sig');
+  assert.equal(sig.danger, false);
+  assert.match(sig.value, /^\d+ base64 chars: .{16}\.\.\.$/);
+  // a dangerous row is never clipped even in a blob field of a dangerous kind
+  const key = describeOp(exact('device-add-holder')).rows.find((r) => r.label === 'device.mlkem_pub');
+  assert.equal(key.danger, true);
+  assert.equal(key.value.length, 1580);
+  // a hash is shown in full
+  assert.equal(describeOp(exact('red-approve')).rows.find((r) => r.label === 'op_hash').value.length, 64);
 });

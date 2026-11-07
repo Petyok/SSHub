@@ -8,10 +8,10 @@ import {
   PIN_MIN_CHARS, generateSecret, pinDelaySecs, pinProblem, identityOfSecret, randomBytes, secretFromWords, secretToWords, unwrapSecret, wrapSecret,
 } from './keys.mjs';
 import {
-  COURIER_TAIL, HEAD_PENDING_MESSAGE, acceptHead, adoptOwnChain, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, confirmNoChain, courierOps, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, restoredState, saveState,
+  COURIER_TAIL, HEAD_PENDING_MESSAGE, SAME_TERMINAL_MESSAGE, acceptHead, adoptOwnChain, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, confirmNoChain, courierOps, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, restoredState, saveState,
 } from './state.mjs';
 import { TIMESTAMP_SKEW_GRACE_SECS, approveRelease, evaluateChallenge } from './release.mjs';
-import { describeOp, iso, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
+import { describeOp, groupedHostUid, iso, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
 import {
   KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeCertExtendRequest, decodeCertRequest, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
   encodeEnrollConfirm, encodeEnrollReveal, encodePhoneOps, transcriptHash,
@@ -335,7 +335,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const msg = h('p', { class: 'err', id: 'head-error' });
     return h('div', { class: 'refusal', id: 'head-pending' },
       h('div', {}, HEAD_PENDING_MESSAGE),
-      h('div', { class: 'mut' }, 'A terminal can be behind, and a chain continued from an old list forks it. Take the list twice, from two terminals or from one terminal at two moments: the page adopts it only when both name the same newest op, and shows you which.'),
+      h('div', { class: 'mut' }, 'A terminal can be behind, and a chain continued from an old list forks it. Take the list from two different terminals: the page adopts it only when both name the same newest op, and shows you which.'),
       btn('Take my chain from a terminal', scanHead, 'primary', 'head-scan'),
       h('div', { class: 'mut' }, 'Only if this key was never used to sign anything, type this phone\'s device id:'),
       typed, msg,
@@ -354,19 +354,29 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     scan({
       heading: 'Take my chain from a terminal', hint: 'A terminal shows this phone\'s own newest ops as a QR code or text (an ops list).', expect: [KIND.PHONE_OPS], onBack: home,
       onDoc: (bytes) => {
-        const r = adoptOwnChain(app.state, app.identity, decodePhoneOps(bytes));
+        const list = decodePhoneOps(bytes);
+        let r;
+        try {
+          r = adoptOwnChain(app.state, app.identity, list, list.sender);
+        } catch (e) {
+          if (e.message !== SAME_TERMINAL_MESSAGE) throw e;
+          return show(
+            title('Same terminal'),
+            h('p', { class: 'err', id: 'head-same' }, SAME_TERMINAL_MESSAGE),
+            btn('Take the next list', scanHead, 'primary', 'head-next'), btn('Back', home, '', 'back'));
+        }
         const seen = `Newest op in this list: seq ${r.head_seq}, signed ${iso(Number(r.newest_at)).slice(0, 16)}Z (${r.ops} op(s) read).`;
         if (!r.agreed) {
           return show(
             title('List read, one more needed', seen),
-            h('p', { class: 'mut', id: 'head-need' }, r.previous_seq ? `The earlier list ended at seq ${r.previous_seq}, so one of the two is behind. Take a list from another terminal, or again after it synced.` : 'Take a second list, from another terminal or from the same one later, before this chain head is trusted.'),
+            h('p', { class: 'mut', id: 'head-need' }, r.previous_seq ? `The earlier list ended at seq ${r.previous_seq}, so one of the two is behind. Take a list from another terminal that is up to date.` : r.sender ? 'Take a second list from another terminal before this chain head is trusted.' : 'This list does not say which terminal made it, so it cannot be one of the two. Take the chain from two different terminals that name themselves.'),
             btn('Take the next list', scanHead, 'primary', 'head-next'), btn('Back', home, '', 'back'));
         }
         show(
           title('Two lists agree', seen),
           h('div', { class: 'refusal', id: 'head-agreed' }, `This phone will continue after seq ${r.head_seq}. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.`),
           btn(`Adopt: continue after seq ${r.head_seq}`, async () => {
-            const a = acceptHead(app.state);
+            const a = acceptHead(app.state, { seq: r.head_seq, hash: r.head_hash });
             await save();
             show(title('Chain taken', `Continuing after seq ${a.head_seq} (${a.ops} op(s) read).`), btn('Done', home, 'primary', 'head-done'));
           }, 'danger', 'head-adopt'),
@@ -616,7 +626,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const rows = Object.entries(app.state.snapshots).map(([host, s]) => {
       const alive = liveSnapshot(app.state, host, app.now());
       return h('div', { class: 'card', 'data-host': host },
-        h('div', { class: 'v' }, host), h('div', { class: 'mut' }, `${alive ? 'live' : 'expired'}; issued ${new Date(s.issued_at * 1000).toISOString().slice(0, 16)}Z, expires ${new Date(s.expires_at * 1000).toISOString().slice(0, 16)}Z; Argon2id ${s.profile.mem_kib / 1024} MiB x ${s.profile.iters}${s.weak ? ' (weak)' : ''}`),
+        h('div', { class: 'v' }, groupedHostUid(host)), h('div', { class: 'mut' }, `${alive ? 'live' : 'expired'}; issued ${new Date(s.issued_at * 1000).toISOString().slice(0, 16)}Z, expires ${new Date(s.expires_at * 1000).toISOString().slice(0, 16)}Z; Argon2id ${s.profile.mem_kib / 1024} MiB x ${s.profile.iters}${s.weak ? ' (weak)' : ''}`),
         btn('Declare it dead (blob never arrived or the credential was reissued)', async () => { invalidateSnapshot(app.state, host); await save(); snapshotList(); }, '', `kill-${host}`));
     });
     show(title('Short codes I issued', 'One live code per credential. The code itself is never stored here.'), rows.length ? rows : h('p', { class: 'mut', id: 'no-snapshots' }, 'None.'), back());

@@ -514,7 +514,7 @@ async function scanChallenge(name, { time = fx.now, profile = PROFILE } = {}) {
   const desc = await text(page, '#desc');
   check('the description names the requesting device', desc.includes(fx.requester.name) && desc.includes(fx.requester.pub.device_id), `${fx.requester.name} [${fx.requester.pub.device_id}]`);
   const dangerRows = await page.locator('#desc .v[data-danger="1"]').allInnerTexts();
-  check('requester and credential are highlighted as dangerous', dangerRows.length === 2 && dangerRows.some((x) => x.includes(fx.requester.pub.device_id)) && dangerRows.some((x) => x.includes(fx.host_uid)), dangerRows.length, 'highlighted rows');
+  check('requester and credential are highlighted as dangerous', dangerRows.length === 2 && dangerRows.some((x) => x.includes(fx.requester.pub.device_id)) && dangerRows.some((x) => x.includes(fx.host_uid.toUpperCase().replace(/(.{4})(?=.)/g, '$1 '))), dangerRows.length, 'highlighted rows');
   const safeRows = await page.locator('#desc .v[data-danger="0"]').count();
   check('the other rows are not highlighted', safeRows >= 3, safeRows, 'plain rows');
   check('the binding words equal the Rust binding hash words', (await text(page, '#binding-words')) === good.binding_words && (await text(page, '#binding-hash')) === good.binding_hash_hex, good.binding_words);
@@ -1063,11 +1063,15 @@ const opJson = (o) => {
   appendHeadAttest(st, phone, now0 - 50, null);
   appendHeadAttest(st, phone, now0 - 40, null);
   await page.click('#head-scan');
-  await pasteDoc(encodePhoneOps(courierOps(st)));
+  await pasteDoc(encodePhoneOps(courierOps(st), new Uint8Array(8).fill(1)));
   await page.waitForSelector('#head-next');
   check('one list is not enough: the page asks for a second one and shows the newest seq and time', /seq 2, signed/.test(await text(page, '#app')) && (await page.locator('#head-pending').count()) === 0, (await text(page, '#app')).replace(/\n/g, ' ').slice(0, 90));
   await page.click('#head-next');
-  await pasteDoc(encodePhoneOps(courierOps(st)));
+  await pasteDoc(encodePhoneOps(courierOps(st), new Uint8Array(8).fill(1)));
+  await page.waitForSelector('#head-same');
+  check('the same terminal twice is refused with the sentence, not agreed', /same terminal as the first one/.test(await text(page, '#head-same')), (await text(page, '#head-same')).slice(0, 70));
+  await page.click('#head-next');
+  await pasteDoc(encodePhoneOps(courierOps(st), new Uint8Array(8).fill(2)));
   await page.waitForSelector('#head-adopt');
   check('two lists with the same newest op reach the confirmation naming seq 2', /continue after seq 2/.test(await text(page, '#head-agreed')), (await text(page, '#head-agreed')).slice(0, 60));
   await page.click('#head-adopt');

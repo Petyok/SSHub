@@ -358,6 +358,7 @@ sshub sync-migrate [--remove-local]           # replicate this profile's saved s
 sshub sync-import-kit                         # second machine: set up the Vault from the kit and the phrase
 sshub sync-phone-enroll [--ble]               # enroll the phone as text: frames (base64) on stdin and stdout, the four words, then y or n (--ble: the frames also over Bluetooth)
 sshub sync-notice <op-id> [--ble]             # the kind 3 notice (base64) of a Red op for the phone (--ble: also handed over Bluetooth)
+sshub sync-phone-chain <phone-id> [--ble]   # the kind 5 list of a restored phone's own newest ops, naming this terminal (unsigned sender): the phone needs it from two different terminals
 sshub sync-phone-ops [--ble] < ops.txt        # take in the ops the phone copied (kind 5, base64); prints what applied and why the rest was skipped (chain-gap, already-known, invalid) (--ble: from the phone over Bluetooth)
 sshub sync-share-request <host> [--wait 120] [--ble]  # kind 1 challenge out, the phone's kind 2 reply on stdin (or over Bluetooth), opens the credential in this process
 sshub sync-cert-request (--group G | --host H...) [--days 30] [--budget 10] [--ble]   # kind 9 trust-session request for the phone
@@ -653,7 +654,7 @@ A **Red** change (revoking a holder, changing a role, switching the credential m
 
 #### The phone companion
 
-`M` also enrolls the phone from the terminal ("Add my phone"): the terminal shows each step as a looping QR, you paste the phone's matching frame (base64, as the page copies it), both show four words that must be identical, and the phone is then registered and proposed as a holder (a Red change, finished by the ceremony). "Paste phone ops" takes in the ops list the phone copies out. A switch from Vault to Quorum is the same two steps as `sshub sync-mode quorum`: `M`, "Switch the credential mode" proposes it and shows the ceremony; once the ring agreed the same entry reads "Finish the switch to Quorum" and re-wraps the credentials (it asks the master phrase, nothing is shown).
+`M` also enrolls the phone from the terminal ("Add my phone"): the terminal shows each step as a looping QR, you paste the phone's matching frame (base64, as the page copies it), both show four words that must be identical, and the phone is then registered and proposed as a holder (a Red change, finished by the ceremony). "Paste phone ops" takes in the ops list the phone copies out; "Show a restored phone's own ops" shows the phone's newest ops for a restored phone to take its chain back (two different terminals are needed; the list names its terminal). A switch from Vault to Quorum is the same two steps as `sshub sync-mode quorum`: `M`, "Switch the credential mode" proposes it and shows the ceremony; once the ring agreed the same entry reads "Finish the switch to Quorum" and re-wraps the credentials (it asks the master phrase, nothing is shown).
 
 The phone is the second factor: `assets/companion/sshub-companion.html` is one self-contained page (its release fingerprint is shown on it and in `assets/companion/FINGERPRINT`). To test it on an Android phone from a development machine, serve the folder on localhost and reverse the port over USB so the page runs in a secure context (camera and microphone work there):
 

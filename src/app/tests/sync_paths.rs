@@ -984,6 +984,7 @@ fn the_trust_flow_shows_the_phone_a_request_and_takes_its_answer_into_the_ceremo
     );
     let answer = B64.encode(
         PhoneOpsWire {
+            sender: None,
             ops: vec![(issue.canonical_bytes(), issue.signature)],
         }
         .encode(),
