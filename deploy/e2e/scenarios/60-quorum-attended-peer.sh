@@ -52,14 +52,15 @@ ring_view
 
 # ---- the phone: peer-a asks for the phone's share (kind 1 out, kind 2 reply in, one process)
 enr_open peer-a sync-share-request quorum1 --wait 400 --format json
-CH=$(enr_get 1); echo "terminal: $CH" | cut -c1-200
+# sync-share-request prints three events before it waits: host (name and id), words, challenge; the reply makes the fourth
+CH=$(enr_get 3); echo "terminal: $CH" | cut -c1-200
 show "the phone reads the challenge" phone share-open "{\"frame\":\"$(pf "$CH" challenge)\"}"
 if [ "$(pf "$LAST_OUT" ok)" = true ]; then
   echo "ok   the page shows a share release"
   show "the phone approves the release" phone share-approve "{\"confirm\":\"$(devid peer-a peer-a)\"}"
   expect "the page gives a reply, text equals QR" "$LAST_OUT" '.ok == true and .qr_equals_clipboard != false'
   enr_send "$(pf "$LAST_OUT" reply)"
-  OPENED=$(enr_get 2); echo "terminal: $OPENED"
+  OPENED=$(enr_get 4); echo "terminal: $OPENED"
   expect "the credential opened with the phone's share" "$OPENED" '.opened == true'
 else
   echo "--- GAP: the page refuses the CLI's challenge: $(pf "$LAST_OUT" refusal)"

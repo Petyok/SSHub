@@ -40,7 +40,8 @@ expect "peer-a reports Quorum mode" "$st" '.credential_mode == "quorum"'
 
 share_release_with_app() {
 enr_open peer-a sync-share-request quorum1 --wait 400 --format json
-CH=$(enr_get 1); echo "terminal: $CH" | cut -c1-200
+# events: 1 host, 2 words, 3 challenge; 4 is the answer after the reply
+CH=$(enr_get 3); echo "terminal: $CH" | cut -c1-200
 CHALLENGE=$(pf "$CH" challenge)
 if [ -n "$CHALLENGE" ]; then
   app_open_frame "$CHALLENGE"
@@ -57,7 +58,7 @@ if [ -n "$CHALLENGE" ]; then
   REPLY=$(appget text)
   check "the clipboard holds the reply text" "[ -n '$REPLY' ]"
   enr_send "$REPLY"
-  OPENED=$(enr_get 2); echo "terminal: $OPENED"
+  OPENED=$(enr_get 4); echo "terminal: $OPENED"
   expect "the credential opened with the app's share" "$OPENED" '.opened == true'
 else
   echo "FAIL no challenge from sync-share-request"; fail=$((fail + 1))
