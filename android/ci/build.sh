@@ -93,7 +93,12 @@ echo "== cargo-ndk"
 rm -rf android/app/src/main/jniLibs
 # `build` produces the release APK: start from clean inputs (no warm core objects, no warm Gradle outputs), never from incremental state.
 if [ "$mode" = build ]; then
-    rm -rf /target/aarch64-linux-android/phone /target/x86_64-linux-android/phone android/app/build android/build
+    rm -rf /target/aarch64-linux-android/phone /target/x86_64-linux-android/phone
+    # android/app/build and android/build are bind mounts (the warm Gradle state of the shared tree, see remote.sh): a mount
+    # point cannot be removed ("Device or resource busy"), its contents can.
+    for d in android/app/build android/build; do
+        [ -d "$d" ] && find "$d" -mindepth 1 -delete
+    done
 fi
 # Focused runs and `native` need only the emulator ABI; `build` (release, device APK) keeps both.
 if [ "$mode" = native ]; then NDK_TARGETS="-t x86_64"; else NDK_TARGETS="-t arm64-v8a -t x86_64"; fi
