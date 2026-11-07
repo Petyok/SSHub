@@ -342,20 +342,36 @@ pub fn liveness_set(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Ve
 }
 
 fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
-    Ok(fresh_in(
+    fresh_in(
+        store,
         super::ceremony::effective_devices(store, None)?,
         now,
-    ))
+    )
 }
 
-fn fresh_in(devices: Vec<DeviceRow>, now: i64) -> Vec<DeviceRow> {
-    devices
+/// The devices known to be alive AT `t`, the same on every device that holds the log: a device this store was in
+/// contact with no later than `t` and within the live window before it, or one that wrote an op stamped no later
+/// than `t` and within the window. Contact AFTER `t` proves nothing about `t` (a device learned from an op has
+/// `last_seen` 0 until its first round, and a requester that left it out was right then), so it does not make a
+/// device required; an op it wrote before `t` does.
+fn fresh_in(store: &LauncherStore, devices: Vec<DeviceRow>, t: i64) -> Result<Vec<DeviceRow>> {
+    let wrote: std::collections::BTreeMap<String, i64> = store.with_conn(|c| {
+        let mut st = c.prepare(
+            "SELECT device_id, MAX(timestamp) FROM sync_ops
+             WHERE timestamp <= ?1 AND COALESCE(reason, '') <> 'unknown-author'
+               AND state NOT IN ('rejected', 'void') GROUP BY device_id",
+        )?;
+        let rows = st.query_map([t], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    })?;
+    Ok(devices
         .into_iter()
         .filter(|d| {
+            let alive = |seen: i64| seen <= t && t - seen <= LIVE_DEVICE_WINDOW_SECS;
             !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
-                && now - d.last_seen <= LIVE_DEVICE_WINDOW_SECS
+                && (alive(d.last_seen) || wrote.get(&d.id).is_some_and(|w| alive(*w)))
         })
-        .collect()
+        .collect())
 }
 
 fn attended_live(row: &DeviceRow) -> bool {
@@ -509,7 +525,7 @@ fn validate_phone_reenroll_upto(
     // this store hold the same chain position they must agree on the head.
     let heads = store.sync_chain_heads()?;
     let mut liveness_ok = true;
-    for d in fresh_in(devices.clone(), *initiated_at) {
+    for d in fresh_in(store, devices.clone(), *initiated_at)? {
         // A device that joined after the request cannot have been in its liveness set (and enrolling one
         // during the lock must not stop a recovery).
         if super::ceremony::joined_after(store, &d.id, op.lamport)? {
