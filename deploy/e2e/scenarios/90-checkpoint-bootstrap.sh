@@ -61,6 +61,9 @@ check "peer-c joins after the checkpoint and receives the ring" "enroll_peer pee
 approve_all peer-a >/dev/null 2>&1 || true
 check "peer-c records peer-a" "enroll_peer peer-c peer-a"
 snowt peer-c
+# peer-c joined through the unattended hub, which holds the ring's changes pending: the joiner receives them as changes to
+# review (nothing below an anchor is reviewed, but nothing the inviter did not apply is below it either).
+show "peer-c approves what it received" peer peer-c $SSHUB sync-review --approve-all
 show "hub op states" sq hub 'SELECT state, coalesce(reason,""), count(*) FROM sync_ops GROUP BY state, reason'
 show "peer-c op states" sq peer-c 'SELECT state, coalesce(reason,""), count(*) FROM sync_ops GROUP BY state, reason'
 show "peer-c hosts and accepted checkpoints" sq peer-c 'SELECT (SELECT count(*) FROM hosts), (SELECT count(*) FROM sync_checkpoints), (SELECT count(*) FROM sync_writes)'
