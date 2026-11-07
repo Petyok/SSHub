@@ -19,6 +19,7 @@ pub mod ffi;
 pub mod identity;
 pub mod notices;
 pub mod outgoing;
+pub mod plain;
 pub mod release;
 pub mod reshare;
 pub mod state;

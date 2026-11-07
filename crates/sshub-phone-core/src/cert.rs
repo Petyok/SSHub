@@ -389,6 +389,7 @@ fn refused(reason: String) -> Opened {
     Opened::Refused {
         view: RefusalView {
             kind: crate::views::RefusalKind::Other,
+ compared: Vec::new(),
             reason,
             checks: Vec::new(),
         },
@@ -419,6 +420,7 @@ pub fn open_cert_request(frame: &[u8], ctx: &Ctx, token: u64) -> (Opened, Option
     let type_to_approve = (clean && !delegate_known).then(|| hex::encode(req.device_id));
     let view = CertRequestView {
         token,
+        plain: crate::plain::plain_cert_request(&req, &ctx.aliases()),
         headline,
         rows,
         delegate_known,
@@ -479,6 +481,11 @@ pub fn open_cert_extend(frame: &[u8], ctx: &Ctx, token: u64) -> (Opened, Option<
     let clean = problems.is_empty();
     let view = CertExtendView {
         token,
+        plain: crate::plain::plain_cert_extend(
+            &req,
+            cert.as_ref().map(|c| c.device_id.as_str()),
+            &aliases,
+        ),
         headline: format!(
             "Allow {} more new host{} for the rolling day on a trust session",
             req.extra_hosts,

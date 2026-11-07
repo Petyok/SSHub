@@ -333,7 +333,7 @@ const PROFILE = 'enrolled';
   const forgedFrame = Uint8Array.from([...h(enrollFx.frames_hex[2]).slice(0, 7), 1, ...(await import('../src/frames.mjs')).revealBytes(forged)]);
   await feedDoc(page, forgedFrame);
   await page.waitForSelector('#refusal');
-  check('a terminal reveal that does not open its commitment is refused', /does not open the commitment/.test(await text(page, '#refusal')), await text(page, '#refusal'));
+  check('terminal keys that do not match the code it showed first are refused', /do not match the code it showed first/.test(await text(page, '#refusal')), await text(page, '#refusal'));
   await page.click('#back');
 
   // --- the honest run
@@ -682,7 +682,7 @@ const scanNotice = async (id, { time = fx.now } = {}) => {
 {
   const { context, page, v } = await scanNotice('device-add-holder', { time: 100 });
   const banner = await text(page, '#red-banner');
-  check('a Red operation notice is described from its bytes: kind, proposer, three proofs', /DeviceAdd proposed by/.test(banner) && /three proofs/.test(banner), banner.slice(0, 90));
+  check('a Red operation notice is described from its bytes: kind, proposer, three proofs', /DeviceAdd proposed by/.test(banner) && /three approvals/.test(banner), banner.slice(0, 90));
   const hot = await page.locator('#desc .v[data-danger="1"]').count();
   check('every row of a holder admission is highlighted as dangerous', hot >= 4, hot, 'rows');
   await gatedClick(page, '#red-approve');
@@ -999,7 +999,7 @@ const opJson = (o) => {
   await page.click('#send-done');
   await page.click('#trust');
   const after = await text(page, `#cert-${certId.slice(0, 8)}`);
-  check('a revoked trust session is listed as revoked and offers no revoke button', /Revoked/.test(after) && (await page.locator(`#revoke-${certId.slice(0, 8)}`).count()) === 0, after.replace(/\n/g, ' ').slice(0, 90));
+  check('an ended trust session is listed as ended and offers no revoke button', /Ended/.test(after) && (await page.locator(`#revoke-${certId.slice(0, 8)}`).count()) === 0, after.replace(/\n/g, ' ').slice(0, 90));
   await page.click('#back');
   await sendExtend(page, certId, 2);
   await page.waitForSelector('#cert-refusal');

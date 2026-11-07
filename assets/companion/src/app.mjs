@@ -127,7 +127,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       else home();
     };
     show(
-      title('SSHub companion', 'This phone holds one key share holder identity. Nothing leaves the page: no network, no account.'),
+      title('SSHub companion', 'This phone is your second factor: it holds one piece of your saved passwords. Nothing leaves the page: no network, no account.'),
       h('div', { class: 'card' }, h('h2', {}, 'Protect it'), pin1, pin2, msg),
       btn('Create a new key', () => finish(generateSecret(), true), 'primary', 'create'),
       h('h2', {}, 'Or restore'),
@@ -313,14 +313,14 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       h('div', { class: 'card' },
         h('div', { class: 'mut' }, 'This phone is device'),
         h('div', { class: 'big', id: 'device-id' }, app.identity.deviceId),
-        h('div', { class: 'mut' }, ring.length ? `Enrolled with: ${ring.map(([id, d]) => `${safeText(d.name)} [${id}]`).join(', ')}` : 'Not enrolled with any terminal yet.'),
+        h('div', { class: 'mut' }, ring.length ? `Connected to: ${ring.map(([id, d]) => `${safeText(d.name)} [${id}]`).join(', ')}` : 'Not connected to any terminal yet.'),
         h('div', { class: 'mut' }, `Chain head: ${app.state.chain.length ? `seq ${app.state.chain[app.state.chain.length - 1].seq}` : 'no ops yet'}; live short codes: ${snaps.length}`),
       ),
       btn('Scan a share request', () => scanRelease(), 'primary', 'scan-release'),
-      btn('Enroll with a terminal', () => enroll(), '', 'enroll'),
+      btn('Connect to a terminal', () => enroll(), '', 'enroll'),
       btn('Short codes I issued', () => snapshotList(), '', 'snapshots'),
       btn('Export my ops as text', exportOps, '', 'export-ops'),
-      btn('Reshare and wrap keys', reshareScreen, '', 'reshare'),
+      btn('Update this phone after a device was removed', reshareScreen, '', 'reshare'),
       btn('Trust sessions', () => trustScreen(), '', 'trust'),
       btn('Recovery and a new phone', () => recovery(), '', 'recovery'),
       btn('Show backup words', showBackup, '', 'show-backup'),
@@ -637,8 +637,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
   function enroll() {
     const nameIn = h('input', { id: 'device-name', value: 'my phone', maxlength: '40' });
     show(
-      title('Enroll with a terminal', 'On the terminal start phone enrollment; it shows a QR code. This phone and the terminal then each commit to their keys, reveal them, and show four words that must be identical.'),
-      h('label', {}, 'Name this phone will have in the ring', nameIn),
+      title('Connect to a terminal', 'On the terminal choose Add my phone; it shows a QR code. You then scan and show five short steps, and compare four check words that must be identical on both screens.'),
+      h('label', {}, 'Name this phone will have among your devices', nameIn),
       btn('Scan the terminal', () => {
         const name = nameIn.value.trim();
         if (!name || new TextEncoder().encode(name).length > 64 || /[\u0000-\u001f\u007f]/.test(name)) return void (nameIn.className = 'err');
@@ -650,7 +650,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
 
   function enrollStep1(name) {
     scan({
-      heading: 'Enrollment 1 of 4: terminal commitment',
+      heading: 'Step 1 of 5: Terminal code',
       hint: 'The terminal shows a short QR code.',
       expect: [KIND.ENROLL_COMMIT],
       onBack: enroll,
@@ -661,13 +661,13 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         } catch (e) {
           return refusalScreen(`Not an enrollment document: ${e.message}`, []);
         }
-        if (m.kind !== 'commit' || m.role !== ROLE_EXISTING) return refusalScreen('Expected the terminal commitment first.', []);
+        if (m.kind !== 'commit' || m.role !== ROLE_EXISTING) return refusalScreen("Expected the terminal's code first.", []);
         const ephSec = randomBytes(32);
         const me = {
           ed25519_pub: app.identity.edPub, x25519_pub: app.identity.xPub, mlkem_pub: app.identity.mlkemPub,
           eph: x25519Pub(ephSec), nonce: randomBytes(32), name, attended: true,
         };
-        enrollShow(`Enrollment 2 of 4: show this phone's commitment`, 'Hold this to the terminal camera until it confirms, then tap Next.', encodeEnrollCommit(ROLE_JOINING, commitOf(ROLE_JOINING, me)), () => enrollStep3(me, m.commit));
+        enrollShow('Step 2 of 5: Phone code', 'Hold this to the terminal camera until it confirms, then tap Next.', encodeEnrollCommit(ROLE_JOINING, commitOf(ROLE_JOINING, me)), () => enrollStep3(me, m.commit));
       },
     });
   }
@@ -693,8 +693,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
 
   function enrollStep3(me, theirCommit) {
     scan({
-      heading: 'Enrollment 3 of 4: terminal keys',
-      hint: 'The terminal now reveals its keys.',
+      heading: 'Step 3 of 5: Terminal keys',
+      hint: 'The terminal now shows its keys.',
       expect: [KIND.ENROLL_REVEAL],
       onBack: enroll,
       onDoc: (bytes) => {
@@ -704,15 +704,15 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         } catch (e) {
           return refusalScreen(`Not an enrollment document: ${e.message}`, []);
         }
-        if (m.kind !== 'reveal' || m.role !== ROLE_EXISTING) return refusalScreen('Expected the terminal reveal.', []);
+        if (m.kind !== 'reveal' || m.role !== ROLE_EXISTING) return refusalScreen("Expected the terminal's keys.", []);
         const r = m.reveal;
-        if (hexOf(commitOf(ROLE_EXISTING, r)) !== hexOf(theirCommit)) return refusalScreen('The terminal reveal does not open the commitment it showed first. Enrollment stopped: someone is interfering.', []);
+        if (hexOf(commitOf(ROLE_EXISTING, r)) !== hexOf(theirCommit)) return refusalScreen("The terminal's keys do not match the code it showed first. Enrollment stopped: someone may be interfering.", []);
         if (r.mlkem_pub.length !== 1184 || hexOf(r.ed25519_pub) === hexOf(me.ed25519_pub)) return refusalScreen('The terminal presented unusable keys.', []);
         const th = transcriptHash(me, r);
         const words = sasWords(th);
         enrollShow(
-          'Enrollment 4 of 4: compare the words',
-          'The terminal shows four words too. They must be identical. Different words mean someone sits between you: tap Differ.',
+          'Step 4 of 5: Compare the words',
+          'The terminal shows four check words too. They must be identical. Different words mean someone sits between you: tap They differ.',
           encodeEnrollReveal(ROLE_JOINING, me),
           null,
           [
@@ -729,11 +729,11 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
   function enrollConfirm(me, r, th, ok) {
     const sig = edSign(app.identity.edSeed, confirmMessage(ROLE_JOINING, ok, th));
     if (!ok) {
-      return enrollShow('Enrollment declined', 'Show this to the terminal so it stops too.', encodeEnrollConfirm(ROLE_JOINING, false, sig), home);
+      return enrollShow('Declined', 'Show this to the terminal so it stops too.', encodeEnrollConfirm(ROLE_JOINING, false, sig), home);
     }
-    enrollShow('Show this phone confirmation', 'Hold it to the terminal camera, then tap Next to read the terminal confirmation.', encodeEnrollConfirm(ROLE_JOINING, true, sig), () =>
+    enrollShow('Step 5 of 5: Finish', 'Hold it to the terminal camera, then tap Next to read the terminal confirmation.', encodeEnrollConfirm(ROLE_JOINING, true, sig), () =>
       scan({
-        heading: 'Terminal confirmation',
+        heading: 'Step 5 of 5: Finish',
         hint: 'The terminal shows a last QR code once it agrees too.',
         expect: [KIND.ENROLL_CONFIRM],
         onBack: enroll,
@@ -763,7 +763,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       h('div', { class: 'card' }, h('h2', {}, 'I still have the 24 words'),
         h('p', { class: 'mut' }, 'Restoring them on a new phone gives the SAME device: no recovery is needed, nothing to revoke. Use "Restore from 24 words" on the lock screen of the new phone, then wipe this one.')),
       h('div', { class: 'card' }, h('h2', {}, 'I lost the phone and the words'),
-        h('p', { class: 'mut' }, 'On a terminal start phone recovery. It needs two other attended devices or the paper phrase, a third factor, and waits seven days on every device screen. Afterwards enroll the new phone here as usual and the ring reshares to it.')),
+        h('p', { class: 'mut' }, 'On a terminal start phone recovery. It needs two other devices with a person at the keyboard or the paper phrase, plus the paper phrase or an emailed code, and waits seven days on every device screen. Afterwards connect the new phone here as usual and your devices split the saved passwords again to include it.')),
       h('div', { class: 'card' }, h('h2', {}, 'A recovery is running and I did not start it'),
         h('p', { class: 'mut' }, 'A phone that can still sign proves the recovery is an attack. Scan the notice from a terminal and cancel it; no other factor is needed.'),
         btn('Scan a recovery notice', () => scan({ heading: 'Scan the recovery notice', hint: 'A terminal shows it on its Sync screen.', expect: [KIND.RECOVERY_NOTICE], onDoc: recoveryNotice }), 'primary', 'scan-notice')),
@@ -835,10 +835,10 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
   function reshareScreen() {
     const msg = h('p', { class: 'err', id: 'reshare-error' });
     show(
-      title('Reshare and wrap keys', `Wrap key generation ${app.identity.wrapEpoch}. After a holder is revoked, every remaining holder rotates its wrap keys first; then the ring reshares and this phone adopts its new share here.`),
+      title('Update this phone after a device was removed', `Key generation ${app.identity.wrapEpoch}. After a full device is removed, the others renew their keys first; then the saved passwords are split again and this phone takes its new piece here.`),
       h('div', { class: 'card', id: 'reshare-limits' },
         h('div', {}, 'This phone only receives a new share: it never contributes a sub-share and keeps none of the old ones.'),
-        h('div', { class: 'mut' }, 'So a reshare that revokes a terminal needs at least two OTHER terminal holders to contribute. A ring of two terminals plus this phone cannot revoke a terminal by resharing (the paper phrase is offline and cannot contribute either): add a third terminal first.')),
+        h('div', { class: 'mut' }, 'To remove a stolen or lost device you need three computers or servers you control, the one you remove included, together with the phone. With fewer, change the passwords of the hosts and remove the device\'s key from every host\'s authorized_keys by hand.')),
       msg,
       btn('Rotate wrap keys', async () => {
         try {
@@ -853,7 +853,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
           msg.textContent = e.message;
         }
       }, '', 'rotate'),
-      btn('Adopt a reshare: load the epoch ops', () => scan({ heading: 'Load the reshare ops', hint: 'The terminal shows or copies the reshare ops addressed to this phone (QR code, or paste the text below).', expect: [KIND.PHONE_OPS], onBack: reshareScreen, onDoc: reshareLoad }), 'primary', 'reshare-load'),
+      btn('Update the shares: load the list from a terminal', () => scan({ heading: 'Load the update list', hint: 'The terminal shows or copies the list for this phone (QR code, or paste the text below).', expect: [KIND.PHONE_OPS], onBack: reshareScreen, onDoc: reshareLoad }), 'primary', 'reshare-load'),
       back(),
     );
   }
@@ -886,7 +886,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         try {
           const out = publishReshare(app.state, app.identity, plan, app.now());
           await save();
-          opsOut({ heading: 'Shares adopted', hint: 'Deliver these ops to a terminal. The ring marks a credential adopted only after a real unlock with the new sharing.', ops: out });
+          opsOut({ heading: 'Shares adopted', hint: 'Deliver this list to a terminal. A saved password counts as updated only after a real unlock with the new pieces.', ops: out });
         } catch (e) {
           msg.textContent = e.message;
         }
@@ -902,19 +902,19 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const certs = issuedCerts(app.state);
     const live = (c) => !c.revoked && BigInt(Math.floor(now)) < c.expiry;
     show(
-      title('Trust sessions', 'A trust session lets one terminal open listed hosts without asking this phone each time, for a limited term. This phone writes and signs every certificate and can revoke it here.'),
+      title('Trust sessions', 'A trust session lets one terminal open listed hosts without asking this phone each time, for a limited term. This phone signs every trust session and can end it here.'),
       btn('Scan a trust-session request', () => scan({ heading: 'Scan the trust-session request', hint: 'The terminal shows it when you choose to trust a device.', expect: [KIND.CERT_REQUEST], onBack: trustScreen, onDoc: certRequestScreen }), 'primary', 'scan-cert'),
-      btn('Scan a budget extension request', () => scan({ heading: 'Scan the extension request', hint: 'The terminal shows it when a certificate used up its daily budget of new hosts.', expect: [KIND.CERT_EXTEND_REQUEST], onBack: trustScreen, onDoc: certExtendScreen }), '', 'scan-extend'),
+      btn('Scan a budget extension request', () => scan({ heading: 'Scan the extension request', hint: 'The terminal shows it when a trust session used up its new hosts for the day.', expect: [KIND.CERT_EXTEND_REQUEST], onBack: trustScreen, onDoc: certExtendScreen }), '', 'scan-extend'),
       h('h2', {}, 'Issued by this phone'),
       certs.length
         ? certs.map((c) => h('div', { class: 'card', id: `cert-${c.id.slice(0, 8)}` },
           h('div', { class: 'cert-line' }, describeCert(c, aliasesNow())),
-          h('div', { class: 'mut' }, `${c.revoked ? 'Revoked' : live(c) ? 'Active' : 'Expired'}; certificate ${c.id}`),
+          h('div', { class: 'mut' }, `${c.revoked ? 'Ended' : live(c) ? 'Active' : 'Expired'}; trust session ${c.id}`),
           live(c) ? btn('Revoke this trust session', async () => {
             try {
               revokeCert(app.state, app.identity, c.id, app.now());
               await save();
-              opsOut({ heading: 'Trust session revoked', hint: 'Carry this to any terminal: peers stop honouring the certificate on their next sync.', ops: courierOps(app.state) });
+              opsOut({ heading: 'Trust session revoked', hint: 'Carry this to any terminal: other devices stop honouring the trust session on their next sync.', ops: courierOps(app.state) });
             } catch (e) {
               refusalScreen(e.message, []);
             }
@@ -939,7 +939,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       try {
         issueCert(app.state, app.identity, req, app.now());
         await save();
-        opsOut({ heading: 'Trust session signed', hint: 'Carry this to the terminal: it holds the certificate this phone signed. The ring activates it after the second terminal and the third factor approve it.', ops: courierOps(app.state) });
+        opsOut({ heading: 'Trust session signed', hint: 'Carry this to the terminal: it holds the trust session this phone signed. It starts after a second device and the paper phrase or emailed code approve it.', ops: courierOps(app.state) });
       } catch (e) {
         msg.textContent = e.message;
       }
@@ -952,7 +952,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       descriptionRows(d),
       d.delegateKnown ? null : h('p', { class: 'mut', id: 'cert-unknown' }, 'This phone has not met that device: compare its id with the one on the terminal before you approve, then type it below.'),
       delegateIn,
-      problems.length ? h('div', { class: 'refusal', id: 'cert-refusal' }, problems.join(' ')) : h('p', { class: 'mut', id: 'cert-note' }, 'The certificate takes effect only after a second terminal and a third factor approve it. This signature is the phone\'s part: it authors the certificate.'),
+      problems.length ? h('div', { class: 'refusal', id: 'cert-refusal' }, problems.join(' ')) : h('p', { class: 'mut', id: 'cert-note' }, 'The trust session starts only after a second device and the paper phrase or emailed code approve it. This signature is the phone\'s part.'),
       msg,
       problems.length ? null : certApprove,
       btn('Refuse', home, '', 'refuse'),
@@ -1006,10 +1006,10 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : own ? edVerify(app.identity.edPub, n.op_canonical, n.op_signature) : null;
     if (sigOk === false) return refusalScreen(`The signature of ${op.device_id} does not verify over this operation.`, []);
     const age = app.now() - Number(op.timestamp);
-    if (age > RED_CEREMONY_TTL_SECS) return refusalScreen(`This operation is ${Math.floor(age / 86400)} days old; a Red ceremony lapses after 3 days. Ask the terminal to propose it again.`, []);
+    if (age > RED_CEREMONY_TTL_SECS) return refusalScreen(`This operation is ${Math.floor(age / 86400)} days old; a big change must be approved within 3 days. Ask the terminal to propose it again.`, []);
     if (age < -TIMESTAMP_SKEW_GRACE_SECS) return refusalScreen('This operation is dated in the future.', []);
     // A trust certificate is authored by the phone itself: the phone's own signature is the proof.
-    const blocked = op.kind === 'CertIssue' && !own ? 'A trust certificate must be issued by the phone itself. This one was written by another device: do not approve it.' : null;
+    const blocked = op.kind === 'CertIssue' && !own ? 'A trust session must be signed by the phone itself. This one was written by another device: do not approve it.' : null;
     const msg = h('p', { class: 'err', id: 'red-error' });
     const approveBtn = blocked ? null : btn('Approve: sign this operation with the phone', async () => {
       try {
@@ -1022,8 +1022,8 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     }, 'danger', 'red-approve');
     const proposerIn = approveBtn && !known && !own ? unmetGate(approveBtn, op.device_id, 'confirm-proposer') : null;
     show(
-      title('Red operation: needs this phone'),
-      h('div', { class: 'refusal', id: 'red-banner' }, `${op.kind} proposed by ${safeText(aliasesNow()[op.device_id] || 'a device this phone has not met')} [${op.device_id}]. It takes effect only with three proofs: this phone, a second attended device and a third factor. Your signature here is the phone's proof.`),
+      title('Big change: needs this phone'),
+      h('div', { class: 'refusal', id: 'red-banner' }, `${op.kind} proposed by ${safeText(aliasesNow()[op.device_id] || 'a device this phone has not met')} [${op.device_id}]. It takes effect only with three approvals: this phone, a second device with a person at the keyboard, and the paper phrase or an emailed code. Your signature here is the phone's approval.`),
       h('div', { class: 'headline', id: 'headline' }, desc.headline),
       descriptionRows(desc),
       h('p', { class: 'mut' }, sigOk ? 'The signature of the proposer verifies.' : 'This phone does not know the proposer, so its signature is not checked here.'),
@@ -1048,7 +1048,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       title('Phone recovery in progress'),
       h('div', { class: 'headline', id: 'headline' }, desc.headline),
       descriptionRows(desc),
-      h('p', { class: 'mut', id: 'timelock' }, `The ring accepts the new phone after ${iso(ends).slice(0, 16)}Z unless it is cancelled.`),
+      h('p', { class: 'mut', id: 'timelock' }, `Your devices accept the new phone after ${iso(ends).slice(0, 16)}Z unless it is cancelled.`),
       h('p', { class: 'mut' }, sigOk ? 'The signature verifies.' : 'This phone does not know the signing device, so the signature is not checked here.'),
       msg,
       btn('Cancel this recovery: I still have this phone', async () => {

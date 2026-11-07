@@ -36,6 +36,9 @@ pub struct OpView {
     /// Hex of the BLAKE3 of the op's canonical bytes (the op hash the ring and the terminal show): compare it with the
     /// terminal.
     pub hash: String,
+    /// One plain sentence for a person to decide on, in the words of docs/host-sync-glossary.md ("Make laptop-2 a full
+    /// device: ... Asked by laptop-2."). No op names, lamport or seq: those are in `rows` as technical details.
+    pub plain: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -178,6 +181,9 @@ pub struct RefusalView {
     /// Why the frame was refused, for enrollment frames (`Other` for every other kind of frame): the app picks its
     /// words by this, not by matching `reason`.
     pub kind: RefusalKind,
+    /// For `RefusalKind::Mismatch`: the two values that differ (the code the terminal showed first, and the code its
+    /// keys open to), each as a label and the hex of its first 16 bytes grouped by four; empty for every other refusal.
+    pub compared: Vec<Row>,
     pub reason: String,
     pub checks: Vec<Check>,
 }
@@ -220,6 +226,8 @@ pub struct ShareRequestView {
     /// The four words the terminal shows too: the person compares them.
     pub binding_words: String,
     pub binding_hash: String,
+    /// The same sentence as `op.plain` ("Give laptop-2 your piece of the saved password of host 0A0A ...").
+    pub plain: String,
     pub checks: Vec<Check>,
     pub expires_at: i64,
     /// This phone was restored and has not taken its chain yet: it cannot sign, so Approve is refused (and keeps the
@@ -288,6 +296,8 @@ pub struct ReenrollNoticeView {
 pub struct CertRequestView {
     pub token: u64,
     pub headline: String,
+    /// One plain sentence ("Let laptop-2 open 2 hosts without asking until 2030-01-04, up to 2 new hosts a day.").
+    pub plain: String,
     pub rows: Vec<Row>,
     pub delegate_known: bool,
     /// Refusals: when not empty Approve is not offered.
@@ -302,6 +312,8 @@ pub struct CertRequestView {
 pub struct CertExtendView {
     pub token: u64,
     pub headline: String,
+    /// One plain sentence ("Allow 5 more new hosts today for the trust session of laptop-2.").
+    pub plain: String,
     pub rows: Vec<Row>,
     pub problems: Vec<String>,
     pub note: String,
@@ -453,5 +465,8 @@ pub enum ScanEvent {
     /// ("not what this step needs"). The collector was reset; nothing is handed to `open_frame`.
     Foreign {
         len: u32,
+        /// The document itself when it is small (at most 256 bytes: a plain QR such as `sshub:dev:1:<16 hex>`), else
+        /// empty.
+        bytes: Vec<u8>,
     },
 }
