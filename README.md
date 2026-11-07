@@ -344,6 +344,7 @@ sshub sync-now laptop --format json           # one device, by name or id prefix
 sshub sync-status                             # ring devices (this one marked), how each was verified, pending changes, credential mode
 sshub sync-review                             # every change waiting for review (id, author, reason, field diffs, Red ceremony)
 sshub sync-review --approve 3fa9c1            # or --reject; id = unique prefix (4+ hex chars)
+sshub sync-review --approve-all               # every waiting change without a ceremony, in one pass (Red changes and share releases stay)
 sshub sync-revoke <device>                    # revoke a device (Red for a holder)
 sshub sync-role <device> holder|mirror        # promote or demote (Red)
 sshub sync-approve <op-id>                    # second-device vote on a Red change
@@ -359,7 +360,7 @@ sshub sync-phone-enroll [--ble]               # enroll the phone as text: frames
 sshub sync-notice <op-id> [--ble]             # the kind 3 notice (base64) of a Red op for the phone (--ble: also handed over Bluetooth)
 sshub sync-phone-chain <phone-id> [--ble]   # the kind 5 list of a restored phone's own newest ops, naming this terminal (unsigned sender): the phone needs it from two different terminals
 sshub sync-phone-ops [--ble] < ops.txt        # take in the ops the phone copied (kind 5, base64); prints what applied and why the rest was skipped (chain-gap, already-known, invalid) (--ble: from the phone over Bluetooth)
-sshub sync-share-request <host> [--wait 120] [--ble]  # kind 1 challenge out, the phone's kind 2 reply on stdin (or over Bluetooth), opens the credential in this process
+sshub sync-share-request <host> [--wait 120] [--ble]  # prints the host name, its host id and the four binding words (compare them with the phone), the kind 1 challenge, then reads the phone's kind 2 reply on stdin (or over Bluetooth) and opens the credential in this process
 sshub sync-cert-request (--group G | --host H...) [--days 30] [--budget 10] [--ble]   # kind 9 trust-session request for the phone
 # Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected. Admin verbs: 0 ok, 1 error, 2 usage.
 # sync-serve / sync-enroll are what a peer runs over ssh (frames on stdin and stdout); not for interactive use.
@@ -637,7 +638,7 @@ First run on a machine with no ring: the app issues a six-word master phrase (fr
 
 Joining: `t` on the hosts tab or `sshub sync-join <host>`. Enrollment shows four words. When both ends have a screen you compare them and answer yes only if they are identical (verified by SAS). When the other end has no terminal (for example `t` enrolls a server over a plain ssh command) the words prove nothing: the dialog says so, and you approve the admission on the strength of the SSH host key you verified for that host (recorded as verified by the SSH host key). Which of the two admitted a device is shown per device on this tab and in `sshub sync-status`. Roles follow ring membership, not who connected: the side that already has a ring invites, a blank side joins, and two different rings are never merged.
 
-A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal. In Vault mode you type the six words (the CLI asks on the terminal without echo). In Quorum mode the CLI writes a share release, syncs with the attended holders it has a host for and waits up to `SSHUB_UNLOCK_WAIT` seconds (default 120) for one of them to approve it: in its TUI, or with `sshub sync-review --approve <id>` there (the id is printed). The CLI does not try the phone or trust-session paths. In Quorum mode the modal asks holders that may release under a trust session, asks attended holders to approve on their screen, and arms the phone: it shows the phone's challenge code and accepts the pasted reply, the 16 character short code or the 24 words, and, in builds with the opt-in `audio`, `camera` and `bluetooth` features, listens for the phone's sound, reads its code, or serves it over Bluetooth by itself while the modal is open (the modal says when a listener is not compiled in or finds no device; with Bluetooth it shows the name to pick in the phone page's device list, `SSHub-` and four characters that change every time). A synced identity's key never touches a disk: it lives in a private `ssh-agent` of this process (and in memory for SFTP) until you lock or quit.
+A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal. In Vault mode you type the six words (the CLI asks on the terminal without echo). In Quorum mode the CLI writes a share release, syncs with the attended holders it has a host for and waits up to `SSHUB_UNLOCK_WAIT` seconds (default 120) for one of them to approve it: in its TUI, or with `sshub sync-review --approve <id>` there (the id is printed). The CLI does not try the phone or trust-session paths. In Quorum mode the modal shows, under the host name, the host id (32 hex digits in groups of four, the way the phone draws it) and the challenge's four binding words: compare both with the phone's release screen before you approve there. The modal asks holders that may release under a trust session, asks attended holders to approve on their screen, and arms the phone: it shows the phone's challenge code and accepts the pasted reply, the 16 character short code or the 24 words, and, in builds with the opt-in `audio`, `camera` and `bluetooth` features, listens for the phone's sound, reads its code, or serves it over Bluetooth by itself while the modal is open (the modal says when a listener is not compiled in or finds no device; with Bluetooth it shows the name to pick in the phone app's (or page's) device list, `SSHub-` and four characters that change every time). A synced identity's key never touches a disk: it lives in a private `ssh-agent` of this process (and in memory for SFTP) until you lock or quit.
 
 While the profile is in a ring, saving a password, a passphrase or an identity's key file (host form, identity form, key generation, the auth prompt's remember choice, `host add --password-stdin`, `identity add`) writes a replicated credential instead of a local keyring entry, and clearing one replicates the clearing. `M` then "Move this machine's saved secrets into the ring" replicates what was saved before.
 
@@ -668,6 +669,7 @@ adb reverse tcp:8443 tcp:8443
 ```toml
 [sync]
 auto_sync_on_start = true   # one sync round with every device that has a known host when sshub starts
+unattended = false          # true on a device nobody sits at (the Hub): it enrolls as unattended, never votes and no checkpoint or Red change waits for it; read at enrollment, so an already enrolled Hub must re-enroll
 
 [sync.notify]               # off until `command` is set; mails a recovery announcement or a third-factor code
 command = "/usr/sbin/sendmail -t -i"   # split without a shell; needs -t (recipients from the headers) and -i (a lone "." must not end the body)
@@ -675,7 +677,7 @@ to = ["me@example.com"]
 from = "sshub@example.com"
 ```
 
-The mail is sent by `sshub sync-serve` on the device that serves the round (the Hub, in a ring with one); SMTP credentials belong to the sendmail command's own configuration, never to this file. The phone receivers are opt-in cargo features, off in release binaries: `audio` (microphone, FSK burst) needs the ALSA development files on Linux (`libasound2-dev` on Debian and Ubuntu) and CoreAudio on macOS; `camera` (webcam, the phone's reverse QR) needs nothing extra on Linux (V4L2) and uses AVFoundation on macOS; `bluetooth` (Bluetooth Low Energy: the terminal advertises as a GATT peripheral, the phone page connects with Web Bluetooth in Chrome on Android; contract C20 in `docs/host-sync-contract.md`) needs a running `bluetoothd` and an adapter on Linux (BlueZ over D-Bus, `libdbus-1-dev` to build) and uses CoreBluetooth on macOS (the first use asks for Bluetooth access). It carries the same frames as the QR, no pairing and no trust in the link; iOS browsers have no Web Bluetooth. The developer check is:
+The mail is sent by `sshub sync-serve` on the device that serves the round (the Hub, in a ring with one); SMTP credentials belong to the sendmail command's own configuration, never to this file. The phone receivers are opt-in cargo features, off in release binaries: `audio` (microphone, FSK burst) needs the ALSA development files on Linux (`libasound2-dev` on Debian and Ubuntu) and CoreAudio on macOS; `camera` (webcam, the phone's reverse QR) needs nothing extra on Linux (V4L2) and uses AVFoundation on macOS; `bluetooth` (Bluetooth Low Energy: the terminal advertises as a GATT peripheral, the phone app connects natively, the phone page with Web Bluetooth in Chrome on Android; contract C20 in `docs/host-sync-contract.md`) needs a running `bluetoothd` and an adapter on Linux (BlueZ over D-Bus, `libdbus-1-dev` to build) and uses CoreBluetooth on macOS (the first use asks for Bluetooth access). It carries the same frames as the QR, no pairing and no trust in the link; iOS browsers have no Web Bluetooth. The developer check is:
 
 ```bash
 cargo build --features audio,camera,bluetooth
@@ -779,6 +781,7 @@ config_path = "~/.ssh/config"   # this profile's ssh_config source (profile mode
 
 [sync]
 auto_sync_on_start = true       # host sync: one round with known devices at start (see "Sync (tab 7)")
+# unattended = true             # a device nobody sits at (the Hub): enrolls as unattended; an already enrolled Hub must re-enroll
 # [sync.notify] command = "/usr/sbin/sendmail -t -i" ... mails recovery announcements and codes
 
 [keybinds]

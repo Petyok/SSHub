@@ -1687,7 +1687,42 @@ pub(crate) fn build_join_anchor(
     now: i64,
 ) -> Result<CheckpointBundle> {
     let me = id.public().device_id();
-    let mut cut = local_heads(conn)?;
+    let cut = local_heads(conn)?;
+    // The state carries only what this device APPLIED. An op it holds pending (a Yellow change nobody reviewed
+    // here: on an unattended Hub that is every one of them) is in no state, so a cut that covered it would make
+    // the joiner believe it already has it and never fetch it. Each chain is cut just before its first pending
+    // op; the joiner receives the rest through the ordinary sync and reviews it itself.
+    let mut first_pending: BTreeMap<String, u64> = BTreeMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT device_id, MIN(seq) FROM sync_ops
+             WHERE state = 'pending' AND COALESCE(reason, '') <> 'unknown-author' GROUP BY device_id",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        for row in rows {
+            let (d, s) = row?;
+            first_pending.insert(d, s as u64);
+        }
+    }
+    let mut trimmed = Vec::with_capacity(cut.len());
+    for c in cut {
+        match first_pending.get(&c.device_id) {
+            Some(&p) if p <= c.seq => {
+                if p > 1 {
+                    let row = op_at(conn, &c.device_id, p - 1)?
+                        .with_context(|| format!("op {} of {} is missing", p - 1, c.device_id))?;
+                    trimmed.push(CutEntry {
+                        device_id: c.device_id,
+                        seq: p - 1,
+                        op_hash: row.hash,
+                        lamport: row.op.lamport,
+                    });
+                }
+            }
+            _ => trimmed.push(c),
+        }
+    }
+    let mut cut = trimmed;
     cut.sort_by(|a, b| a.device_id.cmp(&b.device_id));
     ensure!(!cut.is_empty(), "this device has nothing to hand over yet");
     let state = fold_state(conn, &cut, now)?;

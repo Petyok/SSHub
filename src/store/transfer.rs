@@ -839,7 +839,7 @@ fn apply_transfer_plan_inner(
         .unwrap_or(0);
     dest_store
         .with_conn(|conn| {
-            let tx = conn.unchecked_transaction()?;
+            let tx = super::write_tx(conn)?;
             // Dependency order, not plan order: a failure must be observed
             // before its dependents are attempted.
             for kind in ["identity", "group", "host", "tunnel", "audit"] {
@@ -1402,7 +1402,7 @@ fn delete_source_originals(
     let runnable: Vec<&PlannedItem> = plan.runnable();
     src_store
         .with_conn(|conn| {
-            let tx = conn.unchecked_transaction()?;
+            let tx = super::write_tx(conn)?;
             let mut deleted_hosts: Vec<i64> = Vec::new();
             let mut deleted_identities: Vec<i64> = Vec::new();
             for item in runnable.iter().filter(|i| i.kind == "host") {

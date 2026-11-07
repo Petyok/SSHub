@@ -1101,7 +1101,10 @@ Core (this package, after the op lands):
   the phone shows it, builds and signs `CertIssue` itself and returns it as a courier op / phone-ops frame.
   `cert::cert_revoke_body(&cert)` revokes (Yellow).
 * A device records itself (role, attendance) in its own `sync_devices` when it enrolls, so `quorum::is_unattended`
-  and `recovery::unacknowledged` know an unattended device (the Hub) is one.
+  and `recovery::unacknowledged` know an unattended device (the Hub) is one. Attendance is a property of the device,
+  not of the ssh session: it is attended unless `[sync] unattended = true` is in its config (`runtime::device_attended`,
+  read by `sync-enroll` and by the joining side), the ring is told at enrollment, and an unattended device is never a
+  required checkpoint signer and never votes.
 
 ### 4b. Second-share paths (how a terminal gets the share it does not hold)
 
@@ -1191,6 +1194,42 @@ cannot hold its own hash); the page shows it, the build writes it to
 `assets/companion/FINGERPRINT`, and the About screen says how to recompute it. It detects a wrong
 or outdated build, not a malicious page (a substituted page can print any string; that residual is
 already in the design).
+
+### C21: native Android companion
+
+A second phone implementation next to the page (design: `docs/host-sync-android.md`). It adds no frame kind, no channel and no
+wire field: everything in this section is a rule the app obeys so that a terminal cannot tell, and does not need to tell, which phone
+it talks to. The page stays the iOS and fallback phone; where this section says "the phone" it means both.
+
+- **Identity.** Same secret, same derivation: 32 random bytes, `BLAKE3 derive_key("sshub/sync/phone/v1", secret)` as 128 bytes, wrap generations
+  `"sshub/sync/phone/wrap/v1"`, the 24 BIP39 words are the backup. The same words on the page and in the app are the SAME device.
+  The at-rest form is NOT part of the contract: the page keeps its `"SSHP"` PIN blob; the app wraps the secret with an Android Keystore
+  AES-256-GCM key (StrongBox when present) under per-use biometric or device-credential authentication. The terminal never sees either.
+- **One signer at a time.** A restored phone (page or app) has `head_pending` and signs nothing until it has taken its own chain from a terminal (kind 5 list:
+  every op by this key, every signature valid, one chain, continue after the newest: `seq + 1`, `lamport` above every lamport seen, `epoch`
+  the highest seen) or the user confirmed that the key never signed anything. Migrating page to app is a restore; the user MUST stop using the
+  page copy first (clear its site data). A second copy that signs after the first took over produces two ops with the same `seq`: fork evidence, handled as any fork.
+- **Same refusals, same bytes.** The app applies every rule of C16 and of the companion guide unchanged: strict canonical parsing of received
+  op bytes (never re-serialised), screen built from the bytes, challenge age and expiry limits (120 s plus 600 s skew), requester typed-id for an
+  unmet device, binding words from the signed material, trust-session limits (1 s to 90 days, budget 1..=50, 1..=64 hosts, epoch range starting at the
+  phone's own epoch and at most one wide, no self-request), extension rules (own certificate, not revoked or expired, `extra_hosts` 1..=50, 24 hours
+  apart), courier tail of at most 8 ops, snapshot blob header version 2 and one live blob per credential. The Rust implementation
+  (`sshub-phone-core`) and the page are pinned by the SAME fixtures (`assets/companion/test/fixtures/*.json`, `tests/vectors/`): for equal inputs
+  they MUST emit byte-identical ops, frames and replies (Ed25519 and the canonical encoders are deterministic; fresh randomness is the only difference).
+- **Channels.** The app carries the frames of kinds 1 to 10 over: camera QR (fountain frames, same size and parity as the page), QR display, base64
+  text (clipboard, share sheet, paste), FSK audio (send only; no microphone permission), and Bluetooth LE as the C20 **central** implemented natively
+  (same service and characteristic UUIDs, same messages, same limits, `startNotifications` on TX before the first write to RX). A native central
+  knows its MTU: its HELLO `chunk` is `min(negotiated MTU - 3, 512)`; the terminal's rule `min(proposal, 244, notification MTU - 3)` is unchanged. The
+  app never accepts-all in a scan: it filters on the service UUID and lists `SSHub-<TAG>` for the person to pick.
+- **No network.** The app declares no `INTERNET` permission (the native counterpart of the page's `connect-src 'none'`); the permissions are
+  `CAMERA`, `BLUETOOTH_SCAN` (`neverForLocation`), `BLUETOOTH_CONNECT`, `USE_BIOMETRIC` and `HIDE_OVERLAY_WINDOWS` (normal, API 31: hides overlays drawn over the window).
+- **App fingerprint.** `sha256` of the DER signing certificate of the release APK, lowercase hex (64 characters), as `apksigner verify --print-certs`
+  prints it and as the app shows it on its About screen. The terminal ships `COMPANION_APK_CERT_SHA256` (`src/sync/companion.rs`, from
+  `assets/companion/APK_CERT_SHA256`) and shows it beside the page fingerprint with the same compare hint, and in `sync-status` JSON as
+  `companion_apk_cert_sha256`. It detects an app signed by someone else; like the page fingerprint it does not detect a malicious build signed by the
+  same key. The public debug certificate is never listed.
+- **Shared code.** The primitives the terminal and the phone core use are one crate, `sshub-sync-proto` (crypto, canonical ops, wire, fountain,
+  snapshot, share math, FSK and QR decode, the BLE link layer). Moving a module there changes no byte of this contract.
 
 ### C16: frames and replies only the phone uses
 

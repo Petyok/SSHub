@@ -58,7 +58,7 @@ impl LauncherStore {
         }
         let uid = self.group_uid(id)?;
         let deleted = self.with_conn(|conn| {
-            let tx = conn.unchecked_transaction()?;
+            let tx = super::write_tx(conn)?;
             let deleted = delete_group_on(conn, id)?;
             tx.commit()?;
             Ok(deleted)
@@ -88,7 +88,7 @@ impl LauncherStore {
 
     fn set_host_groups_raw(&self, host_id: i64, group_ids: &[i64]) -> Result<()> {
         self.with_conn(|conn| {
-            let tx = conn.unchecked_transaction()?;
+            let tx = super::write_tx(conn)?;
             // Only clear non-reserved memberships; keep Favorites untouched.
             conn.execute(
                 "DELETE FROM host_group_memberships
@@ -117,7 +117,7 @@ impl LauncherStore {
     /// Add `host_id` to `group_id` (idempotent) and materialize the inherited
     pub fn add_host_to_group(&self, host_id: i64, group_id: i64) -> Result<()> {
         self.with_conn(|conn| {
-            let tx = conn.unchecked_transaction()?;
+            let tx = super::write_tx(conn)?;
             add_host_to_group_on(conn, host_id, group_id)?;
             tx.commit()?;
             Ok(())
@@ -198,7 +198,7 @@ impl LauncherStore {
         // concurrent writer (watcher reimport, second instance) can no longer
         // slip between the read and the write and get its change overwritten.
         self.with_conn(|conn| {
-            let tx = conn.unchecked_transaction()?;
+            let tx = super::write_tx(conn)?;
             let updated = update_host_on(conn, id, update)?;
             tx.commit()?;
             Ok(updated)
@@ -247,7 +247,7 @@ impl LauncherStore {
         // Atomic: a crash between the two updates must not leave both hosts
         // with the same sort_order.
         self.with_conn(|conn| {
-            let tx = conn.unchecked_transaction()?;
+            let tx = super::write_tx(conn)?;
             let so_a: i64 = conn
                 .query_row(
                     "SELECT sort_order FROM hosts WHERE id = ?1",

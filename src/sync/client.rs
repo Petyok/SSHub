@@ -267,8 +267,13 @@ pub enum SyncEvent {
         have: usize,
         need: usize,
     },
-    /// QR frames of a challenge for the phone, looped by the modal.
-    UnlockChallenge(Vec<Vec<u8>>),
+    /// The phone's challenge: QR frames the modal loops (empty when none fits) and what the user compares with the
+    /// phone's release screen, the host uid in the phone's grouping and the four binding words.
+    UnlockChallenge {
+        frames: Vec<Vec<u8>>,
+        host_id: String,
+        words: String,
+    },
     ForkDetected(DeviceId),
     BehindPeer(DeviceId),
     Done,

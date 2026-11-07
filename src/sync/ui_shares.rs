@@ -272,14 +272,23 @@ impl UiShares {
             eph,
         };
         let frame_bytes = crate::sync::fountain::frame_bytes_for_area(QR_AREA.0, QR_AREA.1);
-        match frame_bytes.map(|b| ask.challenge.to_qr_payload(b)) {
-            Some(Ok(frames)) => {
-                let _ = self.events.send(SyncEvent::UnlockChallenge(frames));
-                self.say(
-                    UnlockPathKind::PhoneQr,
-                    "show the code to the phone, then paste or type its answer",
-                );
-            }
+        let qr = frame_bytes.map(|b| ask.challenge.to_qr_payload(b));
+        // The host uid and the binding words go to the modal whether or not a QR fits: they are what the
+        // user compares with the phone's release screen, on every path (QR, paste, short code, words).
+        let shown = ask.challenge.shown().map_err(failed)?;
+        let _ = self.events.send(SyncEvent::UnlockChallenge {
+            frames: match &qr {
+                Some(Ok(frames)) => frames.clone(),
+                _ => Vec::new(),
+            },
+            host_id: shown.host_id,
+            words: shown.words,
+        });
+        match qr {
+            Some(Ok(_)) => self.say(
+                UnlockPathKind::PhoneQr,
+                "show the code to the phone, then paste or type its answer",
+            ),
             Some(Err(e)) => self.say(
                 UnlockPathKind::PhoneQr,
                 format!("no QR for this challenge: {e:#}"),

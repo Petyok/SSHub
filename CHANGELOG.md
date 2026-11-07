@@ -26,7 +26,7 @@ All notable changes to SSHub are documented in this file.
   phone). CLI verbs: `sync-join`, `sync-now`, `sync-status`, `sync-review`, `sync-revoke`, `sync-role`, `sync-approve`,
   `sync-factor`, `sync-factor-register`, `sync-recovery`, `sync-mode`, `sync-exemption`, `sync-export`, `sync-migrate`,
   `sync-import-kit`, `sync-phone-enroll`, `sync-notice`, `sync-phone-ops`, `sync-share-request`, `sync-cert-request`
-  (plus `sync-serve` and `sync-enroll`, which a peer runs over ssh). Config: `[sync] auto_sync_on_start`, `[sync.notify]`
+  (plus `sync-serve` and `sync-enroll`, which a peer runs over ssh). Config: `[sync] auto_sync_on_start`, `[sync] unattended` (a device nobody sits at, such as the Hub, enrolls as unattended and never blocks a checkpoint or a Red change; an already enrolled Hub must re-enroll), `[sync.notify]`
   for recovery mails. Docs: the README "Sync (tab 7)" section with a step-by-step quick start,
   `docs/host-sync-design.md` (with every default and why), `docs/host-sync-companion.md`, `docs/host-sync-contract.md`,
   measurements in `docs/host-sync-poc-results.md`. Limits, stated plainly: metadata (addresses, notes, groups) is

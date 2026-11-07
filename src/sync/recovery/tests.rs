@@ -598,6 +598,22 @@ mod over_the_log {
     #[test]
     fn a_replayed_proposal_a_short_liveness_set_and_the_same_factor_twice_are_refused() {
         let w = world();
+        // A has written something before: a device that wrote an op (stamped before the request) is required in the set.
+        w.d[A]
+            .store
+            .sync_append_local_at(
+                &w.d[A].id,
+                OpBody::HostUpsert {
+                    host_uid: [9; 16],
+                    fields: crate::sync::oplog::HostFields {
+                        name: Some("seen".into()),
+                        ..Default::default()
+                    },
+                },
+                crate::store::now_ts() - 100,
+            )
+            .unwrap();
+        w.sync();
         let first = w.reenroll(false, None, None);
         assert!(w.verdict(&first, first.timestamp).is_ok());
         // The same body again, in a new op: refused. The first stays valid.
@@ -856,6 +872,38 @@ mod over_the_log {
         deliver(&new, &w.d[A]);
         let st = red_status(&w.d[OBS].store, &reg, now + 3).unwrap();
         assert!(st.complete, "{st:?}");
+    }
+
+    // e2e scenario 80: a device learned from an op has last_seen 0 until its first round. A recovery started before
+    // that round omitted it, rightly; contact after the request must not make the recovery invalid.
+    #[test]
+    fn contact_after_the_request_does_not_invalidate_a_recovery_that_left_a_silent_device_out() {
+        let w = world();
+        let set_seen = |on: usize, of: usize, t: i64| {
+            w.d[on]
+                .store
+                .with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_devices SET last_seen = ?2 WHERE device_id = ?1",
+                        rusqlite::params![w.d[of].did, t],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        };
+        // B has never been heard from by R (never wrote an op, last_seen 0): not part of the liveness set.
+        set_seen(R, B, 0);
+        let op = w.reenroll(false, None, None);
+        let now = crate::store::now_ts();
+        w.prove(&op, false);
+        // The first contact with B comes after the request.
+        set_seen(R, B, now + 5);
+        // (The observer's own table says B was fresh: it may judge differently. The requester must not.)
+        let on_r = validate_phone_reenroll(&w.d[R].store, &op, now + 10);
+        assert!(
+            !matches!(on_r, Err(ref e) if e.to_string().contains("liveness")),
+            "{on_r:?}"
+        );
     }
 
     #[test]

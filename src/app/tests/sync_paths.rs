@@ -252,9 +252,17 @@ fn the_24_words_open_the_credential() {
 fn the_short_code_opens_the_credential_from_a_stored_snapshot() {
     let mut r = ring(None);
     let code = crate::sync::codes::gen_snapshot_code();
-    let blob =
-        crate::sync::snapshot::snapshot_seal(&phone_share(&r), &code, crate::store::now_ts())
-            .to_bytes();
+    // A cheap Argon2 profile (the blob carries its own): the default floor is 256 MiB x 4 passes, which under a
+    // loaded suite ran past the wait below twice (log 20261106T202402). What is proved does not depend on the cost.
+    let blob = crate::sync::snapshot::snapshot_seal_for(
+        &r.host,
+        &phone_share(&r),
+        &code,
+        crate::store::now_ts(),
+        FAST,
+    )
+    .unwrap()
+    .to_bytes();
     crate::sync::unlock_paths::remember_snapshot(&r.app.store, &r.host, &blob).unwrap();
     ask(&mut r);
     wait_for_phone_prompt(&mut r);

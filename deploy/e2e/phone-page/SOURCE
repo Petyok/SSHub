@@ -1,0 +1,2 @@
+feature/host-sync (assets/companion/sshub-companion.html and FINGERPRINT, byte for byte)
+Refresh: copy both files from assets/companion after any page change; deploy/e2e/phone-refresh.sh pins a commit of another worktree

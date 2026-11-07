@@ -31,7 +31,9 @@ pub(crate) fn pipe_pair() -> (PipeLink, PipeLink) {
     let mk = |tx, rx| PipeLink {
         tx,
         rx,
-        timeout: Duration::from_secs(20),
+        // A hang bound only: a 2300 op round ingests its tail while the other end waits, and under a loaded
+        // suite that outlasted 20 s (the server's recv timed out, then the client saw "pipe closed").
+        timeout: Duration::from_secs(120),
         hook: None,
         sent: Arc::new(AtomicUsize::new(0)),
     };
