@@ -71,7 +71,7 @@ app_boot() {
     printf '%s' "$out" | grep -q Success || return 1
   done
   echo "android: $($C exec -T android adb shell getprop ro.build.version.release | tr -d '\r') sdk $($C exec -T android adb shell getprop ro.build.version.sdk | tr -d '\r'), $(sha256sum "$APK_DIR/app-debug.apk" | cut -c1-16) $(sha256sum "$APK_DIR/app-debug-androidTest.apk" | cut -c1-16)"
-  $C exec -T android adb shell am instrument -w -r -e class uk.petruha.sshub.phone.live.LiveTerminalTest \
+  $C exec -T android adb shell am instrument -w -r -e live true -e class uk.petruha.sshub.phone.live.LiveTerminalTest \
     uk.petruha.sshub.phone.test/androidx.test.runner.AndroidJUnitRunner > /tmp/app-instr.log 2>&1 &
   APP_INSTR=$!
   j=0

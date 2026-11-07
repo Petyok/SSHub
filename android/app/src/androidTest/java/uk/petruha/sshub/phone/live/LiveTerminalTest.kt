@@ -20,6 +20,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.UiDevice
 import org.json.JSONObject
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -28,7 +29,7 @@ import java.io.File
 
 /**
  * A live session of the REAL app (real MainActivity, UniffiPhoneCore, AndroidPlatform, Keystore, BiometricPrompt) driven from outside by
- * the e2e scenario `66-app-live-terminal.sh`. There is one long test, `serve`: it polls the json files in `<external files>/live/in`, runs each
+ * the e2e scenario `66-app-live-terminal.sh`. There is one long test, `serve` (skipped unless the instrumentation argument `live` is `true`): it polls the json files in `<external files>/live/in`, runs each
  * command against the UI through its semantics (texts and content descriptions, no test tags), and writes the answer to `live/out` under the same name.
  * The scenario moves the files with `adb shell`; the frames of the terminal come in through the app's paste boxes and the frames of
  * the app go out through the text it shows or the clipboard its Copy buttons fill (QR, sound and Bluetooth are not used here).
@@ -48,6 +49,8 @@ class LiveTerminalTest {
     private var pin = "1234"
 
     @Test fun serve() {
+        // A server for the e2e scenario (up to two hours), not a test: the full connected run skips it. Start it with `-e live true`.
+        assumeTrue(InstrumentationRegistry.getArguments().getString("live") == "true")
         File(dir, "in").mkdirs()
         File(dir, "out").mkdirs()
         File(dir, "ready").writeText(dir.absolutePath)
