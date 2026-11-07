@@ -61,6 +61,10 @@ check "peer-c joins after the checkpoint and receives the ring" "enroll_peer pee
 approve_all peer-a >/dev/null 2>&1 || true
 check "peer-c records peer-a" "enroll_peer peer-c peer-a"
 snowt peer-c
+show "hub op states" sq hub 'SELECT state, coalesce(reason,""), count(*) FROM sync_ops GROUP BY state, reason'
+show "peer-c op states" sq peer-c 'SELECT state, coalesce(reason,""), count(*) FROM sync_ops GROUP BY state, reason'
+show "peer-c hosts and accepted checkpoints" sq peer-c 'SELECT (SELECT count(*) FROM hosts), (SELECT count(*) FROM sync_checkpoints), (SELECT count(*) FROM sync_writes)'
+show "hub hosts" sq hub 'SELECT count(*) FROM hosts'
 check "peer-c has the big host after syncing" "peer peer-c $SSHUB host list 2>/dev/null | grep -q big"
 dump_state "after checkpoint"
 
