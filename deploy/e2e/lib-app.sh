@@ -136,6 +136,7 @@ enroll_app() {
   E3=$(enr_get 3); echo "terminal: $E3"
   check "the terminal and the app show the same four words" "[ \"$(pf "$E3" words)\" = \"$APP_WORDS\" ]"
   must "step 4: the words match" appclick "The words match"
+  app '{"op":"auth","timeout":15000}' >/dev/null && echo "    (system prompt after the words match: $(appget auth))"
   must "step 4: continue" appclick "Continue"
   must "step 5: the app's confirmation" appread "Text for the terminal, the same bytes as the QR code, base64"
   enr_send "$APP_TEXT"
