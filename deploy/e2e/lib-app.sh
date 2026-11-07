@@ -108,6 +108,7 @@ app_prep() {
   echo "the app's device id: $APP_ID"
   must "the device id is typed" apptype "Type the device id to confirm" "$APP_ID"
   must "this key never signed anything" appclick "This key never signed anything"
+  app '{"op":"auth","timeout":15000}' >/dev/null && echo "    (system prompt after the confirmation: $(appget auth))"
   step "the chain is taken (confirmed as never signed)" app '{"op":"wait","text":"Confirmed. This key never signed anything.","timeout":20000}'
   must "back on Home" appclick "Go to Home"
 }
