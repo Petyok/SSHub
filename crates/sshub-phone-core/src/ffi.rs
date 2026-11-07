@@ -104,6 +104,7 @@ fn refused(reason: impl Into<String>) -> Opened {
     Opened::Refused {
         view: RefusalView {
             kind: crate::views::RefusalKind::Other,
+ compared: Vec::new(),
             reason: reason.into(),
             checks: Vec::new(),
         },
@@ -670,9 +671,10 @@ impl PhoneCore {
             match e {
                 // like the page's `accept`: a document that is not an SSHub frame is ignored and the collector starts over
                 ScanEvent::Document { bytes } if !is_sshub_frame(&bytes) => {
-                    g.scanner.reset();
+                    g.scanner.forget_document();
                     out.push(ScanEvent::Foreign {
                         len: bytes.len() as u32,
+                        bytes: if bytes.len() <= 256 { bytes } else { Vec::new() },
                     });
                 }
                 other => out.push(other),
@@ -1351,7 +1353,7 @@ mod tests {
         let ev = scan_all(&c, &alien);
         assert!(
             ev.iter()
-                .any(|e| matches!(e, ScanEvent::Foreign { len: 300 })),
+                .any(|e| matches!(e, ScanEvent::Foreign { len: 300, bytes } if bytes.is_empty())),
             "{ev:?}"
         );
         assert!(!ev.iter().any(|e| matches!(e, ScanEvent::Document { .. })));
@@ -1368,6 +1370,26 @@ mod tests {
         let mut bad_kind = real.clone();
         bad_kind[6] = 11;
         assert!(!is_sshub_frame(&bad_kind));
+    }
+
+    #[test]
+    fn a_small_plain_qr_is_reported_once_as_foreign_with_its_bytes() {
+        let c = core();
+        let text = b"sshub:dev:1:723ed85f0566df0c".to_vec();
+        let qr = channels::qr_matrix(&text).unwrap();
+        let (w, h, px) = gray(&qr, 6);
+        let ev = c.scan_gray(w, h, px.clone());
+        assert!(
+            ev.iter().any(|e| matches!(e, ScanEvent::Foreign { len: 28, bytes } if *bytes == text)),
+            "{ev:?}"
+        );
+        // held in front of the camera: reported once, not at every frame
+        let again = c.scan_gray(w, h, px.clone());
+        assert!(!again.iter().any(|e| matches!(e, ScanEvent::Foreign { .. })), "{again:?}");
+        // after a reset it can be scanned again
+        c.scan_reset();
+        let third = c.scan_gray(w, h, px);
+        assert!(third.iter().any(|e| matches!(e, ScanEvent::Foreign { .. })));
     }
 
     #[test]

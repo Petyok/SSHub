@@ -157,7 +157,12 @@ impl Collector {
 pub struct Scanner {
     reader: QrReader,
     collector: Collector,
+    /// The last plain (not fountain) QR payload reported, so a code held in front of the camera is reported once.
+    last_plain: Option<Vec<u8>>,
 }
+
+/// First byte of a fountain frame (`sshub-sync-proto` `fountain::MAGIC`); any other QR payload is a plain code.
+const FOUNTAIN_MAGIC: u8 = 0x51;
 
 impl Default for Scanner {
     fn default() -> Self {
@@ -170,11 +175,19 @@ impl Scanner {
         Self {
             reader: QrReader::default(),
             collector: Collector::new(),
+            last_plain: None,
         }
     }
 
     /// Starts a new scan (also forgets the document delivered last, so it can be scanned again).
     pub fn reset(&mut self) {
+        self.collector = Collector::new();
+        self.last_plain = None;
+    }
+
+    /// Drops a half-read fountain document but keeps the plain code that was last reported (so a plain code still in
+    /// view is not reported again at every camera frame).
+    pub fn forget_document(&mut self) {
         self.collector = Collector::new();
     }
 
@@ -191,6 +204,15 @@ impl Scanner {
             height,
             pixels: luma,
         }) {
+            // A plain single QR (not a fountain frame, such as `sshub:dev:1:<16 hex>` of a terminal's device details) is a
+            // document by itself, reported once while it stays in view.
+            if payload.first().is_some_and(|b| *b != FOUNTAIN_MAGIC) {
+                if self.last_plain.as_deref() != Some(&payload[..]) {
+                    self.last_plain = Some(payload.clone());
+                    events.push(ScanEvent::Document { bytes: payload });
+                }
+                continue;
+            }
             if payload.len() <= FRAME_HEADER {
                 continue;
             }

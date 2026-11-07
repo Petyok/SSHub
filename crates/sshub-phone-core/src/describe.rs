@@ -480,6 +480,7 @@ pub fn describe_op(
         rows,
         danger_count,
         hash: hex::encode(sshub_sync_proto::crypto::chain_hash(canonical)),
+        plain: crate::plain::plain_op(op, aliases),
     }
 }
 
