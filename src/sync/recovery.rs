@@ -345,16 +345,16 @@ fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
     fresh_in(store, super::ceremony::effective_devices(store, None)?, now)
 }
 
-/// The devices known to be alive AT `t`, the same on every device that holds the log: a device this store was in
-/// contact with no later than `t` and within the live window before it, or one that wrote an op stamped no later
-/// than `t` and within the window. Contact AFTER `t` proves nothing about `t` (a device learned from an op has
-/// `last_seen` 0 until its first round, and a requester that left it out was right then), so it does not make a
-/// device required; an op it wrote before `t` does.
+/// The devices known to be alive AT `t`, decided from the LOG only, so every device that holds the same ops judges the
+/// same set: a device that wrote an op stamped BEFORE `t` (strictly: the requester cannot know an op written in its own second) and within the live window before it. Contact is local
+/// knowledge (a device learned from an op has `last_seen` 0 until its first round, and two devices disagree about who
+/// they talked to), and a recovery judged on it was rejected on every device whose contacts differed from the
+/// requester's. A device that never writes anything is not required; the live phone's veto does not depend on the set.
 fn fresh_in(store: &LauncherStore, devices: Vec<DeviceRow>, t: i64) -> Result<Vec<DeviceRow>> {
     let wrote: std::collections::BTreeMap<String, i64> = store.with_conn(|c| {
         let mut st = c.prepare(
             "SELECT device_id, MAX(timestamp) FROM sync_ops
-             WHERE timestamp <= ?1 AND COALESCE(reason, '') <> 'unknown-author'
+             WHERE timestamp < ?1 AND COALESCE(reason, '') <> 'unknown-author'
                AND state NOT IN ('rejected', 'void') GROUP BY device_id",
         )?;
         let rows = st.query_map([t], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
@@ -363,9 +363,10 @@ fn fresh_in(store: &LauncherStore, devices: Vec<DeviceRow>, t: i64) -> Result<Ve
     Ok(devices
         .into_iter()
         .filter(|d| {
-            let alive = |seen: i64| seen <= t && t - seen <= LIVE_DEVICE_WINDOW_SECS;
             !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
-                && (alive(d.last_seen) || wrote.get(&d.id).is_some_and(|w| alive(*w)))
+                && wrote
+                    .get(&d.id)
+                    .is_some_and(|w| t - *w <= LIVE_DEVICE_WINDOW_SECS)
         })
         .collect())
 }

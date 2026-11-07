@@ -598,6 +598,22 @@ mod over_the_log {
     #[test]
     fn a_replayed_proposal_a_short_liveness_set_and_the_same_factor_twice_are_refused() {
         let w = world();
+        // A has written something before: a device that wrote an op (stamped before the request) is required in the set.
+        w.d[A]
+            .store
+            .sync_append_local_at(
+                &w.d[A].id,
+                OpBody::HostUpsert {
+                    host_uid: [9; 16],
+                    fields: crate::sync::oplog::HostFields {
+                        name: Some("seen".into()),
+                        ..Default::default()
+                    },
+                },
+                crate::store::now_ts() - 100,
+            )
+            .unwrap();
+        w.sync();
         let first = w.reenroll(false, None, None);
         assert!(w.verdict(&first, first.timestamp).is_ok());
         // The same body again, in a new op: refused. The first stays valid.
