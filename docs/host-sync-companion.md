@@ -99,27 +99,22 @@ PIN and the Argon2id cost count. A PIN with fewer than 5 different characters, a
 a run of 7 or more consecutive characters (1234567890, abcdefghij) or a well-known word (password, qwerty) is refused:
 use a passphrase of several unrelated words.
 
-## Enrollment
+## Connecting to a terminal
 
-Enrolling introduces the phone to a terminal of your ring. It uses the same commit, reveal and four-word check as
-machine enrollment, over QR codes instead of SSH. Here both sides always have a screen, so the four words are a real
-check (unlike a headless machine reached over ssh, where the words prove nothing).
+Connecting introduces the phone to a terminal of your devices. It uses the same exchange of codes, keys and four check words as machine enrollment (design terms: commit, reveal, SAS), over QR codes instead of SSH. Here both sides always have a screen, so the four check words are a real check (unlike a headless machine reached over ssh, where the words prove nothing). The page, the app and the terminal all show **five steps**.
 
-1. On the terminal start phone enrollment. It shows a short QR code.
-2. On the phone tap **Enroll with a terminal**, name the phone, and scan the code (step 1 of 4).
-3. The phone shows its own commitment as a QR code: hold it to the terminal camera, then tap Next.
-4. Scan the terminal's second QR code (its keys). The phone checks they match the first code; if they do not, it
-   stops and says so.
-5. Both screens now show four words. If they are identical, tap **The words match**; if not, tap **They differ**
-   (someone sits between you). Hold the phone's confirmation QR to the terminal camera, then scan the terminal's
-   confirmation.
+1. On the terminal choose **Add my phone** (or run `sshub sync-phone-enroll`). It shows a short QR code.
+2. On the phone tap **Connect to a terminal**, name the phone, and scan the code (**step 1 of 5: Terminal code**).
+3. **Step 2 of 5: Phone code.** The phone shows its own code as a QR code: hold it to the terminal camera, then tap Next.
+4. **Step 3 of 5: Terminal keys.** Scan the terminal's second QR code (its keys). The phone checks they match the first code; if they do not, it stops and says so.
+5. **Step 4 of 5: Compare the words.** Both screens show four check words. If they are identical, tap **The words match**; if not, tap **They differ** (someone sits between you). The phone also shows its keys for the terminal to read.
+6. **Step 5 of 5: Finish.** Hold the phone's confirmation QR to the terminal camera, then scan the terminal's confirmation.
 
-Each frame the phone shows during enrollment is also offered as text under **Show as text for a terminal without a camera**
+Each frame the phone shows during these steps is also offered as text under **Show as text for a terminal without a camera**
 (the same bytes as the QR code, base64, with a Copy button): a terminal that has no camera takes the phone's frames by paste.
 
 Only after the terminal's signed confirmation does the phone record the terminal. Declining or a bad signature
-enrolls nothing. The terminal then adds the phone to the ring (promotion to holder is a separate step on the
-terminal).
+connects nothing. The terminal then proposes the phone as a full device (a separate step on the terminal).
 
 ## Approving a release
 
@@ -214,7 +209,7 @@ the clipboard: hold it to any terminal. Only cancel a recovery you did not start
 
 ## Red operations: the phone's proof
 
-Some changes are Red: adding or promoting a holder, revoking a holder, a trust certificate, a mode change, a third
+Some changes are big changes (design term: Red): adding or promoting a full device, removing a full device, a trust session, a mode change, a third
 factor, a role change, a bulk export, an exemption. A Red change takes effect only with three proofs: this phone, a
 second attended terminal and a third factor (paper or email code). The terminal shows a Red notice as a QR code.
 On the phone tap **Scan a share request** and scan it: the page describes the operation from its signed bytes
@@ -248,18 +243,16 @@ The same menu lists the certificates this phone issued (active, expired or revok
 this trust session** button for each active one. Carry the signed revocation to any terminal; peers stop honouring the
 certificate on their next sync.
 
-## Reshare and wrap keys
+## Update this phone after a device was removed
 
 After a holder is revoked the ring reshares. The phone is only a receiver: it never contributes a sub-share and
-keeps no old shares. Menu **Reshare and wrap keys**: **Rotate wrap keys** first (its old generations stay readable,
-they derive from the same 24 words), then **Adopt a reshare** and scan or paste the reshare ops a terminal shows for
+keeps no old shares. Menu **Update this phone after a device was removed**: **Rotate wrap keys** first (its old generations stay readable,
+they derive from the same 24 words), then **Update the shares** and scan or paste the list a terminal shows for
 the phone. The page shows the epoch, the holder number, how many credentials are ready and the contributors (with
 "signature not checked" for contributors it has never met), and **Publish the new shares** adds the phone's new
 shares, sealed, to its chain for a terminal to take. Only the contributions of terminals this phone enrolled with, whose
 signature verifies, are combined, and at least two of them are needed per credential; a holder id that is not a 16
-character device id, or an epoch outside the 64 bit range, ends on a refusal. The screen states the consequence of this design: a revocation
-needs at least two other terminal holders to contribute, so a ring of two terminals plus the phone cannot revoke a
-terminal by resharing (the paper phrase is offline and cannot contribute either); add a third terminal first.
+character device id, or an epoch outside the 64 bit range, ends on a refusal. The screen states the consequence of this design in one sentence: to remove a stolen or lost device you need three computers or servers you control, the one you remove included, together with the phone (in code terms: a revocation needs at least two other full terminals to contribute; the paper phrase is offline and cannot contribute either).
 
 ## Bluetooth
 
@@ -310,9 +303,9 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
   anything (see Backup and restore). No recovery is needed, but anyone who holds the lost phone
   and knows or guesses the PIN can still approve requests, so consider the lost phone compromised until you have
   revoked it from a terminal.
-- If you have lost both the phone and the words: on a terminal start phone recovery (two other attended devices or
-  the paper phrase, plus a third factor and a seven day timelock; see the design chapter "Phone loss"). When it
-  completes, enroll the new phone as above; the ring reissues shares to it and clears short codes.
+- If you have lost both the phone and the words: on a terminal start phone recovery (two other devices with a person at the keyboard or
+  the paper phrase, plus the paper phrase or emailed code and a seven day wait; see the design chapter "Phone loss"). When it
+  completes, connect the new phone as above; the ring reissues shares to it and clears short codes.
 - While there is no phone, the second share comes from your terminals (if you have at least two) or from paper.
 
 ## Known limits
@@ -338,7 +331,7 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
   `frame-ancestors 'none'` there.
 - The fingerprint check needs the terminal to print the expected fingerprint; until the terminal does, compare with
   the repository file.
-- The phone can rotate its wrap keys (Reshare and wrap keys), but its older generations derive from the same 24 words
+- The phone can rotate its wrap keys (Update this phone after a device was removed), but its older generations derive from the same 24 words
   and can never be retired, so the forward secrecy of the reshare does not extend to the phone's own envelopes. The
   page opens envelopes wrapped to any generation up to 32 and will not rotate below one it has seen the ring use.
 - The phone's chain carries the last 8 entries with each reply; a long gap needs the phone to touch another terminal.
