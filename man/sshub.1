@@ -708,6 +708,10 @@ section of
 .B auto_sync_on_start
 (default true) runs one sync round with every device that has a known host when
 the TUI starts;
+.B unattended
+(default false) marks a device nobody sits at, such as a Hub: it enrolls as an unattended device, never votes, and no
+checkpoint or Red change waits for it. The ring is told when the device enrolls, so an already enrolled Hub must
+re-enroll to change it;
 .B [sync.notify]
 (off until
 .B command

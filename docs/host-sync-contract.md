@@ -1101,7 +1101,10 @@ Core (this package, after the op lands):
   the phone shows it, builds and signs `CertIssue` itself and returns it as a courier op / phone-ops frame.
   `cert::cert_revoke_body(&cert)` revokes (Yellow).
 * A device records itself (role, attendance) in its own `sync_devices` when it enrolls, so `quorum::is_unattended`
-  and `recovery::unacknowledged` know an unattended device (the Hub) is one.
+  and `recovery::unacknowledged` know an unattended device (the Hub) is one. Attendance is a property of the device,
+  not of the ssh session: it is attended unless `[sync] unattended = true` is in its config (`runtime::device_attended`,
+  read by `sync-enroll` and by the joining side), the ring is told at enrollment, and an unattended device is never a
+  required checkpoint signer and never votes.
 
 ### 4b. Second-share paths (how a terminal gets the share it does not hold)
 
