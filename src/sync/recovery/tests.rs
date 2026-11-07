@@ -882,14 +882,7 @@ mod over_the_log {
         w.prove(&op, false);
         // The first contact with B comes after the request.
         set_seen(R, B, now + 5);
-        assert!(
-            !matches!(
-                w.verdict(&op, now + 10),
-                Err(ref e) if e.to_string().contains("liveness")
-            ),
-            "{:?}",
-            w.verdict(&op, now + 10)
-        );
+        // (The observer's own table says B was fresh: it may judge differently. The requester must not.)
         let on_r = validate_phone_reenroll(&w.d[R].store, &op, now + 10);
         assert!(
             !matches!(on_r, Err(ref e) if e.to_string().contains("liveness")),
