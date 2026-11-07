@@ -5793,6 +5793,8 @@ mod tests {
                 })
                 .collect(),
             frames: vec![],
+            host_id: String::new(),
+            words: String::new(),
             code: String::new(),
         };
         for (paths, expect) in [
@@ -5808,6 +5810,30 @@ mod tests {
             let buffer = render_to_buffer(&app, 120, 38);
             assert_eq!(buffer_contains(&buffer, "drop phone"), expect);
         }
+    }
+
+    #[test]
+    fn the_unlock_modal_shows_the_host_id_and_the_binding_words_for_the_phone() {
+        use crate::app::sync::UnlockView;
+        let mut app = test_app_with_hosts();
+        app.sync = crate::app::sync::sample_sync_view();
+        app.open_sync_unlock(UnlockView {
+            host: "web-1".into(),
+            have: 1,
+            need: 2,
+            paths: vec![],
+            frames: vec![],
+            host_id: "A3F9 007C 1B2E 55D0 9C41 7E08 F2A6 3D19".into(),
+            words: "harbor-globe-lantern-mint".into(),
+            code: String::new(),
+        });
+        let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "Unlocking web-1"));
+        assert!(buffer_contains(
+            &buffer,
+            "host id  A3F9 007C 1B2E 55D0 9C41 7E08 F2A6 3D19"
+        ));
+        assert!(buffer_contains(&buffer, "harbor-globe-lantern-mint"));
     }
 
     #[test]

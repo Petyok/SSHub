@@ -343,6 +343,17 @@ pub fn render_unlock(frame: &mut Frame, app: &App) {
             theme.style(StyleRole::TextPrimary),
         ),
     ];
+    // What the phone's release screen must show too: compare both before approving there.
+    if !u.host_id.is_empty() {
+        body.push(Line::styled(
+            format!("host id  {}", u.host_id),
+            theme.style(StyleRole::TextPrimary),
+        ));
+        body.push(Line::styled(
+            format!("words    {}  (compare with the phone)", u.words),
+            theme.style(StyleRole::TextPrimary),
+        ));
+    }
     for p in &u.paths {
         body.push(Line::styled(
             format!("  {}: {}", p.kind.label(), p.status),

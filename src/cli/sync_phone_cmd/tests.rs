@@ -377,6 +377,14 @@ fn sync_share_request_challenge_decodes_and_the_phones_reply_opens_the_credentia
     let ch = ShareChallenge::new(&d[0].store, &d[0].id, &host).unwrap();
     // The kind 1 text decodes and names a challenge for this host.
     let wire = ChallengeWire::decode(&B64.decode(&ch.text).unwrap()).unwrap();
+    // What the verb prints next to the host name is the phone's grouping of this host's uid.
+    let shown = ch.challenge.shown().unwrap();
+    assert_eq!(shown, crate::sync::quorum::challenge_shown(&wire).unwrap());
+    assert_eq!(shown.host_id, crate::sync::quorum::grouped_host_uid(&host));
+    assert_eq!(
+        shown.words,
+        crate::sync::crypto::sas_words(&wire.binding_hash())
+    );
     // Bluetooth carries the same bytes, as a frame its channel accepts.
     assert_eq!(ch.frame, B64.decode(&ch.text).unwrap());
     assert!(crate::sync::media::ble_link::valid_frame(&ch.frame));

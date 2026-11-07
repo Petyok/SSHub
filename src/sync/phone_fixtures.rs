@@ -513,6 +513,65 @@ fn unhex(v: &Value) -> Vec<u8> {
     hex::decode(v.as_str().unwrap()).unwrap()
 }
 
+/// N5 (Android review round 2): the phone's release screen tells the user to compare the host id and the four
+/// binding words with the terminal. Both come from `challenges.json`, the file the page's tests
+/// (`phone.test.mjs`: `ev.bindingWords == binding_words`, the "Host credential" row == `host_uid`) and the phone
+/// core's `release/tests.rs` judge the same frames against; the terminal must print exactly those.
+#[test]
+fn the_terminal_shows_the_host_id_and_words_the_phone_describes_for_the_same_challenge() {
+    use super::quorum::challenge_shown;
+    let main = read("challenges.json");
+    let host_hex = main["host_uid"].as_str().unwrap().to_string();
+    let mut compared = 0;
+    for ch in main["challenges"].as_array().unwrap() {
+        let name = ch["name"].as_str().unwrap();
+        let w = ChallengeWire::decode(&unhex(&ch["frame_hex"])).unwrap();
+        let Ok(shown) = challenge_shown(&w) else {
+            // A frame that is not a share release is one the phone refuses too.
+            assert_ne!(
+                ch["expect"], "ok",
+                "{name}: the phone accepts it, the terminal cannot show it"
+            );
+            continue;
+        };
+        assert_eq!(
+            shown.words,
+            ch["binding_words"].as_str().unwrap(),
+            "{name}: the four words"
+        );
+        // The phone draws the uid in groups of 4, uppercase, separated by single spaces (the app's groupedUid).
+        assert_eq!(
+            shown.host_id.to_lowercase().replace(' ', ""),
+            shown.host_uid,
+            "{name}"
+        );
+        assert!(
+            shown.host_id.split(' ').all(|g| g.len() == 4
+                && g.chars()
+                    .all(|c| c.is_ascii_digit() || ('A'..='F').contains(&c))),
+            "{name}: {}",
+            shown.host_id
+        );
+        if name == "good" {
+            assert_eq!(
+                shown.host_uid, host_hex,
+                "the credential id of the committed challenge"
+            );
+            let expected: Vec<String> = host_hex
+                .as_bytes()
+                .chunks(4)
+                .map(|c| String::from_utf8_lossy(c).to_uppercase())
+                .collect();
+            assert_eq!(shown.host_id, expected.join(" "));
+            compared += 1;
+        }
+    }
+    assert_eq!(
+        compared, 1,
+        "the committed challenges include the good case"
+    );
+}
+
 #[test]
 fn committed_fixtures_are_consistent_with_the_rust_code() {
     if std::env::var_os("SSHUB_EMIT_PHONE_FIXTURES").is_some() {

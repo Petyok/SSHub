@@ -334,21 +334,30 @@ mod tests {
         };
         thread::sleep(settle);
         const WRITES: u32 = 5;
-        for i in 0..WRITES {
-            writeln!(file, "Host line-{i}").unwrap();
-            file.flush().unwrap();
-            let _ = file.as_file().sync_all();
-            thread::sleep(Duration::from_millis(50));
-        }
-
         let window = debounce_burst_timeout();
-        let deadline = Instant::now() + window;
         let mut events = 0u32;
-        while Instant::now() < deadline {
-            match rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(WatchEvent::ConfigChanged) => events += 1,
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => break,
+        // The premise is a burst much shorter than the debounce window. The writes carry no
+        // sleeps, so only a stalled machine can stretch the burst; when it did, the premise is
+        // gone and the burst is repeated instead of judged (the virtual clock tests below prove
+        // the coalescing rule itself; this test proves the real watcher is wired to it).
+        for attempt in 0..10 {
+            let started = Instant::now();
+            for i in 0..WRITES {
+                writeln!(file, "Host line-{attempt}-{i}").unwrap();
+                file.flush().unwrap();
+            }
+            let burst = started.elapsed();
+            let deadline = Instant::now() + window;
+            events = 0;
+            while Instant::now() < deadline {
+                match rx.recv_timeout(Duration::from_millis(200)) {
+                    Ok(WatchEvent::ConfigChanged) => events += 1,
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            if burst < WATCHER_DEBOUNCE / 2 {
+                break;
             }
         }
 
