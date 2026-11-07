@@ -924,15 +924,15 @@ impl App {
                 sync.enrolling = None;
                 sync.unlock_running = false;
                 let migrating = std::mem::take(&mut sync.migrating);
-                if migrating {
-                    self.sync_close_modal();
-                }
                 if message == crate::sync::client::WORKER_STOPPED {
                     // The thread is gone: stop offering the keys that need it.
                     sync.worker = false;
                     self.sync_worker = None;
                 }
                 self.sync.last_error = Some(message.clone());
+                if migrating {
+                    self.sync_close_modal();
+                }
                 self.host_notice = Some(format!("sync: {message}"));
             }
         }
