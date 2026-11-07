@@ -472,6 +472,8 @@ pub struct SyncView {
     /// Store keys the open unlock modal is for, and whether its round runs.
     pub unlock_keys: Vec<String>,
     pub unlock_running: bool,
+    /// The unlock dialog is gathering shares for a mode switch (Quorum to Vault): close it when the round ends.
+    pub migrating: bool,
     /// This device's id, once the worker has loaded its identity.
     pub this_device: Option<String>,
     /// A behind peer and the host to re-enroll it through, after a round said so.
@@ -905,8 +907,12 @@ impl App {
                 sync.progress = None;
                 sync.enrolling = None;
                 sync.unlock_running = false;
+                let migrating = std::mem::take(&mut sync.migrating);
                 // Whatever the round moved is in the store now.
                 self.refresh_sync_view();
+                if migrating {
+                    self.sync_close_modal();
+                }
                 // A ring just came into being here: learn which device this is.
                 if std::mem::take(&mut self.sync.identify_after) && self.sync.configured {
                     self.sync.intents.push(SyncIntent::Identify);
@@ -917,6 +923,10 @@ impl App {
                 sync.progress = None;
                 sync.enrolling = None;
                 sync.unlock_running = false;
+                let migrating = std::mem::take(&mut sync.migrating);
+                if migrating {
+                    self.sync_close_modal();
+                }
                 if message == crate::sync::client::WORKER_STOPPED {
                     // The thread is gone: stop offering the keys that need it.
                     sync.worker = false;

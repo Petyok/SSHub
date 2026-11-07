@@ -1077,3 +1077,60 @@ fn a_garbage_answer_from_the_phone_is_refused_and_a_trust_session_can_be_revoked
         panic!("the certificate was not listed: {:?}", r.app.host_notice);
     }
 }
+
+/// U13-2: the way back from Quorum to Vault exists in the terminal screen. The switch is proposed with a
+/// co-signing full device, and once the approvals are in the credentials are opened through the same unlock dialog
+/// a connect uses (here the 24 words of the phone's share, the second share) and written again for the Vault.
+#[test]
+fn the_switch_back_to_vault_gathers_the_shares_through_the_unlock_dialog_and_rewraps_the_credential() {
+    use crate::sync::oplog::CredMode;
+    const PHRASE: &str = "abacus abdomen abdominal abide abiding ability";
+    let ring_secret = [7u8; 16];
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    crate::sync::quorum::vault_setup_with(&r.app.store, PHRASE, &ring_secret, FAST).unwrap();
+    assert_eq!(
+        r.app.sync.cred_mode,
+        Some(crate::app::sync::CredModeView::Quorum)
+    );
+
+    // Step one: propose, naming a co-signing full device (the other terminal).
+    crate::app::sync_flows::mode(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncMenu);
+    let names: Vec<String> = r.app.sync.devices.iter().filter(|d| !d.this).map(|d| d.name.clone()).collect();
+    assert!(names.len() >= 2, "{names:?}");
+    r.app.handle_key(key(KeyCode::Down)).unwrap();
+    enter(&mut r.app);
+    pump(&mut r.app, "the proposal panel", |a| a.mode == AppMode::SyncInfo);
+    let ops = crate::sync::quorum::ops_of(&r.app.store, "ModeChange", None).unwrap();
+    assert_eq!(ops.len(), 1, "one ModeChange was appended");
+    r.app.handle_key(key(KeyCode::Esc)).unwrap();
+    r.app.refresh_sync_view();
+
+    // The approvals are in (the fixture counts every big change as in force): the credential is still wrapped
+    // for Quorum, and the menu entry now finishes the switch instead of proposing again.
+    assert_eq!(
+        crate::app::sync_flows::unfinished_switch(&r.app),
+        Some((CredMode::Vault, true))
+    );
+    crate::app::sync_flows::mode(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncUnlock, "the unlock dialog gathers the shares");
+    wait_for_phone_prompt(&mut r);
+    let words = crate::sync::crypto::bip39_encode(&phone_share(&r).bytes.clone().try_into().unwrap());
+    type_and_enter(&mut r.app, &words);
+    pump(&mut r.app, "the dialog to close", |a| {
+        !a.sync.migrating && a.mode != AppMode::SyncUnlock
+    });
+
+    // Now the credential is wrapped for the Vault: the phrase and the ring secret open it, the switch is done.
+    assert_eq!(crate::app::sync_flows::unfinished_switch(&r.app), None);
+    let (ciphertext, _) = r.app.store.sync_cred_ciphertext(&r.host).unwrap().unwrap();
+    let dek = crate::sync::quorum::vault_open_dek_with(&r.app.store, &r.host, PHRASE, &ring_secret, FAST).unwrap();
+    let plain = crate::sync::crypto::dek_open(&dek, &ciphertext).unwrap();
+    let payload = crate::sync::cred_ops::CredPayload::from_bytes(&plain).unwrap();
+    assert_eq!(payload.password.as_deref(), Some("trusted"));
+    assert_eq!(
+        crate::sync::ceremony::effective_cred_mode(&r.app.store).unwrap(),
+        CredMode::Vault
+    );
+}

@@ -403,13 +403,19 @@ fn execute(paths: &ProfilePaths, cmd: Cmd, opts: Opts) -> Result<i32> {
         }
         Cmd::Recovery(rc) => recovery(&store, &id, rc, opts, now),
         Cmd::Mode(to, cosigner) => {
-            let secrets_in = |label: &str| super::unlock::prompt_secret(label);
-            let phrase = secrets_in("Master phrase (six words): ").context("no phrase entered")?;
-            let ring = secrets
-                .get(crate::sync::runtime::RING_SECRET_KEY)?
-                .map(|t| crate::sync::quorum::parse_ring_secret(&t))
-                .transpose()?
-                .context("this profile has no ring secret; import the Vault kit first")?;
+            // Only the Vault to Quorum re-wrap opens credentials with the phrase and the ring secret.
+            let (phrase, ring) = if to == CredMode::Vault {
+                (Zeroizing::new(String::new()), [0u8; 16])
+            } else {
+                let phrase = super::unlock::prompt_secret("Master phrase (six words): ")
+                    .context("no phrase entered")?;
+                let ring = secrets
+                    .get(crate::sync::runtime::RING_SECRET_KEY)?
+                    .map(|t| crate::sync::quorum::parse_ring_secret(&t))
+                    .transpose()?
+                    .context("this profile has no ring secret; import the Vault kit first")?;
+                (phrase, ring)
+            };
             report(
                 opts,
                 &mode(&store, &id, to, cosigner.as_deref(), &phrase, &ring, now)?,
@@ -417,7 +423,7 @@ fn execute(paths: &ProfilePaths, cmd: Cmd, opts: Opts) -> Result<i32> {
         }
         Cmd::Exemption { on, device } => {
             if on {
-                bail!("enabling an exemption needs the slot builder (exemption::enable_body), which is not in the core yet");
+                bail!("Switching the exemption on is done in the terminal screen: tab 7, M, Master-phrase exemption.");
             }
             report(opts, &exemption_off(&store, &id, &device, now)?)
         }
@@ -608,7 +614,11 @@ pub(crate) fn role(
             to,
         },
     )?;
-    op_report(
+    let after = crate::sync::revocation::live_terminal_holders(store)?
+        + usize::from(
+            to == DeviceRole::Holder && row.kind == crate::sync::oplog::DeviceKind::Terminal,
+        );
+    let mut r = op_report(
         store,
         &op,
         format!(
@@ -617,7 +627,14 @@ pub(crate) fn role(
             short(&op.hash())
         ),
         now,
-    )
+    )?;
+    // Say it when a device is made a full device: with fewer than three terminals a stolen one cannot be cut off.
+    if to == DeviceRole::Holder && after < crate::sync::revocation::TERMINALS_TO_CUT_OFF {
+        let w = crate::sync::revocation::cut_off_sentence(after);
+        r.lines.push(format!("warning: {w}"));
+        r.json["warning"] = json!(w);
+    }
+    Ok(r)
 }
 
 fn short_id(id: &DeviceId) -> String {
@@ -1104,7 +1121,7 @@ pub(crate) fn mode(
             }
             ensure!(
                 to == CredMode::Quorum,
-                "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
+                "the other holders agreed. Finish the switch back to Vault in the terminal screen: sshub, tab 7, M, Switch the credential mode. It asks a second full device (or the phone) to approve each credential, which this command cannot ask."
             );
             let bodies = crate::sync::modes::mode_migration(store, &me, &open)?;
             let n = bodies.len();
@@ -1119,18 +1136,19 @@ pub(crate) fn mode(
             );
         }
     }
-    ensure!(
-        crate::sync::ceremony::effective_cred_mode(store)? == CredMode::Vault,
-        "from the command line only Vault to Quorum can open the credentials (the other direction needs shares from other holders: use the TUI)"
-    );
     let body = crate::sync::modes::mode_change_body(store, &me, to, cosigner)?;
     let op = store.sync_append_local(id, body)?;
     op_report(
         store,
         &op,
         format!(
-            "mode change to {to:?} proposed (op {}); once its ceremony completed, run this again to re-encrypt the credentials",
-            short(&op.hash())
+            "mode change to {to:?} proposed (op {}); {}",
+            short(&op.hash()),
+            if to == CredMode::Quorum {
+                "once the approvals are in, run this again to re-encrypt the credentials"
+            } else {
+                "once the approvals are in, finish it in the terminal screen (tab 7, M, Switch the credential mode): it asks a second full device or the phone for each credential"
+            }
         ),
         now,
     )
@@ -1332,7 +1350,7 @@ pub fn print_help(cmd: &str) {
         "sync-factor" => ("sync-factor <op-id> (--paper | --email-code) [--format plain|json]", "Add the third factor to a Red op. The 24 paper words or the emailed code are read without echo."),
         "sync-factor-register" => ("sync-factor-register (paper | email) [--sender <device>] [--format plain|json]", "Register a third factor. Paper reads the 24 words without echo; email creates a code and shows it once. The code is kept, sealed, only on its sender, so register it on the device that will mail it (--sender names only this device; another device is refused)."),
         "sync-recovery" => ("sync-recovery (start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status) [--format plain|json]", "Re-enroll the phone: start, approve or acknowledge as another attended device, cancel, or show the state of every recovery."),
-        "sync-mode" => ("sync-mode (vault | quorum) [--cosigner <device>] [--format plain|json]", "Change the credential mode (Red), in two steps: the first call proposes it and shows the ceremony; run it again once the ring agreed to re-encrypt the credentials. From the command line only Vault to Quorum can open the credentials; the master phrase is read without echo."),
+        "sync-mode" => ("sync-mode (vault | quorum) [--cosigner <device>] [--format plain|json]", "Change the credential mode (Red), in two steps: the first call proposes it and shows the ceremony; for Vault to Quorum run it again once the approvals are in to re-encrypt the credentials (the master phrase is read without echo). The switch back to Vault is proposed here with `--cosigner <device>` (a second full device) and finished in the terminal screen (tab 7, M, Switch the credential mode), which asks a second full device or the phone to approve each credential."),
         "sync-exemption" => ("sync-exemption (on | off) <device> [--format plain|json]", "Switch the master-phrase exemption of a device off (Red). Switching it on needs the TUI."),
         "sync-export" => ("sync-export --window <seconds> --out <path> [--wait <seconds>] [--format plain|json]", "Bulk export (Red, window up to 3600 s): propose it, wait for the ceremony, then write every credential to a new 0600 file in the Termius CSV format (import it from a directory as L00t.csv)."),
         "sync-migrate" => ("sync-migrate [--remove-local] [--format plain|json]", "Write this profile's existing host and identity secrets as replicated credentials; --remove-local deletes the local copies afterwards."),

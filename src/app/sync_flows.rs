@@ -78,6 +78,21 @@ pub(crate) fn revoke(app: &mut App) {
 }
 
 fn confirm_revoke(app: &mut App, id: String, name: String) {
+    // Say at once, before anything is typed, when the ring cannot do it.
+    let holder = app
+        .sync
+        .devices
+        .iter()
+        .find(|d| d.id == id)
+        .is_some_and(|d| d.role == super::sync::DeviceRoleView::Holder);
+    if holder {
+        if let Err(why) = crate::sync::revocation::check_revocable(&app.store, &id, now()) {
+            return app.sync_info(
+                "This device cannot be removed yet",
+                vec![format!("{why:#}")],
+            );
+        }
+    }
     let expected = name.clone();
     app.sync_prompt(
         "Revoke a device",
@@ -148,13 +163,18 @@ fn choose_role(app: &mut App, id: String, name: String) {
 /// The two-step switch, as `sshub sync-mode` does it: the first call proposes
 /// the Red change (nothing is re-encrypted before the ring agreed), a later one
 /// re-wraps the credentials once the ceremony completed.
-fn mode_job(app: &mut App, phrase: String) {
+fn mode_job(app: &mut App, phrase: String, to: CredMode) {
     app.run_sync_job(move |env| {
-        let ring = read_ring_secret(env)?;
+        // Only the Vault direction opens credentials with the ring secret.
+        let ring = if to == CredMode::Quorum {
+            read_ring_secret(env)?
+        } else {
+            [0u8; 16]
+        };
         let r = admin::mode(
             &env.store,
             &env.identity,
-            CredMode::Quorum,
+            to,
             None,
             phrase.trim(),
             &ring,
@@ -164,23 +184,16 @@ fn mode_job(app: &mut App, phrase: String) {
     });
 }
 
-/// This device's own switch to Quorum that is not finished: `Some(false)` while
-/// its ceremony is incomplete, `Some(true)` when it is in force but credentials
-/// are still wrapped for the Vault.
-fn unfinished_switch(app: &App) -> Option<bool> {
+/// This device's own mode switch that is not finished: `(to, false)` while its ceremony is incomplete,
+/// `(to, true)` when it is in force but credentials are still wrapped for the old mode.
+pub(crate) fn unfinished_switch(app: &App) -> Option<(CredMode, bool)> {
     let me = app.sync.this_device.clone()?;
     let mc = crate::sync::modes::own_mode_change(&app.store, &me).ok()??;
-    if !matches!(
-        mc.body,
-        crate::sync::oplog::OpBody::ModeChange {
-            to: CredMode::Quorum,
-            ..
-        }
-    ) {
+    let crate::sync::oplog::OpBody::ModeChange { to, .. } = mc.body else {
         return None;
-    }
+    };
     if !crate::sync::ceremony::in_force(&app.store, &mc).ok()? {
-        return Some(false);
+        return Some((to, false));
     }
     let public = app
         .store
@@ -189,41 +202,82 @@ fn unfinished_switch(app: &App) -> Option<bool> {
         .into_iter()
         .find(|d| d.id == me)?
         .public;
-    // The probe fails where a credential would have to be opened: that one is still wrapped for the Vault.
+    // The probe fails where a credential would have to be opened: that one is still wrapped the old way.
     let pending =
         crate::sync::modes::mode_migration(&app.store, &public, &|_| anyhow::bail!("pending"))
             .is_err();
-    pending.then_some(true)
+    pending.then_some((to, true))
 }
 
 pub(crate) fn mode(app: &mut App) {
     match unfinished_switch(app) {
-        Some(false) => return mode_job(app, String::new()), // shows the ceremony status
-        Some(true) => {
+        Some((to, false)) => return mode_job(app, String::new(), to), // shows the ceremony status
+        Some((CredMode::Quorum, true)) => {
             return app.sync_prompt(
                 "Finish the switch to Quorum",
                 "The ring agreed. Type the master phrase to re-wrap the credentials for Quorum (nothing is shown)",
                 true,
-                mode_job,
+                |app, phrase| mode_job(app, phrase, CredMode::Quorum),
             )
         }
+        Some((CredMode::Vault, true)) => return finish_vault(app),
         None => {}
     }
     match app.sync.cred_mode {
         Some(super::sync::CredModeView::Vault) => {
             // Proposing needs no secret; the phrase is asked when the switch is finished.
-            mode_job(app, String::new());
+            mode_job(app, String::new(), CredMode::Quorum);
         }
-        Some(super::sync::CredModeView::Quorum) => app.sync_info(
-            "Switch to Vault",
-            vec![
-                "Quorum to Vault re-wraps every credential, which needs a second holder".into(),
-                "to open them and a co-signing holder for the Red ceremony.".into(),
-                "Start it from a device that holds shares: `sshub sync-mode vault --cosigner <device>`.".into(),
-            ],
+        Some(super::sync::CredModeView::Quorum) => pick_device(
+            app,
+            "Switch back to Vault: which full device co-signs?",
+            |d| d.role == super::sync::DeviceRoleView::Holder
+                && d.status != DeviceStatusView::Revoked,
+            propose_vault,
         ),
         None => app.host_notice = Some("the credential mode is not known yet".into()),
     }
+}
+
+/// Quorum to Vault, step one: propose the change with a co-signing full device (a big change: the approvals are
+/// collected like any other). Nothing is re-wrapped before the ring agreed.
+fn propose_vault(app: &mut App, id: String, _name: String) {
+    app.run_sync_job(move |env| {
+        let r = admin::mode(
+            &env.store,
+            &env.identity,
+            CredMode::Vault,
+            Some(&id),
+            "",
+            &[0u8; 16],
+            now(),
+        )?;
+        Ok(r.lines.join("\n"))
+    });
+}
+
+/// Quorum to Vault, step two, once the approvals are in: every credential is opened with the same unlock
+/// dialog a connect uses (a second full device approves on its screen, or the phone answers) and written again
+/// for the Vault. One credential after another; nothing changes for a credential that was not opened.
+pub(crate) fn finish_vault(app: &mut App) {
+    if !app.sync.worker {
+        app.host_notice = Some("the sync worker is not running: nothing was changed".into());
+        return;
+    }
+    app.sync.migrating = true;
+    app.open_sync_unlock(super::sync::UnlockView {
+        host: "all credentials (switching back to Vault)".into(),
+        have: 0,
+        need: 0,
+        paths: Vec::new(),
+        frames: Vec::new(),
+        host_id: String::new(),
+        words: String::new(),
+        code: String::new(),
+    });
+    app.sync.intents.push(super::sync::SyncIntent::Unlock {
+        secrets: vec![crate::sync::runtime::MIGRATE_KEY.into()],
+    });
 }
 
 // ---------------------------------------------------------------- recovery

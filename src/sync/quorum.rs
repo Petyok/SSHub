@@ -744,6 +744,12 @@ impl QuorumUnlocker {
         }
     }
 
+    /// A credential's plaintext payload, gathering what the mode asks for (the phrase, or a second share from
+    /// the share source). The mode switch re-wraps every credential through this.
+    pub fn open_plain(&self, host: &HostUid) -> std::result::Result<Zeroizing<Vec<u8>>, UnlockError> {
+        self.open_one(host)
+    }
+
     fn open_one(&self, host: &HostUid) -> std::result::Result<Zeroizing<Vec<u8>>, UnlockError> {
         let fail = |e: anyhow::Error| UnlockError::Failed(format!("{e:#}"));
         let (ciphertext, wraps) = self
@@ -752,11 +758,14 @@ impl QuorumUnlocker {
             .map_err(fail)?
             .ok_or_else(|| UnlockError::Failed("no such credential".into()))?;
         let vault = vault_pub(&self.store).map_err(fail)?.map(|v| v.device_id());
-        let is_vault = super::ceremony::effective_cred_mode(&self.store).map_err(fail)?
-            == CredMode::Vault
-            || vault
-                .as_ref()
-                .is_some_and(|v| wraps.iter().any(|w| w.recipient == *v));
+        // The shape of the credential decides, not the mode the ring is in: between a mode change that
+        // came into force and the re-wrap of a credential, it is still wrapped the old way.
+        let is_vault = match &vault {
+            Some(v) => wraps.iter().any(|w| w.recipient == *v),
+            None => {
+                super::ceremony::effective_cred_mode(&self.store).map_err(fail)? == CredMode::Vault
+            }
+        };
         let dek = if is_vault {
             let ring = self.ring_secret.as_ref().ok_or_else(|| {
                 UnlockError::NeedsShares("this device has no ring secret: import the kit".into())

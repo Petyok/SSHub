@@ -53,8 +53,33 @@ fn live_holders(store: &LauncherStore) -> Result<Vec<super::oplog::DeviceRow>> {
         .collect())
 }
 
+/// Terminals (computers and servers, not the phone) that hold shares and are not removed.
+pub fn live_terminal_holders(store: &LauncherStore) -> Result<usize> {
+    Ok(live_holders(store)?
+        .iter()
+        .filter(|d| d.kind == DeviceKind::Terminal)
+        .count())
+}
+
+/// How many terminals a ring needs before a stolen one can be cut off: the one removed and two that remain
+/// to contribute (the phone approves, it does not contribute).
+pub const TERMINALS_TO_CUT_OFF: usize = 3;
+
+/// The plain sentence for a ring with `terminals` full terminals that cannot cut one off.
+pub fn cut_off_sentence(terminals: usize) -> String {
+    format!(
+        "To remove a stolen or lost device you need {TERMINALS_TO_CUT_OFF} computers or servers you control, the one you remove included, so that two others can approve with the phone. You have {terminals}. Until then: change the passwords of its hosts and remove its key from every host's authorized_keys."
+    )
+}
+
+/// The Sync tab's header answer: `None` when a stolen terminal can be cut off, else how many more are needed.
+pub fn terminals_missing_to_cut_off(store: &LauncherStore) -> Result<Option<usize>> {
+    let n = live_terminal_holders(store)?;
+    Ok((n < TERMINALS_TO_CUT_OFF).then(|| TERMINALS_TO_CUT_OFF - n))
+}
+
 /// The rule that makes a revocation possible at all: two contributors must remain, so at least three
-/// holders exist before it. `target` is the holder to revoke.
+/// holders exist before it. `target` is the holder to revoke. The error is the sentence a person reads.
 pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Result<()> {
     let holders = live_holders(store)?;
     ensure!(
@@ -66,14 +91,20 @@ pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Re
         .iter()
         .filter(|d| d.id != *target && d.kind == DeviceKind::Terminal)
         .collect();
-    ensure!(remaining.len() >= 2, "revoking a holder needs at least two remaining terminal holders to contribute: the ring has {}", remaining.len());
+    let terminals = remaining.len()
+        + usize::from(
+            holders
+                .iter()
+                .any(|d| d.id == *target && d.kind == DeviceKind::Terminal),
+        );
+    ensure!(remaining.len() >= 2, "{}", cut_off_sentence(terminals));
     let fresh = remaining
         .iter()
         .filter(|d| now - d.last_seen <= LIVE_DEVICE_WINDOW_SECS)
         .count();
     ensure!(
         fresh >= 2,
-        "fewer than two remaining holders were seen recently enough to contribute"
+        "Two of the other full devices must have synced in the last 14 days to approve this: sync them first."
     );
     Ok(())
 }
