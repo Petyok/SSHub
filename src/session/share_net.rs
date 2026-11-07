@@ -228,9 +228,7 @@ impl Sidecar {
         let stderr = child.stderr.take().context("proxy ssh has no stderr")?;
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            use std::io::BufRead;
-            for line in std::io::BufReader::new(stderr).lines() {
-                let Ok(line) = line else { break };
+            for line in crate::tunnel::lossy_lines(std::io::BufReader::new(stderr)) {
                 if tx.send(line).is_err() {
                     break;
                 }
