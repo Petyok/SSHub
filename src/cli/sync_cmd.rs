@@ -317,7 +317,16 @@ fn enroll(paths: &ProfilePaths) -> Result<i32> {
         TtyPrompt.confirm(p)
     };
     let ui: Option<&mut dyn SasConfirm> = if interactive { Some(&mut logged) } else { None };
-    let outcome = run_sync_enroll(&mut conn, &store, &identity, &device_name(), true, ui)?;
+    // Attended is a property of the device (config `[sync] unattended`), not of this ssh session: a Hub has no
+    // tty and nobody at its screen, a laptop reached over ssh has no tty either and its owner does.
+    let outcome = run_sync_enroll(
+        &mut conn,
+        &store,
+        &identity,
+        &device_name(),
+        crate::sync::runtime::device_attended(paths),
+        ui,
+    )?;
     if !interactive {
         // No human here, so nothing says whether the peer had a screen: this
         // line is for the log only.

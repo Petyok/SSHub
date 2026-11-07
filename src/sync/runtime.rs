@@ -118,6 +118,12 @@ pub fn resolve_host(store: &LauncherStore, spec: &str) -> Result<SshHost> {
 }
 
 /// This machine's name as peers will see it.
+/// Does a human sit at this device? The ring is told when the device enrolls. Attended unless the profile's
+/// config says `[sync] unattended = true` (the Hub does); a device that cannot read its config is attended.
+pub fn device_attended(paths: &ProfilePaths) -> bool {
+    crate::config::load_config_at(&paths.config_file).map_or(true, |c| !c.sync.unattended)
+}
+
 pub fn device_name() -> String {
     std::process::Command::new("hostname")
         .output()
@@ -247,7 +253,7 @@ impl SyncRuntime {
                         &self.store,
                         &self.identity,
                         &name,
-                        true,
+                        device_attended(&self.paths),
                         Some(&mut *ui),
                     )
                 })?;
@@ -898,5 +904,22 @@ mod mail_tests {
         // The next round sends nothing more.
         rt.mail_owed_codes();
         assert_eq!(std::fs::read_to_string(&capture).unwrap(), mail);
+    }
+
+    #[test]
+    fn a_profile_enrolls_unattended_only_when_its_config_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = ProfilePaths {
+            data_root: dir.path().to_path_buf(),
+            id: "t".into(),
+            name: "t".into(),
+            root: dir.path().to_path_buf(),
+            config_file: dir.path().join("config.toml"),
+            ssh_config: dir.path().join("ssh_config"),
+            compat: false,
+        };
+        assert!(device_attended(&paths), "no config: a person is here");
+        std::fs::write(&paths.config_file, "[sync]\nunattended = true\n").unwrap();
+        assert!(!device_attended(&paths), "the Hub's config");
     }
 }
