@@ -681,15 +681,19 @@ cargo run -- --dry-run # quick sanity check
 
 ## Model credits
 
-Made with dynamic workflows + adversarial-multimodel-reviews + cross-model-reviews. Models with commits, reviews, or blocked merges to their name, in order of appearance:
+Made with dynamic workflows + adversarial-multimodel-reviews + cross-model-reviews + vibe mode in [omp](https://github.com/can1357/oh-my-pi). Models used:
 
 - Opus 4.8
 - Opus 5
+- Opus 5.5
+- Sonnet 5.5
 - Fable 5
-- Composer 2.5
+- Composer 2.5 🤢🤢🤢
 - Grok 4.5
+- Grok 4.6
 - Qwen 3.8 Max
 - GPT-5.6 Luna
+- GPT-5.6 Sol
 
 ## Donations
 
