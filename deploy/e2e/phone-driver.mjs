@@ -41,6 +41,18 @@ const SECRET_HEX = '42'.repeat(32); // the fixture phone of the Rust side (its d
 
 const require = createRequire(import.meta.url);
 const lib = (f) => import(pathToFileURL(path.join(COMPANION, 'src', f)).href);
+// A tap. Chrome on Android moves the page under the point Playwright computed when a long screen first scrolls (the toolbar
+// hides), and another element then "intercepts" the click: a real click first, the element's own click event when the hit test is wrong.
+// `page` is assigned below, before any tap runs.
+async function tap(sel, opts = {}) {
+  try {
+    await page.click(sel, { timeout: 5000, ...opts });
+  } catch (e) {
+    if (!/intercepts pointer events|Timeout/.test(String(e.message))) throw e;
+    await page.locator(sel).dispatchEvent('click');
+  }
+}
+
 const { chromium, _android: android } = require('playwright');
 const jsQR = require(path.join(COMPANION, 'vendor/jsqr-1.4.0/jsQR.cjs'));
 
@@ -173,14 +185,14 @@ async function home() {
     if (await has('#unlock')) {
       await page.waitForTimeout(500); // the unlock screen settles after a reload
       await page.fill('#pin', PIN);
-      await page.click('#unlock', { force: true });
+      await tap('#unlock', { force: true });
       await waitAny(['#device-id', '#unlock-error']);
       continue;
     }
     let tapped = false;
     for (const id of ['#send-done', '#enroll-done', '#head-done', '#refuse', '#back']) {
       if (await has(id)) {
-        await page.click(id);
+        await tap(id);
         tapped = true;
         break;
       }
@@ -200,7 +212,7 @@ async function setup({ words = S.words, pin = PIN } = {}) {
     await page.fill('#words-input', words);
     await page.fill('#pin1', pin);
     await page.fill('#pin2', pin);
-    await page.click('#restore');
+    await tap('#restore');
     // The page shows "Deriving the key..." in the same place while Argon2 runs; only a different text is a refusal.
     await page.waitForFunction(() => {
       if (document.querySelector('#device-id')) return true;
@@ -211,7 +223,7 @@ async function setup({ words = S.words, pin = PIN } = {}) {
     // A restored key does not author until it knows where its chain ended; this key has never signed.
     if (await has('#head-new')) {
       await page.fill('#head-confirm', S.identity.deviceId); // the page asks for the device id before it trusts a fresh chain
-      await page.click('#head-new');
+      await tap('#head-new');
     }
   }
   await home();
@@ -223,9 +235,9 @@ async function setup({ words = S.words, pin = PIN } = {}) {
 // Pastes into the scan screen the way a person without a camera does: summary, text box, button.
 async function paste(frameB64) {
   if (!(await has('#paste'))) throw new Error(`not on a scan screen (page shows: ${await heading()})`);
-  if (!(await page.locator('#paste').isVisible())) await page.click('summary');
+  if (!(await page.locator('#paste').isVisible())) await tap('summary');
   await page.fill('#paste', frameB64);
-  await page.click('#paste-go');
+  await tap('#paste-go');
 }
 
 // Reads a looping QR canvas back like a camera: frames decoded with jsQR, assembled by the page's own collector.
@@ -313,7 +325,7 @@ const commands = {
   // ---- Red notice (kind 3)
   async 'red-open'({ frame }) {
     await home();
-    await page.click('#scan-release');
+    await tap('#scan-release');
     await paste(frame);
     await waitAny(['#red-banner', '#refusal']);
     if (await has('#refusal')) return { ok: false, refusal: await text('#refusal') };
@@ -328,13 +340,7 @@ const commands = {
     };
   },
   async 'red-approve'() {
-    // Chrome on Android moves the page under the point Playwright computed when the long Red screen scrolls (a row of the
-    // description then "intercepts" the click). A real tap first; the element's own click event when the hit test is wrong.
-    try {
-      await page.click('#red-approve', { timeout: 5000 });
-    } catch {
-      await page.locator('#red-approve').dispatchEvent('click');
-    }
+    await tap('#red-approve');
     await waitAny(['#ops-b64', '#red-error']);
     if (await has('#red-error') && (await text('#red-error'))) return { ok: false, error: await text('#red-error') };
     const ops = await page.locator('#ops-b64').inputValue();
@@ -345,7 +351,7 @@ const commands = {
   // ---- share release (kind 1)
   async 'share-open'({ frame }) {
     await home();
-    await page.click('#scan-release');
+    await tap('#scan-release');
     await paste(frame);
     await waitAny(['#headline', '#refusal']);
     if (await has('#refusal')) return { ok: false, refusal: await text('#refusal'), checks: await page.locator('#checks .check').allInnerTexts() };
@@ -365,9 +371,9 @@ const commands = {
       await page.fill('#confirm-requester', confirm);
     }
     // Options as a person would set them: QR and clipboard stay on, sound off, short code only when asked for.
-    if ((await has('#opt-sound')) && (await page.locator('#opt-sound').isChecked())) await page.click('#opt-sound');
-    if ((await has('#opt-snapshot')) && (await page.locator('#opt-snapshot').isChecked()) !== snapshot) await page.click('#opt-snapshot');
-    await page.click('#approve');
+    if ((await has('#opt-sound')) && (await page.locator('#opt-sound').isChecked())) await tap('#opt-sound');
+    if ((await has('#opt-snapshot')) && (await page.locator('#opt-snapshot').isChecked()) !== snapshot) await tap('#opt-snapshot');
+    await tap('#approve');
     // #release-error shows "Approving..." while the page works; only another text is a refusal.
     await page.waitForFunction(() => {
       if (document.querySelector('#send-done')) return true;
@@ -383,9 +389,9 @@ const commands = {
   // ---- enrollment (phone is the initiator, role 0): kinds 6, 7, 8
   async 'enroll-start'({ name = 'my phone' } = {}) {
     await home();
-    await page.click('#enroll');
+    await tap('#enroll');
     await page.fill('#device-name', name);
-    await page.click('#enroll-scan');
+    await tap('#enroll-scan');
     return { heading: await heading() };
   },
   async 'enroll-commit'({ frame }) {
@@ -395,19 +401,19 @@ const commands = {
     return { ok: true, frame: await enrollFrame() };
   },
   async 'enroll-reveal'({ frame }) {
-    await page.click('#enroll-next');
+    await tap('#enroll-next');
     await paste(frame);
     await waitAny(['#sas-words', '#refusal']);
     if (await has('#refusal')) return { ok: false, refusal: await text('#refusal') };
     return { ok: true, words: await text('#sas-words'), frame: await enrollFrame() };
   },
   async 'enroll-match'({ ok = true } = {}) {
-    await page.click(ok ? '#sas-match' : '#sas-differ');
+    await tap(ok ? '#sas-match' : '#sas-differ');
     await page.waitForSelector('#enroll-qr');
     return { frame: await enrollFrame() };
   },
   async 'enroll-finish'({ frame }) {
-    await page.click('#enroll-next');
+    await tap('#enroll-next');
     await paste(frame);
     await waitAny(['#enroll-done', '#refusal']);
     if (await has('#refusal')) return { ok: false, refusal: await text('#refusal') };
