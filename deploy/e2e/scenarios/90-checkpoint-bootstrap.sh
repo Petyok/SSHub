@@ -1,5 +1,5 @@
 #!/bin/sh
-# timeout: 1500
+# timeout: 2100
 # 90: checkpoint. The driver proposes a checkpoint once the log has grown by
 # CHECKPOINT_OPS (5000) ops; there is no env or config knob for small limits, so
 # this scenario produces them with safe edits through the real CLI. Pruning
@@ -41,9 +41,7 @@ done
 # same state), so the reviewers go through what arrived: one bulk approval per device.
 show "peer-b approves everything that waits without a ceremony" peer peer-b $SSHUB sync-review --approve-all
 show "peer-a approves what waits there" peer peer-a $SSHUB sync-review --approve-all
-# The hub is an attended device of the ring too: a checkpoint needs the signature of every live attended terminal, and
-# a device signs only a state equal to its own fold, which excludes what it never reviewed.
-show "the hub approves what waits there" peer hub $SSHUB sync-review --approve-all
+# The hub is an UNATTENDED mirror (its config says so): it is no required signer and nobody reviews there.
 for round in 1 2 3 4; do
   snowt peer-a
   snowt peer-b

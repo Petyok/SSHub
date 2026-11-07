@@ -56,6 +56,8 @@ expect() {
 reset_peers() {
   for p in $PEERS; do
     psh "$p" 'rm -rf "$HOME/.config/sshub" "$HOME/.local/share/sshub"'
+    # The hub has nobody at its screen (deploy/hub/entrypoint.sh writes the same setting): it enrolls unattended.
+    [ "$p" = hub ] && psh hub 'mkdir -p "$HOME/.config/sshub" && printf "[sync]\nunattended = true\n" > "$HOME/.config/sshub/config.toml"'
   done
 }
 

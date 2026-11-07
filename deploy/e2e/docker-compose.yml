@@ -10,6 +10,11 @@ x-peer: &peer
   networks: [e2e]
   volumes:
     - mesh:/mesh
+  # Scenario 90 appends thousands of ops through the CLI; on the overlay filesystem every sqlite commit costs
+  # several fsyncs (0.4 s per host add). Durability is not what the e2e tests, so the data root of every peer is
+  # tmpfs (a parent of .local/share/sshub, so reset_peers can still remove the profile directory).
+  tmpfs:
+    - /home/ci/.local/share:uid=10001,gid=10001,mode=0700
   environment: &peer-env
     PEERS: "peer-a peer-b peer-c hub"
     HOPS: "jump dest"
@@ -24,11 +29,6 @@ services:
       context: ../..
       dockerfile: deploy/e2e/Dockerfile
     hostname: peer-a
-    # Scenario 90 appends thousands of ops through the CLI; on the overlay filesystem every sqlite commit costs
-    # several fsyncs (0.4 s per host add). Durability is not what the e2e tests, so the data root of peer-a is
-    # tmpfs (a parent of .local/share/sshub, so reset_peers can still remove the profile directory).
-    tmpfs:
-      - /home/ci/.local/share:uid=10001,gid=10001,mode=0700
     environment:
       <<: *peer-env
       PEER_NAME: peer-a
