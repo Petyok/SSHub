@@ -639,11 +639,11 @@ pub struct RecoveryAlert {
 }
 
 impl SyncView {
-    fn alert_return_set(&mut self, mode: AppMode) {
+    pub(crate) fn alert_return_set(&mut self, mode: AppMode) {
         self.alert_return = Some(mode);
     }
 
-    fn alert_return_take(&mut self) -> AppMode {
+    pub(crate) fn alert_return_take(&mut self) -> AppMode {
         self.alert_return.take().unwrap_or(AppMode::Normal)
     }
 

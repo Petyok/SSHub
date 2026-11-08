@@ -774,23 +774,12 @@ impl App {
         }
     }
 
-    /// The recoveries to alert about; empty until this device's identity is known and loadable.
-    fn recovery_alert_ops(&mut self) -> Vec<crate::sync::oplog::Op> {
-        if self.sync.this_device.is_none() {
+    /// The recoveries to alert about; empty until the worker has said which device this is.
+    fn recovery_alert_ops(&self) -> Vec<crate::sync::oplog::Op> {
+        let Some(me) = self.sync.this_device.as_ref() else {
             return Vec::new();
-        }
-        if self.sync_identity.is_none() {
-            let Some(paths) = self.profile.as_ref() else {
-                return Vec::new();
-            };
-            let secrets = crate::credentials::open_for_profile(paths);
-            match crate::sync::identity_store::load_or_init_identity(paths, secrets.as_ref()) {
-                Ok(id) => self.sync_identity = Some(std::sync::Arc::new(id)),
-                Err(_) => return Vec::new(),
-            }
-        }
-        let me = self.sync_identity.as_ref().expect("loaded above");
-        crate::sync::recovery::open_for_alert(&self.store, me, crate::store::now_ts())
+        };
+        crate::sync::recovery::open_for_alert_for(&self.store, me, crate::store::now_ts())
             .unwrap_or_default()
     }
 

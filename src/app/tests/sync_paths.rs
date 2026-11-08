@@ -78,7 +78,6 @@ pub(super) fn ring(ssh_program: Option<String>) -> Ring {
 
     let me = Arc::new(load_or_init_identity(&paths, file_secrets(&paths).as_ref()).unwrap());
     crate::sync::ceremony::test_force(&app.store, true);
-    app.sync_identity = Some(me.clone());
     let mine = Dev {
         store: app.store.clone(),
         did: me.public().device_id(),
@@ -770,6 +769,8 @@ fn revoking_needs_the_devices_name_typed_back() {
     for _ in 0..at {
         r.app.handle_key(key(KeyCode::Down)).unwrap();
     }
+    enter(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncMenu, "stolen or wiped first");
     enter(&mut r.app);
     assert_eq!(r.app.mode, AppMode::SyncPrompt);
     type_and_enter(&mut r.app, "not the name");
