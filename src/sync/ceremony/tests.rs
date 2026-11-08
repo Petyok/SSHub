@@ -170,7 +170,7 @@ fn a_gated_op_waits_for_all_three_proofs_from_the_right_participants() {
 }
 
 #[test]
-fn a_ui_cannot_approve_a_red_op_early_and_a_stale_ceremony_is_dropped() {
+fn a_ui_cannot_approve_a_red_op_early_and_a_late_ceremony_is_kept_pending_not_dropped() {
     let d = world(&[R, A, B]);
     let op = propose(
         &d,
@@ -192,11 +192,75 @@ fn a_ui_cannot_approve_a_red_op_early_and_a_stale_ceremony_is_dropped() {
         1,
         "still pending"
     );
-    // Rejecting is always allowed; so is a stale one: after the TTL nothing can complete it.
+    // Past the window on this clock the screens call it expired, but it is NOT dropped: dropping it would make this
+    // device disagree with every device that has not yet heard the proofs (D0b).
     let late = op.timestamp + RED_CEREMONY_TTL_SECS + 1;
     let report = settle_red_ops(&d[OBS].store, late).unwrap();
-    assert_eq!(report.rejected.len(), 1);
-    assert!(d[OBS].store.sync_pending().unwrap().is_empty());
+    assert!(report.rejected.is_empty(), "{report:?}");
+    assert_eq!(d[OBS].store.sync_pending().unwrap().len(), 1);
+    assert!(status(&d, &op, late).expired);
+}
+
+/// D0b: the proofs of a ceremony that completed inside the window count whatever this device's clock says and whenever it
+/// received them.
+#[test]
+fn ceremony_verdicts_do_not_read_received_at_or_now() {
+    let d = world(&[R, A, B]);
+    let phrase = bip39_encode(&[0x41; 32]);
+    let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
+    append(&d[P], red_phone_sign_body(&reg));
+    append(&d[A], red_approve_body(&reg));
+    sync(&d);
+    let before = status(&d, &reg, reg.timestamp + 60);
+    assert!(before.complete, "{before:?}");
+    // The observer heard every proof a year late and judges a year later.
+    d[OBS]
+        .store
+        .with_conn(|c| {
+            c.execute("UPDATE sync_ops SET received_at = received_at + 31536000", [])?;
+            Ok(())
+        })
+        .unwrap();
+    let after = status(&d, &reg, reg.timestamp + 31_536_000 + 60);
+    assert!(after.complete && after.missing.is_empty(), "{after:?}");
+    assert!(!after.expired, "a complete ceremony is never expired: {after:?}");
+}
+
+/// D0b: an op past the window on this clock still completes when its proofs arrive: this device did not reject it.
+#[test]
+fn a_late_device_still_completes_an_op_when_its_proofs_arrive() {
+    let d = world(&[R, A, B]);
+    let phrase = bip39_encode(&[0x42; 32]);
+    let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
+    let late = reg.timestamp + RED_CEREMONY_TTL_SECS + 1;
+    // The observer has the op, its clock is past the window, no proof yet: a settle round keeps it.
+    assert!(settle_red_ops(&d[OBS].store, late).unwrap().rejected.is_empty());
+    // The proofs were written inside the window (author stamps) and reach the observer only now.
+    append(&d[P], red_phone_sign_body(&reg));
+    append(&d[A], red_approve_body(&reg));
+    sync(&d);
+    assert_eq!(
+        settle_red_ops(&d[OBS].store, late).unwrap().applied,
+        vec![reg.hash()]
+    );
+}
+
+/// D0b: the window is measured on the authors' stamps: a proof stamped long after the op never counts.
+#[test]
+fn a_proof_stamped_after_the_window_does_not_count() {
+    let d = world(&[R, A, B]);
+    let phrase = bip39_encode(&[0x43; 32]);
+    let old = crate::store::now_ts() - RED_CEREMONY_TTL_SECS - 100;
+    let reg = d[R]
+        .store
+        .sync_append_local_at(&d[R].id, factor_register_paper(&phrase).unwrap(), old)
+        .unwrap();
+    sync(&d);
+    append(&d[P], red_phone_sign_body(&reg));
+    append(&d[A], red_approve_body(&reg));
+    sync(&d);
+    let st = status(&d, &reg, reg.timestamp + 60);
+    assert!(!st.complete, "{st:?}");
 }
 
 #[test]
@@ -970,9 +1034,10 @@ mod review {
         let _ = ok;
     }
 
-    // crypto F6: a Red op stamped in the future expires like any other.
+    // crypto F6: a Red op stamped far in the future is refused at ingest (skew grace), so no peer ever judges it; the
+    // window of D0b is measured on author stamps and is not what protects against a future date.
     #[test]
-    fn a_future_dated_red_op_expires_like_any_other() {
+    fn a_future_dated_red_op_never_reaches_a_peer() {
         let d = ring_phone(3);
         let phrase = bip39_encode(&[0x66; 32]);
         let now = crate::store::now_ts();
@@ -985,11 +1050,13 @@ mod review {
             )
             .unwrap();
         sync_pull(&d);
-        append(&d[3], red_phone_sign_body(&reg));
-        append(&d[1], red_approve_body(&reg));
-        sync_pull(&d);
-        let st = red_status(&d[2].store, &reg, now + 400 * 86_400).unwrap();
-        assert!(st.expired && !st.complete, "{st:?}");
+        assert!(
+            !ops_of(&d[2].store, "FactorRegister", None)
+                .unwrap()
+                .iter()
+                .any(|o| o.hash() == reg.hash()),
+            "a peer applied an op dated five years ahead"
+        );
     }
 
     // crypto F7a: the emailed code is never in clear in sync_meta, and only this device's key opens it.
@@ -1130,9 +1197,11 @@ mod review {
         assert!(seen <= op.timestamp + 5, "{seen} vs {}", op.timestamp);
     }
 
-    // crypto round 2, F1: a proof is as old as its receipt, whatever stamp its author chose.
+    // D0b residual (design section 1): a signer can stamp its own proof inside the window, and the verdict does not
+    // read when it was received. A proof still needs the three independent participants; a control proves a stamp
+    // OUTSIDE the window is refused.
     #[test]
-    fn a_backdated_late_factor_does_not_complete_a_stale_ceremony() {
+    fn a_proof_stamped_inside_the_window_counts_whenever_it_arrives_and_one_outside_never_does() {
         let d = ring_phone(3);
         let phrase = bip39_encode(&[0x31; 32]);
         let reg = append(
@@ -1169,15 +1238,15 @@ mod review {
         sync_pull(&d);
         assert!(
             !in_force(&d[0].store, &op).unwrap(),
-            "control: a late proof is refused"
+            "control: a proof stamped ten days after the op is outside the window"
         );
         d[1].store
             .sync_append_local_at(&d[1].id, red_factor_paper(&recover, &op), t0 + 7_200)
             .unwrap();
         sync_pull(&d);
         assert!(
-            !in_force(&d[0].store, &op).unwrap(),
-            "a factor proof received ten days late completed the ceremony because its stamp is backdated"
+            in_force(&d[0].store, &op).unwrap(),
+            "a proof stamped inside the window counts on a device that received it late"
         );
     }
 

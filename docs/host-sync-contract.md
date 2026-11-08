@@ -1000,8 +1000,9 @@ new bodies canonical bytes, vectors and oracle checks; `apply` does nothing for 
 
 Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, not op-log):
 
-* Proofs count only if they name `op.hash()`, were written after the op and within `RED_CEREMONY_TTL_SECS` of
-  its timestamp, and their author is valid: `RedApprove` by an attended `Holder` `Terminal` that is not the proposer
+* Proofs count only if they name `op.hash()`, were written after the op (a higher lamport) and within `RED_CEREMONY_TTL_SECS` of
+  its timestamp (the AUTHORS' stamps; never the local receipt time and never `now`: D0b, a verdict is a pure function of the
+  log, so a device that was away longer than the window reaches the verdict of the others), and their author is valid: `RedApprove` by an attended `Holder` `Terminal` that is not the proposer
   (and, for `ModeChange` to Vault, is the named `cosigner`); `RedPhoneSign` by the device with `kind == Phone`
   (not needed for `CertIssue`, whose author is the phone); `RedFactor` whose `sig` verifies under the registered
   factor key over `b"sshub/sync/red/factor/v1" || op_hash || proposer id`.
@@ -1016,8 +1017,11 @@ Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, n
   contributors; `DeviceRevoke` of a holder requires at least two remaining holders after it (three before). Whether a
   contributor is reachable now is advice for the screens (`ceremony::log_live`), not a rule.
 * `RedStatus { missing: Vec<RedProof>, have: Vec<RedProof>, complete: bool, expired: bool }` is what the review
-  screen shows ("phone: signed, second device: waiting, paper: missing"). `settle_red_ops(store, now)` runs after
-  every ingest: it resolves a pending Red op as approved when complete and as rejected when expired.
+  screen shows ("phone: signed, second device: waiting, paper: missing"). `expired` is display and hygiene only: the window
+  passed on THIS clock and the ceremony is not complete; it decides nothing. `settle_red_ops(store, now)` runs after
+  every ingest: it resolves a pending Red op as approved when complete and as rejected when a rule blocks it. An op past
+  the window stays pending (it is not rejected), so a late proof still completes it on every device alike. Residual: a
+  signer can stamp its own proof inside the window; a proof still needs three independent participants.
 * Builders for the UI and the phone: `red_approve_body(op)`, `red_factor_paper(recover_identity, proposer, op)`,
   `red_factor_email(code, store, proposer, op)`, and for the phone `RedPhoneSign` is encoded by the page like its
   cancel op; the terminal shows a Red notice (the op as kind-3 notice frame) for the phone to scan or paste.

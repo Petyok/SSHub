@@ -479,13 +479,12 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         Ok(p) => (p, None),
         Err(e) => (None, Some(e.to_string())),
     };
-    let op_base = base_time(store, op);
-    let expired = now - op_base > RED_CEREMONY_TTL_SECS;
-    // A proof is as old as the moment this device RECEIVED it: its stamp is the author's word, and a
-    // backdated stamp must not let a proof that arrived after the window complete the ceremony.
+    // Display and hygiene only: the clock of THIS device. It never decides a verdict (D0b).
+    let past_window = now - base_time(store, op) > RED_CEREMONY_TTL_SECS;
+    // A proof counts when it comes after the op and inside the window measured on the AUTHORS' stamps. Never the local
+    // receipt time and never `now`: a device that was away for longer than the window must reach the verdict of the others.
     let valid_proof = |p: &Op| {
-        p.lamport > op.lamport
-            && received_at(store, p).unwrap_or(p.timestamp) - op_base <= RED_CEREMONY_TTL_SECS
+        p.lamport > op.lamport && p.timestamp - op.timestamp <= RED_CEREMONY_TTL_SECS
     };
     let mut have = Vec::new();
     let mut missing = Vec::new();
@@ -868,7 +867,9 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
             setup_waived.join(", ")
         ));
     }
-    let complete = missing.is_empty() && blocked.is_none() && !expired;
+    let complete = missing.is_empty() && blocked.is_none();
+    // `expired`: the window passed on this clock and the ceremony is not complete. A screen says so; nothing is decided by it.
+    let expired = past_window && !complete;
     Ok(RedStatus {
         have,
         missing,
@@ -888,8 +889,8 @@ pub struct SettleReport {
     pub rejected: Vec<([u8; 32], String)>,
 }
 
-/// Resolve pending Red ops: approved when their ceremony is complete, rejected when it can never be
-/// (blocked, or expired). Runs after every ingest.
+/// Resolve pending Red ops: approved when their ceremony is complete, rejected when a rule blocks it for good. A ceremony
+/// past its window stays pending: a later proof still completes it, as it does on every other device. Runs after every ingest.
 pub fn settle_red_ops(store: &LauncherStore, now: i64) -> Result<SettleReport> {
     let mut report = SettleReport::default();
     for op in store.sync_pending()? {
@@ -901,11 +902,6 @@ pub fn settle_red_ops(store: &LauncherStore, now: i64) -> Result<SettleReport> {
         if let Some(why) = st.blocked {
             store.sync_resolve_pending(&op.hash(), false)?;
             report.rejected.push((op.hash(), why));
-        } else if st.expired {
-            store.sync_resolve_pending(&op.hash(), false)?;
-            report
-                .rejected
-                .push((op.hash(), "the ceremony did not complete in time".into()));
         } else if st.complete {
             store.sync_resolve_pending(&op.hash(), true)?;
             report.applied.push(op.hash());
