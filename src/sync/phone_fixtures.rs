@@ -1133,7 +1133,7 @@ mod reshare_fixture {
         let err = cert_allows(&cert, &pk, &t2.store, &delegate.did, &hosts[0], t, t)
             .unwrap_err()
             .to_string();
-        assert!(err.contains("revoked"), "{err}");
+        assert!(err.contains("was ended"), "{err}");
 
         // The second certificate (a group) validates too.
         let second = rest.next().unwrap();
