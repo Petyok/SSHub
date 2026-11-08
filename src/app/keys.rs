@@ -1,5 +1,34 @@
 use super::*;
 
+/// Other actions already bound to `spec` in the same context (session keys vs
+/// dashboard keys), compared the way the matcher does: chars case-insensitively,
+/// modifiers exactly.
+pub(crate) fn keybind_clashes(
+    binds: &crate::keybinds::KeybindsConfig,
+    action: KeyAction,
+    spec: &str,
+) -> Vec<KeyAction> {
+    let norm = |s: &str| {
+        crate::app::util::parse_keyspec(s).map(|(code, mods)| match code {
+            KeyCode::Char(c) => (KeyCode::Char(c.to_ascii_lowercase()), mods),
+            other => (other, mods),
+        })
+    };
+    // ponytail: context by name prefix; a per-action context table if this misfires.
+    let session = |a: KeyAction| {
+        let name = format!("{a:?}");
+        name.starts_with("Session") || name.starts_with("Pane")
+    };
+    let Some(key) = norm(spec) else {
+        return Vec::new();
+    };
+    KeyAction::ALL
+        .into_iter()
+        .filter(|&a| a != action && session(a) == session(action))
+        .filter(|&a| binds.binds(a).iter().any(|s| norm(s.as_str()) == Some(key)))
+        .collect()
+}
+
 impl App {
     pub fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         if self.mode == AppMode::AuthPrompt {
@@ -154,6 +183,7 @@ impl App {
             AppMode::AuthPrompt => self.handle_key_auth(key),
             AppMode::PushKeyHostPicker => self.handle_key_push_key_host_picker(key),
             AppMode::PushKeyIdentityPicker => self.handle_key_push_key_identity_picker(key),
+            AppMode::KeyPush => self.handle_key_key_push(key),
             AppMode::FieldPicker => self.handle_key_field_picker(key),
             AppMode::ImportPrompt => self.handle_key_import_prompt(key),
             AppMode::SftpPrompt => self.handle_key_sftp_prompt(key),
@@ -280,12 +310,12 @@ impl App {
     pub(crate) fn dashboard_text_input_active(&self) -> bool {
         (self.active_tab == 1
             && (self.sftp_picker_searching || self.sftp.as_ref().is_some_and(|s| s.searching)))
-            || (matches!(self.active_tab, 2 | 3) && self.list_filter_editing)
+            || (matches!(self.active_tab, 2..=4) && self.list_filter_editing)
             || (self.active_tab == 5
                 && self
                     .map_view
                     .as_ref()
-                    .is_some_and(|v| v.editing || v.use_picker.is_some()))
+                    .is_some_and(|v| v.editing || v.picker.is_some() || v.use_picker.is_some()))
     }
 
     /// The broadcast cancel key does double duty: cancel a live run, or
@@ -386,7 +416,10 @@ impl App {
                 self.panel_scroll.set(0);
                 self.panel_sel = None;
             }
-            _ if self.is_action(KeyAction::Cancel, &key) && !self.tag_filters.is_empty() => {
+            // Esc drops an applied tag or `/` search filter before anything else.
+            _ if self.is_action(KeyAction::Cancel, &key)
+                && (!self.tag_filters.is_empty() || !self.search_query.is_empty()) =>
+            {
                 self.tag_filters.clear();
                 self.search_query.clear();
                 self.rebuild_filter();
@@ -504,7 +537,10 @@ impl App {
             _ if self.is_action(KeyAction::DetailFocus, &key) => {
                 self.detail_focus = !self.detail_focus;
             }
-            _ if self.is_action(KeyAction::Search, &key) => {
+            // `/` filters the host list in place; an applied query is kept so a
+            // second `/` refines it.
+            _ if self.is_action(KeyAction::Search, &key) => self.mode = AppMode::Search,
+            _ if self.is_action(KeyAction::QuickConnect, &key) => {
                 self.palette_query.clear();
                 self.palette_selected = 0;
                 self.palette_results = (0..self.hosts.len()).collect();
@@ -658,6 +694,7 @@ impl App {
     pub(crate) fn reset_tab_input_state(&mut self) {
         // A filter bar belongs to the tab it was opened on.
         self.list_filter_editing = false;
+        self.sftp_picker_end_search();
         if let Some(v) = self.map_view.as_mut() {
             v.editing = false;
             v.picker = None;
@@ -706,11 +743,45 @@ impl App {
                     let t = self.palette_adhoc.take().unwrap();
                     return self.connect_adhoc(t);
                 }
-                let chosen = self.palette_results.get(self.palette_selected).copied();
                 self.mode = AppMode::Normal;
-                if let Some(idx) = chosen {
-                    if self.reveal_host(idx) {
-                        self.connect_selected()?;
+                if self.palette_reveal_selected() {
+                    self.connect_selected()?;
+                }
+            }
+            // Host actions on Ctrl chords, so plain letters stay query text.
+            KeyCode::Char(c @ ('e' | 'd' | 'f' | 'k' | 'n'))
+                if key.modifiers == KeyModifiers::CONTROL =>
+            {
+                if self.palette_adhoc.is_some()
+                    && self.palette_selected == self.palette_results.len()
+                {
+                    self.mode = AppMode::Normal;
+                    self.host_notice = Some("only Enter (connect) works on the ad-hoc row".into());
+                    return Ok(());
+                }
+                self.mode = AppMode::Normal;
+                if !self.palette_reveal_selected() {
+                    return Ok(());
+                }
+                match c {
+                    'e' => self.edit_selected_host()?,
+                    'd' => self.delete_selected_host()?,
+                    'n' => self.duplicate_selected_host()?,
+                    'k' => self.trigger_push_key_from_hosts()?,
+                    _ => {
+                        let Some(entry) = self.selected_entry().cloned() else {
+                            return Ok(());
+                        };
+                        self.switch_to_sftp_tab();
+                        match self.sftp.as_mut() {
+                            Some(s) => {
+                                s.notice = Some(format!(
+                                    "SFTP is already connected to {}; disconnect first",
+                                    self.sftp_host.as_deref().unwrap_or("another host")
+                                ));
+                            }
+                            None => self.sftp_connect_to(entry)?,
+                        }
                     }
                 }
             }
@@ -745,6 +816,17 @@ impl App {
         Ok(())
     }
 
+    /// Select the highlighted palette host in the list. Says why when there is
+    /// none (empty result, or the host vanished in a config reload).
+    fn palette_reveal_selected(&mut self) -> bool {
+        let chosen = self.palette_results.get(self.palette_selected).copied();
+        if chosen.is_some_and(|idx| self.reveal_host(idx)) {
+            return true;
+        }
+        self.host_notice = Some("no host selected in the palette".into());
+        false
+    }
+
     pub(crate) fn rebuild_palette_results(&mut self) {
         // nucleo fuzzy match (same engine as list search) — the palette is
         // advertised as fuzzy, so typos and abbreviations must match too.
@@ -756,10 +838,13 @@ impl App {
         }
     }
 
+    /// The `/` filter input. Typing filters the host list live; Enter applies
+    /// the filter and hands the (still filtered) list back to normal
+    /// navigation, where every host action works; Esc drops the filter.
     pub(crate) fn handle_key_search(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            _ if self.is_action(KeyAction::Cancel, &key) => self.exit_search(true),
-            _ if self.is_action(KeyAction::Connect, &key) => self.connect_selected()?,
+            _ if self.is_action(KeyAction::Cancel, &key) => self.exit_search(),
+            _ if self.is_action(KeyAction::Connect, &key) => self.mode = AppMode::Normal,
             // Plain letters are query text, even ones bound to nav (j/k/l); list
             // navigation while searching lives on the arrow keys below.
             KeyCode::Char(c)
@@ -767,17 +852,30 @@ impl App {
                     && !c.is_control() =>
             {
                 self.search_query.push(c);
-                self.rebuild_filter();
+                self.refilter_search();
             }
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_selection(-1),
             KeyCode::Backspace => {
                 self.search_query.pop();
-                self.rebuild_filter();
+                self.refilter_search();
             }
             _ => {}
         }
         Ok(())
+    }
+
+    /// Re-run the filter after a query edit and land on the first matching
+    /// host, so Enter then acts on a match rather than a group header.
+    fn refilter_search(&mut self) {
+        self.rebuild_filter();
+        if let Some(pos) = self
+            .nav_rows
+            .iter()
+            .position(|r| matches!(r, NavRow::Host(_)))
+        {
+            self.selected = pos;
+        }
     }
 
     pub(crate) fn handle_key_host_detail(&mut self, key: KeyEvent) -> Result<()> {
@@ -785,15 +883,25 @@ impl App {
             return Ok(());
         }
         let field = self.detail_edit.as_ref().unwrap().field;
+        // On a text field a typed letter is text, never a bind (`f` favorite,
+        // `j`/`k` move): Ctrl+F toggles favorite there, arrows move.
+        let text = !field.is_tri_state() && is_typed_char(&key);
 
         match key.code {
             _ if self.is_action(KeyAction::Cancel, &key) => self.cancel_host_detail()?,
             _ if self.is_action(KeyAction::Connect, &key) => self.save_host_detail()?,
-            _ if self.is_action(KeyAction::Favorite, &key) => self.toggle_favorite()?,
-            _ if self.is_action(KeyAction::DetailFocus, &key) => self.detail_edit_field_next(),
+            KeyCode::Char('f') if key.modifiers == KeyModifiers::CONTROL => {
+                self.toggle_favorite()?
+            }
+            _ if !text && self.is_action(KeyAction::Favorite, &key) => self.toggle_favorite()?,
+            _ if !text && self.is_action(KeyAction::DetailFocus, &key) => {
+                self.detail_edit_field_next()
+            }
             KeyCode::BackTab => self.detail_edit_field_prev(),
-            _ if self.is_action(KeyAction::MoveDown, &key) => self.detail_edit_field_next(),
-            _ if self.is_action(KeyAction::MoveUp, &key) => self.detail_edit_field_prev(),
+            _ if !text && self.is_action(KeyAction::MoveDown, &key) => {
+                self.detail_edit_field_next()
+            }
+            _ if !text && self.is_action(KeyAction::MoveUp, &key) => self.detail_edit_field_prev(),
             KeyCode::Right if field.is_tri_state() => self.detail_edit_cycle(1),
             KeyCode::Left if field.is_tri_state() => self.detail_edit_cycle(-1),
             KeyCode::Char(' ') if key.modifiers.is_empty() && field.is_tri_state() => {
@@ -845,7 +953,11 @@ impl App {
             }
             _ if self.is_action(KeyAction::AddHost, &key) => self.enter_identity_form(None)?,
             _ if self.is_action(KeyAction::GenerateKey, &key) => self.enter_keygen_form()?,
-            _ if self.is_action(KeyAction::Edit, &key) => self.edit_selected_identity()?,
+            _ if self.is_action(KeyAction::Edit, &key)
+                || self.is_action(KeyAction::Connect, &key) =>
+            {
+                self.edit_selected_identity()?
+            }
             _ if self.is_action(KeyAction::Delete, &key) => self.delete_selected_identity()?,
             _ if self.is_action(KeyAction::RemoveFromAgent, &key) => {
                 self.remove_selected_from_agent()?;
@@ -893,6 +1005,11 @@ impl App {
                     if self.snippet_form.is_some() && self.mode == AppMode::ConfirmDiscard {
                         self.mode = AppMode::SnippetForm;
                     }
+                } else if self.group_form.is_some() {
+                    self.save_group_form()?;
+                    if self.group_form.is_some() && self.mode == AppMode::ConfirmDiscard {
+                        self.mode = AppMode::GroupForm;
+                    }
                 }
             }
             _ if self.is_action(KeyAction::ConfirmNo, &key) => {
@@ -908,6 +1025,8 @@ impl App {
                     self.mode = AppMode::Normal;
                 } else if self.snippet_form.is_some() {
                     self.discard_snippet_form()?;
+                } else if self.group_form.is_some() {
+                    self.discard_group_form()?;
                 }
             }
             _ if self.is_action(KeyAction::Cancel, &key) => {
@@ -922,6 +1041,8 @@ impl App {
                     self.mode = AppMode::TunnelForm;
                 } else if self.snippet_form.is_some() {
                     self.mode = AppMode::SnippetForm;
+                } else if self.group_form.is_some() {
+                    self.mode = AppMode::GroupForm;
                 } else {
                     self.mode = AppMode::Normal;
                 }
@@ -1197,15 +1318,25 @@ impl App {
                     }
                     self.mode = AppMode::Normal;
                 }
-                Some(PendingDelete::Group { id, name }) => {
+                Some(PendingDelete::Group {
+                    id,
+                    name,
+                    return_to_manage,
+                }) => {
                     let deleted = self.store.delete_group(id)?;
-                    if deleted {
-                        self.reload_hosts()?;
-                    }
+                    self.reload_hosts()?;
+                    let notice = if deleted {
+                        format!("Group '{name}' deleted")
+                    } else {
+                        format!("Group '{name}' was not deleted (reserved or already gone)")
+                    };
                     // enter_group_manage clears group_notice, so set it after.
-                    self.enter_group_manage()?;
-                    if deleted {
-                        self.group_notice = Some(format!("Group '{name}' deleted"));
+                    if return_to_manage {
+                        self.enter_group_manage()?;
+                        self.group_notice = Some(notice);
+                    } else {
+                        self.mode = AppMode::Normal;
+                        self.host_notice = Some(notice);
                     }
                 }
                 Some(PendingDelete::Tunnel { id, label }) => {
@@ -1230,6 +1361,10 @@ impl App {
                     self.sftp_delete_confirmed(side, path, is_dir);
                     self.mode = AppMode::Normal;
                 }
+                Some(PendingDelete::SftpDisconnect { .. }) => {
+                    self.sftp_disconnect();
+                    self.mode = AppMode::Normal;
+                }
                 None => {
                     self.mode = AppMode::Normal;
                 }
@@ -1238,7 +1373,10 @@ impl App {
             || self.is_action(KeyAction::Cancel, &key)
         {
             let return_mode = match self.pending_delete {
-                Some(PendingDelete::Group { .. }) => Some(AppMode::GroupManage),
+                Some(PendingDelete::Group {
+                    return_to_manage: true,
+                    ..
+                }) => Some(AppMode::GroupManage),
                 Some(PendingDelete::Snippet { .. }) => Some(AppMode::SnippetManage),
                 _ => None,
             };
@@ -1252,12 +1390,10 @@ impl App {
         Ok(())
     }
 
-    pub(crate) fn exit_search(&mut self, reset_filter: bool) {
+    pub(crate) fn exit_search(&mut self) {
         self.search_query.clear();
         self.mode = AppMode::Normal;
-        if reset_filter {
-            self.tag_filters.clear();
-        }
+        self.tag_filters.clear();
         self.rebuild_filter();
     }
 
@@ -1341,6 +1477,7 @@ impl App {
             self.mode = AppMode::Normal;
             return Ok(());
         };
+        self.keybind_notice = None;
 
         if editor.capturing {
             if key.code != KeyCode::Esc {
@@ -1349,6 +1486,13 @@ impl App {
                     // would silently edit the wrong action under an active filter.
                     let actions = self.filtered_keybind_actions();
                     if let Some(&action) = actions.get(editor.selected) {
+                        // Keep the bind (sharing a key can be intended), but say so.
+                        let clashes = keybind_clashes(&self.config.keybinds, action, &spec);
+                        if !clashes.is_empty() {
+                            let names: Vec<&str> = clashes.iter().map(|a| a.label()).collect();
+                            self.keybind_notice =
+                                Some(format!("{spec} is also bound to: {}", names.join(", ")));
+                        }
                         if editor.append {
                             self.config.keybinds.add(action, spec);
                         } else {

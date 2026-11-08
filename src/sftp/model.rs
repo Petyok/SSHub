@@ -528,10 +528,15 @@ impl SftpState {
             self.notice = Some(msg.clone());
             return Err(msg);
         }
-        match target {
+        let staged = match target {
             Side::Local => self.stage_download(),
             Side::Remote => self.stage_upload(),
+        };
+        // Every refusal says why (`..` row, nothing selected, duplicate).
+        if let Err(msg) = &staged {
+            self.notice = Some(msg.clone());
         }
+        staged
     }
 
     /// Stage the focused-remote selection for download into `local.cwd`.
@@ -1099,6 +1104,23 @@ mod tests {
         let err = s.stage_upload().unwrap_err();
         assert_eq!(err, "nothing selected");
         assert!(s.queue.is_empty());
+    }
+
+    #[test]
+    fn stage_toward_refusals_set_a_notice() {
+        // Empty remote pane: nothing selected.
+        let mut s = SftpState::new("/srv", "/home/me");
+        assert!(s.stage_toward(Side::Local).is_err());
+        assert_eq!(s.notice.as_deref(), Some("nothing selected"));
+        // The `..` row only walks up.
+        let mut s = state_with_entries();
+        s.remote.selected = 0;
+        assert!(s.remote.selected_entry().unwrap().is_parent());
+        assert!(s.stage_toward(Side::Local).is_err());
+        assert_eq!(
+            s.notice.as_deref(),
+            Some("that row just walks up a directory")
+        );
     }
 
     #[test]

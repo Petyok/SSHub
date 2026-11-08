@@ -226,3 +226,57 @@ fn paste_reaches_the_snippet_form() {
     assert_eq!(form.name, "echo hi");
     assert!(form.dirty);
 }
+
+#[test]
+fn snippet_manager_slash_filter_types_letters_and_opens_the_match() {
+    let mut app = test_app(vec![]);
+    for (name, command) in [
+        ("disk usage", "df -h"),
+        ("restart nginx", "sudo nginx -s reload"),
+    ] {
+        app.store()
+            .create_snippet(&NewSnippet {
+                name: name.into(),
+                command: command.into(),
+                description: None,
+                tags: vec![],
+            })
+            .unwrap();
+    }
+    app.enter_snippet_manage().unwrap();
+
+    app.handle_key(ch('/')).unwrap();
+    // `e`, `a` and `d` are manager binds; while filtering they are text.
+    for c in "nginx".chars() {
+        app.handle_key(ch(c)).unwrap();
+    }
+    assert_eq!(app.mode, AppMode::SnippetManage);
+    let view = app.snippet_manage_view();
+    assert_eq!(view.len(), 1);
+    assert_eq!(app.snippets[view[0]].name, "restart nginx");
+
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
+        .unwrap(); // keep the filter
+    assert!(!app.snippet_manage_filtering);
+    app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()))
+        .unwrap(); // edit the match
+    assert_eq!(app.mode, AppMode::SnippetForm);
+    assert_eq!(app.snippet_form.as_ref().unwrap().name, "restart nginx");
+}
+
+#[test]
+fn snippet_without_a_name_is_named_after_its_command() {
+    let mut app = test_app(vec![]);
+    app.enter_snippet_manage().unwrap();
+    app.handle_key(ch('a')).unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::empty()))
+        .unwrap(); // Name -> Command
+    for c in "uptime && df -h /srv/data/backups".chars() {
+        app.handle_key(ch(c)).unwrap();
+    }
+    app.handle_key(KeyEvent::new(KeyCode::F(2), KeyModifiers::empty()))
+        .unwrap();
+    assert_eq!(app.mode, AppMode::SnippetManage);
+    assert_eq!(app.snippets.len(), 1);
+    assert_eq!(app.snippets[0].name, "uptime && df -h /srv/data/back");
+}

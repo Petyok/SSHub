@@ -196,7 +196,7 @@ fn render_picker(frame: &mut Frame, area: Rect, app: &App) {
 
     let hint_y = area.y + area.height.saturating_sub(1);
     let hint = if app.sftp_picker_searching {
-        format!("search: {}\u{2581}", app.search_query)
+        format!("search: {}\u{2581}", app.sftp_picker_query)
     } else {
         "Enter connect (on a group: fold) · / search · Esc back".to_string()
     };
@@ -982,7 +982,7 @@ mod tests {
         assert_eq!(fg_at_text(&buf, "Enter connect"), marker(DIM), "at rest");
 
         app.sftp_picker_searching = true;
-        app.search_query = "web".into();
+        app.sftp_picker_query = "web".into();
         let buf = crate::test_support::frame_at(area, |f| render_sftp(f, area, &app));
         assert_eq!(fg_at_text(&buf, "search: web"), marker(NOTICE), "searching");
     }

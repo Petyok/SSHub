@@ -125,13 +125,13 @@ pub fn render_identity_picker(frame: &mut Frame, app: &App) {
     let Some(picker) = app.push_key_identity_picker.as_ref() else {
         return;
     };
-    let identities = app.push_key_identities();
+    let identities = app.push_key_identity_matches();
 
     let area = frame.area();
     // Same clamp-then-grow bug as the host picker: see `render_host_picker`.
     let list_rows = identities.len().clamp(1, 8) as u16;
     let popup_w = crate::tui::fit_popup(48, 30, area.width.saturating_sub(4));
-    let popup_h = crate::tui::fit_popup(list_rows + 4, 4, area.height.saturating_sub(2));
+    let popup_h = crate::tui::fit_popup(list_rows + 5, 5, area.height.saturating_sub(2));
     if popup_w == 0 || popup_h == 0 {
         return;
     }
@@ -158,9 +158,9 @@ pub fn render_identity_picker(frame: &mut Frame, app: &App) {
     crate::tui::blit::paint_border(frame.buffer_mut(), popup, theme, PaintRole::PickerBorder);
 
     // As in `render_host_picker`: the outer box being legal says nothing about
-    // the rows. This layout needs one list row and the hint row inside the
-    // border.
-    if popup.width < 4 || popup.height < 4 {
+    // the rows. This layout needs a query row, a rule, one list row and the
+    // hint row inside the border.
+    if popup.width < 4 || popup.height < 5 {
         return;
     }
 
@@ -168,13 +168,23 @@ pub fn render_identity_picker(frame: &mut Frame, app: &App) {
     let row_x = popup.x + 2;
     let inner_w = popup.width.saturating_sub(3) as usize;
 
-    let list_top = popup.y + 2;
-    let visible = popup.height.saturating_sub(4) as usize;
+    let query_line = format!("/ {}\u{2588}", picker.query);
+    buf.set_string(
+        row_x,
+        popup.y + 1,
+        crate::tui::text::ellipsize(&query_line, inner_w),
+        theme.style(StyleRole::PickerQuery),
+    );
+    let sep: String = std::iter::repeat_n('\u{2500}', inner_w).collect();
+    buf.set_string(row_x, popup.y + 2, &sep, theme.style(StyleRole::PopupHint));
+
+    let list_top = popup.y + 3;
+    let visible = popup.height.saturating_sub(5) as usize;
     if identities.is_empty() {
         buf.set_string(
             row_x,
             list_top,
-            "(no key identities)",
+            "(no matching identities)",
             theme.style(StyleRole::PopupLegend),
         );
     } else {
@@ -216,7 +226,7 @@ pub fn render_identity_picker(frame: &mut Frame, app: &App) {
     buf.set_string(
         row_x,
         hint_y,
-        crate::tui::text::ellipsize("\u{2191}/\u{2193} · Enter · Esc", inner_w),
+        crate::tui::text::ellipsize("type to filter · \u{2191}/\u{2193} · Enter · Esc", inner_w),
         theme.style(StyleRole::PopupHint),
     );
 }
@@ -254,7 +264,10 @@ mod tests {
             certificate: None,
             has_password: false,
         }];
-        app.push_key_identity_picker = Some(PushKeyIdentityPicker { selected: 0 });
+        app.push_key_identity_picker = Some(PushKeyIdentityPicker {
+            query: String::new(),
+            selected: 0,
+        });
         app.mode = AppMode::PushKeyIdentityPicker;
         app
     }

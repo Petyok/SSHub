@@ -39,27 +39,24 @@ fn fresh_app() -> (App, crate::support::EnvGuard) {
     (app, env)
 }
 
-/// The default `Ctrl+Shift+T` binding parses to `Char('t')` with
-/// `CONTROL | SHIFT` (the explicit modifiers suppress the bare-uppercase shift
-/// rule, so the code stays lowercase). `keyspec_matches` compares the char
-/// case-insensitively but requires the modifier set to match exactly.
-fn ctrl_shift_t() -> KeyEvent {
-    KeyEvent::new(
-        KeyCode::Char('t'),
-        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-    )
+/// The default `Alt+Shift+T` binding, as crossterm reports it from a legacy
+/// terminal (ESC + `T`): `Char('T')` with `ALT | SHIFT`. `keyspec_matches`
+/// compares the char case-insensitively but requires the modifier set to
+/// match exactly.
+fn alt_shift_t() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('T'), KeyModifiers::ALT | KeyModifiers::SHIFT)
 }
 
-/// Ctrl+Shift+T on the dashboard opens a local-shell session tab: a session is
+/// Alt+Shift+T on the dashboard opens a local-shell session tab: a session is
 /// pushed, labelled "local", made active, and the app enters the connecting
 /// view — identical lifecycle to an ssh tab.
 #[test]
-fn ctrl_shift_t_opens_local_shell_tab() {
+fn alt_shift_t_opens_local_shell_tab() {
     let (mut app, _env) = fresh_app();
     assert!(app.sessions.is_empty());
     assert!(app.active_session.is_none());
 
-    app.handle_key(ctrl_shift_t()).unwrap();
+    app.handle_key(alt_shift_t()).unwrap();
 
     // A single session tab was created and labelled "local". `$SHELL` (or the
     // `/bin/sh` fallback) is always present, so the spawn succeeds and the app
@@ -70,16 +67,16 @@ fn ctrl_shift_t_opens_local_shell_tab() {
     assert_eq!(app.mode, AppMode::Connecting);
 }
 
-/// Ctrl+Shift+T while already inside a session opens a *second* local-shell tab
+/// Alt+Shift+T while already inside a session opens a *second* local-shell tab
 /// rather than replacing the first, matching the multi-tab ssh behaviour.
 #[test]
-fn ctrl_shift_t_opens_additional_local_shell_from_session() {
+fn alt_shift_t_opens_additional_local_shell_from_session() {
     let (mut app, _env) = fresh_app();
-    app.handle_key(ctrl_shift_t()).unwrap();
+    app.handle_key(alt_shift_t()).unwrap();
     assert_eq!(app.sessions.len(), 1);
 
-    // Now focused in the session view; another Ctrl+Shift+T adds a tab.
-    app.handle_key(ctrl_shift_t()).unwrap();
+    // Now focused in the session view; another Alt+Shift+T adds a tab.
+    app.handle_key(alt_shift_t()).unwrap();
     assert_eq!(app.sessions.len(), 2);
     assert_eq!(app.sessions[1].display_name, "local");
     assert_eq!(app.active_session, Some(1));
@@ -91,7 +88,7 @@ fn ctrl_shift_t_opens_additional_local_shell_from_session() {
 #[test]
 fn closing_last_local_shell_returns_to_dashboard() {
     let (mut app, _env) = fresh_app();
-    app.handle_key(ctrl_shift_t()).unwrap();
+    app.handle_key(alt_shift_t()).unwrap();
     assert_eq!(app.sessions.len(), 1);
     assert_eq!(app.active_session, Some(0));
 
@@ -107,8 +104,8 @@ fn closing_last_local_shell_returns_to_dashboard() {
 #[test]
 fn closing_one_of_two_local_shells_keeps_a_tab() {
     let (mut app, _env) = fresh_app();
-    app.handle_key(ctrl_shift_t()).unwrap();
-    app.handle_key(ctrl_shift_t()).unwrap();
+    app.handle_key(alt_shift_t()).unwrap();
+    app.handle_key(alt_shift_t()).unwrap();
     assert_eq!(app.sessions.len(), 2);
     assert_eq!(app.active_session, Some(1));
 
@@ -127,7 +124,7 @@ fn closing_one_of_two_local_shells_keeps_a_tab() {
 #[test]
 fn detach_local_shell_keeps_session_alive() {
     let (mut app, _env) = fresh_app();
-    app.handle_key(ctrl_shift_t()).unwrap();
+    app.handle_key(alt_shift_t()).unwrap();
     assert_eq!(app.sessions.len(), 1);
 
     app.detach_to_dashboard();

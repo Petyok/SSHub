@@ -78,7 +78,8 @@ fn app_with_hosts() -> App {
 fn palette_search_and_connect() {
     let mut app = app_with_hosts();
 
-    app.handle_key(key_char('/')).unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+        .unwrap();
     assert_eq!(app.mode, AppMode::Palette);
 
     app.handle_key(key_char('b')).unwrap();
@@ -138,7 +139,8 @@ fn j_k_navigation_then_quit() {
 #[test]
 fn esc_clears_palette_mode() {
     let mut app = app_with_hosts();
-    app.handle_key(key_char('/')).unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+        .unwrap();
     app.handle_key(key_char('w')).unwrap();
     assert_eq!(app.mode, AppMode::Palette);
     assert_eq!(app.palette_query, "w");

@@ -12,6 +12,9 @@ const SFTP_PROGRESS_TAU: f32 = 0.12;
 
 /// `ui_state` key holding whether SFTP lists dotfiles.
 const SFTP_HIDDEN_KEY: &str = "sftp_show_hidden";
+
+/// Why the remote pane ignores navigation while a queue runs.
+const SFTP_REMOTE_BUSY: &str = "remote pane is busy until the transfer finishes";
 use crate::sftp::SftpCommand;
 
 impl App {
@@ -150,7 +153,7 @@ impl App {
             _ if self.is_action(KeyAction::Connect, &key) => self.sftp_picker_activate()?,
             _ if self.is_action(KeyAction::Search, &key) => {
                 self.sftp_picker_searching = true;
-                self.search_query.clear();
+                self.sftp_picker_query.clear();
                 self.rebuild_filter();
             }
             _ if self.is_action(KeyAction::Help, &key) => {
@@ -163,24 +166,19 @@ impl App {
 
     fn handle_key_sftp_picker_search(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
-            _ if self.is_action(KeyAction::Cancel, &key) => {
-                self.sftp_picker_searching = false;
-                self.search_query.clear();
-                self.rebuild_filter();
-            }
-            _ if self.is_action(KeyAction::Connect, &key) => {
-                self.sftp_picker_searching = false;
-                self.sftp_picker_activate()?;
-            }
+            _ if self.is_action(KeyAction::Cancel, &key) => self.sftp_picker_end_search(),
+            // Enter on a group header folds it and keeps the search open (the
+            // picker query lives only while searching); on a host it connects.
+            _ if self.is_action(KeyAction::Connect, &key) => self.sftp_picker_activate()?,
             KeyCode::Char(c)
                 if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
                     && !c.is_control() =>
             {
-                self.search_query.push(c);
+                self.sftp_picker_query.push(c);
                 self.rebuild_filter();
             }
             KeyCode::Backspace => {
-                self.search_query.pop();
+                self.sftp_picker_query.pop();
                 self.rebuild_filter();
             }
             KeyCode::Up => self.move_selection(-1),
@@ -188,6 +186,17 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Close the picker search and drop its query; the list goes back to
+    /// the Hosts tab filter.
+    pub(crate) fn sftp_picker_end_search(&mut self) {
+        if !self.sftp_picker_searching {
+            return;
+        }
+        self.sftp_picker_searching = false;
+        self.sftp_picker_query.clear();
+        self.rebuild_filter();
     }
 
     /// Enter (or a double click) on the picker: fold the group header under
@@ -207,10 +216,11 @@ impl App {
     /// listing queued behind a transfer would leave the pane looking hung.
     /// The local pane is read straight off the filesystem and stays browsable.
     pub(crate) fn sftp_enter_selected(&mut self) {
-        let Some(s) = self.sftp.as_ref() else {
+        let Some(s) = self.sftp.as_mut() else {
             return;
         };
         if s.phase == crate::sftp::model::Phase::Running && s.focused_side() != Side::Local {
+            s.notice = Some(SFTP_REMOTE_BUSY.to_string());
             return;
         }
         if let Some((side, path)) = s.enter_dir() {
@@ -232,9 +242,16 @@ impl App {
                 .sftp
                 .as_ref()
                 .is_some_and(|s| s.focused_side() == Side::Local);
-        // Esc / Cancel disconnects the live session back to the picker.
+        // Esc / Cancel disconnects the live session back to the picker; with a
+        // run in flight or items staged it asks first (that work is lost).
         if self.is_action(KeyAction::Cancel, &key) {
-            self.sftp_disconnect();
+            let queued = self.sftp.as_ref().map_or(0, |s| s.queue.len());
+            if running || queued > 0 {
+                self.pending_delete = Some(PendingDelete::SftpDisconnect { running, queued });
+                self.mode = AppMode::ConfirmDelete;
+            } else {
+                self.sftp_disconnect();
+            }
             return Ok(());
         }
         // Enter descends into the selected directory of the focused pane.
@@ -265,13 +282,12 @@ impl App {
                     s.toggle_focus();
                 }
             }
-            KeyCode::Backspace => {
-                if can_navigate {
-                    if let Some((side, path)) = self.sftp.as_ref().and_then(|s| s.parent_dir()) {
-                        self.sftp_navigate(side, path);
-                    }
+            KeyCode::Backspace if can_navigate => {
+                if let Some((side, path)) = self.sftp.as_ref().and_then(|s| s.parent_dir()) {
+                    self.sftp_navigate(side, path);
                 }
             }
+            KeyCode::Backspace => self.sftp_notice(SFTP_REMOTE_BUSY),
             // Panes are left=local, right=remote, so the arrow points at the
             // destination pane and the source is the focused one: ← downloads
             // (remote → local), → uploads (local → remote).
@@ -320,9 +336,19 @@ impl App {
             KeyCode::Char('n') if !running => self.sftp_open_prompt(SftpPromptKind::Mkdir),
             KeyCode::Char('R') if !running => self.sftp_open_prompt(SftpPromptKind::Rename),
             KeyCode::Char('M') if !running => self.sftp_open_prompt(SftpPromptKind::Chmod),
+            KeyCode::Char('g') => self.sftp_notice(SFTP_REMOTE_BUSY),
+            KeyCode::Char('d' | 'n' | 'R' | 'M') => {
+                self.sftp_notice("file operations wait until the transfer finishes")
+            }
             _ => {}
         }
         Ok(())
+    }
+
+    fn sftp_notice(&mut self, msg: &str) {
+        if let Some(s) = self.sftp.as_mut() {
+            s.notice = Some(msg.to_string());
+        }
     }
 
     /// Arm the delete confirmation for the focused pane's selection. Reuses the
@@ -836,11 +862,7 @@ impl App {
         // query rebuilds the visible list, which would remap the selected index
         // onto a different (unfiltered) host and connect to the wrong one.
         let entry = self.selected_entry().cloned();
-        self.sftp_picker_searching = false;
-        // Picker search reuses the shared host filter; clear it so a leftover
-        // query doesn't silently filter the hosts tab after we connect.
-        self.search_query.clear();
-        self.rebuild_filter();
+        self.sftp_picker_end_search();
         let Some(entry) = entry else {
             return Ok(());
         };
@@ -868,7 +890,7 @@ impl App {
     /// Spawn the worker for a specific host entry and enter the browser. Refuses
     /// ProxyJump hosts (unsupported by the libssh2 transport in v1) with a
     /// notice instead of a doomed connection attempt.
-    fn sftp_connect_to(&mut self, entry: HostEntry) -> Result<()> {
+    pub(crate) fn sftp_connect_to(&mut self, entry: HostEntry) -> Result<()> {
         let ssh_host = sftp_ssh_host(self.resolver.as_ref(), &self.store, &entry);
 
         if ssh_host.proxy_jump.is_some() {
@@ -1333,7 +1355,7 @@ impl App {
 
     /// Tear down the live session. Dropping the command `Sender` makes the
     /// worker thread self-terminate.
-    fn sftp_disconnect(&mut self) {
+    pub(crate) fn sftp_disconnect(&mut self) {
         // Mirror the way in (#35): a handshake that never completed carries the
         // "connecting…" layer off to the right, a live browser parts its panes
         // toward both edges. Both reveal the picker underneath.
@@ -1355,6 +1377,18 @@ impl App {
         self.sftp_host = None;
         self.sftp_tx2 = None;
         self.sftp_rx2 = None;
+    }
+
+    /// An async connect failure lands whenever the handshake gives up, so it
+    /// takes the popup only on the dashboard (like `report_update_failure`);
+    /// over a form or a session it waits as a toast instead of replacing them.
+    fn report_sftp_connect_failure(&mut self, message: String) {
+        if self.mode == AppMode::Normal {
+            self.notice_popup = Some(message);
+            self.mode = AppMode::Notice;
+        } else {
+            self.host_notice = Some(message.replace('\n', " "));
+        }
     }
 
     /// Apply one [`SftpEvent`] from the *left* pane's worker (the second
@@ -1379,8 +1413,7 @@ impl App {
                 // Fall back to the local filesystem rather than leaving the
                 // pane stuck on a server that never answered.
                 self.sftp_left_pane_to_local();
-                self.notice_popup = Some(format!("Could not connect to {host}:\n{msg}"));
-                self.mode = AppMode::Notice;
+                self.report_sftp_connect_failure(format!("Could not connect to {host}:\n{msg}"));
             }
             SftpEvent::Names(path, entries) => self.sftp_goto_names(Side::Local, path, entries),
             SftpEvent::DirListing(_, path, entries) => {
@@ -1438,12 +1471,11 @@ impl App {
                 self.sftp_disconnect();
                 // Surface the failure as a modal popup instead of silently
                 // reverting to the picker — an unreachable host is loud, not blank.
-                self.notice_popup = Some(if host.is_empty() {
+                self.report_sftp_connect_failure(if host.is_empty() {
                     format!("SFTP connection failed:\n{msg}")
                 } else {
                     format!("Could not connect to {host}:\n{msg}")
                 });
-                self.mode = AppMode::Notice;
             }
             SftpEvent::DirListing(side, path, entries) => {
                 if let Some(s) = self.sftp.as_mut() {

@@ -216,6 +216,8 @@ pub struct App {
     pub tag_filters: Vec<String>,
     /// Highlighted row in the tag-filter popup (0 = "all"; 1.. = a tag).
     pub tag_filter_selected: usize,
+    /// Query typed in the tag-filter popup; separate from the `/` filter.
+    pub tag_filter_query: String,
     pub watcher_rx: Option<crate::watcher::ConfigWatcher>,
     pub should_quit: bool,
     pub detail_focus: bool,
@@ -245,6 +247,8 @@ pub struct App {
     pub auth_modal: Option<auth::AuthModal>,
     pub push_key_host_picker: Option<PushKeyHostPicker>,
     pub push_key_identity_picker: Option<PushKeyIdentityPicker>,
+    /// Public-key push in flight or its outcome ([`AppMode::KeyPush`]).
+    pub key_push: Option<KeyPush>,
     pub import_prompt: Option<ImportPromptEdit>,
     /// Open SFTP mkdir / rename text prompt, if any.
     pub sftp_prompt: Option<SftpPromptEdit>,
@@ -290,6 +294,10 @@ pub struct App {
     /// present (or before any run).
     pub broadcast_panel_gone_at: Option<std::time::Instant>,
     pub group_manage_selected: usize,
+    /// Fuzzy filter of the Group manager list (`/`); empty = show all.
+    pub group_manage_query: String,
+    /// The Group manager filter is being typed (letters are text).
+    pub group_manage_filtering: bool,
     pub group_notice: Option<String>,
     /// Session-log browser state ([`AppMode::LogBrowser`]).
     pub log_browser: Option<LogBrowserState>,
@@ -297,6 +305,10 @@ pub struct App {
     pub snippets: Vec<crate::store::Snippet>,
     /// Highlighted row in the snippet manager ([`AppMode::SnippetManage`]).
     pub snippet_manage_selected: usize,
+    /// Snippet manager `/` filter; empty = show all.
+    pub snippet_manage_query: String,
+    /// The snippet manager filter is being typed (letters are text).
+    pub snippet_manage_filtering: bool,
     /// In-progress snippet add/edit form ([`AppMode::SnippetForm`]).
     pub snippet_form: Option<SnippetFormEdit>,
     /// Live snippet picker state ([`AppMode::SnippetPicker`]).
@@ -329,6 +341,8 @@ pub struct App {
     pub collapsed_groups: std::collections::HashSet<i64>,
     /// Keybind editor state: `(selected action row, capturing next key)`.
     pub keybind_editor: Option<KeybindEditor>,
+    /// Keybind editor warning, e.g. the other actions sharing a just-captured key.
+    pub keybind_notice: Option<String>,
     /// Highlighted row in the Settings overlay.
     pub settings_selected: usize,
     /// Highlighted row in the tunnel reconnect settings overlay.
@@ -482,6 +496,8 @@ pub struct App {
     pub sftp_run_failed: bool,
     /// True while the SFTP picker's host search input is capturing keys.
     pub sftp_picker_searching: bool,
+    /// The SFTP picker's own host query (never the Hosts tab `search_query`).
+    pub sftp_picker_query: String,
     /// Remembered dotfile visibility for the SFTP panes, restored from
     /// `ui_state` at startup and applied to each new browser.
     pub sftp_show_hidden: bool,
@@ -506,6 +522,9 @@ pub struct App {
     pub audit_filter: AuditFilter,
     pub audit_range: AuditRange,
     pub audit_selected: usize,
+    /// Fuzzy filter typed on the Audit tab (`/`) over host, user, status and
+    /// note; empty = show all.
+    pub audit_query: String,
     /// The network map tab's model and cursor; `None` until the tab is first
     /// opened and after any host change while another tab is on screen.
     pub map_view: Option<network_map::MapView>,
@@ -1018,6 +1037,7 @@ impl App {
             profile_count: 1,
             tag_filters: Vec::new(),
             tag_filter_selected: 0,
+            tag_filter_query: String::new(),
             watcher_rx: None,
             should_quit: false,
             detail_focus: false,
@@ -1040,6 +1060,7 @@ impl App {
             auth_modal: None,
             push_key_host_picker: None,
             push_key_identity_picker: None,
+            key_push: None,
             import_prompt: None,
             sftp_prompt: None,
             ui_zoom: 0,
@@ -1056,10 +1077,14 @@ impl App {
             broadcast_toasts: Vec::new(),
             broadcast_panel_gone_at: None,
             group_manage_selected: 0,
+            group_manage_query: String::new(),
+            group_manage_filtering: false,
             group_notice: None,
             log_browser: None,
             snippets: Vec::new(),
             snippet_manage_selected: 0,
+            snippet_manage_query: String::new(),
+            snippet_manage_filtering: false,
             snippet_form: None,
             snippet_picker: None,
             ghost_dismissed_for: None,
@@ -1078,6 +1103,7 @@ impl App {
             nav_rows: Vec::new(),
             collapsed_groups: std::collections::HashSet::new(),
             keybind_editor: None,
+            keybind_notice: None,
             settings_selected: 0,
             tunnel_reconnect_selected: 0,
             active_tab: 0,
@@ -1144,6 +1170,7 @@ impl App {
             sftp_swallow_done: 0,
             sftp_run_failed: false,
             sftp_picker_searching: false,
+            sftp_picker_query: String::new(),
             sftp_show_hidden: false,
             sftp_anim: None,
             sftp_snapshot: std::cell::RefCell::new(None),
@@ -1159,6 +1186,7 @@ impl App {
             audit_filter: AuditFilter::default(),
             audit_range: AuditRange::default(),
             audit_selected: 0,
+            audit_query: String::new(),
             map_view: None,
             map_error: None,
             hop_editor: hop_editor::HopEditor::default(),
@@ -1210,15 +1238,10 @@ impl App {
     /// Refresh the auth events cache if more than 10 seconds have elapsed.
     pub fn refresh_auth_cache(&mut self) {
         if self.auth_cache_updated.elapsed() > std::time::Duration::from_secs(10) {
-            // Respect the audit tab's current filter/range so the periodic
+            // Respect the audit tab's current filter/range/query so the periodic
             // refresh doesn't silently wipe the user's filtered view (it used
             // to clobber it with 20 unfiltered rows every 10s).
-            let status = self.audit_filter.sql_status();
-            let since = self.audit_range.since_timestamp();
-            self.auth_events_cache = self
-                .store
-                .list_auth_events_filtered(status, since, 500)
-                .unwrap_or_default();
+            self.auth_events_cache = self.load_audit_events().unwrap_or_default();
             self.auth_stats_cache = self.store.auth_event_stats(7).unwrap_or((0, 0));
             // Keep the selection within the refreshed list.
             if self.audit_selected >= self.auth_events_cache.len() {
@@ -1314,6 +1337,10 @@ impl App {
         self.rebuild_filter();
         if let Some(name) = selected_name {
             self.restore_selection_by_name(&name);
+        }
+        // Palette indices point into the old host list: re-run its query.
+        if self.mode == AppMode::Palette {
+            self.rebuild_palette_results();
         }
         // The host list or a host's ping override may have changed.
         self.start_ping_worker();

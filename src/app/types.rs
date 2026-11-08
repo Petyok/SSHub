@@ -470,6 +470,8 @@ pub enum AppMode {
     PushKeyHostPicker,
     /// Identity list for `Shift+P` started from the hosts list.
     PushKeyIdentityPicker,
+    /// Popup over a public-key push running in the background (`Shift+P`).
+    KeyPush,
     /// Dropdown over the host form's Group/Identity field.
     FieldPicker,
     /// Keybinding editor overlay.
@@ -567,6 +569,11 @@ pub struct LogBrowserState {
     /// Bookmarks for the whole library, newest first.
     pub bookmarks: Vec<crate::store::LogBookmark>,
     pub notice: Option<String>,
+    /// `/` filter over the Hosts or Segments list on screen; cleared when the
+    /// pane changes.
+    pub list_query: String,
+    /// True while typing `list_query` (letters are text).
+    pub list_filtering: bool,
 }
 
 /// Live background-run state; App holds `broadcast: Option<BroadcastState>`.
@@ -713,13 +720,43 @@ pub struct BroadcastCandidate {
 /// No derive attribute at all — deliberately neither `Clone` nor `Copy`.
 pub struct BroadcastSetup {
     pub options: Vec<BroadcastTarget>,
+    /// Position in [`Self::visible_options`] (not an `options` index).
     pub menu_selected: usize,
+    /// Type-to-filter text on the target menu.
+    pub query: String,
     pub target_label: String, // filled once a target is chosen
     pub command: String,
     pub cursor: usize,
     pub candidates: Vec<BroadcastCandidate>, // resolved on target pick
     pub preview_selected: usize,             // highlighted row in edit-targets
     pub edit_targets: bool,                  // preview [e] entered per-host deselect
+}
+
+impl BroadcastTarget {
+    /// The menu row text, also the run's target label.
+    pub fn menu_label(&self) -> String {
+        match self {
+            BroadcastTarget::Group { label, .. } => format!("group: {label}"),
+            BroadcastTarget::Tag { name } => format!("#{name}"),
+            BroadcastTarget::Hosts { label, .. } => label.clone(),
+        }
+    }
+}
+
+impl BroadcastSetup {
+    /// `options` indices the target menu shows: all of them, or those
+    /// fuzzy-matching `query`, best first.
+    pub fn visible_options(&self) -> Vec<usize> {
+        let items: Vec<Vec<String>> = self.options.iter().map(|o| vec![o.menu_label()]).collect();
+        crate::search::fuzzy_indices(&self.query, &items)
+    }
+
+    /// The highlighted target, `None` when the filter hides every row.
+    pub fn selected_option(&self) -> Option<&BroadcastTarget> {
+        self.visible_options()
+            .get(self.menu_selected)
+            .map(|&i| &self.options[i])
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -891,6 +928,8 @@ pub enum PendingDelete {
     Group {
         id: i64,
         name: String,
+        /// Confirm/cancel lands back in the Group manager (vs the host list).
+        return_to_manage: bool,
     },
     Tunnel {
         id: i64,
@@ -907,6 +946,12 @@ pub enum PendingDelete {
         path: std::path::PathBuf,
         name: String,
         is_dir: bool,
+    },
+    /// Esc in the SFTP browser while a transfer runs or items are staged:
+    /// disconnecting would stop the run and drop the queue.
+    SftpDisconnect {
+        running: bool,
+        queued: usize,
     },
 }
 
@@ -1144,7 +1189,10 @@ pub enum PickerKind {
 #[derive(Debug, Clone)]
 pub struct FieldPicker {
     pub kind: PickerKind,
+    /// Highlighted row, an index into [`App::field_picker_rows`] (the visible rows).
     pub selected: usize,
+    /// Fuzzy filter typed into the list; empty shows every row.
+    pub query: String,
     /// `Some(name)` while typing a brand-new group name inline.
     pub creating: Option<String>,
     pub cursor: usize,
@@ -1308,7 +1356,7 @@ impl HostFormField {
 /// Focusable field in the group form. `↑/↓` (or Tab) move between them.
 /// Text fields (Name, Username, Port, ProxyJump) edit inline; Parent and
 /// Identity open a dropdown; Transport and ForwardAgent cycle a tri-state
-/// (inherit → set → set → inherit) on Space/Enter.
+/// (inherit → set → set → inherit) on Space. Enter advances (saves on the last).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GroupFormField {
     Name,
@@ -1344,7 +1392,7 @@ impl GroupFormField {
         )
     }
 
-    /// Fields cycled in place on Space/Enter.
+    /// Fields cycled in place on Space.
     pub fn is_tri_state(self) -> bool {
         matches!(
             self,
@@ -1377,6 +1425,8 @@ pub struct GroupFormEdit {
     pub field: GroupFormField,
     /// Return to GroupManage after save/cancel (vs Normal when opened from Ctrl+G shortcut).
     pub return_to_manage: bool,
+    /// Any field changed since the form opened (Esc then asks to discard).
+    pub dirty: bool,
 }
 
 /// Dropdown list picker for a group-form field ([`AppMode::GroupFieldPicker`]).
@@ -1384,8 +1434,11 @@ pub struct GroupFormEdit {
 pub struct GroupFieldPicker {
     /// Which field this dropdown edits (`Parent` or `Identity`).
     pub kind: GroupFormField,
-    /// Highlighted row: `0` = the "(none)"/"(top level)" slot, then options.
+    /// Highlighted visible row: `0` = the "(none)"/"(top level)" slot, then
+    /// the options matching `query`.
     pub selected: usize,
+    /// Fuzzy filter typed into the list; empty shows every option.
+    pub query: String,
 }
 
 /// Searchable dropdown for choosing the tunnel form's SSH server
@@ -1426,8 +1479,35 @@ pub struct PushKeyHostPicker {
 /// ([`AppMode::PushKeyIdentityPicker`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PushKeyIdentityPicker {
-    /// Index into the identities that carry a private key.
+    /// Fuzzy filter typed by the user.
+    pub query: String,
+    /// Index into the current filtered match list.
     pub selected: usize,
+}
+
+/// A public-key push run without a terminal tab ([`AppMode::KeyPush`]).
+pub struct KeyPush {
+    pub identity: String,
+    pub host: String,
+    pub started: std::time::Instant,
+    /// The ssh child, drained every frame; `None` once the push ended.
+    /// Dropping it kills ssh.
+    pub session: Option<crate::session::Session>,
+    pub state: KeyPushState,
+    /// Audit-log columns for the outcome row.
+    pub user: Option<String>,
+    pub via: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeyPushState {
+    Running,
+    /// ssh shows a prompt the app could not answer (password, host key).
+    NeedsInput,
+    Installed,
+    AlreadyPresent,
+    Failed(String),
+    Cancelled,
 }
 
 /// A server-to-server transfer in flight, relayed through a local temp file.

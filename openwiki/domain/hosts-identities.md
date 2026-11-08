@@ -105,8 +105,10 @@ passphrases and host passwords live in the credential store under
   key needs a passphrase and whether a stored one matches; the passphrase is fed
   through a 0600 secret file plus a 0700 helper script, never argv.
 - **Key generation** (`src/app/keygen.rs`, `KeyAction::GenerateKey`, default
-  `g` on the Keys tab): ed25519 (default path `~/.ssh/id_ed25519_sshub`) or
-  RSA 4096 via `keyfile::generate_key_pair`.
+  `g` on the Keys tab): ed25519 (default path the first free
+  `~/.ssh/id_ed25519_sshub`, `_2`, `_3`, ...) or RSA 4096 via
+  `keyfile::generate_key_pair`. The same askpass helper feeds a stored
+  passphrase to `ssh-add` when a key is added to the agent.
 - **Public-key push** (`src/app/push_key.rs`, `Shift+P` from the hosts list or
   the Keys tab): reads the public key (`ssh-keygen -y`, using a stored
   passphrase), then runs an idempotent remote append to

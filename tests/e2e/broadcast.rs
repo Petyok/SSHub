@@ -161,8 +161,13 @@ fn broadcast_wizard_pick_command_preview_then_esc() {
     );
 
     // STOP before pressing 'y' (that spawns real ssh). Esc from the preview
-    // closes the wizard cleanly: back to Normal, staged setup cleared, and still
-    // no live run.
+    // steps back to the command (kept); Esc twice more closes the wizard
+    // cleanly, still with no live run.
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::BroadcastCommand);
+    assert_eq!(app.broadcast_setup.as_ref().unwrap().command, "uptime");
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::BroadcastPickTarget);
     app.handle_key(key(KeyCode::Esc)).unwrap();
     assert_eq!(app.mode, AppMode::Normal);
     assert!(app.broadcast_setup.is_none());

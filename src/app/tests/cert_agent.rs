@@ -160,3 +160,90 @@ fn agent_add_warns_when_cert_does_not_match_key() {
         None => std::env::remove_var("SSH_AUTH_SOCK"),
     }
 }
+
+#[test]
+fn agent_add_feeds_the_stored_passphrase_to_ssh_add() {
+    // Oracle: a real ssh-agent and a real passphrase-protected key; the
+    // agent must end up holding the key without any prompt.
+    let have = |tool: &str| Command::new(tool).arg("-h").output().is_ok();
+    if !have("ssh-keygen") || !have("ssh-agent") || !have("ssh-add") {
+        eprintln!("skipping: ssh-keygen/ssh-agent/ssh-add missing");
+        return;
+    }
+    let _lock = crate::test_env::lock_home();
+    let dir = tempfile::tempdir().unwrap();
+    let sock = dir.path().join("agent.sock");
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _agent = Kill(
+        Command::new("ssh-agent")
+            .arg("-D")
+            .arg("-a")
+            .arg(&sock)
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    for _ in 0..100 {
+        if sock.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let key = dir.path().join("enc");
+    assert!(Command::new("ssh-keygen")
+        .args([
+            "-q",
+            "-t",
+            "ed25519",
+            "-N",
+            "s3cret-pass",
+            "-C",
+            "sshub-agent-oracle",
+            "-f"
+        ])
+        .arg(&key)
+        .status()
+        .unwrap()
+        .success());
+
+    let old_sock = std::env::var("SSH_AUTH_SOCK").ok();
+    std::env::set_var("SSH_AUTH_SOCK", &sock);
+    let (mut app, secrets) = test_app_with_secrets(vec![]);
+    let created = app
+        .store
+        .create_identity(&crate::store::NewIdentity {
+            name: "enc".into(),
+            username: None,
+            private_key: Some(key.clone()),
+            certificate: None,
+            sort_order: 0,
+            has_password: true,
+        })
+        .unwrap();
+    crate::credentials::PasswordStore::set(
+        &*secrets,
+        &crate::credentials::identity_key(created.id),
+        "s3cret-pass",
+    )
+    .unwrap();
+    select_identity(&mut app, "enc");
+    app.add_selected_to_agent().unwrap();
+    let listed = Command::new("ssh-add").arg("-l").output().unwrap();
+    match old_sock {
+        Some(v) => std::env::set_var("SSH_AUTH_SOCK", v),
+        None => std::env::remove_var("SSH_AUTH_SOCK"),
+    }
+
+    assert_eq!(
+        app.identity_notice.as_deref(),
+        Some("Added enc to agent"),
+        "notice"
+    );
+    assert!(String::from_utf8_lossy(&listed.stdout).contains("sshub-agent-oracle"));
+}
