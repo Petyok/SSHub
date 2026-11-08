@@ -1748,8 +1748,14 @@ fn log_live_counts_only_devices_with_an_op_before_the_instant_and_inside_the_win
     let now = crate::store::now_ts();
     // Terminal 1 approved and terminal 0 proposed (both wrote ops); terminal 2 never wrote anything.
     let live = ids(now + 60);
-    assert!(live.contains(&d[0].did) && live.contains(&d[1].did), "{live:?}");
-    assert!(!live.contains(&d[2].did), "a device with no op is not live: {live:?}");
+    assert!(
+        live.contains(&d[0].did) && live.contains(&d[1].did),
+        "{live:?}"
+    );
+    assert!(
+        !live.contains(&d[2].did),
+        "a device with no op is not live: {live:?}"
+    );
     // Before any op was written nobody is live; a window later nobody is.
     assert!(ids(0).is_empty());
     assert!(ids(now + LIVE_DEVICE_WINDOW_SECS + 3600).is_empty());
@@ -1810,4 +1816,3 @@ fn the_promotion_block_clears_when_no_quorum_credential_is_left() {
     assert!(quorum_credentials_before(&d[0].store, later.lamport).unwrap());
     assert!(!quorum_credentials_before(&d[0].store, first.lamport).unwrap());
 }
-

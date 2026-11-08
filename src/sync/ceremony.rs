@@ -128,8 +128,11 @@ fn quorum_credentials_before(store: &LauncherStore, before: u64) -> Result<bool>
         return Ok(true);
     }
     store.with_conn(|c| {
-        let mut st = c.prepare("SELECT host_uid, wrapped_shares FROM sync_cred_state WHERE lamport < ?1")?;
-        let rows = st.query_map([i64::try_from(before).unwrap_or(i64::MAX)], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?)))?;
+        let mut st =
+            c.prepare("SELECT host_uid, wrapped_shares FROM sync_cred_state WHERE lamport < ?1")?;
+        let rows = st.query_map([i64::try_from(before).unwrap_or(i64::MAX)], |r| {
+            Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?))
+        })?;
         for row in rows {
             let (uid, wraps) = row?;
             let known = <[u8; 16]>::try_from(uid.as_slice()).is_ok_and(|u| newest.contains_key(&u));
@@ -379,7 +382,11 @@ fn terminal_holder(d: &DeviceRow) -> bool {
 /// a device learned from an op has `last_seen` 0 until its first round, and two devices disagree about who they talked to,
 /// so a verdict that read it was rejected on the devices whose contacts differed from the proposer's. A device that never
 /// writes anything is not live here; revoked and compromised devices never are.
-pub(crate) fn log_live(store: &LauncherStore, devices: Vec<DeviceRow>, t: i64) -> Result<Vec<DeviceRow>> {
+pub(crate) fn log_live(
+    store: &LauncherStore,
+    devices: Vec<DeviceRow>,
+    t: i64,
+) -> Result<Vec<DeviceRow>> {
     let wrote: std::collections::BTreeMap<String, i64> = store.with_conn(|c| {
         let mut st = c.prepare(
             "SELECT device_id, MAX(timestamp) FROM sync_ops

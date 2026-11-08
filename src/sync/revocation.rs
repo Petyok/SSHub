@@ -67,12 +67,9 @@ pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Re
         .collect();
     ensure!(remaining.len() >= 2, "revoking a holder needs at least two remaining terminal holders to contribute: the ring has {}", remaining.len());
     // Alive means: wrote an op to the ring recently (the log, the same on every device), not "was last heard from here".
-    let fresh = super::ceremony::log_live(
-        store,
-        remaining.iter().map(|d| (*d).clone()).collect(),
-        now,
-    )?
-    .len();
+    let fresh =
+        super::ceremony::log_live(store, remaining.iter().map(|d| (*d).clone()).collect(), now)?
+            .len();
     ensure!(
         fresh >= 2,
         "fewer than two remaining holders have written to the ring recently enough to contribute"
