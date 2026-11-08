@@ -626,6 +626,49 @@ impl CertExtendRequestWire {
     }
 }
 
+/// Phase B (contract 4j): the request a terminal shows the phone to renew a trust-session certificate.
+pub const KIND_CERT_RENEW_REQUEST: u8 = 11;
+/// Phase B (contract 4j): the request a terminal shows the OLD phone to hand the ring over to a new phone.
+pub const KIND_PHONE_HANDOVER_REQUEST: u8 = 12;
+/// Phase B (contract 4j): tag of the optional `terminals` block that follows the sender block of a kind 5 frame.
+pub const PHONE_OPS_TERMINALS_TAG: u8 = 2;
+/// Most evidence entries a renew request carries.
+pub const MAX_RENEW_EVIDENCE: usize = 32;
+
+/// What one enforcing holder terminal (never the delegate) knows: its newest op seq and that op's author stamp.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HeadEvidence {
+    pub terminal: [u8; 8],
+    pub head_seq: u64,
+    pub head_ts: i64,
+}
+
+/// Kind 11 (contract 4j), type only: `cert_id(32) || expiry i64 BE || n u8 || n x (terminal(8) || head_seq u64 BE || head_ts i64 BE)`,
+/// `n <= MAX_RENEW_EVIDENCE`. Encode and decode are written by the proto lane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CertRenewRequestWire {
+    pub cert_id: [u8; 32],
+    pub expiry: i64,
+    pub evidence: Vec<HeadEvidence>,
+}
+
+/// Kind 12 (contract 4j), type only: `ed25519(32) || x25519(32) || mlkem_len u16 BE || mlkem || name_len u8 || name utf8 || terminal(8)`.
+/// Encode and decode are written by the proto lane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PhoneHandoverRequestWire {
+    pub new_phone: super::crypto::DevicePublic,
+    pub name: String,
+    pub terminal: [u8; 8],
+}
+
+/// The optional `terminals` block of a kind 5 frame (contract 4j), type only: `0x02 || count u8 || newest_op_ts i64 BE`.
+/// UNSIGNED and informational. `PhoneOpsWire` gains `terminals: Option<TerminalsBlock>` in the proto lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalsBlock {
+    pub count: u8,
+    pub newest_op_ts: i64,
+}
+
 fn frame_header(kind: u8) -> Vec<u8> {
     let mut out = Vec::with_capacity(HEADER + 64);
     out.extend_from_slice(&WIRE_MAGIC);
