@@ -483,7 +483,12 @@ pub fn validate_phone_reenroll(
 /// completed or lapsed) and was not started by this device, as the ops. Empty for a device nobody sits at. The caller
 /// shows ONE alert, deduped by requester, with the count and the earliest lock end; it never writes an op from the alert.
 pub fn open_for_alert(store: &LauncherStore, me: &DeviceIdentity, now: i64) -> Result<Vec<Op>> {
-    let me = me.public().device_id();
+    open_for_alert_for(store, &me.public().device_id(), now)
+}
+
+/// [`open_for_alert`] for a caller that holds only this device's id (the screens).
+pub fn open_for_alert_for(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Vec<Op>> {
+    let me = me.clone();
     let devices = super::ceremony::effective_devices(store, None)?;
     if !devices
         .iter()
