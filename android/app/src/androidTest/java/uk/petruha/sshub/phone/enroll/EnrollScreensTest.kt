@@ -57,7 +57,7 @@ class EnrollScreensTest {
 
     private val calls = mutableListOf<String>()
     private fun hit(s: String): () -> Unit = { calls += s }
-    private fun click(text: String) = rule.onNodeWithText(text).performScrollTo().performClick()
+    private fun click(text: String) = rule.onNodeWithText(text).performClick()
     private fun exists(text: String) = rule.onNodeWithText(text).assertExists()
     private fun absent(text: String) = rule.onNodeWithText(text).assertDoesNotExist()
     private val notSelectable = SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected)
@@ -128,7 +128,7 @@ class EnrollScreensTest {
         rule.onNodeWithContentDescription(QR_DESCRIPTION).assertExists()
         rule.onNode(hasText("of 6", substring = true)).assertExists()
         exists("Marked sensitive: the system hides it from clipboard previews and it is cleared after 60 s.")
-        click("Copy the text")
+        rule.onNodeWithText("Copy the text").performScrollTo().performClick()
         click("Show as text for a terminal without a camera")
         click("Next")
         assertEquals(listOf("copy", "toggle", "next"), calls)

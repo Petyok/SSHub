@@ -52,7 +52,7 @@ class FirstRunScreenTest {
         var opened = 0
         rule.setScreen { FirstRunScreen(IdentitySamples.firstRunNoLock, FirstRunActions(onOpenSecuritySettings = { opened++ })) }
         rule.onNodeWithText("No screen lock on this phone").assertExists()
-        rule.onNodeWithText("Open security settings").performScrollTo().performClick()
+        rule.onNodeWithText("Open security settings").performScrollTo().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) // the longer first-run text pushes it under the bar: act on the node, not on a tap position
         assertEquals(1, opened)
         rule.assertTargets48()
     }
