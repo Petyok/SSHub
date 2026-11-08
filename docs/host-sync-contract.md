@@ -1000,8 +1000,9 @@ new bodies canonical bytes, vectors and oracle checks; `apply` does nothing for 
 
 Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, not op-log):
 
-* Proofs count only if they name `op.hash()`, were written after the op and within `RED_CEREMONY_TTL_SECS` of
-  its timestamp, and their author is valid: `RedApprove` by an attended `Holder` `Terminal` that is not the proposer
+* Proofs count only if they name `op.hash()`, were written after the op (a higher lamport) and within `RED_CEREMONY_TTL_SECS` of
+  its timestamp (the AUTHORS' stamps; never the local receipt time and never `now`: D0b, a verdict is a pure function of the
+  log, so a device that was away longer than the window reaches the verdict of the others), and their author is valid: `RedApprove` by an attended `Holder` `Terminal` that is not the proposer
   (and, for `ModeChange` to Vault, is the named `cosigner`); `RedPhoneSign` by the device with `kind == Phone`
   (not needed for `CertIssue`, whose author is the phone); `RedFactor` whose `sig` verifies under the registered
   factor key over `b"sshub/sync/red/factor/v1" || op_hash || proposer id`.
@@ -1010,14 +1011,36 @@ Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, n
   (`aead_seal(Argon2id(code, salt), seed)`, `ARGON2_EMAIL`), `sender` names the device that holds the code. A first
   `FactorRegister` needs phone + second-device proofs only; a replacement also needs a `RedFactor` of the factor
   being replaced.
-* A ring with one attended `Holder` terminal waives the second-device proof; it needs the phone and the paper.
-* `DeviceRoleChange` and `DeviceAdd` as holder additionally require at least two attended holder terminals in the ring (counted
-  from the device view at the op's own position, never from contact: a verdict is the same on every device) so a reshare has k
-  contributors; `DeviceRevoke` of a holder requires at least two remaining holders after it (three before). Whether a
-  contributor is reachable now is advice for the screens (`ceremony::log_live`), not a rule.
+* A ring with one attended `Holder` terminal waives the second-device proof; it needs the phone and the paper. The subject
+  of a promotion (`DeviceAdd` or `DeviceRoleChange` as holder) is not one of the terminals counted for that waiver, so a
+  replacement terminal in a one-terminal ring completes with the phone and the paper (Phase B, crypto M1).
+* `DeviceRoleChange` and `DeviceAdd` as holder additionally require at least two attended holder terminals in the ring when a
+  Quorum credential exists (counted from the device view at the op's own position, never from contact: a verdict is the same
+  on every device). A third live holder (the phone included) and a `ModeChange` to Quorum, whatever the ring size, require a
+  registered paper (`FactorRegister{Paper}` in force at the op's position); without it the op is blocked.
+* `DeviceRevoke` of a holder needs the phone and, for a terminal, the PAPER: the emailed code never counts for it, and
+  the second-device proof is waived when the paper is among the proofs. It is blocked when the target is the last attended
+  terminal (read from the view only, never from whether a credential exists) and, for a terminal, when no paper is
+  registered. `revocation::revoke_mode` reports `Full` (two or more other attended terminals), `Degraded` (one) or
+  `Refused`; a degraded revocation reshares nothing (it needs two share-holding terminals) and leaves the credentials the
+  removed device held a share of on the exposure list (`quorum::exposed_credentials`). A revocation closes only when two
+  distinct share-holding terminals wrote `ShareReshareBatch` ops of one epoch that leave the target out, or when no
+  credential is shared with the target; `next_actions` offers `Contribute` only to a share-holding terminal and only when
+  two exist. Whether a contributor is reachable now is advice for the screens (`ceremony::log_live`), not a rule.
+* Recoveries are bound to their phone (H1): a cancellation by the phone is judged against the phone of the view at the
+  cancellation's own lamport, and a completion `DeviceRevoke` stands in for the ceremony only when it targets the phone of
+  the view at the recovery's own lamport and that phone is still live just before the completion. (The `Superseded` verdict
+  for an in-force `PhoneHandover` comes with the `PhoneHandover` op.)
+* One-terminal recovery (design 5.2): with no other attended holder terminal the requester's own `RecoveryAck` starts the
+  lock (`RECOVERY_TIMELOCK_SOLO_SECS`, 14 days), the paper authorizes it, and the paper again is the third factor
+  (`ThirdFactor::Paper` with `via_paper`); the live phone still cancels with no factor. `recovery::open_for_alert` lists
+  the open recoveries started by other devices (one alert per requester is the caller's job; the alert writes no op).
 * `RedStatus { missing: Vec<RedProof>, have: Vec<RedProof>, complete: bool, expired: bool }` is what the review
-  screen shows ("phone: signed, second device: waiting, paper: missing"). `settle_red_ops(store, now)` runs after
-  every ingest: it resolves a pending Red op as approved when complete and as rejected when expired.
+  screen shows ("phone: signed, second device: waiting, paper: missing"). `expired` is display and hygiene only: the window
+  passed on THIS clock and the ceremony is not complete; it decides nothing. `settle_red_ops(store, now)` runs after
+  every ingest: it resolves a pending Red op as approved when complete and as rejected when a rule blocks it. An op past
+  the window stays pending (it is not rejected), so a late proof still completes it on every device alike. Residual: a
+  signer can stamp its own proof inside the window; a proof still needs three independent participants.
 * Builders for the UI and the phone: `red_approve_body(op)`, `red_factor_paper(recover_identity, proposer, op)`,
   `red_factor_email(code, store, proposer, op)`, and for the phone `RedPhoneSign` is encoded by the page like its
   cancel op; the terminal shows a Red notice (the op as kind-3 notice frame) for the phone to scan or paste.
