@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use rand_core::{OsRng, RngCore};
 use sshub_sync_proto::wire::{
-    PhoneOpsWire, SignedOpBytes, TerminalsBlock, KIND_CERT_EXTEND_REQUEST, KIND_CERT_REQUEST, KIND_CHALLENGE,
-    KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_OPS,
+    PhoneOpsWire, SignedOpBytes, TerminalsBlock, KIND_CERT_EXTEND_REQUEST, KIND_CERT_REQUEST,
+    KIND_CHALLENGE, KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_OPS,
     KIND_RECOVERY_NOTICE, WIRE_MAGIC,
 };
 use zeroize::Zeroizing;
@@ -532,7 +532,10 @@ impl PhoneCore {
                 cert::approve_cert(p, typed_id.as_deref(), ctx)
             }
             (Pending::Reshare(p), Decision::Approve { .. }) => reshare::publish_reshare(p, ctx),
-            (Pending::Chain { seq: shown, hash }, d @ (Decision::Approve { .. } | Decision::AcceptSingleSource)) => {
+            (
+                Pending::Chain { seq: shown, hash },
+                d @ (Decision::Approve { .. } | Decision::AcceptSingleSource),
+            ) => {
                 let ack = matches!(d, Decision::AcceptSingleSource);
                 let (seq, n) = chain::accept_head(ctx.state, (shown, &hash), ack)?;
                 Ok(none_outgoing(&format!(
@@ -1498,13 +1501,24 @@ mod tests {
         .encode();
         let v = c.take_chain(list).unwrap();
         assert!(v.agreed && v.single_source);
-        assert_eq!((v.terminals_count, v.terminals_newest_at), (Some(2), Some(1_893_452_402)));
-        assert!(v.note.starts_with("Your ring has 2 terminals and I can reach only this one."), "{}", v.note);
+        assert_eq!(
+            (v.terminals_count, v.terminals_newest_at),
+            (Some(2), Some(1_893_452_402))
+        );
+        assert!(
+            v.note
+                .starts_with("Your ring has 2 terminals and I can reach only this one."),
+            "{}",
+            v.note
+        );
         let now = 1_893_452_500;
-        let e = c.decide(v.token, Decision::Approve { typed_id: None }, now).unwrap_err();
+        let e = c
+            .decide(v.token, Decision::Approve { typed_id: None }, now)
+            .unwrap_err();
         assert_eq!(e.reason(), chain::SINGLE_SOURCE_TICK_MESSAGE);
         // the refusal keeps the card open: the tick is a second tap, not a new scan
-        c.decide(v.token, Decision::AcceptSingleSource, now).unwrap();
+        c.decide(v.token, Decision::AcceptSingleSource, now)
+            .unwrap();
         assert!(!c.lock_inner().unlocked.as_ref().unwrap().state.head_pending);
     }
 

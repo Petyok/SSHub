@@ -627,7 +627,8 @@ mod tests {
             head_attest(&mut fresh, &me, NOW + 100, None).is_err(),
             "one list adopts nothing"
         );
-        let newer = adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8), Some([2; 8]), None).unwrap();
+        let newer =
+            adopt_own_chain(&mut fresh, &me, &courier_ops(&live, 8), Some([2; 8]), None).unwrap();
         assert!(!newer.agreed);
         assert_eq!(newer.previous_seq, Some(2));
         assert!(accept_head(&mut fresh, (0, &[]), false).is_err());
@@ -708,8 +709,16 @@ mod tests {
         );
         // a list without a sender can be the first candidate but never agrees, from either side
         let mut s = PhoneState::restored();
-        assert!(!adopt_own_chain(&mut s, &me, &ops, None, None).unwrap().agreed);
-        assert!(!adopt_own_chain(&mut s, &me, &ops, None, None).unwrap().agreed);
+        assert!(
+            !adopt_own_chain(&mut s, &me, &ops, None, None)
+                .unwrap()
+                .agreed
+        );
+        assert!(
+            !adopt_own_chain(&mut s, &me, &ops, None, None)
+                .unwrap()
+                .agreed
+        );
         assert!(
             !adopt_own_chain(&mut s, &me, &ops, a, None).unwrap().agreed,
             "the first one named nobody"
@@ -720,7 +729,9 @@ mod tests {
             Some("0101010101010101")
         );
         assert!(
-            !adopt_own_chain(&mut s, &me, &ops, None, None).unwrap().agreed,
+            !adopt_own_chain(&mut s, &me, &ops, None, None)
+                .unwrap()
+                .agreed,
             "an anonymous list never completes a pair"
         );
         assert_eq!(
@@ -845,7 +856,10 @@ mod tests {
         assert_eq!(r.terminals, tb(2));
         let e = accept_head(&mut s, (3, &hash), false).unwrap_err();
         assert_eq!(e.reason(), SINGLE_SOURCE_TICK_MESSAGE);
-        assert!(s.head_pending && s.head_proposal.is_some(), "a refusal keeps the proposal");
+        assert!(
+            s.head_pending && s.head_proposal.is_some(),
+            "a refusal keeps the proposal"
+        );
         assert_eq!(accept_head(&mut s, (3, &hash), true).unwrap(), (3, 3));
         assert!(!s.head_pending);
     }
@@ -867,7 +881,10 @@ mod tests {
         assert!(!r.agreed && !r.single_source && s.head_proposal.is_none());
         // a count of zero cannot come from an honest terminal (it counts itself): treated as no block
         let z = adopt_own_chain(&mut s, &me, &ops, Some([3; 8]), tb(0)).unwrap();
-        assert!(z.agreed && !z.single_source, "a second sender agrees the usual way");
+        assert!(
+            z.agreed && !z.single_source,
+            "a second sender agrees the usual way"
+        );
     }
 
     #[test]
