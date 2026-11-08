@@ -105,3 +105,11 @@ finish() {
     exit 1
   fi
 }
+
+# A Phase B gate that exists before its feature does: print the gap and PASS. Replace the call with the real scenario body
+# when the lane's code is on the branch under test. Usage: skeleton NAME "what the scenario will show" "what it waits for".
+skeleton() {
+  echo "--- SKELETON: $2"
+  echo "--- WAITS FOR: $3"
+  finish "$1"
+}
