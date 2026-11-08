@@ -791,7 +791,10 @@ pub fn render_release_confirm(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let body = vec![
         Line::styled(
-            format!("{} ({}) asks to open a saved password", r.requester, r.requester_id),
+            format!(
+                "{} ({}) asks to open a saved password",
+                r.requester, r.requester_id
+            ),
             theme.style(StyleRole::TextBright),
         ),
         Line::styled(
