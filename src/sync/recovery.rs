@@ -15,7 +15,9 @@ use std::collections::BTreeSet;
 
 use anyhow::{bail, ensure, Result};
 
-use super::limits::{RECOVERY_TIMELOCK_SECS, RECOVERY_TIMELOCK_SOLO_SECS, TIMESTAMP_SKEW_GRACE_SECS};
+use super::limits::{
+    RECOVERY_TIMELOCK_SECS, RECOVERY_TIMELOCK_SOLO_SECS, TIMESTAMP_SKEW_GRACE_SECS,
+};
 use super::oplog::DeviceId;
 
 /// A recovery stays completable this long after its time lock ended; then it must be started again.

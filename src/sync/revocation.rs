@@ -94,7 +94,9 @@ pub enum RevokeMode {
 pub fn revoke_mode(store: &LauncherStore, target: &DeviceId) -> Result<RevokeMode> {
     let holders = live_holders(store)?;
     let Some(row) = holders.iter().find(|d| d.id == *target) else {
-        return Ok(RevokeMode::Refused(format!("{target} is not a live holder")));
+        return Ok(RevokeMode::Refused(format!(
+            "{target} is not a live holder"
+        )));
     };
     let remaining = holders
         .iter()
@@ -132,7 +134,6 @@ pub fn check_revocable(store: &LauncherStore, target: &DeviceId, _now: i64) -> R
         RevokeMode::Full | RevokeMode::Degraded => Ok(()),
     }
 }
-
 
 /// Does any Quorum credential's newest sharing include `device`?
 fn holds_a_share(store: &LauncherStore, device: &DeviceId) -> Result<bool> {

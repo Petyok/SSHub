@@ -1263,7 +1263,8 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
     // A ring of four holders has its paper (design 3.1); removing a computer needs it.
     append(
         &d[0],
-        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32])).unwrap(),
+        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32]))
+            .unwrap(),
     );
     all_to_all(&d);
     let hosts: Vec<HostUid> = (1..=3u8).map(|n| [100 + n; 16]).collect();
@@ -1493,7 +1494,8 @@ fn check_revocable_reads_the_ring_not_the_contact_clock_nor_who_wrote_lately() {
     let d = ring(4);
     append(
         &d[0],
-        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32])).unwrap(),
+        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32]))
+            .unwrap(),
     );
     all_to_all(&d);
     for x in &d {
@@ -1506,7 +1508,10 @@ fn check_revocable_reads_the_ring_not_the_contact_clock_nor_who_wrote_lately() {
     }
     let now = crate::store::now_ts() + 5;
     check_revocable(&d[0].store, &d[3].did, now).unwrap();
-    assert_eq!(revoke_mode(&d[0].store, &d[3].did).unwrap(), RevokeMode::Full);
+    assert_eq!(
+        revoke_mode(&d[0].store, &d[3].did).unwrap(),
+        RevokeMode::Full
+    );
 
     // Three terminals and no paper: refused, with the paper named.
     let e = ring(4);
@@ -1517,7 +1522,8 @@ fn check_revocable_reads_the_ring_not_the_contact_clock_nor_who_wrote_lately() {
     let two = ring(2);
     append(
         &two[0],
-        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32])).unwrap(),
+        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32]))
+            .unwrap(),
     );
     all_to_all(&two);
     assert_eq!(

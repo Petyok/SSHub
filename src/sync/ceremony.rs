@@ -483,9 +483,8 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     let past_window = now - base_time(store, op) > RED_CEREMONY_TTL_SECS;
     // A proof counts when it comes after the op and inside the window measured on the AUTHORS' stamps. Never the local
     // receipt time and never `now`: a device that was away for longer than the window must reach the verdict of the others.
-    let valid_proof = |p: &Op| {
-        p.lamport > op.lamport && p.timestamp - op.timestamp <= RED_CEREMONY_TTL_SECS
-    };
+    let valid_proof =
+        |p: &Op| p.lamport > op.lamport && p.timestamp - op.timestamp <= RED_CEREMONY_TTL_SECS;
     let mut have = Vec::new();
     let mut missing = Vec::new();
     let mut blocked = phone_verdict;
@@ -520,7 +519,8 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     let attended_terminals = devices.iter().filter(|d| terminal_holder(d)).count();
     // Paper is a precondition of Quorum and of a third holder (design 3.1): read at the op's own position, so every device
     // judges alike. Without it a stolen device could not be cut off and a lost phone could not be recovered.
-    let paper_registered = registered_before(store, ThirdFactor::Paper, Some(op.lamport))?.is_some();
+    let paper_registered =
+        registered_before(store, ThirdFactor::Paper, Some(op.lamport))?.is_some();
     // Removing a terminal holder (a computer or server that holds shares): the paper is the proof that always exists.
     let revoked_terminal_holder = matches!(&op.body, OpBody::DeviceRevoke { device_id }
         if devices.iter().any(|d| d.id == *device_id && d.role == DeviceRole::Holder && d.kind == DeviceKind::Terminal));

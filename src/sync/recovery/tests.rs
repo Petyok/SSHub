@@ -1512,11 +1512,7 @@ mod over_the_log {
             crate::sync::ceremony::red_factor_paper(&recover, &op),
             started + 30,
         );
-        at(
-            &w.d[R],
-            ack_body(&op, started + 60).unwrap(),
-            started + 60,
-        );
+        at(&w.d[R], ack_body(&op, started + 60).unwrap(), started + 60);
         w.sync();
         settle_received_at(&w);
         // The ordinary 7 day lock would be over eight days in; the solo lock is not.
@@ -1555,11 +1551,7 @@ mod over_the_log {
             crate::sync::ceremony::red_factor_paper(&recover, &op),
             started + 30,
         );
-        at(
-            &w.d[R],
-            ack_body(&op, started + 60).unwrap(),
-            started + 60,
-        );
+        at(&w.d[R], ack_body(&op, started + 60).unwrap(), started + 60);
         at(
             &w.d[P],
             OpBody::PhoneReenrollCancel {

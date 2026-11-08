@@ -217,13 +217,19 @@ fn ceremony_verdicts_do_not_read_received_at_or_now() {
     d[OBS]
         .store
         .with_conn(|c| {
-            c.execute("UPDATE sync_ops SET received_at = received_at + 31536000", [])?;
+            c.execute(
+                "UPDATE sync_ops SET received_at = received_at + 31536000",
+                [],
+            )?;
             Ok(())
         })
         .unwrap();
     let after = status(&d, &reg, reg.timestamp + 31_536_000 + 60);
     assert!(after.complete && after.missing.is_empty(), "{after:?}");
-    assert!(!after.expired, "a complete ceremony is never expired: {after:?}");
+    assert!(
+        !after.expired,
+        "a complete ceremony is never expired: {after:?}"
+    );
 }
 
 /// D0b: an op past the window on this clock still completes when its proofs arrive: this device did not reject it.
@@ -234,7 +240,10 @@ fn a_late_device_still_completes_an_op_when_its_proofs_arrive() {
     let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
     let late = reg.timestamp + RED_CEREMONY_TTL_SECS + 1;
     // The observer has the op, its clock is past the window, no proof yet: a settle round keeps it.
-    assert!(settle_red_ops(&d[OBS].store, late).unwrap().rejected.is_empty());
+    assert!(settle_red_ops(&d[OBS].store, late)
+        .unwrap()
+        .rejected
+        .is_empty());
     // The proofs were written inside the window (author stamps) and reach the observer only now.
     append(&d[P], red_phone_sign_body(&reg));
     append(&d[A], red_approve_body(&reg));
@@ -1944,7 +1953,10 @@ fn a_holder_revoke_needs_the_phone_and_the_paper_and_the_second_device_is_waived
     assert!(st.blocked.is_none(), "{st:?}");
     assert_eq!(
         st.missing,
-        vec![RedProof::SecondDevice, RedProof::Factor(Some(ThirdFactor::Paper))]
+        vec![
+            RedProof::SecondDevice,
+            RedProof::Factor(Some(ThirdFactor::Paper))
+        ]
     );
     // The paper alone completes it with the phone: the second device (A) is away.
     append(&d[R], red_factor_paper(&recover, &rev));
@@ -1979,7 +1991,10 @@ fn the_emailed_code_never_counts_for_removing_a_holder() {
     append(&d[B], red_factor_email(&d[B].store, &code, &rev).unwrap());
     sync(&d);
     let st = status(&d, &rev, rev.timestamp + 30);
-    assert!(!st.complete, "the emailed code completed a holder revoke: {st:?}");
+    assert!(
+        !st.complete,
+        "the emailed code completed a holder revoke: {st:?}"
+    );
     assert_eq!(st.missing, vec![RedProof::Factor(Some(ThirdFactor::Paper))]);
 }
 
@@ -1996,7 +2011,9 @@ fn the_last_terminal_cannot_be_removed() {
     );
     let st = status(&d, &rev, rev.timestamp + 30);
     assert!(
-        st.blocked.as_deref().is_some_and(|b| b.contains("last terminal")),
+        st.blocked
+            .as_deref()
+            .is_some_and(|b| b.contains("last terminal")),
         "{st:?}"
     );
 }
@@ -2054,7 +2071,10 @@ fn promotion_in_a_one_terminal_ring_completes_with_phone_and_paper() {
     // the same there as on a peer.
     for store in [&d[OBS].store, &d[R].store] {
         let st = red_status(store, &add, add.timestamp + 30).unwrap();
-        assert!(st.single_machine_ring, "the subject is not a second terminal: {st:?}");
+        assert!(
+            st.single_machine_ring,
+            "the subject is not a second terminal: {st:?}"
+        );
         assert!(st.complete, "{st:?}");
     }
 }
