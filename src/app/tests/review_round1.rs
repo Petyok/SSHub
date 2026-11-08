@@ -459,7 +459,13 @@ fn group_approval_is_only_for_stale_changes_with_safe_fields() {
     };
     assert!(groupable(&view("a", "stale", false)));
     assert!(!groupable(&view("a", "stale", true)));
-    for other in ["resurrection", "revoked-author", "not-holder", "revoke-conflict", "tier"] {
+    for other in [
+        "resurrection",
+        "revoked-author",
+        "not-holder",
+        "revoke-conflict",
+        "tier",
+    ] {
         assert!(!groupable(&view("a", other, false)), "{other}");
     }
     let mut mine = view("a", "stale", false);

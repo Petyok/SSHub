@@ -1401,9 +1401,9 @@ mod tests {
         let mut held = Vec::new();
         for (s, id, n) in [(&sb, &b, 1u8), (&sc, &c, 2u8)] {
             let create = upsert(s, id, n, named("web"));
-            let del =
-                s.sync_append_local(id, OpBody::HostDelete { host_uid: [n; 16] })
-                    .unwrap();
+            let del = s
+                .sync_append_local(id, OpBody::HostDelete { host_uid: [n; 16] })
+                .unwrap();
             let edit = upsert(s, id, n, notes("back"));
             for op in [create, del] {
                 a.sync_ingest(op).unwrap();
