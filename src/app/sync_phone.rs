@@ -237,7 +237,9 @@ fn present(app: &mut App, out: FlowOut) {
                 h.send_frame(f.clone());
             }
             h.ble_tag().map(|t| {
-                format!("Bluetooth: choose SSHub-{t} in the phone app's device list to use it instead.")
+                format!(
+                    "Bluetooth: choose SSHub-{t} in the phone app's device list to use it instead."
+                )
             })
         });
     match out {

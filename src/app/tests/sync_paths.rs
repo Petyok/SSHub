@@ -996,7 +996,11 @@ fn the_trust_flow_shows_the_phone_a_request_and_takes_its_answer_into_the_ceremo
         r.app.handle_key(key(KeyCode::Left)).unwrap();
     }
     enter(&mut r.app); // the one confirm: the default month, 5 new hosts a day
-    assert_eq!(r.app.mode, AppMode::SyncPrompt, "the request QR with the answer field");
+    assert_eq!(
+        r.app.mode,
+        AppMode::SyncPrompt,
+        "the request QR with the answer field"
+    );
     // The request is a looping QR whose bytes say what was asked.
     let wire = CertRequestWire::decode(&decode_frames(&frames_of_prompt(&r.app))).unwrap();
     assert_eq!(wire.scope, CertScope::Hosts(vec![huid]));
@@ -1109,7 +1113,8 @@ fn a_garbage_answer_from_the_phone_is_refused_and_a_trust_session_can_be_revoked
 /// co-signing full device, and once the approvals are in the credentials are opened through the same unlock dialog
 /// a connect uses (here the 24 words of the phone's share, the second share) and written again for the Vault.
 #[test]
-fn the_switch_back_to_vault_gathers_the_shares_through_the_unlock_dialog_and_rewraps_the_credential() {
+fn the_switch_back_to_vault_gathers_the_shares_through_the_unlock_dialog_and_rewraps_the_credential(
+) {
     use crate::sync::oplog::CredMode;
     const PHRASE: &str = "abacus abdomen abdominal abide abiding ability";
     let ring_secret = [7u8; 16];
@@ -1126,7 +1131,9 @@ fn the_switch_back_to_vault_gathers_the_shares_through_the_unlock_dialog_and_rew
     assert_eq!(r.app.mode, AppMode::SyncMenu);
     // Only a full computer can co-sign (the phone is not offered): the one other computer is the first entry.
     enter(&mut r.app);
-    pump(&mut r.app, "the proposal panel", |a| a.mode == AppMode::SyncInfo);
+    pump(&mut r.app, "the proposal panel", |a| {
+        a.mode == AppMode::SyncInfo
+    });
     let ops = crate::sync::quorum::ops_of(&r.app.store, "ModeChange", Some(&r.d[1].did)).unwrap();
     assert_eq!(ops.len(), 1, "this device appended one ModeChange");
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
@@ -1139,9 +1146,14 @@ fn the_switch_back_to_vault_gathers_the_shares_through_the_unlock_dialog_and_rew
         Some((CredMode::Vault, true))
     );
     crate::app::sync_flows::mode(&mut r.app);
-    assert_eq!(r.app.mode, AppMode::SyncUnlock, "the unlock dialog gathers the shares");
+    assert_eq!(
+        r.app.mode,
+        AppMode::SyncUnlock,
+        "the unlock dialog gathers the shares"
+    );
     wait_for_phone_prompt(&mut r);
-    let words = crate::sync::crypto::bip39_encode(&phone_share(&r).bytes.clone().try_into().unwrap());
+    let words =
+        crate::sync::crypto::bip39_encode(&phone_share(&r).bytes.clone().try_into().unwrap());
     type_and_enter(&mut r.app, &words);
     pump(&mut r.app, "the dialog to close", |a| {
         !a.sync.migrating && a.mode != AppMode::SyncUnlock
@@ -1150,7 +1162,9 @@ fn the_switch_back_to_vault_gathers_the_shares_through_the_unlock_dialog_and_rew
     // Now the credential is wrapped for the Vault: the phrase and the ring secret open it, the switch is done.
     assert_eq!(crate::app::sync_flows::unfinished_switch(&r.app), None);
     let (ciphertext, _) = r.app.store.sync_cred_ciphertext(&r.host).unwrap().unwrap();
-    let dek = crate::sync::quorum::vault_open_dek_with(&r.app.store, &r.host, PHRASE, &ring_secret, FAST).unwrap();
+    let dek =
+        crate::sync::quorum::vault_open_dek_with(&r.app.store, &r.host, PHRASE, &ring_secret, FAST)
+            .unwrap();
     let plain = crate::sync::crypto::dek_open(&dek, &ciphertext).unwrap();
     let payload = crate::sync::cred_ops::CredPayload::from_bytes(&plain).unwrap();
     assert_eq!(payload.password.as_deref(), Some("trusted"));
@@ -1181,7 +1195,10 @@ fn revoking_a_full_device_says_at_once_when_the_ring_has_too_few_computers() {
         Some(crate::app::sync_ui::SyncUi::Info { lines, .. }) => lines.join(" "),
         _ => panic!("the info panel is not open"),
     };
-    assert!(text.contains("3 computers or servers you control"), "{text}");
+    assert!(
+        text.contains("3 computers or servers you control"),
+        "{text}"
+    );
     assert!(text.contains("You have 2"), "{text}");
     assert!(
         crate::sync::quorum::ops_of(&r.app.store, "DeviceRevoke", None)
@@ -1244,13 +1261,15 @@ fn the_manage_menu_has_groups_and_greys_what_does_not_apply() {
     crate::app::sync_admin::credentials_group(&mut r.app);
     let creds = titles(&r.app);
     assert!(
-        creds
-            .iter()
-            .any(|t| t.starts_with("Import the Vault kit") && t.contains("(not now: only a Vault ring uses the kit)")),
+        creds.iter().any(|t| t.starts_with("Import the Vault kit")
+            && t.contains("(not now: only a Vault ring uses the kit)")),
         "{creds:?}"
     );
     // Choosing it only says why.
-    let at = creds.iter().position(|t| t.contains("Import the Vault kit")).unwrap();
+    let at = creds
+        .iter()
+        .position(|t| t.contains("Import the Vault kit"))
+        .unwrap();
     for _ in 0..at {
         r.app.handle_key(key(KeyCode::Down)).unwrap();
     }
@@ -1270,7 +1289,11 @@ fn the_paper_wizard_goes_from_the_words_to_the_type_back_check() {
     assert_eq!(r.app.mode, AppMode::SyncInfo);
     assert!(r.app.sync_paper.is_some());
     enter(&mut r.app);
-    assert_eq!(r.app.mode, AppMode::SyncPrompt, "the type-back check follows");
+    assert_eq!(
+        r.app.mode,
+        AppMode::SyncPrompt,
+        "the type-back check follows"
+    );
     // Esc at the words ends the wizard instead.
     crate::app::sync_flows::paper_wizard(&mut r.app);
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
@@ -1283,14 +1306,23 @@ fn enter_on_a_device_shows_details_and_its_id_as_a_qr() {
     let mut r = ring(None);
     mark_this_device(&mut r);
     r.app.active_tab = 6;
-    let i = r.app.sync.devices.iter().position(|d| !d.this && !d.phone).unwrap();
+    let i = r
+        .app
+        .sync
+        .devices
+        .iter()
+        .position(|d| !d.this && !d.phone)
+        .unwrap();
     r.app.sync.selected = i;
     let id = r.app.sync.devices[i].id.clone();
     enter(&mut r.app);
     assert_eq!(r.app.mode, AppMode::SyncInfo);
     match &r.app.sync_ui {
         Some(crate::app::sync_ui::SyncUi::Info { frames, lines, .. }) => {
-            assert_eq!(frames, &vec![format!("sshub:dev:1:{}", id.to_lowercase()).into_bytes()]);
+            assert_eq!(
+                frames,
+                &vec![format!("sshub:dev:1:{}", id.to_lowercase()).into_bytes()]
+            );
             assert!(lines.iter().any(|l| l.contains(&id)));
         }
         _ => panic!("details are not open"),
@@ -1326,12 +1358,17 @@ fn the_phones_answer_to_a_trust_request_is_taken_from_the_camera() {
     let (tx, rx) = std::sync::mpsc::channel();
     let handle = listen_with(&[], tx.clone(), ListenOpts::PHONE_OPS);
     r.app.answer_listener = Some((handle, rx));
-    r.app.sync_prompt("Trust session", "Phone's answer", false, |_, _| {});
-    tx.send(MediaEvent::Reply(MediaKind::Camera, answer)).unwrap();
+    r.app
+        .sync_prompt("Trust session", "Phone's answer", false, |_, _| {});
+    tx.send(MediaEvent::Reply(MediaKind::Camera, answer))
+        .unwrap();
     pump(&mut r.app, "the answer to be taken in", |a| {
         a.mode == AppMode::SyncInfo
             && matches!(&a.sync_ui, Some(crate::app::sync_ui::SyncUi::Info { lines, .. })
                 if lines.iter().any(|l| l.contains("taken from the phone")))
     });
-    assert!(r.app.answer_listener.is_none(), "the listener ends with the answer");
+    assert!(
+        r.app.answer_listener.is_none(),
+        "the listener ends with the answer"
+    );
 }

@@ -42,7 +42,9 @@ pub fn render_sync_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let mut rest = sync
         .trust
         .as_ref()
-        .map_or("no trust session".to_string(), |t| format!("trust {}d", t.term_days));
+        .map_or("no trust session".to_string(), |t| {
+            format!("trust {}d", t.term_days)
+        });
     if sync.pending > 0 {
         rest.push_str(&format!("  \u{23f3}{} waiting", sync.pending));
     }

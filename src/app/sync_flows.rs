@@ -212,7 +212,11 @@ pub(crate) fn finish_row(app: &App) -> Option<String> {
     if let Some((to, true)) = unfinished_switch(app) {
         return Some(format!(
             "Finish: the switch to {} is approved. Press M, Passwords, then Switch to finish it.",
-            if to == CredMode::Quorum { "Quorum" } else { "Vault" }
+            if to == CredMode::Quorum {
+                "Quorum"
+            } else {
+                "Vault"
+            }
         ));
     }
     let op = super::sync_flows_more::open_export(app)?;
@@ -244,9 +248,11 @@ pub(crate) fn mode(app: &mut App) {
         Some(super::sync::CredModeView::Quorum) => pick_device(
             app,
             "Switch back to Vault: which full device co-signs?",
-            |d| d.role == super::sync::DeviceRoleView::Holder
-                && !d.phone
-                && d.status != DeviceStatusView::Revoked,
+            |d| {
+                d.role == super::sync::DeviceRoleView::Holder
+                    && !d.phone
+                    && d.status != DeviceStatusView::Revoked
+            },
             propose_vault,
         ),
         None => app.host_notice = Some("the credential mode is not known yet".into()),
@@ -381,7 +387,10 @@ fn recovery_by_id(app: &mut App, step: RecoveryStep) {
                 .find(|d| d.id == op.device_id)
                 .map_or_else(|| op.device_id.clone(), |d| d.name.clone());
             let age_h = (now() - op.timestamp).max(0) / 3_600;
-            let label = format!("Recovery started by {who}, {age_h} h ago ({})", hex8(&op.hash()));
+            let label = format!(
+                "Recovery started by {who}, {age_h} h ago ({})",
+                hex8(&op.hash())
+            );
             let id: String = hex8(&op.hash());
             (
                 label,
@@ -506,8 +515,10 @@ fn paper_panel(app: &mut App, wizard: bool) {
     rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut *seed);
     let words = zeroize::Zeroizing::new(bip39_encode(&seed));
     let mut lines = vec![
-        "Write these 24 words on paper, now. They are shown once. They are the paper phrase: the".into(),
-        "third approval of every big change. Keep the paper offline and never photograph it.".into(),
+        "Write these 24 words on paper, now. They are shown once. They are the paper phrase: the"
+            .into(),
+        "third approval of every big change. Keep the paper offline and never photograph it."
+            .into(),
         String::new(),
     ];
     let all: Vec<&str> = words.split_whitespace().collect();

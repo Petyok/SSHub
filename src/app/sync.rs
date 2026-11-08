@@ -663,8 +663,8 @@ impl App {
         if let Some(line) = &line {
             text.push_str(&format!("  {line}"));
         }
-        let urgent = sync.health.red_expires_in.is_some_and(|l| l <= 86_400)
-            || sync.health.phone_expired;
+        let urgent =
+            sync.health.red_expires_in.is_some_and(|l| l <= 86_400) || sync.health.phone_expired;
         let role = if sync.compromised() || urgent {
             ColorRole::StatusError
         } else if sync.pending > 0 || line.is_some() {
@@ -799,10 +799,17 @@ impl App {
             ),
             format!(
                 "Has a person at the keyboard: {}",
-                if d.unattended { "no, it runs on its own" } else { "yes" }
+                if d.unattended {
+                    "no, it runs on its own"
+                } else {
+                    "yes"
+                }
             ),
             format!("Admitted because: {verified}"),
-            format!("Its last signed change: number {} (design term: head)", d.head_seq),
+            format!(
+                "Its last signed change: number {} (design term: head)",
+                d.head_seq
+            ),
         ];
         if d.exempt {
             lines.push("Opens passwords with the master phrase (exemption).".into());
@@ -1245,7 +1252,9 @@ impl App {
                         .into_iter()
                         .filter_map(|p| {
                             let p = expand(p);
-                            kit::wipe_file(&p).err().map(|e| format!("{}: {e}", p.display()))
+                            kit::wipe_file(&p)
+                                .err()
+                                .map(|e| format!("{}: {e}", p.display()))
                         })
                         .collect();
                     o.notice = Some(if failed.is_empty() {
@@ -1543,8 +1552,8 @@ impl App {
                 } else if up {
                     self.sync.trust_ttl_selected = self.sync.trust_ttl_selected.saturating_sub(1);
                 } else if key.code == KeyCode::Right {
-                    self.sync.trust_budget =
-                        (self.sync.trust_budget + 1).min(crate::sync::limits::CERT_NEW_HOSTS_PER_DAY);
+                    self.sync.trust_budget = (self.sync.trust_budget + 1)
+                        .min(crate::sync::limits::CERT_NEW_HOSTS_PER_DAY);
                 } else if key.code == KeyCode::Left {
                     self.sync.trust_budget = self.sync.trust_budget.saturating_sub(1).max(1);
                 }
@@ -1785,10 +1794,12 @@ mod tests {
             .iter()
             .position(|r| matches!(r, NavRow::Host(_)))
             .unwrap();
-        app.handle_key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT))
+            .unwrap();
         assert_eq!(app.host_notice.as_deref(), Some(NO_WORKER));
         app.sync.worker = true;
-        app.handle_key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT)).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT))
+            .unwrap();
         assert_eq!(
             app.sync.intents,
             vec![SyncIntent::Enroll {

@@ -111,9 +111,7 @@ impl App {
     ) {
         self.sync_info(title, lines);
         if let Some(SyncUi::Info {
-            frames: f,
-            then: t,
-            ..
+            frames: f, then: t, ..
         }) = self.sync_ui.as_mut()
         {
             *f = frames;

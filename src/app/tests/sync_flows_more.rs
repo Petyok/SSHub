@@ -140,7 +140,10 @@ fn an_export_proposal_reports_the_missing_proofs_and_writes_nothing() {
     let lines = info_lines(&r.app).join("\n");
     assert!(lines.contains("bulk export proposed"), "{lines}");
     assert!(lines.contains("ceremony: have"), "{lines}");
-    assert!(lines.contains("choose \"Export every credential\" again"), "{lines}");
+    assert!(
+        lines.contains("choose \"Export every credential\" again"),
+        "{lines}"
+    );
     let ops = ops_of(&r.app.store, "BulkExport", None).unwrap();
     assert_eq!(ops.len(), 1);
     assert!(matches!(

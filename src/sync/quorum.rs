@@ -746,7 +746,10 @@ impl QuorumUnlocker {
 
     /// A credential's plaintext payload, gathering what the mode asks for (the phrase, or a second share from
     /// the share source). The mode switch re-wraps every credential through this.
-    pub fn open_plain(&self, host: &HostUid) -> std::result::Result<Zeroizing<Vec<u8>>, UnlockError> {
+    pub fn open_plain(
+        &self,
+        host: &HostUid,
+    ) -> std::result::Result<Zeroizing<Vec<u8>>, UnlockError> {
         self.open_one(host)
     }
 

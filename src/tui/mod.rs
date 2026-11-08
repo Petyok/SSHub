@@ -1620,40 +1620,40 @@ fn footer_keybinds(
         ],
         6 if app.sync.configured => {
             let mut v: Vec<(String, &'static str)> = vec![
-            ("\u{2191}\u{2193}".into(), "select"),
-            ("Enter".into(), "details"),
-            (
-                screens::map::key_label(
-                    app.config
-                        .keybinds
-                        .primary(crate::config::KeyAction::SyncNow),
+                ("\u{2191}\u{2193}".into(), "select"),
+                ("Enter".into(), "details"),
+                (
+                    screens::map::key_label(
+                        app.config
+                            .keybinds
+                            .primary(crate::config::KeyAction::SyncNow),
+                    ),
+                    "sync now",
                 ),
-                "sync now",
-            ),
-            (
-                screens::map::key_label(
-                    app.config
-                        .keybinds
-                        .primary(crate::config::KeyAction::SyncReview),
+                (
+                    screens::map::key_label(
+                        app.config
+                            .keybinds
+                            .primary(crate::config::KeyAction::SyncReview),
+                    ),
+                    "review",
                 ),
-                "review",
-            ),
-            (
-                screens::map::key_label(
-                    app.config
-                        .keybinds
-                        .primary(crate::config::KeyAction::SyncTrust),
+                (
+                    screens::map::key_label(
+                        app.config
+                            .keybinds
+                            .primary(crate::config::KeyAction::SyncTrust),
+                    ),
+                    "trust session",
                 ),
-                "trust session",
-            ),
-            (
-                screens::map::key_label(
-                    app.config
-                        .keybinds
-                        .primary(crate::config::KeyAction::SyncAdmin),
+                (
+                    screens::map::key_label(
+                        app.config
+                            .keybinds
+                            .primary(crate::config::KeyAction::SyncAdmin),
+                    ),
+                    "manage",
                 ),
-                "manage",
-            ),
             ];
             // The drop-phone key only does something while the Bluetooth channel runs.
             if crate::app::sync_phone::ble_active(app) {

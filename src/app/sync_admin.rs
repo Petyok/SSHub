@@ -51,15 +51,12 @@ pub(crate) fn entries() -> Vec<(String, MenuFn)> {
 
 fn devices(app: &mut App) {
     use super::sync_flows as f;
-    let few = app
-        .sync
-        .cut_off_missing
-        .map(|n| {
-            format!(
-                "you need {n} more computer{} you control to cut one off",
-                if n == 1 { "" } else { "s" }
-            )
-        });
+    let few = app.sync.cut_off_missing.map(|n| {
+        format!(
+            "you need {n} more computer{} you control to cut one off",
+            if n == 1 { "" } else { "s" }
+        )
+    });
     let others = app.sync.devices.iter().filter(|d| !d.this).count();
     let none = (others == 0).then_some("there is no other device");
     open_group(
@@ -76,7 +73,9 @@ fn devices(app: &mut App) {
     );
     // The reason a removal would fail comes right after the menu opens, never after a typed name.
     if let Some(why) = few {
-        app.host_notice = Some(format!("Removing a full device needs more computers: {why}."));
+        app.host_notice = Some(format!(
+            "Removing a full device needs more computers: {why}."
+        ));
     }
 }
 
@@ -127,12 +126,22 @@ fn credentials(app: &mut App) {
                 f::import_kit,
                 quorum.then_some("only a Vault ring uses the kit"),
             ),
-            go("Paper phrase: create, write down, type back", f::paper_wizard),
-            go("Paper phrase: write a printable sheet", super::sync_flows_more::paper_sheet),
-            go("Emailed code as the third approval: register", f::email_factor),
-            go("Move this computer's saved passwords into the ring", |app| {
-                f::migrate(app, false)
-            }),
+            go(
+                "Paper phrase: create, write down, type back",
+                f::paper_wizard,
+            ),
+            go(
+                "Paper phrase: write a printable sheet",
+                super::sync_flows_more::paper_sheet,
+            ),
+            go(
+                "Emailed code as the third approval: register",
+                f::email_factor,
+            ),
+            go(
+                "Move this computer's saved passwords into the ring",
+                |app| f::migrate(app, false),
+            ),
             go(
                 "Remove the local copies once the ring's copies open",
                 |app| f::migrate(app, true),
@@ -195,7 +204,10 @@ fn advanced(app: &mut App) {
                     None
                 },
             ),
-            go("Export every saved password (a big change)", m::export_start),
+            go(
+                "Export every saved password (a big change)",
+                m::export_start,
+            ),
         ],
     );
 }
@@ -222,7 +234,11 @@ fn overview(app: &mut App) {
             if d.this { " (this device)" } else { "" },
             d.role_word(),
             d.status.label(),
-            if d.unattended { ", runs on its own" } else { "" },
+            if d.unattended {
+                ", runs on its own"
+            } else {
+                ""
+            },
             if d.exempt {
                 ", opens passwords with the master phrase"
             } else {
