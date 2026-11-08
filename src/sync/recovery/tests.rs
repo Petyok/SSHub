@@ -1573,6 +1573,18 @@ mod over_the_log {
     fn an_open_recovery_alerts_the_other_attended_terminals_and_a_cancelled_one_does_not() {
         use crate::sync::recovery::{open_for_alert, open_for_alert_for};
         let w = world();
+        // A device records itself at enrollment; the fixture does not for the terminals.
+        w.d[A]
+            .store
+            .sync_register_device(
+                &w.d[A].id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
         let op = w.reenroll(false, None, None);
         let now = op.timestamp + 60;
         let alerts = open_for_alert_for(&w.d[A].store, &w.d[A].did, now).unwrap();
