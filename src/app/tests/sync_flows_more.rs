@@ -291,7 +291,7 @@ fn the_paper_sheet_needs_the_words_in_memory() {
 fn the_paper_sheet_is_one_private_file_that_is_never_overwritten_and_the_only_copy() {
     use std::os::unix::fs::PermissionsExt;
     let mut r = ring(None);
-    crate::app::sync_flows::paper_setup(&mut r.app);
+    crate::app::sync_flows::paper_wizard(&mut r.app);
     let words = r.app.sync_paper.clone().unwrap().to_string();
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
 

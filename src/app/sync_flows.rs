@@ -500,10 +500,6 @@ fn recovery_start(app: &mut App) {
 
 // ------------------------------------------------------------------- paper
 
-pub(crate) fn paper_setup(app: &mut App) {
-    paper_panel(app, false);
-}
-
 /// The paper phrase as one wizard: the words are shown, you write them down and press Enter, and the type-back
 /// check opens by itself. Nothing is registered until you typed them back exactly.
 pub(crate) fn paper_wizard(app: &mut App) {

@@ -787,7 +787,7 @@ fn revoking_needs_the_devices_name_typed_back() {
 #[test]
 fn the_paper_phrase_is_shown_once_and_registered_only_when_typed_back_exactly() {
     let mut r = ring(None);
-    crate::app::sync_flows::paper_setup(&mut r.app);
+    crate::app::sync_flows::paper_wizard(&mut r.app);
     assert_eq!(r.app.mode, AppMode::SyncInfo);
     let words = r.app.sync_paper.clone().expect("held in memory");
     assert_eq!(words.split_whitespace().count(), 24);
@@ -804,7 +804,7 @@ fn the_paper_phrase_is_shown_once_and_registered_only_when_typed_back_exactly() 
     );
 
     // The right copy registers it as the third factor.
-    crate::app::sync_flows::paper_setup(&mut r.app);
+    crate::app::sync_flows::paper_wizard(&mut r.app);
     let words = r.app.sync_paper.clone().unwrap();
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
     crate::app::sync_flows::paper_register(&mut r.app);
@@ -1258,7 +1258,7 @@ fn the_manage_menu_has_groups_and_greys_what_does_not_apply() {
         assert!(top.contains(group), "{group} in {top}");
     }
     // A Quorum ring has no kit: the entry is there, greyed, with its reason.
-    crate::app::sync_admin::credentials_group(&mut r.app);
+    crate::app::sync_admin::credentials(&mut r.app);
     let creds = titles(&r.app);
     assert!(
         creds.iter().any(|t| t.starts_with("Import the Vault kit")

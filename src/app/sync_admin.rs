@@ -104,11 +104,7 @@ fn phone(app: &mut App) {
     );
 }
 
-pub(crate) fn credentials_group(app: &mut App) {
-    credentials(app);
-}
-
-fn credentials(app: &mut App) {
+pub(crate) fn credentials(app: &mut App) {
     use super::sync_flows as f;
     let quorum = app.sync.cred_mode == Some(super::sync::CredModeView::Quorum);
     let switch = if quorum {
