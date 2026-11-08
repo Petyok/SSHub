@@ -575,7 +575,11 @@ fn paper_challenge() -> [usize; 3] {
 fn paper_words_match(phrase: &str, positions: [usize; 3], typed: &str) -> bool {
     let all: Vec<&str> = phrase.split_whitespace().collect();
     let typed: Vec<&str> = typed.split_whitespace().collect();
-    typed.len() == 3 && positions.iter().zip(&typed).all(|(p, t)| all.get(p - 1) == Some(t))
+    typed.len() == 3
+        && positions
+            .iter()
+            .zip(&typed)
+            .all(|(p, t)| all.get(p - 1) == Some(t))
 }
 
 /// The second half: the user types three words of the phrase back from the paper (chosen at random, no tick box);

@@ -53,10 +53,23 @@ fn with_paper(store: &LauncherStore) {
 #[test]
 fn quorum_mode_needs_a_registered_paper() {
     let r = ring(1);
-    let e = mode(&r[0].store, &r[0].id, CredMode::Quorum, None, "w", &[0; 16], 1_000)
-        .unwrap_err();
-    assert!(format!("{e:#}").contains("register the paper phrase first"), "{e:#}");
-    assert!(crate::sync::quorum::ops_of(&r[0].store, "ModeChange", None).unwrap().is_empty());
+    let e = mode(
+        &r[0].store,
+        &r[0].id,
+        CredMode::Quorum,
+        None,
+        "w",
+        &[0; 16],
+        1_000,
+    )
+    .unwrap_err();
+    assert!(
+        format!("{e:#}").contains("register the paper phrase first"),
+        "{e:#}"
+    );
+    assert!(crate::sync::quorum::ops_of(&r[0].store, "ModeChange", None)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -75,7 +88,10 @@ fn third_holder_needs_a_registered_paper() {
         .unwrap();
     let id = m.public().device_id().to_string();
     let e = role(&r[0].store, &r[0].id, &id[..10], DeviceRole::Holder, 1_000).unwrap_err();
-    assert!(format!("{e:#}").contains("register the paper phrase first"), "{e:#}");
+    assert!(
+        format!("{e:#}").contains("register the paper phrase first"),
+        "{e:#}"
+    );
     with_paper(&r[0].store);
     role(&r[0].store, &r[0].id, &id[..10], DeviceRole::Holder, 1_000).unwrap();
 }

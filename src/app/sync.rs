@@ -704,7 +704,9 @@ impl App {
             _ if self.is_action(KeyAction::SyncReview, &key) => self.sync_open_review(),
             _ if self.is_action(KeyAction::SyncTrust, &key) => self.sync_open_trust(),
             _ if self.is_action(KeyAction::SyncAdmin, &key) => self.open_sync_admin(),
-            _ if self.is_action(KeyAction::SyncPaper, &key) => super::sync_flows::paper_wizard(self),
+            _ if self.is_action(KeyAction::SyncPaper, &key) => {
+                super::sync_flows::paper_wizard(self)
+            }
             _ if self.is_action(KeyAction::Connect, &key) => self.sync_open_selected(),
             _ => {}
         }

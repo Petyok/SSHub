@@ -790,8 +790,17 @@ fn asked_words(app: &App) -> Vec<usize> {
         panic!("no prompt is open");
     };
     let text = lines.join(" ");
-    let rest = text.split("Type words ").nth(1).expect("the prompt names the words");
-    rest.split(" from").next().unwrap().replace(" and", "").split(',').map(|n| n.trim().parse().unwrap()).collect()
+    let rest = text
+        .split("Type words ")
+        .nth(1)
+        .expect("the prompt names the words");
+    rest.split(" from")
+        .next()
+        .unwrap()
+        .replace(" and", "")
+        .split(',')
+        .map(|n| n.trim().parse().unwrap())
+        .collect()
 }
 
 #[test]
@@ -811,13 +820,21 @@ fn paper_wizard_requires_three_correct_words() {
     assert!(at.windows(2).all(|w| w[0] < w[1]) && at.iter().all(|n| (1..=24).contains(n)));
     type_and_enter(&mut r.app, &words);
     assert!(r.app.sync_paper.is_none());
-    assert!(crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None).unwrap().is_empty());
+    assert!(
+        crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None)
+            .unwrap()
+            .is_empty()
+    );
     crate::app::sync_flows::paper_wizard(&mut r.app);
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
     crate::app::sync_flows::paper_register(&mut r.app);
     type_and_enter(&mut r.app, "wrong words here");
     assert!(r.app.sync_paper.is_none());
-    assert!(crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None).unwrap().is_empty());
+    assert!(
+        crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None)
+            .unwrap()
+            .is_empty()
+    );
 
     // The three asked words, in order, register it as the third factor.
     crate::app::sync_flows::paper_wizard(&mut r.app);
@@ -827,9 +844,13 @@ fn paper_wizard_requires_three_correct_words() {
     crate::app::sync_flows::paper_register(&mut r.app);
     let typed: Vec<&str> = asked_words(&r.app).iter().map(|n| all[n - 1]).collect();
     type_and_enter(&mut r.app, &typed.join(" "));
-    pump(&mut r.app, "the registration", |a| a.mode == AppMode::SyncInfo);
+    pump(&mut r.app, "the registration", |a| {
+        a.mode == AppMode::SyncInfo
+    });
     assert_eq!(
-        crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None).unwrap().len(),
+        crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None)
+            .unwrap()
+            .len(),
         1
     );
 }
@@ -1264,9 +1285,11 @@ fn switching_to_quorum_without_paper_starts_the_wizard_not_the_ceremony() {
         .host_notice
         .as_deref()
         .is_some_and(|n| n.contains("register the paper phrase first")));
-    assert!(crate::sync::quorum::ops_of(&r.app.store, "ModeChange", None)
-        .unwrap()
-        .is_empty());
+    assert!(
+        crate::sync::quorum::ops_of(&r.app.store, "ModeChange", None)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 /// U13-9: the status bar names the most urgent fact on every tab, from the store.
