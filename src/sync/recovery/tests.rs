@@ -1294,4 +1294,116 @@ mod over_the_log {
             ReenrollVerdict::CancelledByFactor
         );
     }
+
+    fn phone_swap(w: &World, by: usize, now: i64) -> Dev {
+        let new = Dev::new();
+        append(
+            &w.d[by],
+            OpBody::DeviceRevoke {
+                device_id: w.d[P].did.clone(),
+            },
+        );
+        let _ = now;
+        append(
+            &w.d[by],
+            OpBody::DeviceAdd {
+                device: new.id.public(),
+                name: "new phone".into(),
+                role: DeviceRole::Holder,
+                attendance: Attendance::Attended,
+                kind: DeviceKind::Phone,
+                verified_by: VerifiedBy::Sas,
+            },
+        );
+        w.sync();
+        new
+    }
+
+    // H1 (crypto): a cancellation by the phone that was live stays a cancellation after the ring swaps its phone.
+    #[test]
+    fn cancelled_recovery_stays_cancelled_after_a_phone_swap() {
+        let w = world();
+        let op = w.reenroll(false, None, None);
+        let now = op.timestamp + 60;
+        append(
+            &w.d[P],
+            OpBody::PhoneReenrollCancel {
+                reenroll_hash: op.hash(),
+                by_phone: true,
+                third_factor: None,
+            },
+        );
+        w.sync();
+        assert_eq!(
+            w.verdict(&op, now).unwrap(),
+            ReenrollVerdict::CancelledByPhone
+        );
+        phone_swap(&w, A, now);
+        assert_eq!(
+            w.verdict(&op, now).unwrap(),
+            ReenrollVerdict::CancelledByPhone,
+            "the cancel was judged against today's phone and dropped"
+        );
+    }
+
+    // H1 (crypto): a recovery that was started against the old phone cannot remove the phone that replaced it.
+    #[test]
+    fn recovery_started_before_a_phone_swap_cannot_revoke_the_new_phone() {
+        use crate::sync::recovery::{ack_body, approve_body, ready_recovery_for, start_body};
+        let w = world();
+        let now = crate::store::now_ts();
+        let long_ago = now - 9 * 86_400;
+        let at =
+            |d: &Dev, body: OpBody, t: i64| d.store.sync_append_local_at(&d.id, body, t).unwrap();
+        let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
+        let start = start_body(
+            &w.d[R].store,
+            &w.d[R].id,
+            long_ago,
+            None,
+            ThirdFactor::Paper,
+        )
+        .unwrap();
+        let op = at(&w.d[R], start, long_ago);
+        at(
+            &w.d[R],
+            crate::sync::ceremony::red_factor_paper(&recover, &op),
+            long_ago + 30,
+        );
+        at(&w.d[A], approve_body(&op).unwrap(), long_ago + 60);
+        at(&w.d[B], approve_body(&op).unwrap(), long_ago + 61);
+        at(
+            &w.d[A],
+            ack_body(&op, long_ago + 120).unwrap(),
+            long_ago + 120,
+        );
+        w.sync();
+        for x in &w.d {
+            x.store
+                .with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_ops SET received_at = timestamp WHERE timestamp < received_at",
+                        [],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert_eq!(w.verdict(&op, now).unwrap(), ReenrollVerdict::Ready);
+        // Another path replaces the phone (a second recovery, a handover); then the old recovery's requester tries to
+        // remove the phone that is live now.
+        let new = phone_swap(&w, A, now);
+        let revoke_new = at(
+            &w.d[R],
+            OpBody::DeviceRevoke {
+                device_id: new.did.clone(),
+            },
+            now + 2,
+        );
+        w.sync();
+        assert!(
+            !ready_recovery_for(&w.d[OBS].store, &revoke_new, now + 2).unwrap(),
+            "a recovery started against the old phone stood in for the ceremony that removes the new one"
+        );
+    }
 }

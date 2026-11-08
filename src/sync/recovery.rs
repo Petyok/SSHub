@@ -358,8 +358,11 @@ fn attended_live(row: &DeviceRow) -> bool {
         )
 }
 
-/// Ops of one kind in any state but rejected or void, in log order: a recovery vote is a signed
-/// statement whether or not this device's user has reviewed it yet.
+/// The phone of the ring as the ceremony saw it at lamport `upto`.
+fn phone_in_view(store: &LauncherStore, upto: u64) -> Result<Option<DeviceId>> {
+    super::quorum::phone_device_in(&super::ceremony::effective_devices(store, Some(upto))?)
+}
+
 /// Does a phone-loss recovery of `requester` stand in for the ceremony of `op`, one of its two completion
 /// ops (revoke the lost phone, admit the new one)? Yes when that recovery is `Ready` at `now`, older than
 /// `op`, and no new phone was admitted through it yet: one recovery buys exactly one replacement. The
@@ -369,6 +372,20 @@ pub(crate) fn ready_recovery_for(store: &LauncherStore, op: &Op, now: i64) -> Re
     for re in signed_ops(store, "PhoneReenroll")?.into_iter().rev() {
         if re.device_id != op.device_id || re.lamport >= op.lamport {
             continue;
+        }
+        // A recovery is bound to the phone it was started against (H1): its completion may remove only that phone, and
+        // only while it is still the live phone in the completion's own view. A recovery that outlived a phone swap
+        // stands for nothing against the new phone.
+        if let OpBody::DeviceRevoke { device_id } = &op.body {
+            let started_against = phone_in_view(store, re.lamport).unwrap_or(None);
+            if started_against.as_ref() != Some(device_id)
+                || phone_in_view(store, op.lamport.saturating_sub(1))
+                    .unwrap_or(None)
+                    .as_ref()
+                    != Some(device_id)
+            {
+                continue;
+            }
         }
         if !matches!(
             validate_phone_reenroll_upto(store, &re, now, Some(op.lamport)),
@@ -533,7 +550,16 @@ fn validate_phone_reenroll_upto(
         liveness_ok,
     }))?;
 
-    let phone = super::quorum::phone_device_in(&devices)?;
+    // The phone is the phone of the view at each event's OWN position, never the phone of today (H1): a later phone swap
+    // (a recovery, a handover) must not turn an earlier cancellation by the then-live phone into a dropped event.
+    let phone_at = |lamport: u64| -> Result<Option<DeviceId>> {
+        let view = lamport.min(upto.unwrap_or(u64::MAX));
+        if Some(view) == upto {
+            super::quorum::phone_device_in(&devices)
+        } else {
+            phone_in_view(store, view)
+        }
+    };
     let row = |id: &DeviceId| devices.iter().find(|d| d.id == *id);
     let mut events: Vec<(u64, DeviceId, u64, Event)> = Vec::new();
     for a in signed_ops(store, "RecoveryApprove")? {
@@ -586,7 +612,7 @@ fn validate_phone_reenroll_upto(
             if *reenroll_hash == hash {
                 let ev = if *by_phone {
                     Event::CancelByPhone {
-                        by_phone: phone.as_ref() == Some(&c.device_id),
+                        by_phone: phone_at(c.lamport)?.as_ref() == Some(&c.device_id),
                     }
                 } else {
                     // The factor is PROVEN for this cancellation (a RedFactor over its hash), not just named.
