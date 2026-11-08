@@ -1667,3 +1667,16 @@ fn contribute_is_offered_only_with_two_share_holding_terminals() {
         "{actions:?}"
     );
 }
+
+#[test]
+fn two_computers_are_enough_to_cut_one_off() {
+    use crate::sync::revocation::{
+        cut_off_sentence, terminals_missing_to_cut_off, TERMINALS_TO_CUT_OFF,
+    };
+    assert_eq!(TERMINALS_TO_CUT_OFF, 2);
+    assert_eq!(terminals_missing_to_cut_off(&ring(1)[0].store).unwrap(), Some(1));
+    assert_eq!(terminals_missing_to_cut_off(&ring(2)[0].store).unwrap(), None);
+    assert_eq!(terminals_missing_to_cut_off(&ring(3)[0].store).unwrap(), None);
+    let s = cut_off_sentence(1);
+    assert!(s.contains("2 computers") && s.contains("You have 1") && s.contains("paper"), "{s}");
+}
