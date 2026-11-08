@@ -8,16 +8,20 @@
 # leaking the local machine. Do NOT install this on your PATH outside demos.
 
 # ssh's argv: options (some take a value), the destination, then an optional
-# remote command. Broadcast passes one; a session does not.
+# remote command. Broadcast passes one; a session does not. `-E <file>` is
+# where ssh writes its log; sshub passes a FIFO there.
 dest=""
+log=""
 cmd=()
 while [ $# -gt 0 ]; do
     if [ -n "$dest" ]; then
-        cmd+=("$1")
+        # Broadcast sends `dest -- command`; like ssh, the `--` is not part of it.
+        [ ${#cmd[@]} -eq 0 ] && [ "$1" = "--" ] || cmd+=("$1")
     else
         case "$1" in
             --) shift; dest="${1:-}" ;;
-            -[BbcDEeFIiJLlmOopQRSWw]) shift ;;
+            -E) shift; log="${1:-}" ;;
+            -[BbcDeFIiJLlmOopQRSWw]) shift ;;
             -*) ;;
             *) dest="$1" ;;
         esac
@@ -29,10 +33,10 @@ host="${dest##*@}"  # strip any user@ prefix for display
 
 here="$(cd "$(dirname "$0")" && pwd)"
 
-# sshub siphons the child's stderr (fd 2) into a side channel to hide ssh's
-# `-v` handshake, and keys its "connecting → connected" header off it. Emit a
-# believable handshake there, including the "Authenticated to" marker sshub
-# looks for, so the session reads as genuinely connected.
+# sshub reads ssh's `-E` log to show the handshake on the connect screen, and
+# only an "Authenticated to" line there marks the session connected: until
+# then the session takes no keystrokes. Emit a believable handshake into that
+# log (stderr when there is none), marker included.
 if [ ${#cmd[@]} -eq 0 ]; then
 {
     printf 'OpenSSH_9.6p1 Ubuntu-3ubuntu13, OpenSSL 3.0.13\n'
@@ -42,7 +46,7 @@ if [ ${#cmd[@]} -eq 0 ]; then
     printf 'debug1: Host '\''%s'\'' is known and matches the ED25519 host key.\n' "$host"
     printf 'debug1: Authenticated to %s ([%s]:22) using "publickey".\n' "$host" "$host"
     printf 'debug1: channel 0: new session\n'
-} >&2
+} >"${log:-/dev/stderr}"
 
 sleep 0.4
 printf '\n'

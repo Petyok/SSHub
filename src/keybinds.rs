@@ -92,6 +92,7 @@ pub enum KeyAction {
     SessionTabNext,
     SessionDetach,
     SessionOpenSftp,
+    SessionShareNet,
     LocalShell,
     SessionFocus,
     SessionSwitcher,
@@ -130,7 +131,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 117] = [
+    pub const ALL: [KeyAction; 118] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -214,6 +215,7 @@ impl KeyAction {
         KeyAction::SessionTabNext,
         KeyAction::SessionDetach,
         KeyAction::SessionOpenSftp,
+        KeyAction::SessionShareNet,
         KeyAction::LocalShell,
         KeyAction::SessionFocus,
         KeyAction::SessionSwitcher,
@@ -339,6 +341,7 @@ impl KeyAction {
             KeyAction::SessionTabNext => "Next session tab",
             KeyAction::SessionDetach => "Detach to dashboard",
             KeyAction::SessionOpenSftp => "Open SFTP for this host",
+            KeyAction::SessionShareNet => "Share my network with this host (toggle)",
             KeyAction::LocalShell => "Open local shell tab",
             KeyAction::SessionFocus => "Focus session tab",
             KeyAction::SessionSwitcher => "Switch to an open session",
@@ -464,6 +467,7 @@ pub struct KeybindsConfig {
     pub session_tab_next: Vec<String>,
     pub session_detach: Vec<String>,
     pub session_open_sftp: Vec<String>,
+    pub session_share_net: Vec<String>,
     pub local_shell: Vec<String>,
     pub session_focus: Vec<String>,
     pub session_switcher: Vec<String>,
@@ -586,6 +590,10 @@ impl Default for KeybindsConfig {
             session_tab_next: vec!["Ctrl+]".into(), "Ctrl+PageDown".into()],
             session_detach: vec!["Ctrl+D".into()],
             session_open_sftp: vec!["Ctrl+Shift+F".into()],
+            // Alt+Shift+letter: every Alt+letter that no shell binds is taken by
+            // the split view, and remote apps (readline, tmux, vim) leave the
+            // shifted Alt chords alone.
+            session_share_net: vec!["Alt+Shift+N".into()],
             local_shell: vec!["Ctrl+Shift+T".into()],
             session_focus: vec!["Ctrl+Shift+S".into()],
             session_switcher: vec!["Alt+S".into()],
@@ -813,6 +821,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => &self.session_tab_next,
             KeyAction::SessionDetach => &self.session_detach,
             KeyAction::SessionOpenSftp => &self.session_open_sftp,
+            KeyAction::SessionShareNet => &self.session_share_net,
             KeyAction::LocalShell => &self.local_shell,
             KeyAction::SessionFocus => &self.session_focus,
             KeyAction::SessionSwitcher => &self.session_switcher,
@@ -935,6 +944,7 @@ impl KeybindsConfig {
             KeyAction::SessionTabNext => self.session_tab_next = binds,
             KeyAction::SessionDetach => self.session_detach = binds,
             KeyAction::SessionOpenSftp => self.session_open_sftp = binds,
+            KeyAction::SessionShareNet => self.session_share_net = binds,
             KeyAction::LocalShell => self.local_shell = binds,
             KeyAction::SessionFocus => self.session_focus = binds,
             KeyAction::SessionSwitcher => self.session_switcher = binds,

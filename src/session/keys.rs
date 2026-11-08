@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn decckm_switches_cursor_keys_to_ss3() {
-        let mut parser = vt100::Parser::new(24, 80, 0);
+        let mut parser = vt100::Parser::default();
         parser.process(b"\x1b[?1h");
         let application_cursor = parser.screen().application_cursor();
 

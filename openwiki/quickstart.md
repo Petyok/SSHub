@@ -24,8 +24,8 @@ scripting (`sshub exec`, `sshub host ...`, transfers, themes, `sshub map
 - Crate: `sshub` on crates.io (`cargo install sshub`), npm package
   `sshub-tui`; repo: github.com/Petyok/SSHub.
 - Stack: Rust 2021, ratatui 0.30 + crossterm 0.29 (TUI), portable-pty +
-  vt100 0.16 + tui-term (embedded sessions, upstream vt100 with SSHub's own
-  query answers and sequence translation), rusqlite bundled (SQLite), ssh2 /
+  vt100 0.18 (embedded sessions, upstream vt100 with SSHub's own query
+  answers, sequence translation and grid painter), rusqlite bundled (SQLite), ssh2 /
   libssh2 with OpenSSL vendored by default (SFTP), nucleo (fuzzy search),
   notify (file watcher), keyring + dbus-secret-service (credentials).
   **No async runtime**: a synchronous event loop polls every 50 ms

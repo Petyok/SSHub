@@ -47,7 +47,7 @@ impl App {
 
         self.push_ssh_log(crate::ssh::probe::SshLogEntry {
             host_name: log_host_name.to_string(),
-            line: format!("$ {}", argv.join(" ")),
+            line: format!("$ {}", argv.join(" ").replace('\n', "\\n")),
             level: crate::ssh::probe::LogLevel::Success,
             timestamp: now_ts(),
         });

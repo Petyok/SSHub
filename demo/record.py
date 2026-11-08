@@ -323,10 +323,12 @@ def navigate() -> Tape:
     t.type("/").sleep(1.2).type("quad").sleep(1.6).key("esc").sleep(1.2)
     # Group manager overlay (nested groups).
     t.type("G").sleep(1.6).key("down").sleep(0.8).key("down").sleep(0.8).key("esc").sleep(1.2)
-    # Multi-tag filter: # opens the picker, Space toggles, Enter applies.
+    # Multi-tag filter: # opens the picker, Space toggles, Enter applies. The
+    # picker lists (all) then the tags alphabetically; #db AND #prod matches
+    # the two Cloudflare hosts, where the neighbours #ci and #db share none.
     t.type("#").sleep(1.2)
-    t.key("down").sleep(0.7).key("space").sleep(0.8)
-    t.key("down").sleep(0.7).key("space").sleep(1.0).key("enter")
+    t.key("down", times=2, gap=0.7).sleep(0.7).key("space").sleep(0.8)
+    t.key("down", times=3, gap=0.7).sleep(0.7).key("space").sleep(1.0).key("enter")
     t.sleep(3.5)
     return t
 
