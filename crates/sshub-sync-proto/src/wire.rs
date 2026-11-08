@@ -718,7 +718,9 @@ impl CertRenewRequestWire {
             bail!("a certificate renewal request does not match its evidence count");
         }
         let evidence = body[41..]
-            .chunks_exact(24)
+            .as_chunks::<24>()
+            .0
+            .iter()
             .map(|c| HeadEvidence {
                 terminal: c[..8].try_into().unwrap(),
                 head_seq: u64::from_be_bytes(c[8..16].try_into().unwrap()),
