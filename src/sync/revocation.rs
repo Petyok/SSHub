@@ -60,14 +60,14 @@ pub fn live_terminal_holders(store: &LauncherStore) -> Result<usize> {
         .count())
 }
 
-/// How many terminals a ring needs before a stolen one can be cut off: the one removed and two that remain
-/// to contribute (the phone approves, it does not contribute).
-pub const TERMINALS_TO_CUT_OFF: usize = 3;
+/// How many terminals a ring needs before a stolen one can be cut off: the one removed and one that remains (a degraded
+/// revocation: the phone and the paper approve; with two or more remaining the remaining terminals also reshare).
+pub const TERMINALS_TO_CUT_OFF: usize = 2;
 
 /// The plain sentence for a ring with `terminals` full terminals that cannot cut one off.
 pub fn cut_off_sentence(terminals: usize) -> String {
     format!(
-        "To remove a stolen or lost device you need {TERMINALS_TO_CUT_OFF} computers or servers you control, the one you remove included, so that two others can approve with the phone. You have {terminals}. Until then: change the passwords of its hosts and remove its key from every host's authorized_keys."
+        "To remove a stolen or lost device you need {TERMINALS_TO_CUT_OFF} computers or servers you control, the one you remove included, so that one other can approve with the phone and the paper phrase. You have {terminals}. Until then: change the passwords of its hosts and remove its key from every host's authorized_keys."
     )
 }
 
