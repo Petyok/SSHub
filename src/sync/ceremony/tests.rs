@@ -630,6 +630,24 @@ mod in_force {
     fn a_revocation_reshares_nothing_until_complete() {
         use crate::sync::revocation::next_actions;
         let (d, phrase) = ring_with_paper();
+        // A Quorum credential: without one nothing is shared with the removed device and its revocation closes at once.
+        let mc = append(
+            &d[0],
+            OpBody::ModeChange {
+                to: crate::sync::oplog::CredMode::Quorum,
+                migrated_on: d[0].did.clone(),
+                cosigner: None,
+            },
+        );
+        complete(&d, &mc, 1, Some(&phrase));
+        crate::sync::cred_ops::cred_put(
+            &d[0].store,
+            &d[0].id,
+            &[5u8; 16],
+            &crate::sync::quorum::tests::payload("x"),
+        )
+        .unwrap();
+        all_to_all_pull(&d);
         let target = d[2].did.clone();
         let holders = live_holder_count(&d[0].store).unwrap();
         let rev = append(&d[0], OpBody::DeviceRevoke { device_id: target });
@@ -803,6 +821,14 @@ mod review {
     fn a_non_holder_cannot_close_a_revocation_with_a_reshare_batch() {
         let d = ring(4);
         quorum_mode(&d[0]);
+        all_to_all(&d);
+        crate::sync::cred_ops::cred_put(
+            &d[0].store,
+            &d[0].id,
+            &[6u8; 16],
+            &crate::sync::quorum::tests::payload("x"),
+        )
+        .unwrap();
         all_to_all(&d);
         let m = mirror_in(&d);
         let now = crate::store::now_ts();

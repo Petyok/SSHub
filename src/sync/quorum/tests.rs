@@ -1531,3 +1531,133 @@ fn check_revocable_reads_the_ring_not_the_contact_clock_nor_who_wrote_lately() {
         RevokeMode::Refused(_)
     ));
 }
+
+#[test]
+fn exposed_credentials_lists_what_a_removed_device_still_holds_and_what_a_new_holder_lacks() {
+    use crate::sync::oplog::{Attendance, DeviceKind};
+    use crate::sync::quorum::{exposed_credentials, ExposureKind};
+    let d = ring(4);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    let hosts = [[1u8; 16], [2u8; 16]];
+    for h in &hosts {
+        cred_put(&d[0].store, &d[0].id, h, &payload("x")).unwrap();
+    }
+    all_to_all(&d);
+    assert!(exposed_credentials(&d[0].store).unwrap().is_empty());
+
+    // d[3] is removed and nobody reshared yet: it still holds a share of both credentials.
+    append(
+        &d[0],
+        OpBody::DeviceRevoke {
+            device_id: d[3].did.clone(),
+        },
+    );
+    all_to_all(&d[..3]);
+    let ex = exposed_credentials(&d[0].store).unwrap();
+    assert_eq!(ex.len(), 2, "{ex:?}");
+    assert!(ex
+        .iter()
+        .all(|e| e.kind == ExposureKind::Removed && e.devices == vec![d[3].did.clone()]));
+
+    // A holder that joined later has no share of the newest sharing.
+    let fresh = Dev::new();
+    d[0].trust_with(&fresh, Attendance::Attended, DeviceKind::Terminal);
+    let ex = exposed_credentials(&d[0].store).unwrap();
+    assert_eq!(ex.len(), 4, "{ex:?}");
+    assert!(ex
+        .iter()
+        .any(|e| e.kind == ExposureKind::NotHeldBy && e.devices == vec![fresh.did.clone()]));
+}
+
+/// crypto L1: one batch is not a reshare. The revocation closes when two distinct share-holding terminals wrote batches of
+/// one epoch that leave the removed device out.
+#[test]
+fn a_revocation_stays_open_until_two_share_holders_wrote_batches_of_one_epoch() {
+    use crate::sync::oplog::OpBody;
+    use crate::sync::revocation::{next_actions, RevocationAction};
+    let d = ring(4);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    cred_put(&d[0].store, &d[0].id, &[7u8; 16], &payload("x")).unwrap();
+    all_to_all(&d);
+    let now = crate::store::now_ts();
+    append(
+        &d[0],
+        OpBody::DeviceRevoke {
+            device_id: d[3].did.clone(),
+        },
+    );
+    all_to_all(&d[..3]);
+    let mut holders: Vec<_> = d[..3].iter().map(|x| x.did.clone()).collect();
+    holders.sort();
+    let batch = || OpBody::ShareReshareBatch {
+        epoch: 1,
+        new_holders: holders.clone(),
+        items: vec![],
+    };
+    assert!(next_actions(&d[0].store, &d[0].id, now)
+        .unwrap()
+        .contains(&RevocationAction::Rotate));
+    append(&d[1], batch());
+    all_to_all(&d[..3]);
+    assert!(
+        next_actions(&d[0].store, &d[0].id, now)
+            .unwrap()
+            .contains(&RevocationAction::Rotate),
+        "one batch closed the revocation"
+    );
+    append(&d[2], batch());
+    all_to_all(&d[..3]);
+    assert!(
+        !next_actions(&d[0].store, &d[0].id, now)
+            .unwrap()
+            .contains(&RevocationAction::Rotate),
+        "two distinct share holders in one epoch close it"
+    );
+}
+
+/// A degraded revocation: only one terminal holds a share, so nobody contributes (nothing can be reshared).
+#[test]
+fn contribute_is_offered_only_with_two_share_holding_terminals() {
+    use crate::sync::oplog::{Attendance, DeviceKind, OpBody};
+    use crate::sync::revocation::{next_actions, perform, RevocationAction};
+    let mut d = ring(3);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    cred_put(&d[0].store, &d[0].id, &[8u8; 16], &payload("x")).unwrap();
+    all_to_all(&d);
+    // A third terminal joins after the credential was written: it holds no share of it.
+    let fresh = Dev::new();
+    for x in &d {
+        x.trust_with(&fresh, Attendance::Attended, DeviceKind::Terminal);
+    }
+    // d[1] and d[2] are removed: d[0] is the only share-holding terminal left (the new one holds no share).
+    for gone in [&d[1], &d[2]] {
+        append(
+            &d[0],
+            OpBody::DeviceRevoke {
+                device_id: gone.did.clone(),
+            },
+        );
+    }
+    let now = crate::store::now_ts();
+    let store = d[0].store.clone();
+    let bodies = perform(
+        &store,
+        std::sync::Arc::get_mut(&mut d[0].id).unwrap(),
+        &RevocationAction::Rotate,
+    )
+    .unwrap();
+    for b in bodies {
+        append(&d[0], b);
+    }
+    let later = now + 2 * 86_400; // past the rotation grace
+    let actions = next_actions(&d[0].store, &d[0].id, later).unwrap();
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, RevocationAction::Contribute { .. })),
+        "{actions:?}"
+    );
+}

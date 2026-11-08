@@ -133,9 +133,42 @@ pub fn check_revocable(store: &LauncherStore, target: &DeviceId, _now: i64) -> R
     }
 }
 
+
+/// Does any Quorum credential's newest sharing include `device`?
+fn holds_a_share(store: &LauncherStore, device: &DeviceId) -> Result<bool> {
+    for host in super::reshare::quorum_credentials(store)? {
+        if let Some((_, wraps)) = store.sync_cred_ciphertext(&host)? {
+            if wraps.len() >= 2 && wraps.iter().any(|w| w.recipient == *device) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Live terminal holders that hold a share of at least one Quorum credential: the only ones that can contribute to a reshare.
+/// A replacement terminal that joined after the credentials were written holds none until they are healed or reshared.
+fn share_holding_terminals(store: &LauncherStore) -> Result<Vec<super::oplog::DeviceRow>> {
+    let mut holding: BTreeSet<DeviceId> = BTreeSet::new();
+    for host in super::reshare::quorum_credentials(store)? {
+        if let Some((_, wraps)) = store.sync_cred_ciphertext(&host)? {
+            if wraps.len() >= 2 {
+                holding.extend(wraps.into_iter().map(|w| w.recipient));
+            }
+        }
+    }
+    Ok(live_holders(store)?
+        .into_iter()
+        .filter(|d| d.kind == DeviceKind::Terminal && holding.contains(&d.id))
+        .collect())
+}
 /// The newest revoked holder whose reshare is not finished: `(op lamport, timestamp, revoked id)`.
 fn open_revocation(store: &LauncherStore) -> Result<Option<(u64, i64, DeviceId)>> {
     let devices = super::ceremony::effective_devices(store, None)?;
+    let share_holders: BTreeSet<DeviceId> = share_holding_terminals(store)?
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
     let batches = reshare_ops(store, "ShareReshareBatch")?;
     let mut open = None;
     for op in ops_of(store, "DeviceRevoke", None)? {
@@ -152,9 +185,20 @@ fn open_revocation(store: &LauncherStore) -> Result<Option<(u64, i64, DeviceId)>
         if !was_holder {
             continue;
         }
-        let resolved = batches.iter().any(|b| {
-            b.lamport > op.lamport && matches!(&b.body, OpBody::ShareReshareBatch { new_holders, .. } if !new_holders.contains(device_id))
-        });
+        // Resolved when two DISTINCT share-holding terminals wrote batches of ONE epoch that leave the target out (a
+        // single batch, or a mirror's, is not a reshare: crypto L1), or when no credential is shared with the target.
+        let mut by_epoch: std::collections::BTreeMap<u64, BTreeSet<&DeviceId>> = Default::default();
+        for b in batches.iter().filter(|b| b.lamport > op.lamport) {
+            if let OpBody::ShareReshareBatch {
+                epoch, new_holders, ..
+            } = &b.body
+            {
+                if !new_holders.contains(device_id) && share_holders.contains(&b.device_id) {
+                    by_epoch.entry(*epoch).or_default().insert(&b.device_id);
+                }
+            }
+        }
+        let resolved = by_epoch.values().any(|c| c.len() >= 2) || !holds_a_share(store, device_id)?;
         if !resolved {
             open = Some((op.lamport, op.timestamp, device_id.clone()));
         }
@@ -264,7 +308,12 @@ pub fn next_actions(
         .iter()
         .any(|o| matches!(&o.body, OpBody::ShareReshareSession { epoch: e, .. } if *e == epoch));
     if !contributed {
-        out.push(RevocationAction::Contribute { epoch, new_holders });
+        // A contribution needs a share to contribute from: with fewer than two share-holding terminals nothing can be
+        // reshared (a degraded revocation): the credentials wait on the exposure list (`quorum::exposed_credentials`).
+        let share_holders = share_holding_terminals(store)?;
+        if share_holders.len() >= 2 && share_holders.iter().any(|d| d.id == me) {
+            out.push(RevocationAction::Contribute { epoch, new_holders });
+        }
         return Ok(out);
     }
     Ok(out)
@@ -281,8 +330,8 @@ fn membership_reshare(store: &LauncherStore, me: &DeviceId) -> Result<Option<Rev
         return Ok(None);
     }
     let live = live_holders(store)?;
-    let terminals = live.iter().filter(|d| d.kind == DeviceKind::Terminal);
-    if terminals.clone().count() < 2 || !terminals.clone().any(|d| d.id == *me) {
+    let terminals = share_holding_terminals(store)?;
+    if terminals.len() < 2 || !terminals.iter().any(|d| d.id == *me) {
         return Ok(None);
     }
     let mut new_holders: Vec<DeviceId> = live.iter().map(|d| d.id.clone()).collect();
