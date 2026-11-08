@@ -285,3 +285,44 @@ fn nothing_but_the_kit_ever_holds_the_phrase_on_disk() {
         .collect();
     assert_eq!(holders, vec![dir.path().join("phrase.html")]);
 }
+
+#[test]
+fn without_a_printer_the_ring_secret_is_shown_for_hand_copying_and_no_file_is_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = test_app(vec![]);
+    open(&mut app, view_in(dir.path()));
+    to_kit(&mut app);
+    app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL))
+        .unwrap();
+    assert_eq!(view(&app).step, OnboardingStep::ShowRing);
+    assert!(files_in(dir.path()).is_empty(), "nothing was written");
+    // Esc goes back to the kit step; Enter finishes and hands the secrets on.
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(view(&app).step, OnboardingStep::Kit);
+    app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL))
+        .unwrap();
+    enter(&mut app);
+    assert!(app
+        .sync
+        .intents
+        .iter()
+        .any(|i| matches!(i, SyncIntent::OnboardingDone(_))));
+    assert!(files_in(dir.path()).is_empty());
+}
+
+#[test]
+fn after_printing_d_deletes_both_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = test_app(vec![]);
+    open(&mut app, view_in(dir.path()));
+    to_kit(&mut app);
+    enter(&mut app); // write both sheets
+    assert_eq!(view(&app).step, OnboardingStep::Done);
+    assert_eq!(files_in(dir.path()).len(), 2);
+    app.handle_key(key_char('d')).unwrap();
+    assert!(files_in(dir.path()).is_empty(), "both files are gone");
+    assert!(view(&app)
+        .notice
+        .as_deref()
+        .is_some_and(|n| n.contains("deleted")));
+}

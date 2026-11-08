@@ -54,7 +54,7 @@ fn enabling_the_exemption_warns_validates_the_phrase_and_proposes_a_red_op() {
         a.mode == AppMode::SyncInfo
     });
     let lines = info_lines(&r.app).join("\n");
-    assert!(lines.contains("ceremony: have"), "{lines}");
+    assert!(lines.contains("approvals: have"), "{lines}");
     assert!(lines.contains("second device"), "{lines}");
     let ops = ops_of(&r.app.store, "ExemptionSet", None).unwrap();
     assert_eq!(ops.len(), 1);
@@ -79,7 +79,7 @@ fn the_exemption_is_refused_outside_a_quorum_ring_and_off_an_unattended_machine(
     }
     r.app.host_notice = None;
     crate::app::sync_flows_more::exemption_on(&mut r.app);
-    assert!(notice(&r.app).contains("attended holder terminal"));
+    assert!(notice(&r.app).contains("person at the keyboard"));
     assert_ne!(r.app.mode, AppMode::SyncPrompt);
 }
 
@@ -138,9 +138,12 @@ fn an_export_proposal_reports_the_missing_proofs_and_writes_nothing() {
         a.mode == AppMode::SyncInfo
     });
     let lines = info_lines(&r.app).join("\n");
-    assert!(lines.contains("bulk export proposed"), "{lines}");
-    assert!(lines.contains("ceremony: have"), "{lines}");
-    assert!(lines.contains("Export: continue"), "{lines}");
+    assert!(lines.contains("proposed (change"), "{lines}");
+    assert!(lines.contains("approvals: have"), "{lines}");
+    assert!(
+        lines.contains("choose \"Export every credential\" again"),
+        "{lines}"
+    );
     let ops = ops_of(&r.app.store, "BulkExport", None).unwrap();
     assert_eq!(ops.len(), 1);
     assert!(matches!(
@@ -154,13 +157,12 @@ fn an_export_proposal_reports_the_missing_proofs_and_writes_nothing() {
 
     // Continuing before the other devices approved says the same and writes nothing.
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
-    crate::app::sync_flows_more::export_continue(&mut r.app);
-    type_and_enter(&mut r.app, &hex::encode(&ops[0].hash()[..4]));
+    crate::app::sync_flows_more::export_start(&mut r.app);
     type_and_enter(&mut r.app, &out.to_string_lossy());
     pump(&mut r.app, "the status panel", |a| {
         a.mode == AppMode::SyncInfo
     });
-    assert!(info_lines(&r.app).join("\n").contains("not complete yet"));
+    assert!(info_lines(&r.app).join("\n").contains("not approved yet"));
     assert!(!out.exists());
 }
 
@@ -216,8 +218,7 @@ fn a_completed_export_writes_the_open_credentials_and_lists_the_locked_ones() {
     ingest_from(&r.d[2], &r.d[1]);
 
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
-    crate::app::sync_flows_more::export_continue(&mut r.app);
-    type_and_enter(&mut r.app, &hex::encode(&op.hash()[..4]));
+    crate::app::sync_flows_more::export_start(&mut r.app);
     type_and_enter(&mut r.app, &out.to_string_lossy());
     pump(&mut r.app, "the export", |a| out_done(a, &out));
     let csv = std::fs::read_to_string(&out).unwrap();
@@ -233,8 +234,7 @@ fn a_completed_export_writes_the_open_credentials_and_lists_the_locked_ones() {
 
     // The file is never overwritten: a second run to the same path fails.
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
-    crate::app::sync_flows_more::export_continue(&mut r.app);
-    type_and_enter(&mut r.app, &hex::encode(&op.hash()[..4]));
+    crate::app::sync_flows_more::export_start(&mut r.app);
     type_and_enter(&mut r.app, &out.to_string_lossy());
     assert!(notice(&r.app).contains("already exists"));
 }
@@ -244,13 +244,11 @@ fn out_done(app: &App, out: &std::path::Path) -> bool {
 }
 
 #[test]
-fn continuing_needs_an_export_op_of_this_device() {
+fn an_export_another_device_proposed_is_not_continued_here() {
     let mut r = ring(None);
     mark_this_device(&mut r);
-    let dir = tempfile::tempdir().unwrap();
-    let out = dir.path().join("export.csv");
     // The op exists but another device proposed it.
-    let op = append(
+    append(
         &r.d[2],
         crate::sync::oplog::OpBody::BulkExport {
             requester: r.d[2].did.clone(),
@@ -258,13 +256,14 @@ fn continuing_needs_an_export_op_of_this_device() {
         },
     );
     ingest_from(&r.d[2], &r.d[1]);
-    crate::app::sync_flows_more::export_continue(&mut r.app);
-    type_and_enter(&mut r.app, &hex::encode(&op.hash()[..4]));
-    type_and_enter(&mut r.app, &out.to_string_lossy());
-    pump(&mut r.app, "the refusal", |a| {
-        notice(a).contains("not a bulk export proposed by this device")
-    });
-    assert!(!out.exists());
+    crate::app::sync_flows_more::export_start(&mut r.app);
+    // A new export is started (it asks for a window); nothing of the other device's is continued.
+    match &r.app.sync_ui {
+        Some(crate::app::sync_ui::SyncUi::Prompt { label, .. }) => {
+            assert!(label.starts_with("Window in seconds"), "{label}")
+        }
+        _ => panic!("the window prompt is not open"),
+    }
 }
 
 // ------------------------------------------------------------- paper sheet
@@ -292,7 +291,7 @@ fn the_paper_sheet_needs_the_words_in_memory() {
 fn the_paper_sheet_is_one_private_file_that_is_never_overwritten_and_the_only_copy() {
     use std::os::unix::fs::PermissionsExt;
     let mut r = ring(None);
-    crate::app::sync_flows::paper_setup(&mut r.app);
+    crate::app::sync_flows::paper_wizard(&mut r.app);
     let words = r.app.sync_paper.clone().unwrap().to_string();
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
 

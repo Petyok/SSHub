@@ -307,7 +307,7 @@ impl KeyAction {
             KeyAction::SyncAdmin => {
                 "Sync tab: manage the ring (revoke, roles, mode, recovery, paper)"
             }
-            KeyAction::SyncEnroll => "Hosts: make this machine one of my devices",
+            KeyAction::SyncEnroll => "Hosts: add this machine as a sync device",
             KeyAction::SyncBleDrop => {
                 "Unlock and phone enrollment: drop the connected phone (Bluetooth)"
             }
@@ -558,7 +558,7 @@ impl Default for KeybindsConfig {
             sync_review: vec!["R".into()],
             sync_trust: vec!["t".into()],
             sync_admin: vec!["M".into()],
-            sync_enroll: vec!["t".into()],
+            sync_enroll: vec!["A".into()],
             sync_ble_drop: vec!["Ctrl+B".into()],
             map_up: vec!["Up".into()],
             map_down: vec!["Down".into()],

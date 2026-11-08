@@ -39,7 +39,7 @@ const COMMANDS: [&str; 6] = [
 
 /// Appended to every device sync-now cannot reach for want of a host.
 const HOW_TO_RECORD_A_HOST: &str =
-    "press t on its host in the hosts tab, or run `sshub sync-join <host>` (a repeat ceremony records it)";
+    "press A on its host in the hosts tab, or run `sshub sync-join <host>` (it is approved again and recorded)";
 
 const EMPTY_RING: &str = "No sync ring on this profile yet.";
 
@@ -134,7 +134,7 @@ fn parse_args(cmd: &str, args: &[String]) -> Result<Parsed, String> {
             let id = args
                 .get(i + 1)
                 .filter(|v| !v.starts_with('-'))
-                .ok_or_else(|| format!("{a} requires an op id"))?;
+                .ok_or_else(|| format!("{a} requires a change id"))?;
             if out.resolve.is_some() {
                 return Err("give exactly one of --approve and --reject".into());
             }
@@ -260,7 +260,7 @@ fn sas_question(p: &SasPrompt<'_>, host: Option<&str>) -> String {
         )
     } else {
         format!(
-            "Enrolling {}. SAS words: {}\n{NO_SCREEN_NOTE} {}.\nAdmit this device? [y/N] ",
+            "Enrolling {}. The four check words: {}\n{NO_SCREEN_NOTE} {}.\nAdmit this device? [y/N] ",
             p.peer_name,
             p.sas,
             host.unwrap_or("this connection")
@@ -309,7 +309,7 @@ fn enroll(paths: &ProfilePaths) -> Result<i32> {
     // to stderr for the log only.
     let mut logged = |p: &SasPrompt<'_>| {
         eprintln!(
-            "SAS words: {} (peer has screen: {}) (peer {})",
+            "The four check words: {} (peer has screen: {}) (peer {})",
             p.sas,
             if p.peer_has_screen { "yes" } else { "no" },
             p.peer_name
@@ -331,7 +331,7 @@ fn enroll(paths: &ProfilePaths) -> Result<i32> {
         // No human here, so nothing says whether the peer had a screen: this
         // line is for the log only.
         eprintln!(
-            "SAS words: {} (peer has screen: unknown, no tty here; admitted on the SSH session)",
+            "The four check words: {} (peer has screen: unknown, no tty here; admitted on the SSH session)",
             outcome.sas
         );
     }
@@ -365,7 +365,7 @@ impl<I: BufRead, O: Write, E: Write> SasConfirm for JoinPrompt<'_, I, O, E> {
             let _ = writeln!(out, "Peer: {}", p.peer_name);
             let _ = write!(out, "Do they match? [y/N] ");
         } else {
-            let _ = writeln!(out, "SAS words: {}", p.sas);
+            let _ = writeln!(out, "The four check words: {}", p.sas);
             let _ = writeln!(out, "Peer: {}", p.peer_name);
             let _ = writeln!(out, "{NO_SCREEN_NOTE} {}.", self.host);
             let _ = write!(out, "Admit this device? [y/N] ");
@@ -392,18 +392,30 @@ fn join(paths: &ProfilePaths, host: &str) -> Result<i32> {
     match rt.join(host, &mut ui, &cancel) {
         Ok(o) => {
             let how = match o.verified_by {
-                VerifiedBy::Sas => "verified by SAS",
+                VerifiedBy::Sas => "verified by the four check words",
                 VerifiedBy::SshHostKey => "verified by the SSH host key only",
             };
             let id = o.peer.device_id();
             match o.role {
-                EnrollRole::Joiner => println!(
-                    "Joined the ring of {} (device {}), {how}. This device is a mirror until the ring approves more.",
-                    o.peer_name,
-                    short(&id)
-                ),
+                EnrollRole::Joiner => {
+                    println!(
+                        "Joined the ring of {} (device {}), {how}. This device is a view-only copy until the ring approves more.",
+                        o.peer_name,
+                        short(&id)
+                    );
+                    if let Ok(store) = open_store(paths) {
+                        let vault = crate::sync::ceremony::effective_cred_mode(&store)
+                            .is_ok_and(|m| m == crate::sync::oplog::CredMode::Vault)
+                            && crate::sync::quorum::vault_pub(&store).is_ok_and(|v| v.is_some());
+                        if vault {
+                            println!(
+                                "Next: import the Vault kit (sshub sync-import-kit, or in the terminal screen M, Passwords, Import the Vault kit) so this computer can open saved passwords."
+                            );
+                        }
+                    }
+                }
                 EnrollRole::Inviter => println!(
-                    "Admitted {} (device {}) to this ring as a mirror, {how}.",
+                    "Admitted {} (device {}) to this ring as a view-only copy, {how}.",
                     o.peer_name,
                     short(&id)
                 ),
@@ -556,7 +568,7 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
                 if !s.forks.is_empty() {
                     fork = true;
                     if !json_out {
-                        println!("FORK DETECTED: {shown}");
+                        println!("TWO HISTORIES (fork) DETECTED: {shown}");
                     }
                 }
                 if !json_out {
@@ -654,7 +666,7 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
                 )
                 .map(|v| format!("{v:?}"))
                 .unwrap_or_else(|e| format!("invalid: {e:#}"));
-                json!({ "op": hex(&op.hash())[..12], "verdict": v })
+                json!({ "op": hex(&op.hash())[..8], "verdict": v })
             })
             .collect();
         let doc = json!({
@@ -671,19 +683,33 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     }
     for r in &rows {
         println!(
-            "{} ({}) role {} status {} last seen {} head {} host {} verified {}",
+            "{} ({}): {}, {}, last in sync {}, last change number {}, host {}, admitted by {}",
             plain(&r.name),
             short(&r.id),
-            lower(r.role),
-            lower(r.status),
+            match (r.kind, r.role) {
+                (crate::sync::oplog::DeviceKind::Phone, _) => "phone",
+                (_, crate::sync::oplog::DeviceRole::Holder) => "full device",
+                (_, crate::sync::oplog::DeviceRole::Mirror) => "view-only copy",
+            },
+            match r.status {
+                crate::sync::oplog::DeviceStatus::Operational => "in sync",
+                crate::sync::oplog::DeviceStatus::Behind => "missed some changes",
+                crate::sync::oplog::DeviceStatus::Stale => "away too long",
+                crate::sync::oplog::DeviceStatus::Suspect => "needs a look",
+                crate::sync::oplog::DeviceStatus::Compromised => "COMPROMISED",
+                crate::sync::oplog::DeviceStatus::Revoked => "removed",
+            },
             age(r.last_seen),
             r.head_seq,
             peers.host_of(&r.id).unwrap_or("-"),
-            verified_str(r.verified_by),
+            match r.verified_by {
+                VerifiedBy::Sas => "the four check words",
+                VerifiedBy::SshHostKey => "the SSH host key",
+            },
         );
     }
-    println!("Pending changes: {pending}");
-    println!("Credential mode: {mode}");
+    println!("Changes waiting for approval: {pending}");
+    println!("Passwords: {mode}");
     for op in super::sync_admin::all_recoveries(&store)? {
         for l in super::sync_admin::recovery_lines(&store, &op, crate::store::now_ts()) {
             println!("{}", plain(&l));
@@ -734,9 +760,9 @@ fn release_fresh(op: &crate::sync::oplog::Op, now: i64) -> Result<()> {
     Ok(())
 }
 
-/// The 12-hex-digit id `sync-review` shows for a pending op.
+/// The 8-hex-digit id `sync-review` shows for a pending op.
 pub(crate) fn op_id(hash: &[u8; 32]) -> String {
-    hex(hash)[..12].to_string()
+    hex(hash)[..8].to_string()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -744,20 +770,20 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// The one full hash among `hashes` that starts with `prefix` (hex, at least
-/// four characters).
+/// six digits).
 fn resolve_prefix(hashes: &[[u8; 32]], prefix: &str) -> Result<[u8; 32], String> {
     let p = prefix.to_lowercase();
-    if p.len() < 4 || !p.chars().all(|c| c.is_ascii_hexdigit()) {
+    if p.len() < 6 || !p.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(format!(
-            "'{prefix}' is not an op id (at least 4 hex characters)"
+            "'{prefix}' is not a change id (at least 6 hex digits, see `sshub sync-review`)"
         ));
     }
     let hits: Vec<&[u8; 32]> = hashes.iter().filter(|h| hex(*h).starts_with(&p)).collect();
     match hits.as_slice() {
-        [] => Err(format!("no pending op matches '{prefix}'")),
+        [] => Err(format!("no waiting change matches '{prefix}'")),
         [one] => Ok(**one),
         _ => Err(format!(
-            "'{prefix}' matches several pending ops; use more characters"
+            "'{prefix}' matches several waiting changes; use more characters"
         )),
     }
 }
@@ -816,7 +842,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             .iter()
             .find(|v| v.hash == hash)
             .expect("resolved above");
-        let id = hex(&hash)[..12].to_string();
+        let id = hex(&hash)[..8].to_string();
         // A share release is answered with the grants the TUI's confirmation would write: the
         // explicit approval is this `--approve` (the listing names the requester, its full id and
         // the request's age).
@@ -851,8 +877,9 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             .iter()
             .map(|v| {
                 json!({
-                    "id": &hex(&v.hash)[..12], "author": v.device, "summary": v.summary,
+                    "id": &hex(&v.hash)[..8], "author": v.device, "summary": v.summary,
                     "reason": v.reason,
+                    "reason_words": v.reason.as_deref().map(crate::app::sync_view::reason_words),
                     "ceremony": v.red.as_ref().map(|r| json!({
                         "have": r.have, "missing": r.missing, "expired": r.expired,
                         "blocked": r.blocked, "rule_violation": r.rule_violation, "note": r.note,
@@ -874,7 +901,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
     for v in &views {
         println!(
             "{}  {}  {}",
-            &hex(&v.hash)[..12],
+            &hex(&v.hash)[..8],
             plain(&v.device),
             plain(&v.summary)
         );
@@ -888,7 +915,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             );
         }
         if let Some(red) = &v.red {
-            println!("  Red change, three proofs needed:");
+            println!("  Big change, three approvals needed:");
             for h in &red.have {
                 println!("    present: {h}");
             }
@@ -896,7 +923,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
                 println!("    missing: {m}");
             }
             if let Some(why) = &red.blocked {
-                println!("    impossible as it stands: {}", plain(why));
+                println!("    cannot go through as it stands: {}", plain(why));
             }
             if let Some(note) = &red.note {
                 println!("    note: {}", plain(note));
@@ -998,16 +1025,19 @@ mod tests {
         c[0] = 0x12;
         c[1] = 0x34;
         let all = [a, b, c];
-        assert_eq!(resolve_prefix(&all, "1234"), Ok(c));
+        assert_eq!(resolve_prefix(&all, "123400"), Ok(c));
         assert_eq!(
             resolve_prefix(&all, "1234AB"),
-            Err("no pending op matches '1234AB'".into())
+            Err("no waiting change matches '1234AB'".into())
         );
-        assert!(resolve_prefix(&all, "abcd")
+        let mut d = a;
+        d[5] = 0x01; // shares its first six digits with `a`
+        assert!(resolve_prefix(&[a, d], "abcd00")
             .unwrap_err()
             .contains("several"));
         assert_eq!(resolve_prefix(&all, "abcd01"), Ok(b));
-        assert!(resolve_prefix(&all, "12").unwrap_err().contains("4 hex"));
+        assert!(resolve_prefix(&all, "12").unwrap_err().contains("6 hex"));
+        assert!(resolve_prefix(&all, "1234").unwrap_err().contains("6 hex"));
         assert!(resolve_prefix(&all, "zzzz").is_err());
     }
 

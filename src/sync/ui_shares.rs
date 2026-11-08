@@ -162,7 +162,10 @@ impl UiShares {
     ) -> Share {
         if let Some(ext) = &reply.ext {
             if let Err(e) = apply_reply_ext(&self.runtime.store, ext) {
-                self.say(kind, format!("reply accepted; courier ops not kept: {e:#}"));
+                self.say(
+                    kind,
+                    format!("reply accepted; the phone's own changes were not kept: {e:#}"),
+                );
             }
         }
         reply.share
@@ -235,7 +238,7 @@ impl UiShares {
         }
         match peer_poll(&self.runtime.store, req, epoch) {
             Ok(Some(share)) => {
-                self.say(UnlockPathKind::Peer, "a holder approved on its screen");
+                self.say(UnlockPathKind::Peer, "a full device approved on its screen");
                 Some(share)
             }
             _ => None,
@@ -328,7 +331,7 @@ impl UiShares {
         let phone = self.phone_ask(host)?;
         if request.is_none() && phone.is_none() {
             return Err(UnlockError::NeedsShares(
-                "no holder released a share, none can be asked from here, and the ring has no phone: unlock on a device that can, or use a Vault ring".into(),
+                "no full device approved, none can be asked from here, and you have no phone: unlock on a device that can, or use a Vault ring".into(),
             ));
         }
         // The microphone, the camera and (feature `bluetooth`) the phone's Bluetooth link listen
@@ -380,7 +383,7 @@ impl UiShares {
                     let Some(ask) = &phone else {
                         self.say(
                             UnlockPathKind::Peer,
-                            "waiting for a holder: nothing to type here",
+                            "waiting for a full device: nothing to type here",
                         );
                         continue;
                     };

@@ -320,6 +320,11 @@ pub struct App {
     pub(crate) sync_ui: Option<sync_ui::SyncUi>,
     /// Phone enrollment in progress (see `app/sync_phone.rs`).
     pub(crate) phone_flow: Option<sync_phone::PhoneFlow>,
+    /// The camera (and Bluetooth) listening for the phone's answer to a trust session request.
+    pub(crate) answer_listener: Option<(
+        crate::sync::media::ListenHandle,
+        std::sync::mpsc::Receiver<crate::sync::media::MediaEvent>,
+    )>,
     /// The paper phrase just created, until the user typed it back (memory only).
     pub(crate) sync_paper: Option<zeroize::Zeroizing<String>>,
     /// Tracker line an Esc dismiss applies to: the ghost stays hidden until
@@ -1120,6 +1125,7 @@ impl App {
             unlock_resume: None,
             sync_ui: None,
             phone_flow: None,
+            answer_listener: None,
             sync_paper: None,
             sync_worker: None,
             ghost_dismissed_for: None,

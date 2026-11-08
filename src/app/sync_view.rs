@@ -40,6 +40,7 @@ pub(crate) fn device_view(row: &DeviceRow) -> DeviceView {
         head_seq: row.head_seq,
         verified_by: None,
         this: false,
+        phone: row.kind == crate::sync::oplog::DeviceKind::Phone,
     }
 }
 
@@ -430,22 +431,29 @@ pub(crate) fn pending_view(
             kind,
             ..
         } => format!(
-            "add device {name} as {} ({}), key {}",
-            format!("{role:?}").to_lowercase(),
-            format!("{kind:?}").to_lowercase(),
+            "add {name} as a {} ({}), key {}",
+            match (kind, role) {
+                (crate::sync::oplog::DeviceKind::Phone, _) => "phone",
+                (_, crate::sync::oplog::DeviceRole::Holder) => "full device",
+                (_, crate::sync::oplog::DeviceRole::Mirror) => "view-only copy",
+            },
+            match kind {
+                crate::sync::oplog::DeviceKind::Phone => "phone",
+                crate::sync::oplog::DeviceKind::Terminal => "computer or server",
+            },
             short(&device.device_id())
         ) + &recovery_suffix(store, op),
         OpBody::DeviceRevoke { device_id } => format!(
-            "revoke device {}{}",
+            "remove device {}{}",
             short(device_id),
             recovery_suffix(store, op)
         ),
         OpBody::ModeChange { to, cosigner, .. } => match cosigner {
             Some(c) => format!(
-                "switch credential mode to {to:?}, co-signed by {}",
+                "switch passwords to {to:?}, second signer {}",
                 device_name(devices, c)
             ),
-            None => format!("switch credential mode to {to:?}"),
+            None => format!("switch passwords to {to:?}"),
         },
         OpBody::ShareRelease {
             host_uid,
@@ -463,7 +471,7 @@ pub(crate) fn pending_view(
                 .and_then(|id| store.get_host(id).ok().flatten())
                 .map_or_else(|| short(&uid_hex(host_uid)), |m| m.name);
             format!(
-                "release a share of {what} to {who} (device {requester}, asked {} s ago)",
+                "let {who} open the saved password of {what} (device {requester}, asked {} s ago)",
                 (crate::store::now_ts() - op.timestamp).max(0)
             )
         }
@@ -512,12 +520,12 @@ pub(crate) fn pending_view(
         }
         OpBody::ExemptionSet { device_id, slot } => match slot {
             Some(key) => format!(
-                "enable the master-phrase exemption for {} (slot key {}, computed by that machine itself: only as trustworthy as it is)",
+                "turn on the master phrase exemption for {} (it made its own key: only as trustworthy as that computer, slot key {})",
                 device_name(devices, device_id),
                 short(&key.device_id())
             ),
             None => format!(
-                "switch off the master-phrase exemption for {}",
+                "turn off the master phrase exemption for {}",
                 device_name(devices, device_id)
             ),
         },
@@ -533,10 +541,10 @@ pub(crate) fn pending_view(
             };
             match sender {
                 Some(s) => format!(
-                    "register the {kind} as third factor, sent by {}",
+                    "register the {kind} as the third approval, sent by {}",
                     device_name(devices, s)
                 ),
-                None => format!("register the {kind} as third factor"),
+                None => format!("register the {kind} as the third approval"),
             }
         }
         other => {
@@ -549,7 +557,7 @@ pub(crate) fn pending_view(
     };
     let reason_text = reason.clone();
     if let Some(reason) = reason {
-        summary.push_str(&format!(" [{reason}]"));
+        summary.push_str(&format!(" [{}]", reason_words(&reason)));
     }
     PendingOpView {
         device,
@@ -561,13 +569,29 @@ pub(crate) fn pending_view(
     }
 }
 
+/// What a reason a change waits for means, in the glossary's words (the stored codes stay in JSON).
+pub(crate) fn reason_words(reason: &str) -> String {
+    match reason {
+        "tier" => "needs your approval",
+        "stale" => "made by a device that was away too long",
+        "resurrection" => "brings back something that was deleted",
+        "revoke-conflict" => "conflicts with a removal",
+        "unknown-author" => "from a device this computer does not know yet",
+        "future-dated" => "its time is in the future",
+        "not-holder" => "made by a device that may not make this change",
+        "revoked-author" => "made by a device that was removed",
+        other => other,
+    }
+    .to_string()
+}
+
 pub(crate) fn proof_label(p: &crate::sync::ceremony::RedProof) -> &'static str {
     use crate::sync::ceremony::RedProof;
     use crate::sync::oplog::ThirdFactor;
     match p {
-        RedProof::Phone => "phone signature",
-        RedProof::SecondDevice => "second attended device",
-        RedProof::Factor(None) => "third factor (paper or emailed code)",
+        RedProof::Phone => "the phone's approval",
+        RedProof::SecondDevice => "a second device with a person at the keyboard",
+        RedProof::Factor(None) => "paper phrase or emailed code",
         RedProof::Factor(Some(ThirdFactor::Paper)) => "paper phrase (24 words)",
         RedProof::Factor(Some(_)) => "emailed code",
     }
@@ -606,7 +630,7 @@ pub(crate) fn evidence_lines(e: &crate::sync::oplog::ForkEvidence) -> Vec<String
     };
     let op = |o: &Op| {
         format!(
-            "operation seq {} lamport {} hash {}",
+            "change number {} (lamport {}) hash {}",
             o.seq,
             o.lamport,
             h(&o.hash())
@@ -614,19 +638,23 @@ pub(crate) fn evidence_lines(e: &crate::sync::oplog::ForkEvidence) -> Vec<String
     };
     match e {
         ForkEvidence::Ops(a, b) => vec![
-            "Proof: two different operations signed by the same device at the same position".into(),
+            "Evidence: two different changes signed by the same device at the same position".into(),
             format!("  {}", op(a)),
             format!("  {}", op(b)),
         ],
         ForkEvidence::OpAndHead(o, head) => vec![
-            "Proof: an operation and a signed head that contradict each other".into(),
+            "Evidence: a change and a last signed change that contradict each other".into(),
             format!("  {}", op(o)),
-            format!("  signed head seq {} hash {}", head.seq, h(&head.hash)),
+            format!(
+                "  last signed change number {} hash {}",
+                head.seq,
+                h(&head.hash)
+            ),
         ],
         ForkEvidence::Heads(a, b) => vec![
-            "Proof: two signed heads that cannot both be true".into(),
-            format!("  signed head seq {} hash {}", a.seq, h(&a.hash)),
-            format!("  signed head seq {} hash {}", b.seq, h(&b.hash)),
+            "Evidence: two last signed changes that cannot both be true".into(),
+            format!("  last signed change number {} hash {}", a.seq, h(&a.hash)),
+            format!("  last signed change number {} hash {}", b.seq, h(&b.hash)),
         ],
     }
 }
@@ -667,7 +695,7 @@ fn red_proof(
     let now = crate::store::now_ts();
     let report = ceremony::settle_red_ops(&env.store, now)?;
     if report.applied.contains(hash) {
-        return Ok("the ceremony is complete: the change took effect".into());
+        return Ok("all three approvals are in: the change took effect".into());
     }
     let left = ceremony::red_status(&env.store, &op, now)?
         .missing
@@ -676,9 +704,9 @@ fn red_proof(
         .collect::<Vec<_>>()
         .join(", ");
     Ok(if left.is_empty() {
-        "proof added".to_string()
+        "approval added".to_string()
     } else {
-        format!("proof added; still missing: {left}")
+        format!("approval added; still missing: {left}")
     })
 }
 
@@ -689,6 +717,7 @@ impl App {
         if let Err(e) = self.try_refresh_sync_view() {
             self.sync.last_error = Some(format!("{e:#}"));
         }
+        self.sync.finish_row = super::sync_flows::finish_row(self);
     }
 
     fn try_refresh_sync_view(&mut self) -> Result<()> {
@@ -727,7 +756,26 @@ impl App {
         sync.review_selected = sync.review_selected.min(review.len().saturating_sub(1));
         sync.review = review;
         sync.cred_mode = cred_mode;
-        (sync.trust_scopes, sync.trust_scope_values) = super::sync_trust::scope_choices(&store);
+        let now = crate::store::now_ts();
+        sync.health = crate::sync::health::health(&store, this_device.as_deref(), now)?;
+        sync.cut_off_missing = crate::sync::revocation::terminals_missing_to_cut_off(&store)?;
+        if sync.ring_secret_missing.is_none() {
+            // Only a Vault ring with a master key set up needs the ring secret on this machine.
+            let needs = cred_mode == Some(CredModeView::Vault)
+                && crate::sync::quorum::vault_pub(&store)?.is_some();
+            sync.ring_secret_missing = Some(
+                needs
+                    && self.profile.as_ref().is_some_and(|p| {
+                        crate::credentials::open_ungated_for_profile(p)
+                            .get(crate::sync::runtime::RING_SECRET_KEY)
+                            .ok()
+                            .flatten()
+                            .is_none()
+                    }),
+            );
+        }
+        (self.sync.trust_scopes, self.sync.trust_scope_values) =
+            super::sync_trust::scope_choices(&store);
         // A holder is asked for a share: the prompt names the requester.
         if self.mode == AppMode::Normal && self.sync.release.is_none() {
             let answered = self.sync.answered_releases.clone();

@@ -28,6 +28,10 @@ pub(crate) enum SyncUi {
     Info {
         title: String,
         lines: Vec<String>,
+        /// A QR under the text (a plain payload, one frame), empty for none.
+        frames: Vec<Vec<u8>>,
+        /// What opens when the panel is closed (a wizard's next step).
+        then: Option<MenuFn>,
     },
 }
 
@@ -91,8 +95,29 @@ impl App {
         self.sync_ui = Some(SyncUi::Info {
             title: title.into(),
             lines,
+            frames: Vec::new(),
+            then: None,
         });
         self.mode = AppMode::SyncInfo;
+    }
+
+    /// [`Self::sync_info`] with a QR under the text and, optionally, the next step of a wizard.
+    pub(crate) fn sync_info_with(
+        &mut self,
+        title: impl Into<String>,
+        lines: Vec<String>,
+        frames: Vec<Vec<u8>>,
+        then: Option<MenuFn>,
+    ) {
+        self.sync_info(title, lines);
+        if let Some(SyncUi::Info {
+            frames: f, then: t, ..
+        }) = self.sync_ui.as_mut()
+        {
+            *f = frames;
+            *t = then;
+        }
+        self.sync.qr_frame = 0;
     }
 
     /// The Sync tab's admin menu: the operations that change the ring itself.
@@ -180,11 +205,25 @@ impl App {
                     });
                 }
             }
-            SyncUi::Info { title, lines } => {
+            SyncUi::Info {
+                title,
+                lines,
+                frames,
+                then,
+            } => {
                 if cancel || key.code == KeyCode::Enter {
                     self.mode = AppMode::Normal;
+                    // Escape ends a wizard; Enter goes on to its next step.
+                    if let (Some(next), false) = (then, cancel) {
+                        next(self);
+                    }
                 } else {
-                    self.sync_ui = Some(SyncUi::Info { title, lines });
+                    self.sync_ui = Some(SyncUi::Info {
+                        title,
+                        lines,
+                        frames,
+                        then,
+                    });
                 }
             }
         }

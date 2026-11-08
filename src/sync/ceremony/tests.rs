@@ -186,7 +186,7 @@ fn a_ui_cannot_approve_a_red_op_early_and_a_stale_ceremony_is_dropped() {
     let err = resolve(&d[OBS].store, &op.hash(), true, now)
         .unwrap_err()
         .to_string();
-    assert!(err.contains("Red change"), "{err}");
+    assert!(err.contains("big change"), "{err}");
     assert_eq!(
         d[OBS].store.sync_pending().unwrap().len(),
         1,
@@ -556,7 +556,7 @@ mod in_force {
         let at = op.timestamp + 5;
         for x in &d[..3] {
             let err = cert_allows(&cert, &pk, &x.store, &d[1].did, &host, at, at).unwrap_err();
-            assert!(err.to_string().contains("ceremony"), "{err}");
+            assert!(err.to_string().contains("not approved yet"), "{err}");
         }
         complete(&d, &op, 2, Some(&phrase));
         for x in &d[..3] {

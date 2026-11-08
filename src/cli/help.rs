@@ -117,7 +117,16 @@ instead of waiting for a human. A per-host or ssh_config remote command is
 overridden by the command given here. Session transcripts are skipped for exec —
 script(1) wrapping fights redirection; use `sshub connect` when you want one.
 Mosh hosts are refused: mosh has no one-shot command mode. Runs show up in
-`sshub audit list --via exec`."#
+`sshub audit list --via exec`.
+
+SAVED PASSWORDS IN A QUORUM RING: a command that needs a synced password asks a
+full device with a person at the keyboard to approve it (it waits SSHUB_UNLOCK_WAIT
+seconds, 120 by default; the approval is `sshub sync-review --approve <id>` or the
+terminal screen of that device). It never asks the phone. For cron, tunnels and
+other unattended runs open it first in the terminal screen (the run then
+inherits it), or start a trust session (tab 7, then t): the phone lets this
+computer open some hosts without asking for up to 90 days, and it stops 14 days
+after the phone last touched any of your computers."#
     );
 }
 
@@ -222,7 +231,11 @@ USAGE:
     sshub sftp chmod  <host> <octal-mode> <remote-path>
 
 <host> is a saved host name. rm is destructive and requires --yes; --recursive
-descends into directories."#
+descends into directories.
+
+A saved password that is synced in a Quorum ring is asked of another full device
+with a person at the keyboard (SSHUB_UNLOCK_WAIT seconds, 120 by default; approve
+with `sshub sync-review --approve <id>`). See `sshub exec --help` for unattended runs."#
     );
 }
 
@@ -321,7 +334,7 @@ USAGE:
 the printed words with its words and answer y (anything else, or EOF, refuses).
 If it has none, the words prove nothing: you are asked `Admit this device?`
 and its identity rests on the SSH host key you verified. The host is remembered
-for `sync-now`. A joining device is a mirror until the ring approves more.
+for `sync-now`. A joining device is a view-only copy until the ring approves more.
 
 EXIT CODES:
     0  joined
@@ -362,13 +375,13 @@ USAGE:
     sshub [--profile NAME] sync-review (--approve <id> | --reject <id>) [--format plain|json]
     sshub [--profile NAME] sync-review --approve-all [--format plain|json]
 
-Without a flag, lists each change waiting for review: a 12-character id, the
+Without a flag, lists each change waiting for review: an 8-digit id, the
 author device, a summary, and one line per field (`[!]` marks a dangerous
 field). EVERY waiting change is listed with why it waits: the reason is in
 brackets after the summary (`tier`, `stale`, `resurrection`, `revoke-conflict`,
 `unknown-author`) and is the `reason` field of the JSON items. A Red change
 shows its ceremony (proofs present and missing). --approve / --reject take a
-unique prefix (at least 4 hex characters) of an id and resolve the change the
+unique prefix (at least 6 hex digits) of an id and resolve the change the
 way the TUI does: a Red change is approved only when its ceremony is complete. Approving
 a share release (a requester asking this holder for a share of a credential) is the explicit
 consent: the line names the requester, its full device id and the request age, and the grants
@@ -393,7 +406,7 @@ fn print_sync_status() {
 USAGE:
     sshub [--profile NAME] sync-status [--format plain|json]
 
-Lists ring devices (name, short id, role, status, last seen, head seq, host if
+Lists your devices (name, short id, kind, state, last in sync, last change number, host if
 known), the number of pending changes and the credential mode. Never creates a
 device key. An empty profile prints `No sync ring on this profile yet.`"#
     );

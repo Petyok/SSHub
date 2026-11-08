@@ -62,6 +62,10 @@ fn cmd_list(ctx: &CliContext, args: &[String]) -> Result<i32> {
 
     let indices = apply_filters(&ctx.hosts, &ctx.store, &tags, group.as_deref(), sort)?;
 
+    // A big sync change that is about to be dropped is said once, on stderr, so a script's output stays clean.
+    if let Some(line) = crate::sync::health::cli_line(&ctx.store, crate::store::now_ts()) {
+        eprintln!("{line}");
+    }
     match fmt {
         OutputFormat::Json => {
             let records: Vec<_> = indices

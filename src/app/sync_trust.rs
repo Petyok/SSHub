@@ -103,8 +103,8 @@ pub(crate) fn chosen(sync: &super::sync::SyncView) -> Option<(CertScope, String)
     ))
 }
 
-/// The TTL step of the `t` flow is done: ask for the budget, then show the request.
-pub(crate) fn begin(app: &mut App, term_days: u32) {
+/// The confirm screen was accepted (scope, days and new hosts a day, all on one screen): show the request.
+pub(crate) fn begin(app: &mut App, term_days: u32, budget: u32) {
     let Some((scope, label)) = chosen(&app.sync) else {
         app.host_notice = Some("that scope is gone: open the trust session again".into());
         return;
@@ -112,27 +112,8 @@ pub(crate) fn begin(app: &mut App, term_days: u32) {
     if app.sync.trust_marked.is_empty() {
         let _ = crate::sync::quorum::meta_set(&app.store, LAST_SCOPE_KEY, label.as_bytes());
     }
-    app.sync_prompt(
-        "Trust session: budget",
-        format!(
-            "How many NEW hosts of {label} may it open per day without asking? (1 to {CERT_NEW_HOSTS_PER_DAY}, Enter for 10)"
-        ),
-        false,
-        move |app, text| {
-            let budget = match text.trim() {
-                "" => 10,
-                t => match t.parse::<u32>() {
-                    Ok(n) if (1..=CERT_NEW_HOSTS_PER_DAY).contains(&n) => n,
-                    _ => {
-                        app.host_notice =
-                            Some(format!("the budget is a number from 1 to {CERT_NEW_HOSTS_PER_DAY}"));
-                        return;
-                    }
-                },
-            };
-            request(app, scope, term_days, budget);
-        },
-    );
+    let budget = budget.clamp(1, CERT_NEW_HOSTS_PER_DAY);
+    request(app, scope, term_days, budget);
 }
 
 fn request(app: &mut App, scope: CertScope, days: u32, budget: u32) {
@@ -147,8 +128,8 @@ fn request(app: &mut App, scope: CertScope, days: u32, budget: u32) {
             "Trust session",
             wire.encode(),
             vec![
-                format!("Show this code to the phone: it asks you to approve a trust session of {days} days."),
-                "Paste the answer the phone shows (the signed certificate) below.".into(),
+                format!("Show this code to the phone: it asks you to approve a trust session of {days} days, up to {budget} new hosts a day."),
+                "The phone then shows its answer as a code: hold it to the camera, or paste its text below.".into(),
             ],
         ),
         Err(e) => app.host_notice = Some(format!("{e:#}")),
@@ -162,28 +143,69 @@ pub(crate) fn qr_frames(bytes: &[u8]) -> Result<Vec<Vec<u8>>> {
     crate::sync::fountain::fountain_encode(bytes, b, QR_PARITY_PERCENT)
 }
 
-/// The request as a looping QR over a field for the phone's answer.
+/// The request as a looping QR over a field for the phone's answer. A camera (or Bluetooth) of this build
+/// reads the answer by itself while the prompt is open.
 fn show_qr(app: &mut App, title: &str, request: Vec<u8>, lines: Vec<String>) {
     match qr_frames(&request) {
-        Ok(frames) => app.sync_prompt_qr(
-            title.to_string(),
-            lines,
-            frames,
-            "Phone's answer (base64)",
-            ingest,
-        ),
+        Ok(frames) => {
+            app.sync_prompt_qr(
+                title.to_string(),
+                lines,
+                frames,
+                "Phone's answer (base64)",
+                ingest,
+            );
+            listen_for_answer(app);
+        }
         Err(e) => app.host_notice = Some(format!("{e:#}")),
     }
 }
 
-/// The phone's answer: chain its ops, run the ceremony check, say what is next.
+/// Start the camera (and Bluetooth, when built) for the phone's answer; nothing to do in a build without them.
+fn listen_for_answer(app: &mut App) {
+    use crate::sync::media::{listen_with, ListenOpts, MediaKind};
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut kinds = vec![MediaKind::Camera];
+    if cfg!(feature = "bluetooth") {
+        kinds.push(MediaKind::Ble);
+    }
+    let handle = listen_with(&kinds, tx, ListenOpts::PHONE_OPS);
+    app.answer_listener = Some((handle, rx));
+}
+
+/// Per tick: an answer read by the camera or over Bluetooth is taken in as if it had been pasted; the listener
+/// ends with the prompt it belongs to.
+pub(crate) fn tick(app: &mut App) {
+    let Some((_, rx)) = app.answer_listener.as_ref() else {
+        return;
+    };
+    let answer = rx.try_iter().find_map(|e| match e {
+        crate::sync::media::MediaEvent::Reply(_, bytes) => Some(bytes),
+        _ => None,
+    });
+    if let Some(bytes) = answer {
+        app.answer_listener = None;
+        app.sync_ui = None;
+        app.mode = AppMode::Normal;
+        ingest_bytes(app, &bytes);
+    } else if app.sync_ui.is_none() {
+        app.answer_listener = None;
+    }
+}
+
+/// The phone's answer, pasted as text.
 fn ingest(app: &mut App, text: String) {
+    app.answer_listener = None;
     let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-    let ops = B64
-        .decode(compact)
-        .map_err(anyhow::Error::from)
-        .and_then(|bytes| PhoneOpsWire::decode(&bytes));
-    let ops = match ops {
+    match B64.decode(compact) {
+        Ok(bytes) => ingest_bytes(app, &bytes),
+        Err(e) => app.host_notice = Some(format!("that is not the phone's answer: {e}")),
+    }
+}
+
+/// The phone's answer: chain its ops, run the ceremony check, say what is next.
+fn ingest_bytes(app: &mut App, bytes: &[u8]) {
+    let ops = match PhoneOpsWire::decode(bytes) {
         Ok(w) => w.ops,
         Err(e) => {
             app.host_notice = Some(format!("that is not the phone's answer: {e:#}"));
@@ -194,19 +216,19 @@ fn ingest(app: &mut App, text: String) {
         crate::sync::hub::courier_ingest(&env.store, &ops)?;
         let at = now();
         crate::sync::ceremony::settle_red_ops(&env.store, at)?;
-        let mut lines = vec![format!("{} operation(s) taken from the phone", ops.len())];
+        let mut lines = vec![format!("{} change(s) taken from the phone", ops.len())];
         for (canonical, sig) in &ops {
             let op = Op::from_canonical(canonical, *sig)?;
             if crate::sync::ceremony::is_gated(&env.store, &op)? {
                 let st = crate::sync::ceremony::red_status(&env.store, &op, at)?;
                 if st.complete {
-                    lines.push("the ceremony is complete: the change took effect".into());
+                    lines.push("the approvals are complete: the change took effect".into());
                 } else {
                     for m in &st.missing {
-                        lines.push(format!("  missing: {}", super::sync_view::proof_label(m)));
+                        lines.push(format!("  still missing: {}", super::sync_view::proof_label(m)));
                     }
                     lines.push(
-                        "next: another attended holder approves it in Review (a), and the paper phrase (p) or the emailed code (e) is typed there".into(),
+                        "next: another full device with a person at the keyboard approves it in Review (a), and the paper phrase (p) or the emailed code (e) is typed there".into(),
                     );
                 }
             }

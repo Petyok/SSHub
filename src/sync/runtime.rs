@@ -504,7 +504,11 @@ fn read_ring_secret(deps: &RoundDeps) -> Option<[u8; 16]> {
 /// Run the unlock on its own thread and pump the UI's answers to it until it
 /// finishes: the share source blocks on the answers, the worker keeps reading
 /// commands.
+/// The unlock key that asks for the mode switch's re-wrap instead of opening a credential.
+pub const MIGRATE_KEY: &str = "migrate:mode-switch";
+
 fn unlock_round(deps: &RoundDeps, rt: &SyncRuntime, keys: &str, ctx: &RoundCtx<'_>) -> Result<()> {
+    let migrate = keys == MIGRATE_KEY;
     let refs: Vec<SecretRef> = keys
         .lines()
         .map(|k| SecretRef::Key(k.to_string()))
@@ -525,8 +529,14 @@ fn unlock_round(deps: &RoundDeps, rt: &SyncRuntime, keys: &str, ctx: &RoundCtx<'
         deps.argon,
     );
     let (done_tx, done_rx) = mpsc::channel();
+    let (store, identity) = (deps.store.clone(), rt.identity.clone());
     std::thread::spawn(move || {
-        let _ = done_tx.send(unlocker.unlock(&refs));
+        let result = if migrate {
+            re_wrap_for_mode_switch(&store, &identity, &unlocker)
+        } else {
+            unlocker.unlock(&refs)
+        };
+        let _ = done_tx.send(result);
     });
     let mut answer_tx = Some(answer_tx);
     let result = loop {
@@ -551,6 +561,34 @@ fn unlock_round(deps: &RoundDeps, rt: &SyncRuntime, keys: &str, ctx: &RoundCtx<'
         }
     };
     result.map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// The second step of a mode switch, on the machine that proposed it, once its ceremony completed: every
+/// credential is opened the way it is wrapped now (Quorum: a second share from a holder or the phone, through
+/// the unlock modal's paths; Vault: the master phrase) and written again for the new mode.
+fn re_wrap_for_mode_switch(
+    store: &LauncherStore,
+    identity: &DeviceIdentity,
+    unlocker: &QuorumUnlocker,
+) -> std::result::Result<(), UnlockError> {
+    let fail = |e: anyhow::Error| UnlockError::Failed(format!("{e:#}"));
+    let me = identity.public();
+    let stop: std::cell::RefCell<Option<UnlockError>> = std::cell::RefCell::new(None);
+    let bodies = crate::sync::modes::mode_migration(store, &me, &|host| {
+        unlocker.open_plain(host).map_err(|e| {
+            let msg = e.to_string();
+            *stop.borrow_mut() = Some(e);
+            anyhow::anyhow!(msg)
+        })
+    });
+    let bodies = match bodies {
+        Ok(b) => b,
+        Err(e) => return Err(stop.into_inner().unwrap_or_else(|| fail(e))),
+    };
+    for body in bodies {
+        store.sync_append_local(identity, body).map_err(fail)?;
+    }
+    Ok(())
 }
 
 /// Set up the Vault ring: the recipient key from phrase and ring secret, the
@@ -630,6 +668,11 @@ pub fn round_fn(deps: RoundDeps) -> RoundFn {
             }
             Round::Unlock => {
                 unlock_round(&deps, rt, device, ctx)?;
+                if device == MIGRATE_KEY {
+                    ctx.emit(SyncEvent::Notice(
+                        "the credentials are re-wrapped for the new mode".into(),
+                    ));
+                }
                 Ok(RoundSummary::default())
             }
             Round::Job => {

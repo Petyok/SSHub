@@ -237,7 +237,9 @@ fn present(app: &mut App, out: FlowOut) {
                 h.send_frame(f.clone());
             }
             h.ble_tag().map(|t| {
-                format!("Bluetooth: choose SSHub-{t} in the phone app's (or page's) device list to use it instead.")
+                format!(
+                    "Bluetooth: choose SSHub-{t} in the phone app's device list to use it instead."
+                )
             })
         });
     match out {
@@ -351,14 +353,14 @@ pub(crate) fn drop_central(app: &mut App) {
 /// Menu entry: the ops list the phone copied (kind 5), through the courier ingest.
 pub(crate) fn paste_ops(app: &mut App) {
     app.sync_prompt(
-        "Paste phone ops",
-        "The phone's ops (base64, as the phone app or page copies them)",
+        "What the phone signed",
+        "What the phone signed (base64, as the phone app copies it)",
         false,
         |app, text| {
             app.run_sync_job(move |env| {
                 let s = crate::sync::unlock_paths::phone_ops_from_text(&env.store, &text)?;
                 Ok(format!(
-                    "phone ops taken in: {} received, {} applied, {} waiting for approval",
+                    "the phone's changes taken in: {} received, {} applied, {} waiting for approval",
                     s.received, s.applied, s.pending_arrived
                 ))
             });
@@ -369,38 +371,39 @@ pub(crate) fn paste_ops(app: &mut App) {
 /// Menu entry: this phone's own newest ops as a kind 5 list for a RESTORED phone to take its chain back. The list names
 /// this terminal (an unsigned sender id): the phone needs the same newest op from two different terminals.
 pub(crate) fn show_chain(app: &mut App) {
-    app.sync_prompt(
-        "Show a phone's own ops",
-        "The phone's device id (16 characters, on its home screen)",
-        false,
-        |app, text| {
-            let Some(me) = app.sync.this_device.clone() else {
-                app.host_notice =
-                    Some("this device's identity is not loaded yet: try again in a moment".into());
-                return;
-            };
-            let wire = match crate::sync::hub::phone_chain_wire(&app.store, &text, &me) {
-                Ok(w) => w,
-                Err(e) => {
-                    app.host_notice = Some(format!("{e:#}"));
-                    return;
-                }
-            };
-            match qr_frames(&wire.encode()) {
-                Ok(frames) => app.sync_prompt_qr(
-                    "The phone's own ops",
-                    vec![
-                        format!("{} op(s), newest first on the phone's screen as seq of its own chain.", wire.ops.len()),
-                        "The phone takes its chain only from two lists made by two DIFFERENT terminals: show it, then do the same on another terminal.".into(),
-                    ],
-                    frames,
-                    "Press Enter to close",
-                    |_, _| {},
-                ),
-                Err(e) => app.host_notice = Some(format!("{e:#}")),
-            }
-        },
-    );
+    // The ring has one phone: its id is known here, so there is nothing to type.
+    let phone = match crate::sync::quorum::phone_device(&app.store) {
+        Ok(Some(p)) => p,
+        _ => {
+            app.host_notice = Some("the ring has no phone yet".into());
+            return;
+        }
+    };
+    let Some(me) = app.sync.this_device.clone() else {
+        app.host_notice =
+            Some("this device's identity is not loaded yet: try again in a moment".into());
+        return;
+    };
+    let wire = match crate::sync::hub::phone_chain_wire(&app.store, &phone, &me) {
+        Ok(w) => w,
+        Err(e) => {
+            app.host_notice = Some(format!("{e:#}"));
+            return;
+        }
+    };
+    match qr_frames(&wire.encode()) {
+        Ok(frames) => app.sync_prompt_qr(
+            "The phone's own changes",
+            vec![
+                format!("{} change(s) the phone signed, as this computer knows them.", wire.ops.len()),
+                "A restored phone takes its history only from two lists made by two DIFFERENT computers: show it, then do the same on another computer.".into(),
+            ],
+            frames,
+            "Press Enter to close",
+            |_, _| {},
+        ),
+        Err(e) => app.host_notice = Some(format!("{e:#}")),
+    }
 }
 
 /// Tests stand in for the webcam: frames sent on `rx`' sender arrive as the camera's.

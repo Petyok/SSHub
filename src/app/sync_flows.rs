@@ -53,10 +53,7 @@ pub(super) fn pick_device(
 }
 
 fn role_label(d: &DeviceView) -> &'static str {
-    match d.role {
-        super::sync::DeviceRoleView::Holder => "holder",
-        super::sync::DeviceRoleView::Mirror => "mirror",
-    }
+    d.role_word()
 }
 
 fn read_ring_secret(env: &JobEnv) -> Result<[u8; 16]> {
@@ -78,11 +75,26 @@ pub(crate) fn revoke(app: &mut App) {
 }
 
 fn confirm_revoke(app: &mut App, id: String, name: String) {
+    // Say at once, before anything is typed, when the ring cannot do it.
+    let holder = app
+        .sync
+        .devices
+        .iter()
+        .find(|d| d.id == id)
+        .is_some_and(|d| d.role == super::sync::DeviceRoleView::Holder);
+    if holder {
+        if let Err(why) = crate::sync::revocation::check_revocable(&app.store, &id, now()) {
+            return app.sync_info(
+                "This device cannot be removed yet",
+                vec![format!("{why:#}")],
+            );
+        }
+    }
     let expected = name.clone();
     app.sync_prompt(
         "Revoke a device",
         format!(
-            "{name} will be cut off and the keys rotated. A holder needs the Red ceremony. Type its name to confirm"
+            "{name} will be cut off and the keys rotated. A full device needs the three approvals. Type its name to confirm"
         ),
         false,
         move |app, typed| {
@@ -132,11 +144,11 @@ fn choose_role(app: &mut App, id: String, name: String) {
         format!("Role of {name}"),
         vec![
             (
-                "Holder: holds shares, votes on Red changes".to_string(),
+                "Full device: holds a piece of every password, approves big changes".to_string(),
                 to(DeviceRole::Holder, id.clone()),
             ),
             (
-                "Mirror: syncs the ring, holds no share".to_string(),
+                "View-only copy: gets your hosts, holds no piece of any password".to_string(),
                 to(DeviceRole::Mirror, id),
             ),
         ],
@@ -148,13 +160,18 @@ fn choose_role(app: &mut App, id: String, name: String) {
 /// The two-step switch, as `sshub sync-mode` does it: the first call proposes
 /// the Red change (nothing is re-encrypted before the ring agreed), a later one
 /// re-wraps the credentials once the ceremony completed.
-fn mode_job(app: &mut App, phrase: String) {
+fn mode_job(app: &mut App, phrase: String, to: CredMode) {
     app.run_sync_job(move |env| {
-        let ring = read_ring_secret(env)?;
+        // Only the Vault direction opens credentials with the ring secret.
+        let ring = if to == CredMode::Quorum {
+            read_ring_secret(env)?
+        } else {
+            [0u8; 16]
+        };
         let r = admin::mode(
             &env.store,
             &env.identity,
-            CredMode::Quorum,
+            to,
             None,
             phrase.trim(),
             &ring,
@@ -164,23 +181,17 @@ fn mode_job(app: &mut App, phrase: String) {
     });
 }
 
-/// This device's own switch to Quorum that is not finished: `Some(false)` while
-/// its ceremony is incomplete, `Some(true)` when it is in force but credentials
-/// are still wrapped for the Vault.
-fn unfinished_switch(app: &App) -> Option<bool> {
+/// This device's own mode switch that is not finished: `(to, false)` while its ceremony is incomplete,
+/// `(to, true)` when it is in force but credentials are still wrapped for the old mode.
+pub(crate) fn unfinished_switch(app: &App) -> Option<(CredMode, bool)> {
     let me = app.sync.this_device.clone()?;
     let mc = crate::sync::modes::own_mode_change(&app.store, &me).ok()??;
-    if !matches!(
-        mc.body,
-        crate::sync::oplog::OpBody::ModeChange {
-            to: CredMode::Quorum,
-            ..
-        }
-    ) {
+    let crate::sync::oplog::OpBody::ModeChange { to, .. } = &mc.body else {
         return None;
-    }
+    };
+    let to = *to;
     if !crate::sync::ceremony::in_force(&app.store, &mc).ok()? {
-        return Some(false);
+        return Some((to, false));
     }
     let public = app
         .store
@@ -189,41 +200,116 @@ fn unfinished_switch(app: &App) -> Option<bool> {
         .into_iter()
         .find(|d| d.id == me)?
         .public;
-    // The probe fails where a credential would have to be opened: that one is still wrapped for the Vault.
+    // The probe fails where a credential would have to be opened: that one is still wrapped the old way.
     let pending =
         crate::sync::modes::mode_migration(&app.store, &public, &|_| anyhow::bail!("pending"))
             .is_err();
-    pending.then_some(true)
+    pending.then_some((to, true))
+}
+
+/// The persistent row of the Sync tab for a switch or an export that was approved and waits to be finished.
+pub(crate) fn finish_row(app: &App) -> Option<String> {
+    if let Some((to, true)) = unfinished_switch(app) {
+        return Some(format!(
+            "Finish: the switch to {} is approved. Press M, Passwords, then Switch to finish it.",
+            if to == CredMode::Quorum {
+                "Quorum"
+            } else {
+                "Vault"
+            }
+        ));
+    }
+    let op = super::sync_flows_more::open_export(app)?;
+    let st = crate::sync::ceremony::red_status(&app.store, &op, now()).ok()?;
+    st.complete.then(|| {
+        "Finish: the export is approved. Press M, Advanced, Export every saved password.".into()
+    })
 }
 
 pub(crate) fn mode(app: &mut App) {
     match unfinished_switch(app) {
-        Some(false) => return mode_job(app, String::new()), // shows the ceremony status
-        Some(true) => {
+        Some((to, false)) => return mode_job(app, String::new(), to), // shows the ceremony status
+        Some((CredMode::Quorum, true)) => {
             return app.sync_prompt(
                 "Finish the switch to Quorum",
                 "The ring agreed. Type the master phrase to re-wrap the credentials for Quorum (nothing is shown)",
                 true,
-                mode_job,
+                |app, phrase| mode_job(app, phrase, CredMode::Quorum),
             )
         }
+        Some((CredMode::Vault, true)) => return finish_vault(app),
         None => {}
     }
     match app.sync.cred_mode {
         Some(super::sync::CredModeView::Vault) => {
             // Proposing needs no secret; the phrase is asked when the switch is finished.
-            mode_job(app, String::new());
+            mode_job(app, String::new(), CredMode::Quorum);
         }
-        Some(super::sync::CredModeView::Quorum) => app.sync_info(
-            "Switch to Vault",
-            vec![
-                "Quorum to Vault re-wraps every credential, which needs a second holder".into(),
-                "to open them and a co-signing holder for the Red ceremony.".into(),
-                "Start it from a device that holds shares: `sshub sync-mode vault --cosigner <device>`.".into(),
-            ],
+        Some(super::sync::CredModeView::Quorum) => pick_device(
+            app,
+            "Switch back to Vault: which full device is the second signer?",
+            |d| {
+                d.role == super::sync::DeviceRoleView::Holder
+                    && !d.phone
+                    && !d.unattended
+                    && d.status != DeviceStatusView::Revoked
+            },
+            propose_vault,
         ),
         None => app.host_notice = Some("the credential mode is not known yet".into()),
     }
+}
+
+/// Quorum to Vault, step one: propose the change with a co-signing full device (a big change: the approvals are
+/// collected like any other). Nothing is re-wrapped before the ring agreed.
+fn propose_vault(app: &mut App, id: String, _name: String) {
+    app.run_sync_job(move |env| {
+        let r = admin::mode(
+            &env.store,
+            &env.identity,
+            CredMode::Vault,
+            Some(&id),
+            "",
+            &[0u8; 16],
+            now(),
+        )?;
+        let mut lines = r.lines;
+        // What the design asks the screen to say plainly about a downgrade (design: Mode transitions).
+        lines.push(
+            "Going back to Vault lowers the protection: afterwards the master phrase and the kit open every saved password, so a stolen computer is no longer stopped by needing a second device."
+                .into(),
+        );
+        lines.push(
+            "The computer that finishes the switch sees every password once. Passwords already copied while they were Quorum stay openable by whoever held a share then."
+                .into(),
+        );
+        lines.push("The second signer you picked must approve it, with the phone and the paper phrase or emailed code.".into());
+        Ok(lines.join("\n"))
+    });
+}
+
+/// Quorum to Vault, step two, once the approvals are in: every credential is opened with the same unlock
+/// dialog a connect uses (a second full device approves on its screen, or the phone answers) and written again
+/// for the Vault. One credential after another; nothing changes for a credential that was not opened.
+pub(crate) fn finish_vault(app: &mut App) {
+    if !app.sync.worker {
+        app.host_notice = Some("the sync worker is not running: nothing was changed".into());
+        return;
+    }
+    app.sync.migrating = true;
+    app.open_sync_unlock(super::sync::UnlockView {
+        host: "all credentials (switching back to Vault)".into(),
+        have: 0,
+        need: 0,
+        paths: Vec::new(),
+        frames: Vec::new(),
+        host_id: String::new(),
+        words: String::new(),
+        code: String::new(),
+    });
+    app.sync.intents.push(super::sync::SyncIntent::Unlock {
+        secrets: vec![crate::sync::runtime::MIGRATE_KEY.into()],
+    });
 }
 
 // ---------------------------------------------------------------- recovery
@@ -296,68 +382,95 @@ enum RecoveryStep {
     Cancel,
 }
 
+/// Pick the recovery from a list (no id to type), then approve or cancel it.
 fn recovery_by_id(app: &mut App, step: RecoveryStep) {
-    app.sync_prompt(
+    let ops = admin::all_recoveries(&app.store).unwrap_or_default();
+    if ops.is_empty() {
+        app.host_notice = Some("no recovery was started".into());
+        return;
+    }
+    let items: Vec<(String, MenuFn)> = ops
+        .iter()
+        .map(|op| {
+            let who = app
+                .sync
+                .devices
+                .iter()
+                .find(|d| d.id == op.device_id)
+                .map_or_else(|| op.device_id.clone(), |d| d.name.clone());
+            let age_h = (now() - op.timestamp).max(0) / 3_600;
+            let label = format!(
+                "Recovery started by {who}, {age_h} h ago ({})",
+                hex8(&op.hash())
+            );
+            let id: String = hex8(&op.hash());
+            (
+                label,
+                Box::new(move |app: &mut App| recovery_chosen(app, step, id)) as MenuFn,
+            )
+        })
+        .collect();
+    app.sync_menu(
         match step {
-            RecoveryStep::Approve => "Approve a recovery",
-            RecoveryStep::Cancel => "Cancel a recovery",
+            RecoveryStep::Approve => "Approve which recovery?",
+            RecoveryStep::Cancel => "Cancel which recovery?",
         },
-        "Recovery id (the first characters shown by the status list)",
-        false,
-        move |app, prefix| match step {
-            RecoveryStep::Approve => app.run_sync_job(move |env| {
-                let op = admin::find_op(&env.store, prefix.trim())?;
-                env.store
-                    .sync_append_local(&env.identity, crate::sync::recovery::approve_body(&op)?)?;
-                Ok(format!("approved recovery {}", hex8(&op.hash())))
-            }),
-            RecoveryStep::Cancel => {
-                let pick = |kind: admin::FactorKind, prefix: String| -> MenuFn {
-                    Box::new(move |app: &mut App| {
-                        app.sync_prompt(
-                            "Cancel a recovery",
-                            match kind {
-                                admin::FactorKind::Paper => {
-                                    "Type the 24 words of the paper phrase (nothing is shown)"
-                                }
-                                admin::FactorKind::Email => {
-                                    "Type the emailed code (nothing is shown)"
-                                }
-                            },
-                            true,
-                            move |app, secret| {
-                                app.run_sync_job(move |env| {
-                                    Ok(admin::recovery_cancel(
-                                        &env.store,
-                                        &env.identity,
-                                        prefix.trim(),
-                                        kind,
-                                        &secret,
-                                        now(),
-                                    )?
-                                    .lines
-                                    .join("\n"))
-                                });
-                            },
-                        );
-                    })
-                };
-                app.sync_menu(
-                    "Cancel with which third factor?",
-                    vec![
-                        (
-                            "Paper phrase".to_string(),
-                            pick(admin::FactorKind::Paper, prefix.clone()),
-                        ),
-                        (
-                            "Emailed code".to_string(),
-                            pick(admin::FactorKind::Email, prefix),
-                        ),
-                    ],
-                );
-            }
-        },
+        items,
     );
+}
+
+fn recovery_chosen(app: &mut App, step: RecoveryStep, prefix: String) {
+    match step {
+        RecoveryStep::Approve => app.run_sync_job(move |env| {
+            let op = admin::find_op(&env.store, prefix.trim())?;
+            env.store
+                .sync_append_local(&env.identity, crate::sync::recovery::approve_body(&op)?)?;
+            Ok(format!("approved recovery {}", hex8(&op.hash())))
+        }),
+        RecoveryStep::Cancel => {
+            let pick = |kind: admin::FactorKind, prefix: String| -> MenuFn {
+                Box::new(move |app: &mut App| {
+                    app.sync_prompt(
+                        "Cancel a recovery",
+                        match kind {
+                            admin::FactorKind::Paper => {
+                                "Type the 24 words of the paper phrase (nothing is shown)"
+                            }
+                            admin::FactorKind::Email => "Type the emailed code (nothing is shown)",
+                        },
+                        true,
+                        move |app, secret| {
+                            app.run_sync_job(move |env| {
+                                Ok(admin::recovery_cancel(
+                                    &env.store,
+                                    &env.identity,
+                                    prefix.trim(),
+                                    kind,
+                                    &secret,
+                                    now(),
+                                )?
+                                .lines
+                                .join("\n"))
+                            });
+                        },
+                    );
+                })
+            };
+            app.sync_menu(
+                "Cancel with which third approval?",
+                vec![
+                    (
+                        "Paper phrase".to_string(),
+                        pick(admin::FactorKind::Paper, prefix.clone()),
+                    ),
+                    (
+                        "Emailed code".to_string(),
+                        pick(admin::FactorKind::Email, prefix),
+                    ),
+                ],
+            );
+        }
+    }
 }
 
 fn recovery_start(app: &mut App) {
@@ -371,11 +484,11 @@ fn recovery_start(app: &mut App) {
             // The third factor is proven over the new op: the emailed code when the paper
             // authorized it, the paper words otherwise. Empty leaves it awaiting the factor.
             app.sync_prompt(
-                "Start a recovery: third factor",
+                "Start a recovery: paper phrase or emailed code",
                 if paper {
                     "Type the emailed code (empty: prove it later; nothing is shown)"
                 } else {
-                    "Type the 24 words of the paper phrase as the third factor (empty: prove it later; nothing is shown)"
+                    "Type the 24 words of the paper phrase to prove it now (empty: prove it later; nothing is shown)"
                 },
                 true,
                 move |app, third| {
@@ -399,13 +512,21 @@ fn recovery_start(app: &mut App) {
 
 // ------------------------------------------------------------------- paper
 
-pub(crate) fn paper_setup(app: &mut App) {
+/// The paper phrase as one wizard: the words are shown, you write them down and press Enter, and the type-back
+/// check opens by itself. Nothing is registered until you typed them back exactly.
+pub(crate) fn paper_wizard(app: &mut App) {
+    paper_panel(app, true);
+}
+
+fn paper_panel(app: &mut App, wizard: bool) {
     let mut seed = zeroize::Zeroizing::new([0u8; 32]);
     rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut *seed);
     let words = zeroize::Zeroizing::new(bip39_encode(&seed));
     let mut lines = vec![
-        "Write these 24 words on paper, now. They are shown once and are the third factor".into(),
-        "of every Red change. Anyone with them and a phone proof can act for you.".into(),
+        "Write these 24 words on paper, now. They are shown once. They are the paper phrase: the"
+            .into(),
+        "third approval of every big change. Keep the paper offline and never photograph it."
+            .into(),
         String::new(),
     ];
     let all: Vec<&str> = words.split_whitespace().collect();
@@ -418,11 +539,14 @@ pub(crate) fn paper_setup(app: &mut App) {
         ));
     }
     lines.push(String::new());
-    lines.push(
-        "Close this panel, then choose \"register what I wrote down\" and type them back.".into(),
-    );
+    lines.push(if wizard {
+        "Step 1 of 2: write the words on paper. Step 2: press Enter and type them back to check them. They are kept only until this program closes, so do both now.".into()
+    } else {
+        "Close this panel, then choose \"register what I wrote down\" and type them back.".into()
+    });
     app.sync_paper = Some(words);
-    app.sync_info("Paper phrase", lines);
+    let then: Option<MenuFn> = wizard.then(|| Box::new(paper_register) as MenuFn);
+    app.sync_info_with("Paper phrase", lines, Vec::new(), then);
 }
 
 /// The second half: the user types the words back from the paper; only an exact

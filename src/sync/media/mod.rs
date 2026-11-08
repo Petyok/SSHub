@@ -47,7 +47,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
-use crate::sync::wire::{EnrollFrame, ShareResponseWire};
+use crate::sync::wire::{EnrollFrame, PhoneOpsWire, ShareResponseWire};
 
 /// A response channel the terminal can listen on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -206,6 +206,11 @@ pub fn accept_share_response(bytes: &[u8]) -> bool {
     ShareResponseWire::decode(bytes).is_ok()
 }
 
+/// `bytes` is the phone's list of signed changes (kind 5): the answer to a trust session request.
+pub fn accept_phone_ops(bytes: &[u8]) -> bool {
+    PhoneOpsWire::decode(bytes).is_ok()
+}
+
 /// `bytes` is an enrollment frame (`EnrollFrame` kinds 6, 7, 8).
 pub fn accept_enroll_frame(bytes: &[u8]) -> bool {
     EnrollFrame::decode(bytes).is_ok()
@@ -215,6 +220,12 @@ impl ListenOpts {
     /// What [`listen`] uses: the first valid `ShareResponseWire`, then stop.
     pub const SHARE_RESPONSE: ListenOpts = ListenOpts {
         accept: accept_share_response,
+        keep_listening: false,
+    };
+
+    /// The phone's signed changes (kind 5), then stop.
+    pub const PHONE_OPS: ListenOpts = ListenOpts {
+        accept: accept_phone_ops,
         keep_listening: false,
     };
 

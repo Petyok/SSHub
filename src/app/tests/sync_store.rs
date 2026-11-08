@@ -422,7 +422,7 @@ fn a_share_release_names_the_requester_and_the_host_in_the_review() {
     let view = crate::app::sync_view::pending_view(&app.store, &op, &rows, None);
     // The approver sees who, the requester's full id and how old the request is.
     let want = format!(
-        "release a share of web to laptop (device {}, asked ",
+        "let laptop open the saved password of web (device {}, asked ",
         author.id.public().device_id()
     );
     assert!(view.summary.starts_with(&want), "{}", view.summary);
@@ -458,7 +458,7 @@ fn enter_on_a_compromised_device_shows_the_proof_and_the_next_steps() {
     let fork = app.sync.fork.clone().unwrap();
     assert_eq!(fork.device, "laptop");
     assert!(
-        fork.evidence.iter().any(|l| l.starts_with("Proof:")),
+        fork.evidence.iter().any(|l| l.starts_with("Evidence:")),
         "{:?}",
         fork.evidence
     );

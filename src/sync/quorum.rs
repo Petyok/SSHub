@@ -401,7 +401,7 @@ pub fn paper_registration(phrase: &str) -> Result<OpBody> {
 /// live holders (terminals and phone) the change leaves.
 pub fn paper_rule(store: &LauncherStore, holders_after: usize) -> Result<()> {
     if holders_after == 2 && paper_pub(store)?.is_none() {
-        bail!("a ring with exactly two holders needs the paper registered first: losing either device would lose every credential");
+        bail!("a ring with exactly two full devices needs the paper phrase registered first: losing either device would lose every saved password");
     }
     Ok(())
 }
@@ -744,6 +744,15 @@ impl QuorumUnlocker {
         }
     }
 
+    /// A credential's plaintext payload, gathering what the mode asks for (the phrase, or a second share from
+    /// the share source). The mode switch re-wraps every credential through this.
+    pub fn open_plain(
+        &self,
+        host: &HostUid,
+    ) -> std::result::Result<Zeroizing<Vec<u8>>, UnlockError> {
+        self.open_one(host)
+    }
+
     fn open_one(&self, host: &HostUid) -> std::result::Result<Zeroizing<Vec<u8>>, UnlockError> {
         let fail = |e: anyhow::Error| UnlockError::Failed(format!("{e:#}"));
         let (ciphertext, wraps) = self
@@ -752,11 +761,14 @@ impl QuorumUnlocker {
             .map_err(fail)?
             .ok_or_else(|| UnlockError::Failed("no such credential".into()))?;
         let vault = vault_pub(&self.store).map_err(fail)?.map(|v| v.device_id());
-        let is_vault = super::ceremony::effective_cred_mode(&self.store).map_err(fail)?
-            == CredMode::Vault
-            || vault
-                .as_ref()
-                .is_some_and(|v| wraps.iter().any(|w| w.recipient == *v));
+        // The shape of the credential decides, not the mode the ring is in: between a mode change that
+        // came into force and the re-wrap of a credential, it is still wrapped the old way.
+        let is_vault = match &vault {
+            Some(v) => wraps.iter().any(|w| w.recipient == *v),
+            None => {
+                super::ceremony::effective_cred_mode(&self.store).map_err(fail)? == CredMode::Vault
+            }
+        };
         let dek = if is_vault {
             let ring = self.ring_secret.as_ref().ok_or_else(|| {
                 UnlockError::NeedsShares("this device has no ring secret: import the kit".into())
@@ -765,7 +777,7 @@ impl QuorumUnlocker {
             vault_open_dek_with(&self.store, host, &phrase, ring, self.argon).map_err(fail)?
         } else {
             let mine = own_shares(&self.store, &self.id, host).map_err(fail)?;
-            let mut last = UnlockError::NeedsShares("another holder must release a share".into());
+            let mut last = UnlockError::NeedsShares("another full device must approve".into());
             let mut found = None;
             // An exempt device holds the slot's share too: the phrase opens the credential alone.
             let exempt_phrase = if super::exemption::active_slots(&self.store)
@@ -894,7 +906,7 @@ pub fn release_share_for(
         Grant::Approved => {
             ensure!(
                 !is_unattended(store, &id.public())?,
-                "an unattended device releases shares only under a valid trust certificate"
+                "a device that runs on its own opens passwords only under a valid trust session"
             );
             None
         }
@@ -937,13 +949,14 @@ pub fn trust_grant(
     eph_x25519_pub: &[u8; 32],
     now: i64,
 ) -> Result<(Vec<u8>, Option<OpBody>)> {
-    let phone = phone_device(store)?.context("the ring has no phone: no certificate can exist")?;
+    let phone =
+        phone_device(store)?.context("the ring has no phone: no trust session can exist")?;
     let row = store
         .sync_devices()?
         .into_iter()
         .find(|d| d.id == phone)
         .context("the phone is not a device of this ring")?;
-    let mut last = anyhow!("the requester holds no trust certificate");
+    let mut last = anyhow!("the requester has no trust session");
     for op in ops_of(store, "CertIssue", Some(&phone))?.into_iter().rev() {
         let Ok(cert) = super::cert::DelegationCert::from_op(&op) else {
             continue;
@@ -1066,7 +1079,7 @@ pub fn grant_bodies(
     );
     ensure!(
         !is_unattended(store, &id.public())?,
-        "an unattended device releases shares only under a valid trust certificate"
+        "a device that runs on its own opens passwords only under a valid trust session"
     );
     let state: Option<String> = store.with_conn(|c| {
         Ok(c.query_row(

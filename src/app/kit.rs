@@ -157,9 +157,32 @@ pub fn write_sheet(path: &Path, html: &str) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Delete a sheet so its bytes do not stay in free space: overwrite with zeros, flush, then unlink. (A journaling or
+/// copy-on-write file system or a backup may still hold an older copy: that is why the default directory is memory.)
+pub fn wipe_file(path: &Path) -> std::io::Result<()> {
+    let len = std::fs::metadata(path)?.len() as usize;
+    {
+        let mut f = std::fs::OpenOptions::new().write(true).open(path)?;
+        f.write_all(&vec![0u8; len])?;
+        f.sync_all()?;
+    }
+    std::fs::remove_file(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wiped_sheet_is_gone_and_leaves_nothing_to_remind_about() {
+        let dir = tempfile::tempdir().unwrap();
+        let sheet = dir.path().join("wipe.html");
+        write_sheet(&sheet, "secret words").unwrap();
+        assert!(sheets_left().contains(&sheet));
+        wipe_file(&sheet).unwrap();
+        assert!(!sheet.exists());
+        assert!(!sheets_left().contains(&sheet));
+    }
 
     #[test]
     fn the_sheets_default_into_the_runtime_directory_and_the_quit_reminder_lists_them() {

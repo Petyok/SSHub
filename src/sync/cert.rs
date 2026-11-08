@@ -79,7 +79,7 @@ pub fn cert_allows(
 ) -> Result<()> {
     ensure!(
         cert.op.verify(issuer_ed25519) && device_id_of(issuer_ed25519) == cert.issuer,
-        "the certificate is not signed by the phone"
+        "the trust session is not signed by the phone"
     );
     ensure!(
         cert.id == cert.op.hash(),
@@ -88,38 +88,38 @@ pub fn cert_allows(
     // The phone's own op counts only once its ceremony completed, on every device.
     ensure!(
         super::ceremony::in_force(store, &cert.op)?,
-        "the certificate's ceremony is not complete"
+        "the trust session is not approved yet"
     );
     ensure!(
         cert.device_id == *requester,
-        "the certificate was issued to another device"
+        "the trust session was made for another device"
     );
     ensure!(
         !store.sync_cert_revoked(&cert.id)?,
-        "the certificate was revoked"
+        "the trust session was ended"
     );
-    ensure!(now < cert.expiry, "the certificate has expired");
+    ensure!(now < cert.expiry, "the trust session has expired");
     ensure!(
         cert.expiry - cert.issued_at() <= CERT_TERM_MAX_SECS,
-        "the certificate term exceeds the cap"
+        "the trust session lasts longer than allowed (90 days)"
     );
     ensure!(
         now - phone_head_ts <= PHONE_FRESH_SECS,
-        "the phone has not been seen recently enough to vouch for a trust session"
+        "the phone has not touched any of your computers for 14 days, so this trust session stopped: open the phone app and scan something from a terminal"
     );
     let epoch = store.sync_epoch(&cert.issuer)?;
     ensure!(
         (cert.epoch_range.0..=cert.epoch_range.1).contains(&epoch),
-        "the phone's epoch is outside the certificate's range"
+        "the phone's sharing round is outside the trust session's range"
     );
     match &cert.scope {
         CertScope::Hosts(list) => ensure!(
             list.contains(host),
-            "the host is outside the certificate's scope"
+            "the host is not covered by the trust session"
         ),
         CertScope::Group(g) => ensure!(
             host_in_group(store, host, g)?,
-            "the host is outside the certificate's group"
+            "the host is not in the trust session's group"
         ),
     }
     // Hosts already opened under this certificate are free; a new one counts against the
@@ -221,7 +221,10 @@ pub fn cert_extend_request(
 /// ring size (three holders, otherwise nobody enforces it).
 pub fn validate_cert_issue(store: &LauncherStore, op: &Op, phone: &DeviceId) -> Result<()> {
     let cert = DelegationCert::from_op(op)?;
-    ensure!(cert.issuer == *phone, "only the phone issues certificates");
+    ensure!(
+        cert.issuer == *phone,
+        "only the phone can start a trust session"
+    );
     ensure!(
         cert.expiry > op.timestamp && cert.expiry - op.timestamp <= CERT_TERM_MAX_SECS,
         "the term must be positive and at most 90 days"
@@ -251,13 +254,13 @@ pub fn validate_cert_issue(store: &LauncherStore, op: &Op, phone: &DeviceId) -> 
         .count();
     ensure!(
         holders >= 3,
-        "trust sessions need at least three holders: with fewer nobody enforces the certificate"
+        "trust sessions need at least three full devices: with fewer nobody enforces the trust session"
     );
     ensure!(
         devices
             .iter()
             .any(|d| d.id == cert.device_id && d.role == DeviceRole::Holder),
-        "the certificate names a device that is not a holder"
+        "the trust session names a device that is not a full device"
     );
     Ok(())
 }

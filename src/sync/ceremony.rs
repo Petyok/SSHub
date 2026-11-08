@@ -892,7 +892,7 @@ pub fn resolve(store: &LauncherStore, op_hash: &[u8; 32], approve: bool, now: i6
             .context("no such pending op")?;
         if is_gated(store, &op)? {
             let st = red_status(store, &op, now)?;
-            ensure!(st.complete, "this is a Red change: it takes effect when its ceremony is complete (missing {:?})", st.missing);
+            ensure!(st.complete, "this is a big change: it takes effect when all three approvals are in (missing {:?})", st.missing);
         }
     }
     store.sync_resolve_pending(op_hash, approve)

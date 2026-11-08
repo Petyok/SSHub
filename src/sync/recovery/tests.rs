@@ -1246,7 +1246,10 @@ mod over_the_log {
             now,
         )
         .unwrap_err();
-        assert!(e.to_string().contains("third factor"), "{e}");
+        assert!(
+            e.to_string().contains("paper phrase or the emailed code"),
+            "{e}"
+        );
         assert_eq!(
             crate::sync::quorum::ops_of(&w.d[A].store, "PhoneReenrollCancel", None)
                 .unwrap()

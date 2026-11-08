@@ -50,14 +50,14 @@ impl BleLink {
         })
     }
 
-    /// Prints the name to pick in the phone app's (or page's) device list.
+    /// Prints the name to pick in the phone app's device list.
     pub fn announce(&self, out: &mut impl Write) {
         let name = media::ble_link::local_name(&self.tag);
         emit(
             out,
             self.json,
             "bluetooth",
-            format!("pick {name} in the phone app's (or page's) device list"),
+            format!("pick {name} in the phone app's device list"),
             json!({"name": name, "tag": self.tag}),
         );
     }
@@ -182,7 +182,7 @@ pub fn ops_text(json: bool, wait: u64, out: &mut impl Write) -> Result<String> {
         }
         std::thread::sleep(POLL);
     }
-    bail!("no ops from the phone within {wait} s")
+    bail!("no changes from the phone within {wait} s")
 }
 
 /// `sync-notice --ble` and `sync-cert-request --ble`: hand the frame to the phone page and wait

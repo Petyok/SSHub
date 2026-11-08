@@ -121,7 +121,7 @@ fn every_verb_parses_its_synopsis() {
 #[test]
 fn bad_arguments_are_named() {
     assert!(bad("sync-revoke", &[]).contains("one device"));
-    assert!(bad("sync-role", &["a", "boss"]).contains("holder or mirror"));
+    assert!(bad("sync-role", &["a", "boss"]).contains("holder = full device"));
     assert!(bad("sync-factor", &["abcdef"]).contains("exactly one"));
     assert!(bad("sync-factor", &["abcdef", "--paper", "--email-code"]).contains("exactly one"));
     assert!(bad("sync-recovery", &["cancel", "abcdef"]).contains("--factor"));
@@ -148,7 +148,7 @@ fn a_role_change_is_proposed_and_a_second_holder_votes() {
     )
     .unwrap();
     assert!(
-        rep.lines.iter().any(|l| l.starts_with("ceremony:")),
+        rep.lines.iter().any(|l| l.starts_with("approvals:")),
         "{rep:?}"
     );
     let op_hex = rep.json["op"].as_str().unwrap().to_string();
@@ -188,7 +188,7 @@ fn the_export_waits_for_its_ceremony_and_writes_nothing_without_it() {
         Ok(Some("pw".into()))
     })
     .unwrap_err();
-    assert!(format!("{err:#}").contains("ceremony"), "{err:#}");
+    assert!(format!("{err:#}").contains("not approved yet"), "{err:#}");
     assert!(!out.exists());
 }
 
@@ -289,7 +289,7 @@ fn an_exemption_that_is_not_set_cannot_be_switched_off() {
     assert!(exemption_off(&r[0].store, &r[0].id, &d[..10], 1_000)
         .unwrap_err()
         .to_string()
-        .contains("no exemption"));
+        .contains("no master phrase exemption"));
 }
 
 #[test]
