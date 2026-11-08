@@ -1189,3 +1189,149 @@ fn revoking_a_full_device_says_at_once_when_the_ring_has_too_few_computers() {
             .is_empty()
     );
 }
+
+/// U13-1: the Sync tab header says whether a stolen computer can be cut off, from the real device table.
+#[test]
+fn the_sync_view_says_how_many_more_computers_are_needed_to_cut_one_off() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    // Two computers and the phone: one more computer is needed.
+    assert_eq!(r.app.sync.cut_off_missing, Some(1));
+    r.app.active_tab = 6;
+    let tab = crate::tui::screens::sync::tests_screen(&r.app, 120, 30);
+    assert!(tab.contains("no, add 1 more computer"), "{tab}");
+}
+
+/// U13-9: the status bar names the most urgent fact on every tab, from the store.
+#[test]
+fn the_status_bar_segment_follows_what_waits_and_what_is_about_to_expire() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    r.app.sync.health = crate::sync::health::Health {
+        waiting: 2,
+        ..Default::default()
+    };
+    r.app.sync.pending = 2;
+    let (text, _) = r.app.sync_badge().expect("a ring shows the badge");
+    assert!(text.contains("sync: 2 waiting"), "{text}");
+    r.app.sync.health.red_expires_in = Some(20 * 3_600);
+    let (text, _) = r.app.sync_badge().unwrap();
+    assert!(text.contains("Red change expires in 20 h"), "{text}");
+    // The badge is drawn by the tab bar, so it shows on every tab.
+    r.app.active_tab = 0;
+    let bar = crate::tui::screens::sync::tests_screen(&r.app, 160, 30);
+    assert!(bar.contains("Red change expires in 20 h"), "{bar}");
+}
+
+/// U13-20: the Manage menu is grouped, and an entry that does not apply says why instead of vanishing.
+#[test]
+fn the_manage_menu_has_groups_and_greys_what_does_not_apply() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    r.app.open_sync_admin();
+    assert_eq!(r.app.mode, AppMode::SyncMenu);
+    let titles = |app: &App| match &app.sync_ui {
+        Some(crate::app::sync_ui::SyncUi::Menu { items, .. }) => {
+            items.iter().map(|(t, _)| t.clone()).collect::<Vec<_>>()
+        }
+        _ => panic!("no menu"),
+    };
+    let top = titles(&r.app).join("|");
+    for group in ["Devices:", "Phone:", "Passwords:", "Recovery:", "Advanced:"] {
+        assert!(top.contains(group), "{group} in {top}");
+    }
+    // A Quorum ring has no kit: the entry is there, greyed, with its reason.
+    crate::app::sync_admin::credentials_group(&mut r.app);
+    let creds = titles(&r.app);
+    assert!(
+        creds
+            .iter()
+            .any(|t| t.starts_with("Import the Vault kit") && t.contains("(not now: only a Vault ring uses the kit)")),
+        "{creds:?}"
+    );
+    // Choosing it only says why.
+    let at = creds.iter().position(|t| t.contains("Import the Vault kit")).unwrap();
+    for _ in 0..at {
+        r.app.handle_key(key(KeyCode::Down)).unwrap();
+    }
+    enter(&mut r.app);
+    assert!(r
+        .app
+        .host_notice
+        .as_deref()
+        .is_some_and(|n| n.contains("only a Vault ring uses the kit")));
+}
+
+/// U13-25: the paper phrase is one wizard: the words, then (Enter) the type-back check opens by itself.
+#[test]
+fn the_paper_wizard_goes_from_the_words_to_the_type_back_check() {
+    let mut r = ring(None);
+    crate::app::sync_flows::paper_wizard(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncInfo);
+    assert!(r.app.sync_paper.is_some());
+    enter(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncPrompt, "the type-back check follows");
+    // Esc at the words ends the wizard instead.
+    crate::app::sync_flows::paper_wizard(&mut r.app);
+    r.app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(r.app.mode, AppMode::Normal);
+}
+
+/// U13-16: Enter on a device shows details with its id as the QR the phone app scans.
+#[test]
+fn enter_on_a_device_shows_details_and_its_id_as_a_qr() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    r.app.active_tab = 6;
+    let i = r.app.sync.devices.iter().position(|d| !d.this && !d.phone).unwrap();
+    r.app.sync.selected = i;
+    let id = r.app.sync.devices[i].id.clone();
+    enter(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncInfo);
+    match &r.app.sync_ui {
+        Some(crate::app::sync_ui::SyncUi::Info { frames, lines, .. }) => {
+            assert_eq!(frames, &vec![format!("sshub:dev:1:{}", id.to_lowercase()).into_bytes()]);
+            assert!(lines.iter().any(|l| l.contains(&id)));
+        }
+        _ => panic!("details are not open"),
+    }
+}
+
+/// U13-14: the camera (or Bluetooth) reads the phone's answer to a trust request as if it were pasted.
+#[test]
+fn the_phones_answer_to_a_trust_request_is_taken_from_the_camera() {
+    use crate::sync::media::{listen_with, ListenOpts, MediaEvent, MediaKind};
+    use crate::sync::oplog::{CertScope, OpBody};
+    use crate::sync::wire::PhoneOpsWire;
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    let (_, huid) = group_with_host(&r);
+    ingest_from(&r.d[2], &r.d[0]);
+    let issue = append(
+        &r.d[0],
+        OpBody::CertIssue {
+            device_id: r.d[1].did.clone(),
+            scope: CertScope::Hosts(vec![huid]),
+            expiry: crate::store::now_ts() + 30 * 86_400,
+            max_new_hosts_per_day: 5,
+            epoch_lo: 0,
+            epoch_hi: 9,
+        },
+    );
+    let answer = PhoneOpsWire {
+        sender: None,
+        ops: vec![(issue.canonical_bytes(), issue.signature)],
+    }
+    .encode();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = listen_with(&[], tx.clone(), ListenOpts::PHONE_OPS);
+    r.app.answer_listener = Some((handle, rx));
+    r.app.sync_prompt("Trust session", "Phone's answer", false, |_, _| {});
+    tx.send(MediaEvent::Reply(MediaKind::Camera, answer)).unwrap();
+    pump(&mut r.app, "the answer to be taken in", |a| {
+        a.mode == AppMode::SyncInfo
+            && matches!(&a.sync_ui, Some(crate::app::sync_ui::SyncUi::Info { lines, .. })
+                if lines.iter().any(|l| l.contains("taken from the phone")))
+    });
+    assert!(r.app.answer_listener.is_none(), "the listener ends with the answer");
+}

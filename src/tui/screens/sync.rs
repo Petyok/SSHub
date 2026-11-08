@@ -934,6 +934,12 @@ pub fn render_onboarding(frame: &mut Frame, app: &App) {
     modal(frame, app, "Set up sync", 76, body, hint);
 }
 
+/// The whole screen as text, for tests of other modules.
+#[cfg(test)]
+pub(crate) fn tests_screen(app: &App, w: u16, h: u16) -> String {
+    tests::screen(app, w, h)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::app::sync::*;
