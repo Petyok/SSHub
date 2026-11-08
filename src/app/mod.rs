@@ -314,6 +314,8 @@ pub struct App {
     pub sync: sync::SyncView,
     /// The sync worker, once the protocol package attaches one.
     pub sync_worker: Option<crate::sync::client::SyncHandle>,
+    /// This device's identity, loaded once to ask which recoveries to alert about (`recovery::open_for_alert`).
+    pub(crate) sync_identity: Option<std::sync::Arc<crate::sync::crypto::DeviceIdentity>>,
     /// The action waiting for a credential unlock, if any.
     pub(crate) unlock_resume: Option<sync::UnlockResume>,
     /// The open generic Sync modal (prompt, menu or panel).
@@ -601,7 +603,11 @@ pub struct App {
 pub(crate) fn is_overlay_mode(mode: AppMode) -> bool {
     !matches!(
         mode,
-        AppMode::Normal | AppMode::Connecting | AppMode::Session | AppMode::SyncForkAlert
+        AppMode::Normal
+            | AppMode::Connecting
+            | AppMode::Session
+            | AppMode::SyncForkAlert
+            | AppMode::SyncRecoveryAlert
     )
 }
 
@@ -1128,6 +1134,7 @@ impl App {
             answer_listener: None,
             sync_paper: None,
             sync_worker: None,
+            sync_identity: None,
             ghost_dismissed_for: None,
             ghost_host_cache: std::cell::RefCell::new(None),
             snippet_notice: None,

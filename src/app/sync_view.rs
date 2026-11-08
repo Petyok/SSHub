@@ -742,6 +742,50 @@ impl App {
             self.sync.last_error = Some(format!("{e:#}"));
         }
         self.sync.finish_row = super::sync_flows::finish_row(self);
+        self.update_recovery_alert();
+    }
+
+    /// One alert for the recoveries open on this terminal (`recovery::open_for_alert`), raised full-screen unless
+    /// every one of them was dismissed. It never writes an op.
+    fn update_recovery_alert(&mut self) {
+        let ops = self.recovery_alert_ops();
+        let now = crate::store::now_ts();
+        let view = crate::cli::sync_admin::alert_view(&self.store, &ops, now).ok().flatten();
+        let Some(view) = view else {
+            self.sync.alert = None;
+            if self.mode == AppMode::SyncRecoveryAlert {
+                self.mode = self.sync.alert_return_take();
+            }
+            return;
+        };
+        let fresh = view.hashes.iter().any(|h| !self.sync.alert_dismissed.contains(h));
+        self.sync.alert = Some(super::sync::RecoveryAlert {
+            lines: crate::cli::sync_admin::alert_lines(&view, now),
+            hashes: view.hashes,
+        });
+        if fresh && self.mode != AppMode::SyncRecoveryAlert {
+            self.sync.alert_return_set(self.mode);
+            self.mode = AppMode::SyncRecoveryAlert;
+        }
+    }
+
+    /// The recoveries to alert about; empty until this device's identity is known and loadable.
+    fn recovery_alert_ops(&mut self) -> Vec<crate::sync::oplog::Op> {
+        if self.sync.this_device.is_none() {
+            return Vec::new();
+        }
+        if self.sync_identity.is_none() {
+            let Some(paths) = self.profile.as_ref() else {
+                return Vec::new();
+            };
+            let secrets = crate::credentials::open_for_profile(paths);
+            match crate::sync::identity_store::load_or_init_identity(paths, secrets.as_ref()) {
+                Ok(id) => self.sync_identity = Some(std::sync::Arc::new(id)),
+                Err(_) => return Vec::new(),
+            }
+        }
+        let me = self.sync_identity.as_ref().expect("loaded above");
+        crate::sync::recovery::open_for_alert(&self.store, me, crate::store::now_ts()).unwrap_or_default()
     }
 
     fn try_refresh_sync_view(&mut self) -> Result<()> {
@@ -783,6 +827,8 @@ impl App {
         let now = crate::store::now_ts();
         sync.health = crate::sync::health::health(&store, this_device.as_deref(), now)?;
         sync.cut_off_missing = crate::sync::revocation::terminals_missing_to_cut_off(&store)?;
+        sync.exposure = crate::cli::sync_admin::exposure_lines(&store)?;
+        sync.exposed_hosts = crate::cli::sync_admin::exposed_host_names(&store)?;
         sync.no_paper = sync.configured && crate::sync::quorum::paper_pub(&store)?.is_none();
         if sync.ring_secret_missing.is_none() {
             // Only a Vault ring with a master key set up needs the ring secret on this machine.

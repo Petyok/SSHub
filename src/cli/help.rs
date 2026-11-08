@@ -410,8 +410,16 @@ USAGE:
     sshub [--profile NAME] sync-status [--format plain|json]
 
 Lists your devices (name, short id, kind, state, last in sync, last change number, host if
-known), the number of pending changes and the credential mode. Never creates a
-device key. An empty profile prints `No sync ring on this profile yet.`"#
+known), the number of pending changes and the credential mode, then the saved passwords that
+are exposed or not yet shared with a current full device. Never creates a device key on a
+profile without a ring, which prints `No sync ring on this profile yet.`
+
+EXIT CODES:
+    0  listed
+    1  error
+    2  usage error
+    3  a recovery of the phone is open and was not started here (it is listed; cancel it from the
+       phone if the phone is not lost)"#
     );
 }
 

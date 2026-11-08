@@ -395,3 +395,28 @@ fn a_repeated_export_continues_the_open_proposal() {
         .len();
     assert_eq!(n, 1, "the second command must not start a second ceremony");
 }
+
+#[test]
+fn the_alert_is_one_per_requester_with_a_count() {
+    let r = ring(3);
+    let mut ops = Vec::new();
+    for (i, n) in [(1usize, 1u8), (1, 2), (2, 3)] {
+        ops.push(
+            r[i].store
+                .sync_append_local(
+                    &r[i].id,
+                    OpBody::HostUpsert {
+                        host_uid: [n; 16],
+                        fields: Default::default(),
+                    },
+                )
+                .unwrap(),
+        );
+    }
+    let view = alert_view(&r[0].store, &ops, 1_000).unwrap().unwrap();
+    assert_eq!(view.requesters, vec![("dev1".to_string(), 2), ("dev2".to_string(), 1)]);
+    assert_eq!(view.total, 3);
+    let lines = alert_lines(&view, 1_000).join(" ");
+    assert!(lines.contains("3 open") && lines.contains("dev1 (2)"), "{lines}");
+    assert!(alert_view(&r[0].store, &[], 1_000).unwrap().is_none());
+}

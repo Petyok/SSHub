@@ -78,6 +78,7 @@ pub(super) fn ring(ssh_program: Option<String>) -> Ring {
 
     let me = Arc::new(load_or_init_identity(&paths, file_secrets(&paths).as_ref()).unwrap());
     crate::sync::ceremony::test_force(&app.store, true);
+    app.sync_identity = Some(me.clone());
     let mine = Dev {
         store: app.store.clone(),
         did: me.public().device_id(),
@@ -1230,11 +1231,14 @@ fn revoking_a_full_device_says_at_once_when_the_ring_has_too_few_computers() {
         Some(crate::app::sync_ui::SyncUi::Info { lines, .. }) => lines.join(" "),
         _ => panic!("the info panel is not open"),
     };
-    assert!(
-        text.contains("3 computers or servers you control"),
-        "{text}"
-    );
-    assert!(text.contains("You have 2"), "{text}");
+    // The sentence is the core's own (no paper phrase is registered yet), not a copy of it here.
+    let target = r.app.sync.devices.iter().find(|d| !d.this && !d.phone).unwrap().id.clone();
+    let crate::sync::revocation::RevokeMode::Refused(why) =
+        crate::sync::revocation::revoke_mode(&r.app.store, &target).unwrap()
+    else {
+        panic!("a ring of two computers without paper refuses");
+    };
+    assert!(text.contains(&why), "{text}");
     assert!(
         crate::sync::quorum::ops_of(&r.app.store, "DeviceRevoke", None)
             .unwrap()
@@ -1247,11 +1251,34 @@ fn revoking_a_full_device_says_at_once_when_the_ring_has_too_few_computers() {
 fn the_sync_view_says_how_many_more_computers_are_needed_to_cut_one_off() {
     let mut r = ring(None);
     mark_this_device(&mut r);
-    // Two computers and the phone: one more computer is needed.
-    assert_eq!(r.app.sync.cut_off_missing, Some(1));
+    // Two computers and the phone: enough since the degraded removal (the phone and the paper approve it).
+    assert_eq!(r.app.sync.cut_off_missing, None);
     r.app.active_tab = 6;
     let tab = crate::tui::screens::sync::tests_screen(&r.app, 120, 30);
-    assert!(tab.contains("no, add 1 more computer"), "{tab}");
+    assert!(tab.contains("Can cut off a stolen device: yes"), "{tab}");
+}
+
+/// Design 3.2: with the paper registered a two-computer ring removes one in degraded mode; the dialog asks stolen or
+/// destroyed first and says the mode before the name is asked.
+#[test]
+fn removing_a_computer_asks_stolen_or_wiped_and_prints_the_mode_before_the_name() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    crate::sync::quorum::paper_setup(&r.app.store, &crate::sync::crypto::bip39_encode(&[9u8; 32])).unwrap();
+    crate::app::sync_flows::revoke(&mut r.app);
+    let at = r.app.sync.devices.iter().filter(|d| !d.this).position(|d| !d.phone).unwrap();
+    for _ in 0..at {
+        r.app.handle_key(key(KeyCode::Down)).unwrap();
+    }
+    enter(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncMenu, "stolen or wiped first");
+    enter(&mut r.app); // stolen or lost
+    assert_eq!(r.app.mode, AppMode::SyncPrompt);
+    let Some(crate::app::sync_ui::SyncUi::Prompt { label, .. }) = &r.app.sync_ui else {
+        panic!("no prompt");
+    };
+    assert!(label.contains("Only one other computer remains"), "{label}");
+    assert!(crate::sync::quorum::ops_of(&r.app.store, "DeviceRevoke", None).unwrap().is_empty());
 }
 
 /// Design 3.1: a ring without a registered paper phrase shows a standing line, and one key opens the wizard.
@@ -1450,4 +1477,40 @@ fn the_phones_answer_to_a_trust_request_is_taken_from_the_camera() {
         r.app.answer_listener.is_none(),
         "the listener ends with the answer"
     );
+}
+
+/// Design 7b: a recovery another device started raises ONE full-screen alert; Esc only dismisses it (nothing is
+/// written), and it comes back for a new recovery.
+#[test]
+fn a_recovery_started_elsewhere_raises_one_alert_that_esc_only_dismisses() {
+    use crate::sync::oplog::ThirdFactor;
+    use crate::sync::quorum::tests::append;
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    assert!(r.app.sync.alert.is_none());
+    let now = crate::store::now_ts();
+    for _ in 0..2 {
+        let body = crate::sync::recovery::start_body(&r.d[2].store, &r.d[2].id, now, None, ThirdFactor::Paper).unwrap();
+        append(&r.d[2], body);
+    }
+    ingest_from(&r.d[2], &r.d[1]);
+    let before = r.app.store.sync_pending().unwrap().len() + crate::sync::quorum::ops_of(&r.app.store, "PhoneReenroll", None).unwrap().len();
+    r.app.refresh_sync_view();
+    assert_eq!(r.app.mode, AppMode::SyncRecoveryAlert);
+    let alert = r.app.sync.alert.clone().expect("one alert");
+    let text = alert.lines.join(" ");
+    assert!(text.contains("2 open"), "{text}");
+    assert_eq!(alert.hashes.len(), 2);
+    // Any key but Esc/Enter changes nothing; Esc dismisses and writes no op.
+    r.app.handle_key(key_char('a')).unwrap();
+    assert_eq!(r.app.mode, AppMode::SyncRecoveryAlert);
+    r.app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(r.app.mode, AppMode::Normal);
+    let after = r.app.store.sync_pending().unwrap().len() + crate::sync::quorum::ops_of(&r.app.store, "PhoneReenroll", None).unwrap().len();
+    assert_eq!(before, after);
+    r.app.refresh_sync_view();
+    assert_eq!(r.app.mode, AppMode::Normal, "dismissed ones do not raise it again");
+    assert!(r.app.sync.alert.is_some(), "the badge and the Sync tab still show it");
+    let (badge, _) = r.app.sync_badge().unwrap();
+    assert!(badge.contains("recovery open"), "{badge}");
 }

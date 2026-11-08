@@ -602,6 +602,70 @@ pub(crate) fn find_op(store: &LauncherStore, prefix: &str) -> Result<Op> {
 
 // -------------------------------------------------------------------- verbs
 
+/// A host's name for a credential list, from the host's uid.
+fn host_label(store: &LauncherStore, uid: &crate::sync::oplog::HostUid) -> String {
+    store
+        .host_id_by_uid(uid)
+        .ok()
+        .flatten()
+        .and_then(|id| store.get_host(id).ok().flatten())
+        .map_or_else(|| "(unknown host)".into(), |h| h.name)
+}
+
+/// Names of the hosts on either exposure list.
+pub(crate) fn exposed_host_names(store: &LauncherStore) -> Result<Vec<String>> {
+    let mut names: Vec<String> = crate::sync::quorum::exposed_credentials(store)?
+        .iter()
+        .map(|e| host_label(store, &e.host_uid))
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+/// The exposure of saved passwords as plain lines (design 4.3): credentials that share a key with a removed device
+/// (change them) and credentials a current full device does not hold a piece of yet (healed on use).
+pub(crate) fn exposure_lines(store: &LauncherStore) -> Result<Vec<String>> {
+    use crate::sync::quorum::{exposed_credentials, ExposureKind};
+    let mut removed = Vec::new();
+    let mut not_held: Vec<String> = Vec::new();
+    let mut who = std::collections::BTreeSet::new();
+    let names: std::collections::HashMap<_, _> = crate::sync::ceremony::effective_devices(store, None)?
+        .into_iter()
+        .map(|d| (d.id, d.name))
+        .collect();
+    for e in exposed_credentials(store)? {
+        let host = host_label(store, &e.host_uid);
+        match e.kind {
+            ExposureKind::Removed => removed.push(host),
+            ExposureKind::NotHeldBy => {
+                not_held.push(host);
+                who.extend(e.devices.iter().map(|d| names.get(d).cloned().unwrap_or_else(|| short_id(d))));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    if !removed.is_empty() {
+        out.push(format!(
+            "{} credential(s) share a key with a removed device (change them): {}",
+            removed.len(),
+            removed.join(", ")
+        ));
+    }
+    if !not_held.is_empty() {
+        out.push(format!(
+            "{} credential(s) not shared with {} (healing on use): {}",
+            not_held.len(),
+            who.into_iter().collect::<Vec<_>>().join(", "),
+            not_held.join(", ")
+        ));
+    }
+    Ok(out)
+}
+
+/// What to do about a removed device's passwords when it was stolen or lost (the answer the TUI asks first).
+pub(crate) const STOLEN_NOTE: &str = "It was stolen or lost: change the passwords of the hosts listed above on the servers, and remove its key from their authorized_keys.";
+
 /// A registered paper phrase comes first (design 3.1): before a switch to Quorum, and before a change that leaves
 /// three or more full devices. Without it a stolen device cannot be cut off and a lost phone cannot be recovered.
 pub(crate) fn paper_gate(
@@ -703,6 +767,9 @@ pub(crate) fn revoke(
         r.lines.push(format!("revocation step: {s}"));
     }
     r.json["steps"] = json!(steps);
+    let exposure = exposure_lines(store)?;
+    r.lines.extend(exposure.iter().cloned());
+    r.json["exposure"] = json!(exposure);
     Ok(r)
 }
 
@@ -887,6 +954,75 @@ fn verdict_hint(v: &crate::sync::recovery::ReenrollVerdict) -> &'static str {
         V::CancelledByPhone | V::CancelledByFactor => "cancelled",
         V::Completed => "completed: the old phone is revoked and the new one enrolled",
     }
+}
+
+/// The recoveries a person at this terminal is told about, as ONE alert (design 7b): deduped by requester with a
+/// count and the earliest end of the time lock. Built from `recovery::open_for_alert`; it never writes an op and has
+/// no acknowledge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AlertView {
+    /// `(requester name, open recoveries of it)`, in the order the requesters first appear.
+    pub requesters: Vec<(String, usize)>,
+    pub total: usize,
+    /// The earliest time a still-locked recovery can complete.
+    pub earliest_lock: Option<i64>,
+    /// Hashes of the recoveries, so a screen can remember which ones were dismissed.
+    pub hashes: Vec<[u8; 32]>,
+}
+
+pub(crate) fn alert_view(store: &LauncherStore, ops: &[Op], now: i64) -> Result<Option<AlertView>> {
+    if ops.is_empty() {
+        return Ok(None);
+    }
+    let names: std::collections::HashMap<_, _> = crate::sync::ceremony::effective_devices(store, None)?
+        .into_iter()
+        .map(|d| (d.id, d.name))
+        .collect();
+    let mut requesters: Vec<(DeviceId, String, usize)> = Vec::new();
+    let mut earliest = None;
+    for op in ops {
+        match requesters.iter_mut().find(|r| r.0 == op.device_id) {
+            Some(r) => r.2 += 1,
+            None => requesters.push((
+                op.device_id.clone(),
+                names.get(&op.device_id).cloned().unwrap_or_else(|| short_id(&op.device_id)),
+                1,
+            )),
+        }
+        if let Ok(crate::sync::recovery::ReenrollVerdict::NeedsMoreTime { ready_at }) =
+            crate::sync::recovery::validate_phone_reenroll(store, op, now)
+        {
+            earliest = Some(earliest.map_or(ready_at, |e: i64| e.min(ready_at)));
+        }
+    }
+    Ok(Some(AlertView {
+        requesters: requesters.into_iter().map(|(_, n, c)| (n, c)).collect(),
+        total: ops.len(),
+        earliest_lock: earliest,
+        hashes: ops.iter().map(|o| o.hash()).collect(),
+    }))
+}
+
+/// The alert's plain lines (CLI `sync-status`, the full-screen notice).
+pub(crate) fn alert_lines(a: &AlertView, now: i64) -> Vec<String> {
+    let who = a
+        .requesters
+        .iter()
+        .map(|(n, c)| if *c > 1 { format!("{n} ({c})") } else { n.clone() })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut out = vec![format!(
+        "A recovery of the phone is under way: {} open, started from {who}.",
+        a.total
+    )];
+    if let Some(t) = a.earliest_lock {
+        out.push(format!(
+            "The earliest time lock ends in {}.",
+            crate::sync::health::human_left((t - now).max(0))
+        ));
+    }
+    out.push("If your phone is not lost, cancel it from the phone now: nothing else is needed.".into());
+    out
 }
 
 /// One line per recovery state for `sync-recovery status`, `sync-status` and the TUI.
@@ -1407,7 +1543,7 @@ pub(crate) fn import_kit(
 
 pub fn print_help(cmd: &str) {
     let (synopsis, text) = match cmd {
-        "sync-revoke" => ("sync-revoke <device> [--format plain|json]", "Remove a device: one approval for a view-only copy, a big change for a full device. Removing a full device needs three computers or servers you control, the one you remove included, so that two others can approve with the phone. Prints the ceremony status and runs this device's revocation steps (rotate wrap keys, reshare, retire)."),
+        "sync-revoke" => ("sync-revoke <device> [--format plain|json]", "Remove a device: one approval for a view-only copy, a big change for a full device. Removing a full device needs two computers or servers you control, the one you remove included, so that one other can approve with the phone and the paper phrase (the passwords the removed device held a piece of then stay on an exposure list until you change them). Prints the ceremony status and runs this device's revocation steps (rotate wrap keys, reshare, retire)."),
         "sync-role" => ("sync-role <device> holder|mirror [--format plain|json]", "Promote a mirror to holder or demote a holder (Red)."),
         "sync-approve" => ("sync-approve <op-id> [--format plain|json]", "Approve a pending Red op as this attended device (the second-device vote)."),
         "sync-factor" => ("sync-factor <op-id> (--paper | --email-code) [--format plain|json]", "Add the third factor to a Red op. The 24 paper words or the emailed code are read without echo."),

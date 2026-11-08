@@ -95,7 +95,7 @@ impl App {
     /// Handle a mouse event — clicks, scroll wheel, etc.
     pub fn handle_mouse(&mut self, mouse: MouseEvent) -> Result<()> {
         // The fork alert is the whole frame; nothing under it is clickable.
-        if self.mode == AppMode::SyncForkAlert {
+        if matches!(self.mode, AppMode::SyncForkAlert | AppMode::SyncRecoveryAlert) {
             return Ok(());
         }
         if matches!(self.mode, AppMode::Connecting | AppMode::Session) {

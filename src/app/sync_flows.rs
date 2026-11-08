@@ -82,19 +82,52 @@ fn confirm_revoke(app: &mut App, id: String, name: String) {
         .iter()
         .find(|d| d.id == id)
         .is_some_and(|d| d.role == super::sync::DeviceRoleView::Holder);
+    // The mode is printed before the name is asked (design 3.2).
+    let mut mode_line = None;
     if holder {
-        if let Err(why) = crate::sync::revocation::check_revocable(&app.store, &id, now()) {
-            return app.sync_info(
-                "This device cannot be removed yet",
-                vec![format!("{why:#}")],
-            );
+        match crate::sync::revocation::revoke_mode(&app.store, &id) {
+            Ok(crate::sync::revocation::RevokeMode::Refused(why)) => {
+                return app.sync_info("This device cannot be removed yet", vec![why]);
+            }
+            Ok(crate::sync::revocation::RevokeMode::Degraded) => mode_line = Some(DEGRADED_REVOKE),
+            Ok(crate::sync::revocation::RevokeMode::Full) => mode_line = Some(FULL_REVOKE),
+            Err(e) => return app.sync_info("This device cannot be removed yet", vec![format!("{e:#}")]),
         }
     }
+    app.sync_menu(
+        format!("Remove {name}"),
+        vec![
+            (
+                "It was stolen or lost: its passwords must be changed too".to_string(),
+                Box::new({
+                    let (id, name) = (id.clone(), name.clone());
+                    move |app: &mut App| revoke_name_prompt(app, id, name, mode_line, true)
+                }) as MenuFn,
+            ),
+            (
+                "It was destroyed or wiped: nothing of it is left".to_string(),
+                Box::new(move |app: &mut App| revoke_name_prompt(app, id, name, mode_line, false)),
+            ),
+        ],
+    );
+}
+
+const FULL_REVOKE: &str = "The other computers re-share your passwords without it.";
+const DEGRADED_REVOKE: &str = "Only one other computer remains: the phone and the paper phrase approve this, and the passwords this device held a piece of stay exposed until you change them.";
+
+fn revoke_name_prompt(
+    app: &mut App,
+    id: String,
+    name: String,
+    mode_line: Option<&'static str>,
+    stolen: bool,
+) {
     let expected = name.clone();
     app.sync_prompt(
         "Revoke a device",
         format!(
-            "{name} will be cut off and the keys rotated. A full device needs the three approvals. Type its name to confirm"
+            "{name} will be cut off and the keys rotated. {} A full device needs the phone and the paper phrase. Type its name to confirm",
+            mode_line.unwrap_or("")
         ),
         false,
         move |app, typed| {
@@ -115,7 +148,11 @@ fn confirm_revoke(app: &mut App, id: String, name: String) {
                     &id,
                     now(),
                 )?;
-                Ok(r.lines.join("\n"))
+                let mut lines = r.lines;
+                if stolen {
+                    lines.push(admin::STOLEN_NOTE.to_string());
+                }
+                Ok(lines.join("\n"))
             });
         },
     );

@@ -684,13 +684,20 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
                 json!({ "op": hex(&op.hash())[..8], "verdict": v })
             })
             .collect();
+        let alert = recovery_alert(paths, &store, &rows)?;
         let doc = json!({
+            "alert": alert.as_ref().map(|a| json!({
+                "open": a.total,
+                "requesters": a.requesters.iter().map(|(n, c)| json!({ "name": n, "open": c })).collect::<Vec<_>>(),
+                "earliest_lock": a.earliest_lock,
+            })),
+            "exposure": super::sync_admin::exposure_lines(&store)?,
             "recoveries": recoveries,
             "devices": devices, "pending": pending, "credential_mode": mode,
             "companion_fingerprint": crate::sync::companion::COMPANION_FINGERPRINT,
         });
         println!("{}", serde_json::to_string_pretty(&doc)?);
-        return Ok(0);
+        return Ok(if alert.is_some() { 3 } else { 0 });
     }
     if rows.is_empty() && pending == 0 {
         println!("{EMPTY_RING}");
@@ -725,6 +732,15 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     }
     println!("Changes waiting for approval: {pending}");
     println!("Passwords: {mode}");
+    for l in super::sync_admin::exposure_lines(&store)? {
+        println!("{}", plain(&l));
+    }
+    let alert = recovery_alert(paths, &store, &rows)?;
+    if let Some(a) = &alert {
+        for l in super::sync_admin::alert_lines(a, crate::store::now_ts()) {
+            println!("{}", plain(&l));
+        }
+    }
     for op in super::sync_admin::all_recoveries(&store)? {
         for l in super::sync_admin::recovery_lines(&store, &op, crate::store::now_ts()) {
             println!("{}", plain(&l));
@@ -735,7 +751,22 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
         crate::sync::companion::COMPANION_FINGERPRINT,
         crate::sync::companion::COMPARE_HINT
     );
-    Ok(0)
+    // Exit 3 while a recovery of the phone is open and was not started here: a script or a login banner can act on it.
+    Ok(if alert.is_some() { 3 } else { 0 })
+}
+
+/// The one alert for the recoveries open on this terminal, if any (needs the device identity, so only for a ring).
+fn recovery_alert(
+    paths: &ProfilePaths,
+    store: &LauncherStore,
+    rows: &[crate::sync::oplog::DeviceRow],
+) -> Result<Option<super::sync_admin::AlertView>> {
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    let now = crate::store::now_ts();
+    let ops = crate::sync::recovery::open_for_alert(store, &open_identity(paths)?, now)?;
+    super::sync_admin::alert_view(store, &ops, now)
 }
 
 /// Approve the pending `ShareRelease` `hash` as this holder: refused when stale (the requester's

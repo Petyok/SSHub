@@ -111,6 +111,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             color(app, ColorRole::StatusWarning),
         ));
     }
+    for l in &sync.exposure {
+        lines.push(Line::styled(l.clone(), color(app, ColorRole::StatusWarning)));
+    }
     if let Some(error) = &sync.last_error {
         lines.push(Line::styled(
             format!("Last sync failed: {error}"),
@@ -629,6 +632,36 @@ pub fn render_fork_alert(frame: &mut Frame, app: &App) {
         ),
     ];
     body.extend(body_rest);
+    frame.render_widget(
+        Paragraph::new(body).wrap(Wrap { trim: false }),
+        area.inner(Margin::new(3, 2)),
+    );
+}
+
+/// Full-screen notice for recoveries of the phone that were not started here (design 7b): who, how many, when the
+/// earliest lock ends, what to do. Esc only closes it; there is no acknowledge and nothing is written.
+pub fn render_recovery_alert(frame: &mut Frame, app: &App) {
+    let Some(a) = app.sync.alert.as_ref() else {
+        return;
+    };
+    let area = frame.area();
+    let theme = app.theme();
+    let warn = color(app, ColorRole::StatusError);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(warn)
+            .title(Span::styled(" RECOVERY OF THE PHONE ", warn)),
+        area,
+    );
+    let text = theme.style(StyleRole::TextPrimary);
+    let mut body: Vec<Line> = a.lines.iter().map(|l| Line::styled(l.clone(), text)).collect();
+    body.push(Line::raw(""));
+    body.push(Line::styled(
+        "Esc closes this notice. It comes back for a new recovery, and the Sync tab and `sshub sync-status` keep showing it.",
+        theme.style(StyleRole::PopupHint),
+    ));
     frame.render_widget(
         Paragraph::new(body).wrap(Wrap { trim: false }),
         area.inner(Margin::new(3, 2)),
