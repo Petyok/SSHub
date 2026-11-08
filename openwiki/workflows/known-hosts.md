@@ -28,7 +28,7 @@ Embedded ssh sessions run with `-o StrictHostKeyChecking=ask` and `LogLevel=DEBU
 - **Unknown key**: ssh asks through the askpass channel; the [auth modal](session-tools.md#interactive-authentication-modal) shows the prompt. Only `y` accepts (answers `yes`); `n` or Esc refuses, and Enter does nothing.
 - **Changed key**: ssh refuses; `Session::host_key_changed` detects it and the modal shows a warning plus the new fingerprint. Capital `A` removes the stale entry through the same guarded `remove_host` and reconnects; `n`/Esc leaves it alone. The target comes from ssh's own log (`Session::changed_key_target`: the `Host key for <spec> has changed` name and the absolute `Offending … key in <file>:<n>` path) and is used only when the name is one this session connects to (its address, a host argument or `HostKeyAlias`), is a single plain name (no commas or wildcards) and every log line agrees; otherwise no repair is offered.
 
-Other paths keep `accept-new` semantics: `sshub host connect` / `sshub exec` (`prepare_cli_connect_argv`), embedded mosh and tunnels add `StrictHostKeyChecking=accept-new` only when a stored secret is staged, [broadcast](broadcast.md) always adds it, and the [SFTP](sessions-sftp.md#sftp-srcsftp) libssh2 transport appends unknown keys itself and treats a changed key as a hard error.
+Other paths keep `accept-new` semantics: `sshub host connect` / `sshub exec` (`prepare_cli_session_argv` / `prepare_cli_connect_argv`), embedded mosh and tunnels add `StrictHostKeyChecking=accept-new` only when a stored secret is staged, [broadcast](broadcast.md) always adds it, and the [SFTP](sessions-sftp.md#sftp-srcsftp) libssh2 transport appends unknown keys itself and treats a changed key as a hard error.
 
 ```mermaid
 sequenceDiagram

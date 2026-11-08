@@ -1,0 +1,64 @@
+name: Nix
+
+# The maintainer does not use Nix, so this workflow is what keeps flake.nix
+# from rotting: it builds the package and runs the result, the same smoke the
+# release workflow runs on its binaries. It also fills the sshub.cachix.org
+# binary cache that flake.nix points users at, so `nix run` substitutes the
+# build instead of compiling it. Fork PRs get no secrets: they only pull from
+# the cache and skip the push.
+#
+# Every push to a long-lived branch builds, so the cache always holds what
+# users install. A pull request builds only when it touches what the Nix build
+# reads beyond the Rust sources: dependencies, the flake, and the files
+# `postInstall` installs. A Rust-only change builds the same way under Nix as
+# under cargo, and the Test jobs already cover that.
+on:
+  push:
+    branches: [main, master, development]
+  pull_request:
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - flake.nix
+      - flake.lock
+      - man/sshub.1
+      - assets/sshub.svg
+      - assets/sshub.desktop
+      - .github/workflows/nix.yml
+
+jobs:
+  nix:
+    name: Nix build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    # The secret is only tested here, not exposed: the token itself is set on
+    # the push step alone, and `secrets` cannot be read in a step `if`.
+    env:
+      HAS_CACHIX_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN != '' }}
+    steps:
+      # PRs build the branch tip, not GitHub's merge commit, so testers running
+      # `nix run github:Petyok/SSHub/<branch>` substitute what CI pushed (the
+      # Test jobs still test the merge result).
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v17
+        with:
+          name: sshub
+          skipPush: true
+      - name: Build
+        run: nix build -L
+      - name: Smoke
+        run: ./result/bin/sshub --dry-run
+      # Only the package's runtime closure is what users substitute, so push
+      # that, not every crate tarball and the vendor dir the build consumed.
+      # Paths already on cache.nixos.org are skipped by cachix.
+      - name: Push to the binary cache
+        if: env.HAS_CACHIX_TOKEN == 'true'
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: cachix push sshub ./result

@@ -22,6 +22,7 @@ Directory overrides (`SSHUB_CONFIG_DIR`, `SSHUB_DATA_DIR`) put SSHub in compatib
 Parsing is hand-rolled (`src/cli/parse.rs`), output DTOs live in `src/cli/output.rs`. Conventions:
 
 - `--format plain|json` on listing/show commands (plain default); `theme show` takes `toml|json`.
+- `host connect <name> --share-net` (alias `connect`) shares this machine's network with the host for that session (ssh only, see [sessions-sftp.md](sessions-sftp.md)); ssh itself prints the port it allocated.
 - Exit codes: `0` success, `1` operational failure, `2` usage error, `124` when `exec --timeout` kills the run. `host connect` and `exec` propagate the child ssh exit code (ssh's own failures are 255).
 - Destructive commands refuse without `--yes`; `sshub db purge` requires `--yes-i-am-stupid`.
 
