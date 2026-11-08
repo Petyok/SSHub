@@ -591,7 +591,7 @@ fn certificates_are_enforced_by_the_holders() {
     assert!(validate_cert_issue(&small[1].store, &op, &small[0].did)
         .unwrap_err()
         .to_string()
-        .contains("three holders"));
+        .contains("three full devices"));
 }
 
 #[test]
