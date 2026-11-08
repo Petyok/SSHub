@@ -393,7 +393,7 @@ const PROFILE = 'enrolled';
   check('"They differ" sends a signed decline and enrolls nothing', declined.kind === 'confirm' && declined.ok === false, 'ok=false');
   await page.click('#enroll-next');
   await page.waitForSelector('#device-id');
-  check('declined enrollment leaves the ring empty', /Not enrolled/.test(await text(page, '.card')), 'not enrolled');
+  check('declined enrollment leaves the ring empty', /Not connected/.test(await text(page, '.card')), 'not enrolled');
   await context.close();
 }
 
@@ -647,7 +647,7 @@ for (const [name, fragment, why] of [
   await page.click('#recovery');
   await page.click('#scan-notice');
   await page.waitForSelector('#cancel-recovery', { timeout: 60000 });
-  check('the recovery notice is described from its op bytes with the timelock end', /PhoneReenroll/.test(await text(page, '#headline')) && /accepts the new phone after/.test(await text(page, '#timelock')), await text(page, '#timelock'));
+  check('the recovery notice is described from its op bytes with the timelock end', /PhoneReenroll/.test(await text(page, '#headline')) && /accept the new phone after/.test(await text(page, '#timelock')), await text(page, '#timelock'));
   await page.click('#cancel-recovery');
   await page.waitForSelector('#cancel-b64');
   const cancel = await captureDoc(page, '#reverse-qr');
@@ -844,7 +844,7 @@ const opJson = (o) => {
   await seedRing(page, Object.fromEntries(rfx.contributors.map((c) => [c.device_id, { name: `terminal ${c.device_id.slice(0, 4)}`, ed25519_pub: c.ed25519_pub }])));
   await page.click('#reshare');
   const limits = await text(page, '#reshare-limits');
-  check('the reshare screen says that a ring of two terminals and the phone cannot revoke a terminal by resharing', /ring of two terminals plus this phone cannot revoke a terminal by resharing/.test(limits), limits.replace(/\n/g, ' ').slice(0, 110));
+  check('the update screen states the rule: three computers or servers you control to remove a device', /three computers or servers you control/.test(limits), limits.replace(/\n/g, ' ').slice(0, 110));
   await page.click('#reshare-load');
   await page.waitForSelector('#reshare-summary', { timeout: 90000 });
   const sum = await text(page, '#reshare-summary');
