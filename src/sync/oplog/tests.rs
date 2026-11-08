@@ -2991,7 +2991,6 @@ fn every_body_that_carries_a_device_id_refuses_a_malformed_one() {
 
 #[test]
 fn the_phase_b_ops_have_their_tiers_and_shape_rules() {
-    use crate::sync::oplog::tier::OpTier;
     let renew = |expiry| OpBody::CertRenew {
         cert_id: [1; 32],
         expiry,
