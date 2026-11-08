@@ -1785,10 +1785,10 @@ mod tests {
             .iter()
             .position(|r| matches!(r, NavRow::Host(_)))
             .unwrap();
-        app.handle_key(key('t')).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT)).unwrap();
         assert_eq!(app.host_notice.as_deref(), Some(NO_WORKER));
         app.sync.worker = true;
-        app.handle_key(key('t')).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT)).unwrap();
         assert_eq!(
             app.sync.intents,
             vec![SyncIntent::Enroll {

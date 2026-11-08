@@ -350,7 +350,7 @@ fn a_device_admission_review_shows_role_kind_and_key_and_a_mode_change_its_cosig
         verified_by: VerifiedBy::Sas,
     });
     assert!(
-        v.summary.contains("holder") && v.summary.contains("terminal"),
+        v.summary.contains("full device") && v.summary.contains("computer or server"),
         "{}",
         v.summary
     );

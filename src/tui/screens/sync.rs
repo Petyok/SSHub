@@ -78,8 +78,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let mode = sync.cred_mode.map_or("-", |m| m.label());
+    let trust = sync.trust.as_ref().map_or(String::new(), |t| {
+        format!(
+            "   Trust session: {}, {} days, {} hosts opened",
+            t.scope, t.term_days, t.hosts_opened
+        )
+    });
     lines.push(Line::styled(
-        format!("Passwords: {mode}   Waiting for approval: {}", sync.pending),
+        format!(
+            "Passwords: {mode}   Waiting for approval: {}{trust}",
+            sync.pending
+        ),
         muted,
     ));
     // U13-1: can a stolen computer be cut off?
@@ -999,8 +1008,8 @@ mod tests {
         let mut app = test_app(vec![]);
         app.active_tab = 6;
         let s = screen(&app, 110, 30);
-        assert!(s.contains("sync is not set up on this profile"), "{s}");
-        assert!(s.contains("Start a ring"), "{s}");
+        assert!(s.contains("Sync is not set up on this profile"), "{s}");
+        assert!(s.contains("Start:"), "{s}");
         assert!(s.contains("sshub sync-join"), "{s}");
         assert!(s.contains("7 sync") || s.contains("[7] sync"), "{s}");
         assert!(!s.contains('\u{21c5}'), "no badge without a ring: {s}");

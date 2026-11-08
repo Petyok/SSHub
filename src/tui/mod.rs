@@ -5869,7 +5869,7 @@ mod tests {
         });
         let buffer = render_to_buffer(&app, 120, 38);
         assert!(buffer_contains(&buffer, "emailed code cannot count"));
-        assert!(buffer_contains(&buffer, "rule broken"));
+        assert!(buffer_contains(&buffer, "not allowed"));
         assert!(buffer_contains(&buffer, "also approved as second device"));
     }
 

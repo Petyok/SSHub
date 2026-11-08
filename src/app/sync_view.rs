@@ -740,7 +740,6 @@ impl App {
         sync.health = crate::sync::health::health(&store, this_device.as_deref(), now)?;
         sync.cut_off_missing = crate::sync::revocation::terminals_missing_to_cut_off(&store)?;
         if sync.ring_secret_missing.is_none() {
-            use crate::credentials::PasswordStore as _;
             // Only a Vault ring with a master key set up needs the ring secret on this machine.
             let needs = cred_mode == Some(CredModeView::Vault)
                 && crate::sync::quorum::vault_pub(&store)?.is_some();

@@ -186,7 +186,7 @@ fn a_ui_cannot_approve_a_red_op_early_and_a_stale_ceremony_is_dropped() {
     let err = resolve(&d[OBS].store, &op.hash(), true, now)
         .unwrap_err()
         .to_string();
-    assert!(err.contains("Red change"), "{err}");
+    assert!(err.contains("big change"), "{err}");
     assert_eq!(
         d[OBS].store.sync_pending().unwrap().len(),
         1,

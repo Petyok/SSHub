@@ -1024,7 +1024,7 @@ mod tests {
         c[0] = 0x12;
         c[1] = 0x34;
         let all = [a, b, c];
-        assert_eq!(resolve_prefix(&all, "123456"), Ok(c));
+        assert_eq!(resolve_prefix(&all, "123400"), Ok(c));
         assert_eq!(
             resolve_prefix(&all, "1234AB"),
             Err("no pending op matches '1234AB'".into())

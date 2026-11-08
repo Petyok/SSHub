@@ -95,7 +95,7 @@ mod tests {
         let mut app = test_app(vec![]);
         app.sync = sample_sync_view();
         let s = text(&dashboard(&app));
-        for want in ["your devices", "cert 30d", "2ops", "recent sessions"] {
+        for want in ["your devices", "trust 30d", "2 waiting", "recent sessions"] {
             assert!(s.contains(want), "{want}");
         }
     }
