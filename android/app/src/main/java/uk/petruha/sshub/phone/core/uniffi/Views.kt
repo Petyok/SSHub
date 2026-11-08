@@ -129,7 +129,7 @@ internal fun enrollRefusalKind(k: RsRefusalKind): RefusalKind = when (k) {
 }
 
 internal fun mapRefused(v: RsRefusalView, enrollFrame: Boolean): Opened =
-    if (enrollFrame) EnrollRefusal(v.reason, null, null, enrollRefusalKind(v.kind))
+    if (enrollFrame) EnrollRefusal(v.reason, v.compared.getOrNull(0)?.value, v.compared.getOrNull(1)?.value, enrollRefusalKind(v.kind))
     else OpenedRefused(RefusalReason("refused", "refused", v.reason, "", emptyList(), false), v.checks.map { it.asCheck() })
 
 /** QR and one sound choice. There is no clipboard channel: the core renders none, "Copy as text" is always offered. */
@@ -154,6 +154,7 @@ internal fun mapRelease(v: RsShareRequestView): OpenedRelease {
             // The challenge's own lifetime: the core gives `expires_at` only.
             signedAt = v.expiresAt - CHALLENGE_SECS,
             expiresAt = v.expiresAt,
+            plain = v.plain,
             headPending = v.headPending,
             words = words(v.bindingWords),
             checks = v.checks.map { it.asCheck(typeGate = must != null) },
@@ -192,6 +193,7 @@ internal fun mapRed(v: RsRedNoticeView): OpenedRed {
             phoneProof = if (v.blocked != null) ProofState.Refused else ProofState.YourTurn,
             checks = checks,
             mustType = v.typeToApprove,
+            plain = v.op.plain,
         ),
     )
 }
@@ -235,6 +237,7 @@ internal fun mapTrustRequest(v: RsCertRequestView): OpenedTrustRequest {
             epoch = epoch?.let { TrustEpochView(it.label, it.value) },
             signedSummary = v.headline,
             refusal = problems(v.problems),
+            plain = v.plain,
         ),
     )
 }
@@ -254,6 +257,7 @@ internal fun mapTrustExtend(v: RsCertExtendView): OpenedTrustExtend {
         TrustExtendView(
             token = v.token.toLong(),
             headline = v.headline,
+            plain = v.plain,
             fields = v.rows.map { TrustFieldView(it.label, it.value, danger = it.danger) },
             diffKey = if (pair != null) "Allowance for the next 24 hours" else extra?.label.orEmpty(),
             diffFrom = pair?.first.orEmpty(),

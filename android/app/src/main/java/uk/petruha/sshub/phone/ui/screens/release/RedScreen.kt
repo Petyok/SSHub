@@ -66,9 +66,10 @@ fun RedScreen(state: RedState, on: RedActions) {
             return@ScreenFrame
         }
         if (state.phase == ApprovalPhase.Review || state.phase == ApprovalPhase.Signing) ExpiryLine(state.timerLeft, if (state.windowIsTimer) spokenWindow(state.timerLeft) else spokenDuration(state.timerLeft) + " left", Modifier.padding(bottom = 8.dp), danger = state.timerLeft <= 0L)
-        Text(v.title, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+        // One plain sentence first (U13-8); the op's own headline and the raw fields sit under "Technical details". No lamport, no seq.
+        Text(v.plain.ifEmpty { v.title }, style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         Text(
-            "proposed by ${nameAndId(v.proposerName, v.proposerId)}, lamport ${v.lamport}" + (v.seq?.let { ", seq $it" } ?: ""), Modifier.padding(top = 4.dp, bottom = 12.dp),
+            "proposed by ${nameAndId(v.proposerName, v.proposerId)}", Modifier.padding(top = 4.dp, bottom = 12.dp),
             style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
@@ -101,15 +102,17 @@ fun RedScreen(state: RedState, on: RedActions) {
             }
         }
 
-        SectionHeading("Changes", trailing = "${v.fields.size} fields")
-        DiffBox(v.fields.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
         Note(v.note, Modifier.padding(top = 8.dp))
-
-        SectionHeading("Hash of the operation", trailing = if (state.showHash) "tap to fold" else "tap for all 64")
-        HexGroups(
-            v.hash, Modifier.heightIn(min = 48.dp), groups = if (state.showHash) null else 3,
-            onClick = on.onToggleHash, label = "Hash of the operation",
-        )
+        TechnicalDetails("${v.fields.size} fields, ${v.fields.count { it.danger }} flagged", startOpen = v.plain.isEmpty()) {
+            if (v.plain.isNotEmpty()) Text(v.title, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SectionHeading("Changes", trailing = "${v.fields.size} fields")
+            DiffBox(v.fields.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
+            SectionHeading("Hash of the operation", trailing = if (state.showHash) "tap to fold" else "tap for all 64")
+            HexGroups(
+                v.hash, Modifier.heightIn(min = 48.dp), groups = if (state.showHash) null else 3,
+                onClick = on.onToggleHash, label = "Hash of the operation",
+            )
+        }
 
         // Only this phone's own proof is known here; the page states the rule in a sentence and so does this screen (M2).
         val phone = when {

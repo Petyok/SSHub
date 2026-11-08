@@ -77,12 +77,12 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
             }
         }
 
+        if (v.plain.isNotEmpty()) Text(v.plain, Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         SshubCard {
             Text("requester", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(displayName(v.requesterName), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
             Text(v.requesterId, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
             v.requesterKey?.let { HexGroups(it, Modifier.padding(top = 8.dp), groups = null, label = "Requester key") }
-            KeyValue("share", "${v.shareKind}, sharing round ${v.shareEpoch}, share ${v.shareIndex}", Modifier.padding(top = 8.dp))
         }
 
         // Lifetime of the challenge, one needle step per second (spec 8): `now` is whole seconds. The one timer sits in this card.
@@ -109,8 +109,11 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
             HexGroups(v.hostUid, groups = null, label = "Host id")
         }
         if (v.opRows.isNotEmpty()) {
-            SectionHeading("What you release", trailing = "${v.opRows.size} fields")
-            DiffBox(v.opRows.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
+            TechnicalDetails("${v.opRows.size} fields, ${v.opRows.count { it.danger }} flagged", startOpen = v.plain.isEmpty()) {
+                KeyValue("share", "${v.shareKind}, sharing round ${v.shareEpoch}, share ${v.shareIndex}")
+                SectionHeading("What you release", trailing = "${v.opRows.size} fields")
+                DiffBox(v.opRows.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
+            }
         }
 
         SectionHeading("Binding words", trailing = "compare with the terminal")

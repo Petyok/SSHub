@@ -14,6 +14,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -21,6 +22,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import uk.petruha.sshub.phone.core.DeviceIdScanned
@@ -125,3 +127,18 @@ internal fun CopyAsText(copied: Boolean, clearsIn: Int?, onCopy: () -> Unit) {
 }
 
 internal const val QR_DESCRIPTION = "QR code with the signed reply. Use the text below or ask the other device to read it"
+
+/**
+ * The raw fields of a signed op behind a toggle (U13-8): the decision is the plain sentence above, the facts stay one tap away.
+ * Open by default only when the core gave no sentence, so nothing is ever hidden without a plain line in its place.
+ */
+@Composable
+internal fun TechnicalDetails(summary: String, startOpen: Boolean = false, content: @Composable () -> Unit) {
+    var open by remember { mutableStateOf(startOpen) }
+    SshubButton(
+        "Technical details: $summary", { open = !open },
+        Modifier.fillMaxWidth().padding(top = 12.dp).semantics { stateDescription = if (open) "Expanded" else "Collapsed" },
+        kind = ButtonKind.Outline,
+    )
+    if (open) content()
+}

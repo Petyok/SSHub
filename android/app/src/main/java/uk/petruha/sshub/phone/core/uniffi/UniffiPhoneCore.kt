@@ -248,6 +248,8 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         val events = guard { core.scanGray(width.toUInt(), height.toUInt(), luma) }
         events.filterIsInstance<RsScanEvent.Document>().firstOrNull()?.let { return ScanEvent.Frame(it.bytes) }
         // A completed document that is not one of ours: the page ignores it, the screen says so.
+        // A small plain QR (the device id code) arrives as Foreign with its bytes: hand it on as a frame, the screen decides by purpose.
+        events.filterIsInstance<RsScanEvent.Foreign>().firstOrNull { it.bytes.size >= DEVICE_ID_PREFIX.size && it.bytes.copyOfRange(0, DEVICE_ID_PREFIX.size).contentEquals(DEVICE_ID_PREFIX) }?.let { return ScanEvent.Frame(it.bytes) }
         if (events.any { it is RsScanEvent.Foreign }) return ScanEvent.Foreign
         val p = events.filterIsInstance<RsScanEvent.Progress>().lastOrNull() ?: return ScanEvent.None
         return ScanEvent.Progress(p.have.toInt(), p.total.toInt())
@@ -663,3 +665,6 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         const val MAX_OUTCOMES = 8
     }
 }
+
+/** The plain QR a terminal shows for a device id: `sshub:dev:1:<16 hex>`. The only foreign document the app reads. */
+private val DEVICE_ID_PREFIX = "sshub:dev:1:".toByteArray(Charsets.US_ASCII)

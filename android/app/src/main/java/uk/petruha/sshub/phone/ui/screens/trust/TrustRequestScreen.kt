@@ -109,6 +109,7 @@ private fun ReviewFrame(state: TrustRequestState, on: TrustRequestActions) {
         },
     ) {
         Text("Trust session requested", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+        if (v.plain.isNotEmpty()) Text(v.plain, Modifier.padding(vertical = 4.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
         Text(v.headline, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Gap()
         v.refusal?.let { r ->

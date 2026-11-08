@@ -14,6 +14,7 @@ import uk.petruha.sshub.phone.core.nameAndId
 import uk.petruha.sshub.phone.core.OpenedRed
 import uk.petruha.sshub.phone.core.OpenedRelease
 import uk.petruha.sshub.phone.core.Platform
+import uk.petruha.sshub.phone.core.RedView
 import uk.petruha.sshub.phone.core.SettingsStore
 import uk.petruha.sshub.phone.core.ReleaseApi
 import uk.petruha.sshub.phone.core.ReleaseChannels
