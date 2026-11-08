@@ -138,7 +138,9 @@ fn step_job(
                 )?;
                 let mut lines = report.lines;
                 let cfg = crate::config::load_config_at(&env.paths.config_file).ok();
-                lines.extend(crate::cli::sync_admin::notify_hint(cfg.as_ref().map(|c| &c.sync.notify)).1);
+                lines.extend(
+                    crate::cli::sync_admin::notify_hint(cfg.as_ref().map(|c| &c.sync.notify)).1,
+                );
                 Ok(FlowOut::Admitted {
                     frame: v.frame,
                     lines,

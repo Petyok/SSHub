@@ -1027,7 +1027,9 @@ pub(crate) fn alert_view(store: &LauncherStore, ops: &[Op], now: i64) -> Result<
         }
         let verdict = crate::sync::recovery::validate_phone_reenroll(store, op, now);
         let lock_ends = match &verdict {
-            Ok(crate::sync::recovery::ReenrollVerdict::NeedsMoreTime { ready_at }) => Some(*ready_at),
+            Ok(crate::sync::recovery::ReenrollVerdict::NeedsMoreTime { ready_at }) => {
+                Some(*ready_at)
+            }
             _ => None,
         };
         if let Some(t) = lock_ends {
