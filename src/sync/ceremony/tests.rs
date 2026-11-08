@@ -1715,6 +1715,22 @@ fn quorum_ring() -> Vec<Dev> {
     d
 }
 
+fn put_credential(x: &Dev, host: u8) -> Op {
+    use crate::sync::quorum::tests::payload;
+    crate::sync::cred_ops::cred_put(&x.store, &x.id, &[host; 16], &payload("pw")).unwrap()
+}
+
+fn forget_contacts(d: &[Dev]) {
+    for x in d {
+        x.store
+            .with_conn(|c| {
+                c.execute("UPDATE sync_devices SET last_seen = 0", [])?;
+                Ok(())
+            })
+            .unwrap();
+    }
+}
+
 #[test]
 fn log_live_counts_only_devices_with_an_op_before_the_instant_and_inside_the_window() {
     let d = quorum_ring();
@@ -1737,5 +1753,29 @@ fn log_live_counts_only_devices_with_an_op_before_the_instant_and_inside_the_win
     // Before any op was written nobody is live; a window later nobody is.
     assert!(ids(0).is_empty());
     assert!(ids(now + LIVE_DEVICE_WINDOW_SECS + 3600).is_empty());
+}
+
+#[test]
+fn a_promotion_verdict_follows_the_log_not_the_contact_clock() {
+    let d = quorum_ring();
+    put_credential(&d[0], 7);
+    // Terminals 1 and 2 each wrote something: the log shows them alive. The contact clock (what this
+    // device happened to hear when) says nobody was ever seen; it must change nothing.
+    d[1].append_host();
+    d[2].append_host();
+    sync(&d);
+    forget_contacts(&d);
+    let promo = propose(
+        &d,
+        R,
+        OpBody::DeviceRoleChange {
+            device_id: d[2].did.clone(),
+            to: DeviceRole::Holder,
+        },
+    );
+    forget_contacts(&d);
+    // Judged where the Quorum credential is applied (a Yellow credential waits for approval on a peer that merely pulled).
+    let st = red_status(&d[0].store, &promo, promo.timestamp + 60).unwrap();
+    assert_eq!(st.blocked, None, "the verdict read last_seen: {st:?}");
 }
 

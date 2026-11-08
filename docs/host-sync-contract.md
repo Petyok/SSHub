@@ -1011,9 +1011,10 @@ Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, n
   `FactorRegister` needs phone + second-device proofs only; a replacement also needs a `RedFactor` of the factor
   being replaced.
 * A ring with one attended `Holder` terminal waives the second-device proof; it needs the phone and the paper.
-* `DeviceRoleChange` and `DeviceAdd` as holder additionally require at least two other live holders (seen within
-  `LIVE_DEVICE_WINDOW_SECS`) so a reshare has k contributors; `DeviceRevoke` of a holder requires at least two
-  remaining holders after it (three before).
+* `DeviceRoleChange` and `DeviceAdd` as holder additionally require at least two attended holder terminals in the ring (counted
+  from the device view at the op's own position, never from contact: a verdict is the same on every device) so a reshare has k
+  contributors; `DeviceRevoke` of a holder requires at least two remaining holders after it (three before). Whether a
+  contributor is reachable now is advice for the screens (`ceremony::log_live`), not a rule.
 * `RedStatus { missing: Vec<RedProof>, have: Vec<RedProof>, complete: bool, expired: bool }` is what the review
   screen shows ("phone: signed, second device: waiting, paper: missing"). `settle_red_ops(store, now)` runs after
   every ingest: it resolves a pending Red op as approved when complete and as rejected when expired.

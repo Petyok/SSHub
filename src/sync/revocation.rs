@@ -19,7 +19,6 @@ use std::collections::BTreeSet;
 use anyhow::{bail, ensure, Result};
 
 use super::crypto::DeviceIdentity;
-use super::limits::LIVE_DEVICE_WINDOW_SECS;
 use super::oplog::{DeviceId, DeviceKind, DeviceRole, DeviceStatus, OpBody};
 use super::quorum::{ops_of, paper_pub, reshare_ops};
 use super::reshare::{next_epoch, reissue_plan, reissue_receive, unadopted};
@@ -67,13 +66,16 @@ pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Re
         .filter(|d| d.id != *target && d.kind == DeviceKind::Terminal)
         .collect();
     ensure!(remaining.len() >= 2, "revoking a holder needs at least two remaining terminal holders to contribute: the ring has {}", remaining.len());
-    let fresh = remaining
-        .iter()
-        .filter(|d| now - d.last_seen <= LIVE_DEVICE_WINDOW_SECS)
-        .count();
+    // Alive means: wrote an op to the ring recently (the log, the same on every device), not "was last heard from here".
+    let fresh = super::ceremony::log_live(
+        store,
+        remaining.iter().map(|d| (*d).clone()).collect(),
+        now,
+    )?
+    .len();
     ensure!(
         fresh >= 2,
-        "fewer than two remaining holders were seen recently enough to contribute"
+        "fewer than two remaining holders have written to the ring recently enough to contribute"
     );
     Ok(())
 }

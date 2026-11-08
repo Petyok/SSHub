@@ -486,11 +486,11 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     let setup_promotion = setup && promoted.is_some();
     let mut setup_waived: Vec<&str> = Vec::new();
 
-    // Counting rules that make an op impossible.
-    let live_terminals = devices
-        .iter()
-        .filter(|d| terminal_holder(d) && now - d.last_seen <= LIVE_DEVICE_WINDOW_SECS)
-        .count();
+    // Counting rules that make an op impossible. They count who is IN the ring (the view at the op's own position),
+    // never who was heard from lately: contact is local to a device, and "wrote an op recently" is weak evidence
+    // (a terminal writes only when it edits), so a verdict built on either differs between devices or blocks a quiet
+    // ring. Whether a contributor is reachable is advice for the screens (`log_live`), not a rule.
+    let attended_terminals = devices.iter().filter(|d| terminal_holder(d)).count();
     match &op.body {
         OpBody::DeviceAdd {
             kind: DeviceKind::Phone,
@@ -514,9 +514,9 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
             ..
         } => {
             // The rule follows from the reshare: with no Quorum credential there is nothing to reshare.
-            if live_terminals < 2 && quorum_credentials {
+            if attended_terminals < 2 && quorum_credentials {
                 blocked = Some(
-                    "adding or promoting a holder needs two other live holders for the reshare"
+                    "adding or promoting a holder needs two attended holder terminals for the reshare"
                         .to_string(),
                 );
             }
