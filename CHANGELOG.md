@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-09
+
 ### Changed
 
 - **`/` filters the hosts list instead of opening quick connect** - type to
