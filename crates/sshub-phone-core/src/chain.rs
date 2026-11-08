@@ -508,7 +508,7 @@ pub fn accept_head(
         ));
     }
     if p.single_source && !acknowledged_single_source {
-        return Err(CoreError::refused(SINGLE_SOURCE_TICK_MESSAGE));
+        return Err(CoreError::bad(SINGLE_SOURCE_TICK_MESSAGE));
     }
     let p = state.head_proposal.take().expect("checked above");
     let head_seq = p.chain.last().map_or(0, |e| e.seq);

@@ -506,6 +506,10 @@ impl PhoneCore {
             Pending::Release(r) => Some(Pending::Release(r.clone())),
             Pending::Notice(n) => Some(Pending::Notice(n.clone())),
             Pending::Cert(c) => Some(Pending::Cert(c.clone())),
+            Pending::Chain { seq, hash } => Some(Pending::Chain {
+                seq: *seq,
+                hash: hash.clone(),
+            }),
             _ => None,
         };
         // A restored phone cannot sign: refuse before any work and keep the request, so it can be approved once the head
@@ -1499,6 +1503,7 @@ mod tests {
         let now = 1_893_452_500;
         let e = c.decide(v.token, Decision::Approve { typed_id: None }, now).unwrap_err();
         assert_eq!(e.reason(), chain::SINGLE_SOURCE_TICK_MESSAGE);
+        // the refusal keeps the card open: the tick is a second tap, not a new scan
         c.decide(v.token, Decision::AcceptSingleSource, now).unwrap();
         assert!(!c.lock_inner().unlocked.as_ref().unwrap().state.head_pending);
     }
