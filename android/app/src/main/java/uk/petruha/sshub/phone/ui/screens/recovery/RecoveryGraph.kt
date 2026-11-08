@@ -36,7 +36,7 @@ fun NavGraphBuilder.recoveryGraph(env: AppEnv) {
 
 @Composable
 private fun ReshareRoute(env: AppEnv, token: Long?) {
-    val vm = viewModel<ReshareViewModel>(key = "reshare-$token", factory = viewModelFactory { initializer { ReshareViewModel(env.core, env.platform, token) } })
+    val vm = viewModel<ReshareViewModel>(key = "reshare-$token", factory = viewModelFactory { initializer { ReshareViewModel(env.core, env.platform, token, env.settings) } })
     val s by vm.state.collectAsStateWithLifecycle()
     ReshareScreen(
         s,

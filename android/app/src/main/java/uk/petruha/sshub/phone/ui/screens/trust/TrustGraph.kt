@@ -21,6 +21,7 @@ import uk.petruha.sshub.phone.core.ScanPurpose
 import uk.petruha.sshub.phone.core.scanRoute
 import uk.petruha.sshub.phone.ui.components.Note
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
+import uk.petruha.sshub.phone.ui.screens.release.ConsumeScannedDeviceId
 
 /** Argument routes of this group: `Routes.TrustRequest + "/{token}"` and `Routes.TrustExtend + "/{token}"`; the token is the one in `Opened.TrustRequest`/`TrustExtend`. */
 fun trustRequestRoute(token: Long) = "${Routes.TrustRequest}/$token"
@@ -38,6 +39,7 @@ fun NavGraphBuilder.trustGraph(env: AppEnv) {
         val vm: TrustRequestViewModel = viewModel(factory = viewModelFactory { initializer { TrustRequestViewModel(env.core, env.platform, token, handoffs) } })
         val s by vm.state.collectAsStateWithLifecycle()
         val st = s
+        ConsumeScannedDeviceId(vm::typed)
         if (st == null) TrustMissing("Trust request", ::back)
         else TrustRequestScreen(
             st,
@@ -45,6 +47,7 @@ fun NavGraphBuilder.trustGraph(env: AppEnv) {
                 onTyped = vm::typed,
                 onApprove = { vm.approve { nav.navigate(Routes.TrustSigned) { popUpTo(Routes.TrustRequest + "/{token}") { inclusive = true } } } },
                 onDecline = vm::decline, onBack = { backTo(Routes.Approvals) },
+                onScanId = { nav.navigate(scanRoute(ScanPurpose.DeviceId)) },
             ),
         )
     }

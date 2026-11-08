@@ -222,20 +222,7 @@ class AndroidKeyVault(
     }
 
     private fun generateKey(keyAlias: String): SecretKey {
-        fun spec(strong: Boolean): KeyGenParameterSpec {
-            val b = KeyGenParameterSpec.Builder(keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
-                .setKeySize(256)
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setRandomizedEncryptionRequired(true)
-            if (requireAuth) {
-                b.setUserAuthenticationRequired(true)
-                b.setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
-                b.setInvalidatedByBiometricEnrollment(true)
-            }
-            if (strong) b.setIsStrongBoxBacked(true)
-            return b.build()
-        }
+        fun spec(strong: Boolean) = keySpec(keyAlias, strong, requireAuth)
         val kg = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, PROVIDER)
         if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)) {
             try {
@@ -250,6 +237,27 @@ class AndroidKeyVault(
     }
 
     companion object {
+        /**
+         * The key spec. Per-use authentication stays (strong biometric or the device credential, bound to a CryptoObject), but adding a
+         * fingerprint does NOT invalidate the key: an ordinary Android action must not destroy the phone's share (UX review U13-6). The
+         * device-credential fallback already bounds what that invalidation protected (residual M6). The key is still lost when the
+         * secure screen lock is removed, which Android enforces and the app cannot prevent.
+         */
+        internal fun keySpec(keyAlias: String, strong: Boolean, requireAuth: Boolean): KeyGenParameterSpec {
+            val b = KeyGenParameterSpec.Builder(keyAlias, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+                .setKeySize(256)
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setRandomizedEncryptionRequired(true)
+            if (requireAuth) {
+                b.setUserAuthenticationRequired(true)
+                b.setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL)
+                b.setInvalidatedByBiometricEnrollment(false)
+            }
+            if (strong) b.setIsStrongBoxBacked(true)
+            return b.build()
+        }
+
         const val ALIAS = "sshub.phone.secret.v1"
         const val FILE = "secret.bin"
         private const val PROVIDER = "AndroidKeyStore"

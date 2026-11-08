@@ -46,6 +46,8 @@ data class TrustRequestView(
     /** `laptop-main [7B3E-0D15], 5 hosts, 30 days, ends 2026-11-25`, shown after signing. */
     val signedSummary: String,
     val refusal: TrustRefusal?,
+    /** One plain sentence from the core (U13-8); empty when none. */
+    val plain: String = "",
 )
 
 data class TrustExtendView(
@@ -67,6 +69,8 @@ data class TrustExtendView(
     val refusal: TrustRefusal?,
     /** Present for the `again` refusal: when the next extension is possible. */
     val again: TrustAgain?,
+    /** One plain sentence from the core (U13-8); empty when none. */
+    val plain: String = "",
 )
 
 data class TrustAgain(val remainingSeconds: Long, val windowSeconds: Long)

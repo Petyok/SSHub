@@ -65,7 +65,7 @@ private fun nextLines(c: EnrollChannel): List<String> = when (c) {
     EnrollChannel.Qr -> listOf("Step 2 shows this phone's code: hold it to the terminal camera.", "Steps 3 and 5 scan the terminal's codes.")
     EnrollChannel.Bluetooth -> listOf(
         "The terminal shows a 4-character tag. This phone finds that terminal in a Bluetooth list.",
-        "The tag only points to the terminal. The four-word check still decides.",
+        "The tag only points to the terminal. The four check words still decide.",
     )
     EnrollChannel.Paste -> listOf("Each step gives you text to copy to the terminal, or a box for the terminal's text.", "Use it when the terminal has no camera.")
     EnrollChannel.Sound -> listOf(
@@ -92,8 +92,8 @@ fun EnrollScanScreen(state: EnrollScanState, on: EnrollScanActions) {
         },
     ) {
         Note("On the terminal start phone enrollment. It shows a short QR code.", Modifier.padding(bottom = 14.dp))
-        Text("Name this phone will have in the ring", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
-        MonoField(state.name, on.onName, label = "Name this phone will have in the ring", error = state.nameProblem)
+        Text("Name this phone will have among your devices", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
+        MonoField(state.name, on.onName, label = "Name this phone will have among your devices", error = state.nameProblem)
         if (ok) ValidationLine(LineKind.Neutral, "This phone will be called ${state.name.trim()}. The phone checks the name again when the terminal's code is read.")
         SectionHeading("Channel", trailing = state.channel.label())
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -145,7 +145,7 @@ internal fun holdLine(c: EnrollChannel, terminal: String): String = when (c) {
 @Composable
 fun EnrollShowScreen(state: EnrollShowState, on: EnrollShowActions) {
     EnrollFrame(state.terminal, 2, on.onBack, bar = { SshubButton("Next", on.onNext, Modifier.fillMaxWidth(), ButtonKind.Primary) }) {
-        SectionHeading("Show this phone's commitment", first = true, trailing = state.send.channel.label())
+        SectionHeading("Show the phone code", first = true, trailing = state.send.channel.label())
         Note(holdLine(state.send.channel, state.terminal), Modifier.padding(bottom = 12.dp))
         SendBlock(state.send, on.send)
     }
@@ -179,19 +179,19 @@ fun EnrollKeysScreen(state: EnrollKeysState, on: EnrollKeysActions) {
             val mismatch = state.status == KeysStatus.Mismatch
             StopBox(if (mismatch) "The keys do not match the first code." else state.reason.ifEmpty { "Enrollment stopped." }, live = true) {
                 if (mismatch) Text(
-                    state.reason.ifEmpty { "Nothing was enrolled." } + " Do not retry on this channel; start again on the terminal.",
+                    "These two values must be the same. They are not: someone may be interfering. Nothing was enrolled. Do not retry on this channel; start again on the terminal.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer,
                 ) else Text(
                     "Nothing was enrolled. Start again on the terminal.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer,
                 )
                 if (state.committed.isNotEmpty()) {
-                    Text("first code committed to", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onErrorContainer)
-                    HexGroups(state.committed, groups = null, label = "First code committed to")
+                    Text("The terminal showed first", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onErrorContainer)
+                    HexGroups(state.committed, groups = null, label = "The terminal showed first")
                 }
                 if (state.shown.isNotEmpty()) {
-                    Text("keys shown now open to", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onErrorContainer)
-                    HexGroups(state.shown, groups = null, label = "Keys shown now open to")
+                    Text("The terminal now shows", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onErrorContainer)
+                    HexGroups(state.shown, groups = null, label = "The terminal now shows")
                 }
             }
         } else {
@@ -238,7 +238,7 @@ fun EnrollCompareScreen(state: EnrollCompareState, on: EnrollCompareActions) {
             SendBlock(state.send, on.send, title = "Tell the terminal to stop")
             Note("Show this declined confirmation to $t so it stops too.", Modifier.padding(top = 8.dp))
         } else {
-            SectionHeading("Compare the four words", first = true, trailing = "both screens")
+            SectionHeading("Compare the four check words", first = true, trailing = "both screens")
             Column(
                 Modifier.fillMaxWidth().border(2.dp, cs.onSurface, MaterialTheme.shapes.small).padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -250,8 +250,8 @@ fun EnrollCompareScreen(state: EnrollCompareState, on: EnrollCompareActions) {
             SshubCard {
                 if (state.phase == ComparePhase.Match) {
                     Text("You confirmed the words.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.sshub.ok)
-                    Note("Next, hold this phone's confirmation to $t, then read its answer. The terminal adds this phone to the ring.")
-                } else Note("Here both sides always have a screen, so the four words are a real check, unlike a machine reached over ssh. Different words mean someone sits between you: tap They differ.")
+                    Note("Next, hold this phone's confirmation to $t, then read its answer. The terminal adds this phone to your devices.")
+                } else Note("Here both sides always have a screen, so the four check words are a real check, unlike a machine reached over ssh. Different words mean someone sits between you: tap They differ.")
             }
             KeyValue("terminal", "$t [${state.terminalId}]")
             KeyValue("channel", "${state.channel.label()}, steps 1 to 3 done")
@@ -314,20 +314,20 @@ fun EnrolledScreen(state: EnrolledState, on: EnrolledActions) {
     ScreenFrame(
         title = "Enrolled", onBack = null,
         bar = { SshubButton("Done", on.onDone, Modifier.fillMaxWidth(), ButtonKind.Primary) },
-        headerTrailing = { Text("step 5 of 5 done", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+        headerTrailing = { Text("Step 5 of 5 done", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) },
     ) {
         EnrollSteps(6)
         Text("Enrolled", Modifier.padding(top = 12.dp, bottom = 6.dp), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
         Note("This phone is now known to $t [${state.terminalId}] as ${state.phoneName}.", Modifier.padding(bottom = 12.dp))
         SshubCard {
-            ChainRow(SquareState.Fill, t, "${state.terminalId}, terminal holder", first = true, last = false, description = "$t, ${state.terminalId}, terminal holder")
+            ChainRow(SquareState.Fill, t, "${state.terminalId}, terminal, full device", first = true, last = false, description = "$t, ${state.terminalId}, terminal, full device")
             ChainRow(
                 SquareState.Me, state.phoneName, "${state.phoneId}, known to $t", first = false, last = true, chip = "new",
                 description = "${state.phoneName}, this phone, new, ${state.phoneId}, known to $t",
             )
         }
         Gap12()
-        SshubCard { Note("Promotion to holder is a separate step on the terminal. Until then the terminal knows this phone but does not yet count it as a holder.") }
+        SshubCard { Note("Making this phone a full device is a separate step on the terminal. Until then the terminal knows this phone but does not yet count it as a full device.") }
     }
 }
 
@@ -370,7 +370,7 @@ fun EnrollBtScreen(state: EnrollBtState, on: EnrollBtActions) {
         Gap12()
         SshubCard {
             Text("The tag only points to the right terminal.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = cs.onSurface)
-            Note("It does not replace the four-word check in step 4. The link adds no security: every frame is signed or sealed end to end.")
+            Note("It does not replace the four check words in step 4. The link adds no security: every frame is signed or sealed end to end.")
         }
         Gap12()
         Column(
@@ -440,7 +440,7 @@ private fun BtRow(d: BleDevice, selected: Boolean, hit: Boolean, onClick: () -> 
 
 private fun pasteIntro(n: Int): String = when (n) {
     1 -> "Paste the short code the terminal shows as text."
-    2 -> "Copy this phone's commitment and paste it into the terminal."
+    2 -> "Copy this phone's code and paste it into the terminal."
     3 -> "Paste the text the terminal shows for its keys."
     else -> "Copy this phone's confirmation into the terminal, then paste its answer."
 }

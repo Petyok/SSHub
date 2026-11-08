@@ -218,15 +218,15 @@ class SecurityMenuScreenTest {
             SecurityMenuScreen(
                 IdentitySamples.menu,
                 SecurityMenuActions(
-                    onTrustList = { hit += "trust" }, onCodes = { hit += "codes" }, onReshare = { hit += "reshare" }, onRecovery = { hit += "recovery" },
+                    onTrustList = { hit += "trust" }, onCodes = { hit += "codes" }, onReshare = { hit += "reshare" }, onRecovery = { hit += "recovery" }, onNewPhone = { hit += "newphone" },
                     onBackup = { hit += "backup" }, onExport = { hit += "export" }, onAbout = { hit += "about" }, onLock = { hit += "lock" },
                 ),
             )
         }
-        for (t in listOf("Trust sessions", "Short codes I issued", "Reshare and wrap keys", "Recovery and a new phone", "Recovery words", "Export my ops as text", "About and security", "Lock now")) {
+        for (t in listOf("Trust sessions", "Short codes I issued", "Update the shares", "I am getting a new phone", "I lost my phone", "Recovery words", "Export my ops as text", "About and security", "Lock now")) {
             rule.onNodeWithText(t).performScrollTo().performClick()
         }
-        assertEquals(listOf("trust", "codes", "reshare", "recovery", "backup", "export", "about", "lock"), hit)
+        assertEquals(listOf("trust", "codes", "reshare", "newphone", "recovery", "backup", "export", "about", "lock"), hit)
         rule.assertTargets48()
     }
 
@@ -263,7 +263,7 @@ class SecurityMenuScreenTest {
         rule.onNodeWithText("Signing fingerprint differs").assertExists()
         rule.onNodeWithText("Get the app again from the release notes", substring = true).assertExists()
         rule.onNodeWithText("you will need your 24 words", substring = true).assertExists()
-        for (t in listOf("Trust sessions", "Short codes I issued", "Reshare and wrap keys", "Recovery and a new phone", "Recovery words", "Export my ops as text")) {
+        for (t in listOf("Trust sessions", "Short codes I issued", "Update the shares", "I am getting a new phone", "I lost my phone", "Recovery words", "Export my ops as text")) {
             rule.onNodeWithText(t).assertHasNoClickAction()
         }
         rule.onNodeWithText("About and security").performScrollTo().assertHasClickAction().performClick()

@@ -392,27 +392,27 @@ in the source tree.
 .SS Host sync (headless, encrypted peer-to-peer)
 .TP
 .B sshub sync\-join \fIHOST\fR
-Join the ring of the device at
+Join the group of devices of the device at
 .IR HOST ,
 a launcher host name or
 .RI [ USER @] HOST [: PORT ].
 Runs
 .B sshub sync\-enroll
-there over ssh. The four SAS words and the peer name are printed on stdout.
+there over ssh. The four check words and the peer name are printed on stdout.
 If the other end has a screen too, compare the words and answer
 .B y
 on stdin only if they are identical (anything else, or EOF, refuses). If it has
 none, the words prove nothing: the command says so and asks
 .B Admit this device?
 instead; the device's identity then rests on the SSH host key you verified. The
-success line names the role (joined a ring, or admitted the peer) and how the
-device was verified (by SAS, or by the SSH host key only). Exits 0 when joined, 1 on failure,
+success line names the role (joined, or admitted the peer) and how the
+device was verified (by the four check words, or by the SSH host key only). Exits 0 when joined, 1 on failure,
 2 on usage error.
 .TP
 .B sshub sync\-now \fR[\fIDEVICE\fR] [\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
-Sync with one ring device (name or unique id prefix) or, without
+Sync with one of your devices (name or unique id prefix) or, without
 .IR DEVICE ,
-with every other ring device that has a known host; the rest are reported as
+with every other device that has a known host; the rest are reported as
 .BR "skipped (no host known)"
 (with how to record one: the hosts tab key
 .BR t ,
@@ -431,23 +431,23 @@ offline or failed, 2 on usage error, 3 when a fork is proven
 .RB ( "FORK DETECTED: <name>" ).
 .TP
 .B sshub sync\-status \fR[\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
-Read-only: ring devices (name, short id, role, status, last seen, head seq,
+Read-only: your devices (name, short id, role, status, last in sync, last change number,
 host), pending change count and credential mode. Never creates a device key.
 .TP
 .B sshub sync\-review \fR[\fB\-\-approve\fR \fIID\fR | \fB\-\-reject\fR \fIID\fR] [\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
-List the changes waiting for review: a 12-character id, the author device, a
+List the changes waiting for review: an id (the first 8 hex digits are shown), the author device, a
 summary and one line per field (marked
 .B [!]
 when dangerous). Every waiting change is listed with the reason it waits
 (in brackets; the
 .B reason
-field of the JSON items) and a Red change with the proofs of its ceremony. With
+field of the JSON items) and a big change with the three approvals it has and misses. With
 .B \-\-approve
 or
 .B \-\-reject
 the change whose id starts with
 .I ID
-(at least 4 hex characters, unique) is resolved in the store like in the TUI.
+(at least 6 hex digits, unique) is resolved in the store like in the TUI.
 Never creates a device key. Exit 0 on success or empty queue, 1 on a store
 error, 2 on an unknown or ambiguous id or bad options.
 .TP
@@ -536,35 +536,39 @@ Leaves
 untouched.
 .TP
 .B sshub sync\-revoke \fIDEVICE\fR
-Revoke a device: Yellow for a mirror, Red for a holder. Prints the ceremony status.
+Remove a device: needs one approval for a view-only copy, and is a big change for a full device. Removing a full device needs three computers or servers you control, the one you remove included, together with the phone; with fewer, change the passwords of the hosts and remove the device's key from every host's authorized_keys by hand. Prints the approval status.
 .TP
 .B sshub sync\-role \fIDEVICE\fR \fBholder\fR|\fBmirror\fR
-Promote or demote a device (Red).
+Make a device a full device or a view-only copy (a big change).
 .TP
 .B sshub sync\-approve \fIOP\fR
-Approve a pending Red op as this attended device.
+Approve a pending big change as this device, which has a person at the keyboard.
 .TP
 .B sshub sync\-factor \fIOP\fR \fB\-\-paper\fR|\fB\-\-email\-code\fR
-Add the third factor to a Red op; the secret is read without echo.
+Add the paper phrase or the emailed code to a big change; the secret is read without echo.
 .TP
 .B sshub sync\-factor\-register \fBpaper\fR|\fBemail\fR \fR[\fB\-\-sender\fR \fIDEVICE\fR]
-Register a third factor. The emailed code is kept, sealed, only on its sender: register it on
+Register the paper phrase or the emailed code. The emailed code is kept, sealed, only on its sender: register it on
 the device that will mail it (\fB\-\-sender\fR may only name this device).
 .TP
 .B sshub sync\-phone\-enroll
-Enroll the phone from this terminal as text. Prints the terminal's frames; read the phone's frames
-(base64, one per line) and then \fBy\fR or \fBn\fR for the four words from standard input. A verified phone is
-registered and its admission proposed (a Red change).
+Add the phone from this terminal as text. Prints the terminal's frames; read the phone's frames
+(base64, one per line) and then \fBy\fR or \fBn\fR for the four check words from standard input. A verified phone is
+registered and proposed as a full device (a big change).
 .TP
 .B sshub sync\-notice \fIOP\fR
-Print the kind 3 notice (base64) of a Red op for the phone.
+Print the kind 3 notice (base64) of a big change for the phone.
 .TP
 .B sshub sync\-phone\-ops
-Take in the ops the phone copied (kind 5, base64) from standard input and print what applied.
+Take in the changes the phone copied (kind 5, base64) from standard input and print what applied.
+.TP
+.B sshub sync\-phone\-chain \fIPHONE\fR
+Print the kind 5 list of a phone's own newest changes (at most 8) that this terminal holds, for a phone restored
+from its 24 words to read. The list names this terminal; the phone needs the same newest change from two different terminals.
 .TP
 .B sshub sync\-share\-request \fIHOST\fR \fR[\fB\-\-wait\fR \fISECS\fR]
-Print the host name with its host id (32 hex digits in groups of four, as the phone draws it) and the challenge's
-four binding words, to compare with the phone before approving there, then the kind 1 challenge for the phone;
+Print the host name with its host id (8 groups of four uppercase hex digits, as the phone draws it) and the challenge's
+four check words, to compare with the phone before approving there, then the kind 1 challenge for the phone;
 read its kind 2 reply from standard input and open the credential in this process.
 The TUI unlock modal shows the same host id and words under the host name.
 .TP
@@ -572,14 +576,14 @@ The TUI unlock modal shows the same host id and words under the host name.
 Print the kind 9 trust-session request for the phone. Every verb takes \fB\-\-format\fR \fBplain\fR|\fBjson\fR.
 .TP
 .B sshub sync\-recovery \fBstart\fR \fR[\fB\-\-paper\fR]|\fBapprove\fR \fIOP\fR|\fBack\fR \fIOP\fR|\fBcancel\fR \fIOP\fR \fB\-\-factor\fR \fBpaper\fR|\fBemail\fR|\fBstatus\fR
-Phone re-enrollment.
+Replacing a lost phone.
 .TP
 .B sshub sync\-mode \fBvault\fR|\fBquorum\fR \fR[\fB\-\-cosigner\fR \fIDEVICE\fR]
-Change the credential mode (Red), in two steps: the first call proposes the change
-and shows the ceremony, a later call (after the ring agreed) re-encrypts the credentials.
+Change the credential mode (a big change), in two steps: the first call proposes the change
+and shows the approval status, a later call (after your devices agreed) re-encrypts the credentials.
 .TP
 .B sshub sync\-exemption \fBon\fR|\fBoff\fR \fIDEVICE\fR
-Master-phrase exemption of a device.
+Master phrase exemption of a device (advanced).
 .TP
 .B sshub sync\-export \fB\-\-window\fR \fISECS\fR \fB\-\-out\fR \fIPATH\fR \fR[\fB\-\-wait\fR \fISECS\fR]
 Bulk export inside a Red-approved window, as a Termius CSV (mode 0600).
@@ -662,8 +666,8 @@ and the update check.
 Replace the version label in the tab bar; set but empty hides it.
 .TP
 .B SSHUB_UNLOCK_WAIT
-Seconds a command waits, in Quorum mode, for an attended holder to approve its share
-release (default 120; 0 does not ask). The holder approves in its TUI or with
+Seconds a command waits, in Quorum mode, for a full device with a person at the keyboard to approve its share
+release (default 120; 0 does not ask). That device approves in its TUI or with
 .BR "sshub sync\-review \-\-approve" .
 .TP
 .B SSHUB_INSTALL_CHANNEL

@@ -96,7 +96,7 @@ fun LockScreen(state: LockState, on: LockActions) {
             }
             LockPhase.Invalidated -> StopBox("The key is gone", live = true) {
                 Text(
-                    "Android removed the key because the fingerprints or the screen lock changed. This protects the key and cannot be undone. " +
+                    "Android removed the key because the screen lock of this phone was removed or reset. Adding a fingerprint does not do this. " +
                         "The 24 words restore this phone: the same device, the same id. The phone then takes its chain from a terminal before it signs.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
                 )

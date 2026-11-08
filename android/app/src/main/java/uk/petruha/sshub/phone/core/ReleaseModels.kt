@@ -42,6 +42,8 @@ data class RedView(
     val phoneProof: ProofState,
     val checks: List<ReleaseCheck>,
     val mustType: String? = null,
+    /** One plain sentence built by the core from the signed op (U13-8); empty when the core gave none. */
+    val plain: String = "",
 )
 
 /** How a release answer is shown. The clipboard is not a channel: "Copy as text" is always offered after approval. */
@@ -77,6 +79,8 @@ data class ReleaseView(
     val hostUid: String = "",
     val bindingHash: String = "",
     val opRows: List<RedField> = emptyList(),
+    /** One plain sentence built by the core from the signed request (U13-8); empty when the core gave none. */
+    val plain: String = "",
 )
 
 data class RefusalRow(val key: String, val value: String)

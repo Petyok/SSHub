@@ -293,13 +293,15 @@ window, and a stolen unlocked-looking phone is not enough.
   `KeyInfo.securityLevel`), `setUserAuthenticationRequired(true)` with
   `setUserAuthenticationParameters(0, AUTH_BIOMETRIC_STRONG or AUTH_DEVICE_CREDENTIAL)` (timeout 0 = per-use authentication, bound to a
   `CryptoObject`; the combination of strong biometric, device credential and `CryptoObject` needs API 30, which is why `minSdk` is 30),
-  `setInvalidatedByBiometricEnrollment(true)`.
+  `setInvalidatedByBiometricEnrollment(false)` (UX review U13-6: adding a fingerprint must not destroy the phone's share; the device-credential
+  fallback already bounds what that invalidation protected, see the residual below).
 - **Stored**: `secret.bin` = `version u8 || iv(12) || AES-GCM(secret32) with AAD "sshub/phone/secret/v1" || ...`, plus the sealed state of
   2.1. Nothing else about the key is on disk.
 - **Use**: each unlock shows `BiometricPrompt` with the `Cipher` as `CryptoObject`; on success Kotlin decrypts, hands the bytes to
   `PhoneCore.unlock` and zero-fills its copy at once. The core holds the secret in `Zeroizing` and wipes on `lock()`. The app locks when
   it leaves the foreground (`ON_STOP`), after 60 s idle on a flow screen, and when the device locks.
-- **Changed security**: adding a biometric invalidates the key (`KeyPermanentlyInvalidatedException`). The app then offers
+- **Changed security**: adding a fingerprint does NOT invalidate the key. Removing or resetting the secure screen lock still makes Android
+  delete it (`KeyPermanentlyInvalidatedException` or a missing key). The app then offers
   "Restore from 24 words", exactly the page's restore path with head adoption (section 5). The words are the backup, not the Keystore.
 - **No app PIN, no Argon2 of a PIN.** The page needs one because a browser has no secure element; the app uses the platform's
   credential and hardware. Residual: a device credential that is a short PIN is the phone's, not the app's, to harden;
@@ -520,3 +522,29 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
 - `SecureWindow` never clears a FLAG_SECURE the Activity already holds. A QR keeps the screen lit for at most 2 minutes, then the normal screen timeout and the auto-lock apply; in landscape the code is capped to the screen height.
 - CI: `build` (the release APK) starts from clean cargo outputs and Gradle build dirs; the manifest check runs on the release APK too (non-debuggable, HIDE_OVERLAY_WINDOWS present) and gates the focused run; the uniffi-bindgen cache key includes the uniffi packages of Cargo.lock.
 - Not done: the blind clipboard clear can wipe a clip another app put there while the window has no focus (needs a device to confirm the changed-clip listener); `settings.txt` is still written on the calling thread (the D17 tests rely on write-then-read ordering); the platform and core are still built in `onCreate`; flows L1 to L3, L11 and L12 and the remaining low items beyond the ones listed in the commit message.
+
+## 16. UX batch A
+
+### Home notice, reshare name, paste Finish, glossary
+
+- Home: `HomeState.updateNeededAfter` (device name) draws the card "Update needed after removing <device>" with "Update this phone" (`HomeActions.onUpdateShares`, routed to `Routes.Reshare`). `HomeViewModel` takes `updateNeeded: StateFlow<String?>` (default none) and `homeGraph(env, router, updateNeeded)` passes it on. Wiring still owed outside Home: `AppRoot` passes `settings.updateNeededAfter` to `homeGraph`; the Red approve of a removal calls `settings.setUpdateNeededAfter(name)` and the reshare adopt clears it with `setUpdateNeededAfter(null)`.
+- The Reshare screen is titled "Update this phone after a device was removed" (`RESHARE_TITLE`). It says "Passwords ready for this phone: N of M"; the key generation, the sharing round and the full device number sit behind a collapsed "Technical details". Buttons: "Renew the phone keys"; "full devices" replace "holders".
+- Paste enrollment no longer skips Finish: after the terminal confirmation is pasted the phone shows step 5 (Finish, confirmation received) and only its Finish button opens Enrolled, as on QR. Test `EnrollPasteFinishTest`.
+- The mismatch box labels the two values "The terminal showed first" and "The terminal now shows", both in full in groups of 4, with "These two values must be the same. They are not: someone may be interfering. Nothing was enrolled."
+- Glossary: steps are "Terminal code", "Phone code", "Terminal keys", "Compare the words", "Finish" with "Step N of 5" on every enrollment screen; the screens are titled "Connect to <terminal>" and Home says "Connect to a terminal"; "the four check words", "full device", "your devices".
+
+### Approval screens: one timer, scan the device id
+
+- One timer: the Red and share release screens show a single "expires in ..." line (`ExpiryLine`): the request's own time (`ReleaseView.expiresAt`, `RedView.lapsesAt`), as `1:58` under an hour, `5 h 12 min` under a day, `2 days 4 h` beyond (`expiresText`). The 12 minute screen window is still a rule (`closed`, `WindowClosedBox`) but is written out only when it ends before the request does (`RedState.windowIsTimer`, `ReleaseState.windowIsTimer`); otherwise it is not displayed. The spoken live region stays on that one line (`spokenWindow` for the window, the 120/60/30/10 steps for a share release). The card countdown and "expires after N s" are gone.
+- Scan the device id: the typed-id field of Red, share release and trust request has a "Scan its QR" button (`TypedIdField`, `RedActions/ReleaseActions/TrustRequestActions.onScanId`) that opens the scan screen with `ScanPurpose.DeviceId` ("Scan the device id"). The QR payload is plain ASCII `sshub:dev:1:<16 hex>`; `parseDeviceIdPayload` accepts any case and spaces or dashes inside the hex. `ScanViewModel` does not call `openFrame` for this purpose: it publishes `DeviceIdScanned(id)` and the calling screen fills its field (`ConsumeScannedDeviceId`). A wrong code shows "That is not a device id code from SSHub." and scanning goes on. The core still re-checks the typed id.
+- Core owed: `scan_gray` (`ffi.rs`) drops a plain QR (its payload is not a fountain frame, so the collector counts it as damaged and no event is returned). It must hand a payload that starts with `sshub:dev:1:` through as `ScanEvent::Document { bytes }` (skipping the `is_sshub_frame` filter for that prefix); the Kotlin side already reads those bytes from `ScanEvent.Frame`. The paste path of the scan screen takes the text directly and works today.
+- Glossary on these screens: "Big change" (title of the Red screen, banner word kept), "approvals" for the three proofs, "full device", "trust session" for certificate, "sharing round" for epoch, "paper phrase or emailed code".
+
+### Backup check, first run, new phone
+
+- Backup check: before the first approval the phone asks for two random words of the 24 (`BackupVerifyScreen`, route `backup-verify`, `pickCheckWords`). The words come from `backupWords()` behind the system lock; only the two needed ones are kept until the check ends. A wrong word shows "That is not word no. N. Look at your paper again." and a "Show the words again" button. The flag `SettingsStore.backupVerified` (`verified=1` in the settings file) is sticky and is set only by a right check or by a restore from the 24 words (all 24 were typed). The tick box "I wrote them on paper" stays: its Done leads to the check while the flag is false (first run: words, tick, two words, Home).
+- The gate is navigation only: one `LaunchedEffect` in `AppRoot` opens `backup-verify` on top of an approval route (`Routes.approvalBases`: Red, release, trust request, trust extension, reshare, recovery notice, enrollment compare) while the vault is unlocked and the flag is false. Back on the check pops it and the approval screen with it, so Back reaches the list instead of reopening the check. The Approve buttons are not touched.
+- Update marker for another screen: `SettingsStore.updateNeededAfter` / `setUpdateNeededAfter(name)` (`updatefor=<name>`, blank or absent is null).
+- First run says plainly that with one computer there is no backup of the host list (this phone and the paper words hold pieces of passwords, not hosts) and to add a second computer or a view-only copy before relying on sync.
+- Security menu: "Recovery and a new phone" is two rows. "I am getting a new phone" (`onNewPhone`, route `new-phone`, `NewPhoneScreen`) says what works today: the 24 paper words on the new phone, then its history from a terminal; no direct pairing with the old phone yet; your devices accept one phone at a time, so remove the old one. "I lost my phone" opens the recovery screen (title now "I lost my phone").
+- Glossary on the identity strings: "full device", "trust sessions", "update the shares", "phone key generation", "your devices" instead of share holder, certificates, reshare and wrap keys, wrap key generation, ring.

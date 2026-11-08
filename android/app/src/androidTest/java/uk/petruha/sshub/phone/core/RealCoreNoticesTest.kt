@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -76,7 +77,9 @@ class RealCoreNoticesTest {
         rule.setScreen { RedScreen(RedState(v, at), RedActions()) }
         rule.onNodeWithText("This proposer has never met this phone.").assertExists()
         rule.onNodeWithText("Approve").assertIsNotEnabled()
-        rule.onNodeWithText("${v.fields.size} fields").assertExists()
+        assertTrue("the core gives a plain sentence", v.plain.isNotBlank())
+        rule.onNodeWithText(v.plain).assertExists()
+        rule.onNodeWithText("Technical details: ${v.fields.size} fields", substring = true).performClick() // raw fields are behind the toggle
         v.fields.forEach { f -> rule.onNode(hasContentDescription("Field ${f.key}, new value ${f.to}")).assertExists() }
         assertTrue("the core flags danger rows", v.fields.any { it.danger })
         rule.assertTargets48()

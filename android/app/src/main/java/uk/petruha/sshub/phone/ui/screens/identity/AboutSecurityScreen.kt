@@ -206,7 +206,7 @@ fun AboutSecurityScreen(state: AboutState, on: AboutActions) {
         }
         SectionHeading("What this app is not")
         SshubCard {
-            Note("Not a password manager. It holds no credential keys and no copy of your hosts: the terminal sends it only its own wrapped share inside each request. It is a share holder that approves, and never a place to read a password.")
+            Note("Not a password manager. It holds no credential keys and no copy of your hosts: the terminal sends it only its own wrapped share inside each request. It is a full device that approves, and never a place to read a password.")
             Gap(8.dp)
             Note("A rooted or compromised Android can read the secret while the app is unlocked. The Keystore does not protect against that; the freshness limits and revocation do.")
         }

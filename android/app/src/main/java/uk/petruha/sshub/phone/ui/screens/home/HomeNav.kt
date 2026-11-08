@@ -12,6 +12,8 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.NavType
 import androidx.navigation.compose.composable
 import androidx.navigation.navArgument
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import uk.petruha.sshub.phone.core.AppEnv
 import uk.petruha.sshub.phone.core.OpenedRouter
 import uk.petruha.sshub.phone.core.PendingItem
@@ -23,9 +25,13 @@ import uk.petruha.sshub.phone.core.scanRoute
  * Routes: `home`, `approvals`, `scan/{purpose}`. `router` turns a scanned `Opened` into a route (null: pop back and let the caller read
  * `ScanResults`). The shell provides `LocalPlatform` (the scan screen draws `platform.camera.Preview`).
  */
-fun NavGraphBuilder.homeGraph(env: AppEnv, router: OpenedRouter = OpenedRouter { null }) {
+fun NavGraphBuilder.homeGraph(
+    env: AppEnv,
+    router: OpenedRouter = OpenedRouter { null },
+    updateNeeded: StateFlow<String?> = MutableStateFlow(null),
+) {
     composable(Routes.Home) {
-        val vm: HomeViewModel = viewModel(factory = viewModelFactory { initializer { HomeViewModel(env.core, env.platform) } })
+        val vm: HomeViewModel = viewModel(factory = viewModelFactory { initializer { HomeViewModel(env.core, env.platform, updateNeeded) } })
         val state by vm.state.collectAsState()
         LaunchedEffect(Unit) { vm.refresh() }
         val shown = state
@@ -36,6 +42,7 @@ fun NavGraphBuilder.homeGraph(env: AppEnv, router: OpenedRouter = OpenedRouter {
                 onEnroll = { env.nav.navigate(Routes.Enroll1) },
                 onRestore = { env.nav.navigate(Routes.LockRestore) },
                 onTakeChain = { env.nav.navigate(Routes.ChainHead) },
+                onUpdateShares = { env.nav.navigate(Routes.Reshare) },
             )
         }
         if (shown != null) RingHomeScreen(shown, actions)

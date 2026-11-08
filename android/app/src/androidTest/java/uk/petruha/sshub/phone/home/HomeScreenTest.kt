@@ -21,7 +21,7 @@ class HomeScreenTest {
     private val log = mutableListOf<String>()
     private val on = HomeActions(
         onOpenPending = { log += "open:" + it.title }, onOpenApprovals = { log += "approvals" }, onEnroll = { log += "enroll" },
-        onRestore = { log += "restore" }, onTakeChain = { log += "chain" },
+        onRestore = { log += "restore" }, onTakeChain = { log += "chain" }, onUpdateShares = { log += "update" },
     )
 
     private fun show(s: HomeState, dark: Boolean = true, fontScale: Float = 1f) = rule.setScreen(dark, fontScale) { RingHomeScreen(s, on) }
@@ -89,7 +89,7 @@ class HomeScreenTest {
         rule.onNodeWithText("no ops yet").assertExists()
         rule.onNodeWithText("1 here, 0 terminals").assertExists()
         rule.onNodeWithText("Restore").performClick()
-        rule.onNodeWithText("Enroll with a terminal").performClick()
+        rule.onNodeWithText("Connect to a terminal").performClick()
         check(log == listOf("restore", "enroll")) { log.toString() }
     }
 
@@ -131,5 +131,18 @@ class HomeScreenTest {
         show(HomeSamples.homeEmpty, dark = false, fontScale = 2f)
         rule.assertNoVisualOverflow()
         rule.assertTargets48()
+    }
+
+    @Test fun u13_23_update_card_shows_with_a_marker_and_opens_the_update() {
+        show(HomeSamples.home.copy(updateNeededAfter = "build-box"))
+        rule.onNodeWithText("Update needed after removing build-box").assertIsDisplayed()
+        rule.onNodeWithText("This phone has not received the new shares yet.", substring = true).assertIsDisplayed()
+        rule.onNodeWithText("Update this phone").performClick()
+        check(log == listOf("update")) { log.toString() }
+    }
+
+    @Test fun u13_23_no_update_card_without_a_marker() {
+        show(HomeSamples.home)
+        rule.onNodeWithText("Update this phone").assertDoesNotExist()
     }
 }

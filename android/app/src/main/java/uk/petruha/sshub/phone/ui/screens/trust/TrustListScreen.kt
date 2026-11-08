@@ -65,9 +65,9 @@ fun TrustListScreen(state: TrustListState, on: TrustListActions) {
     ) {
         state.error?.let { WarnBox(it, live = true); Gap() }
         if (state.certs.isEmpty()) {
-            EmptyState("No trust sessions issued", "A terminal asks for one by showing a request. Scan it: this phone signs the certificate.")
+            EmptyState("No trust sessions issued", "A terminal asks for one by showing a request. Scan it: this phone signs the trust session.")
         } else {
-            SectionHeading("Issued by this phone", first = true, trailing = if (state.certs.size == 1) "1 certificate" else "${state.certs.size} certificates")
+            SectionHeading("Issued by this phone", first = true, trailing = if (state.certs.size == 1) "1 trust session" else "${state.certs.size} trust sessions")
             state.certs.forEach { c ->
                 val open = c.certId in state.expanded
                 SshubCard {
@@ -105,7 +105,7 @@ fun TrustListScreen(state: TrustListState, on: TrustListActions) {
                         KeyValue("issued", isoDate(c.issuedAt))
                         KeyValue("term", "${c.termText}, ends ${isoDate(c.endsAt)}")
                         KeyValue("epoch range", "epoch ${c.epochLo} to ${c.epochHi}")
-                        KeyValue("certificate", c.certId)
+                        KeyValue("trust session", c.certId)
                         c.lamport?.let { KeyValue("chain position", it.toString()) }
                         KeyValue(
                             "extensions",

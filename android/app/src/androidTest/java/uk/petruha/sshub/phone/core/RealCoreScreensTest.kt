@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -67,7 +68,9 @@ class RealCoreScreensTest {
         // M8: the host in groups of 4, the same text the lists use
         val first4 = groupedUid(v.hostUid).substringBefore(' ')
         rule.onNode(descStartsWith("Host id " + first4.uppercase().toList().joinToString(" ")), useUnmergedTree = true).assertExists()
-        rule.onNodeWithText("${v.opRows.size} fields").assertExists()
+        assertTrue("the core gives a plain sentence", v.plain.isNotBlank())
+        rule.onNodeWithText(v.plain).assertExists()
+        rule.onNodeWithText("Technical details: ${v.opRows.size} fields", substring = true).performClick()
         v.opRows.forEach { r ->
             rule.onNodeWithContentDescription("Field ${r.key}, new value ${r.to}").assertExists()
         }
@@ -132,7 +135,7 @@ class RealCoreScreensTest {
     @Test fun a_wrong_frame_from_the_real_core_is_a_stray_refusal_with_its_own_sentence_and_no_compared_values() {
         val r = wrongFrameRefusal()
         assertEquals(r.reason, RefusalKind.WrongOrder, r.kind)
-        assertEquals("Expected the terminal reveal.", r.reason)
+        assertEquals("Expected the terminal's keys.", r.reason)
         assertEquals(null, r.committed)
         assertEquals(null, r.shown)
     }

@@ -73,6 +73,7 @@ fn refused(kind: RefusalKind, reason: impl Into<String>) -> Opened {
     Opened::Refused {
         view: RefusalView {
             kind,
+            compared: Vec::new(),
             reason: reason.into(),
             checks: Vec::new(),
         },
@@ -157,7 +158,7 @@ impl EnrollFlow {
                     Stage::Idle,
                     refused(
                         RefusalKind::WrongOrder,
-                        "Expected the terminal commitment first.",
+                        "Expected the terminal's code first.",
                     ),
                 ),
             },
@@ -172,7 +173,7 @@ impl EnrollFlow {
                 } => self.on_reveal(me, commit, &reveal, token),
                 _ => (
                     Stage::AwaitReveal { me, commit },
-                    refused(RefusalKind::WrongOrder, "Expected the terminal reveal."),
+                    refused(RefusalKind::WrongOrder, "Expected the terminal's keys."),
                 ),
             },
             stage @ Stage::AwaitSas { .. } => (
@@ -254,14 +255,36 @@ impl EnrollFlow {
                 )
             }
         };
-        if commit_of(ROLE_EXISTING, &peer) != commit {
-            return (
-                Stage::Idle,
-                refused(
-                    RefusalKind::Mismatch,
-                    "The terminal reveal does not open the commitment it showed first. Enrollment stopped: someone is interfering.",
-                ),
+        let opens_to = commit_of(ROLE_EXISTING, &peer);
+        if opens_to != commit {
+            let mut o = refused(
+                RefusalKind::Mismatch,
+                "The terminal's keys do not match the code it showed first. Enrollment stopped: someone may be interfering.",
             );
+            if let Opened::Refused { view } = &mut o {
+                let show = |b: &[u8; 32]| {
+                    hex::encode(&b[..16])
+                        .to_uppercase()
+                        .as_bytes()
+                        .chunks(4)
+                        .map(|c| String::from_utf8_lossy(c).into_owned())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                view.compared = vec![
+                    crate::views::Row {
+                        label: "Code the terminal showed first".into(),
+                        value: show(&commit),
+                        danger: false,
+                    },
+                    crate::views::Row {
+                        label: "Code its keys open to".into(),
+                        value: show(&opens_to),
+                        danger: true,
+                    },
+                ];
+            }
+            return (Stage::Idle, o);
         }
         if peer.public().validate().is_err() || peer.ed25519_pub == me.ed25519_pub {
             return (
@@ -533,7 +556,7 @@ mod tests {
         // finished: a second confirm is out of order
         assert_eq!(
             reason(&flow.on_frame(&frames[4], &mut rig.ctx(), 4)),
-            "Expected the terminal commitment first."
+            "Expected the terminal's code first."
         );
     }
 
@@ -668,12 +691,20 @@ mod tests {
         }
         .encode();
         let o = flow.on_frame(&bad, &mut rig.ctx(), 2);
-        assert!(reason(&o).contains("does not open the commitment"));
+        assert!(reason(&o).contains("do not match the code it showed first"));
         assert_eq!(kind(&o), RefusalKind::Mismatch);
+        // the two values that differ are carried: the code shown first and the code the keys open to
+        let Opened::Refused { view } = &o else { unreachable!() };
+        assert_eq!(view.compared.len(), 2);
+        assert_ne!(view.compared[0].value, view.compared[1].value);
+        for r in &view.compared {
+            assert_eq!(r.value.split(' ').count(), 8, "{}", r.value);
+            assert!(r.value.chars().all(|c| c == ' ' || c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
+        }
         // the honest reveal now finds no flow
         assert_eq!(
             reason(&flow.on_frame(&t.reveal(), &mut rig.ctx(), 3)),
-            "Expected the terminal commitment first."
+            "Expected the terminal's code first."
         );
         assert!(rig.state.ring.is_empty());
     }
@@ -804,7 +835,7 @@ mod tests {
             &mut rig.ctx(),
             3,
         );
-        assert_eq!(reason(&o), "Expected the terminal commitment first.");
+        assert_eq!(reason(&o), "Expected the terminal's code first.");
         assert!(rig.state.ring.is_empty() && rig.state.enrolled.is_none());
         assert!(flow
             .decide(&Decision::EnrollSas { matches: true }, &mut rig.ctx())
@@ -898,7 +929,7 @@ mod tests {
         let mut flow = EnrollFlow::new();
         // a reveal or a confirm first
         let o = flow.on_frame(&t.reveal(), &mut rig.ctx(), 1);
-        assert_eq!(reason(&o), "Expected the terminal commitment first.");
+        assert_eq!(reason(&o), "Expected the terminal's code first.");
         assert_eq!(kind(&o), RefusalKind::WrongOrder);
         let c = EnrollFrame::Confirm {
             role: 1,
@@ -908,7 +939,7 @@ mod tests {
         .encode();
         assert_eq!(
             reason(&flow.on_frame(&c, &mut rig.ctx(), 1)),
-            "Expected the terminal commitment first."
+            "Expected the terminal's code first."
         );
         // a commitment that claims the joining role
         let own = EnrollFrame::Commit {
@@ -918,7 +949,7 @@ mod tests {
         .encode();
         assert_eq!(
             reason(&flow.on_frame(&own, &mut rig.ctx(), 1)),
-            "Expected the terminal commitment first."
+            "Expected the terminal's code first."
         );
         // a frame of another kind
         let ops = sshub_sync_proto::wire::PhoneOpsWire {
@@ -945,15 +976,15 @@ mod tests {
         .encode();
         assert_eq!(
             reason(&flow.on_frame(&wrong, &mut rig.ctx(), 2)),
-            "Expected the terminal reveal."
+            "Expected the terminal's keys."
         );
         assert_eq!(
             reason(&flow.on_frame(&t.commit(), &mut rig.ctx(), 2)),
-            "Expected the terminal reveal."
+            "Expected the terminal's keys."
         );
         assert_eq!(
             reason(&flow.on_frame(&c, &mut rig.ctx(), 2)),
-            "Expected the terminal reveal."
+            "Expected the terminal's keys."
         );
         // after the reveal the person must answer first
         assert!(matches!(

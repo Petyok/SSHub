@@ -90,6 +90,7 @@ fn refuse(checks: &[Check], reason: impl Into<String>) -> RefusalView {
     });
     RefusalView {
         kind: crate::views::RefusalKind::Other,
+ compared: Vec::new(),
         reason,
         checks,
     }
@@ -331,6 +332,7 @@ pub fn open_challenge(
         },
         None => ShortCodeOffer::Available,
     };
+    let plain = op_view.plain.clone();
     let view = ShareRequestView {
         token,
         op: op_view,
@@ -338,6 +340,7 @@ pub fn open_challenge(
         requester: requester.clone(),
         binding_words: sas_words(&bhash),
         binding_hash: hex::encode(bhash),
+        plain,
         checks,
         expires_at: ch.expiry,
         head_pending: ctx.state.head_pending,

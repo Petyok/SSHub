@@ -36,26 +36,26 @@ fun TrustSignedScreen(state: TrustSignedState, on: TrustSignedActions) {
     val h = state.handoff
     ScreenFrame(
         "Trust session signed", on.onBack,
-        banner = { RedBanner("SIGNED", kind = BannerKind.Green, trailing = "trust certificate") },
+        banner = { RedBanner("SIGNED", kind = BannerKind.Green, trailing = "trust session") },
         bar = { if (h != null) HandoffBar(state.clearsIn, on.onDone, on.onCopy) else SshubButton("Done", on.onDone, Modifier.fillMaxWidth()) },
     ) {
         Text("Trust session signed", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         if (h == null) { Gap(); Note("The signed answer is no longer on this phone. Ask the terminal for the request again."); return@ScreenFrame }
         Text(h.summary, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        SectionHeading("Proofs", trailing = "1 of 3")
+        SectionHeading("Approvals", trailing = "1 of 3")
         SshubCard {
             ProofChain(
                 listOf(
                     ProofItem("phone", "this phone", ProofKind.Signed),
-                    ProofItem("second", "attended terminal", ProofKind.Waiting),
-                    ProofItem("factor", "paper or email code", ProofKind.Waiting),
+                    ProofItem("second", "second device", ProofKind.Waiting),
+                    ProofItem("factor", "paper phrase or emailed code", ProofKind.Waiting),
                 ),
             )
         }
         Gap()
         HandoffCard(
-            h.outgoing, "certificate",
-            "The ring activates it after the second terminal and the third factor approve it. Carry this to the terminal: QR code, or the text.",
+            h.outgoing, "trust session",
+            "Your devices activate it after the second device and the paper phrase or the emailed code approve it. Carry this to the terminal: QR code, or the text.",
         )
     }
 }
@@ -67,13 +67,13 @@ fun TrustRevokedScreen(state: TrustRevokedState, on: TrustRevokedActions) {
     val h = state.handoff
     ScreenFrame(
         "Revocation signed", on.onBack,
-        banner = { RedBanner("REVOCATION SIGNED", kind = BannerKind.Neutral, trailing = "trust certificate") },
+        banner = { RedBanner("REVOCATION SIGNED", kind = BannerKind.Neutral, trailing = "trust session") },
         bar = { if (h != null) HandoffBar(state.clearsIn, on.onDone, on.onCopy) else SshubButton("Done", on.onDone, Modifier.fillMaxWidth()) },
     ) {
         Text("Revocation signed", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         if (h == null) { Gap(); Note("The signed revocation is no longer on this phone. Revoke the trust session again from the list."); return@ScreenFrame }
         Text(h.summary, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Gap()
-        HandoffCard(h.outgoing, "revocation", "Carry this to any terminal: peers stop honouring the certificate on their next sync.")
+        HandoffCard(h.outgoing, "revocation", "Carry this to any terminal: peers stop honouring the trust session on their next sync.")
     }
 }

@@ -67,13 +67,13 @@ class RecoveryScreenTest {
 
     @Test fun dark_theme() {
         show(RecoverySamples.recoveryWithNotice, dark = true)
-        rule.onNodeWithText("Recovery and a new phone").assertExists()
+        rule.onNodeWithText("I lost my phone").assertExists()
         rule.assertTargets48()
     }
 
     @Test fun light_theme() {
         show(RecoverySamples.recoveryWithNotice, dark = false)
-        rule.onNodeWithText("Recovery and a new phone").assertExists()
+        rule.onNodeWithText("I lost my phone").assertExists()
         rule.assertTargets48()
     }
 

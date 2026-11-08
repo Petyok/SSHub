@@ -63,7 +63,7 @@ fun TrustExtendScreen(state: TrustExtendState, on: TrustExtendActions) {
                 signed -> RedBanner("SIGNED", kind = BannerKind.Green, trailing = "budget extension")
                 state.phase == TrustPhase.Declined -> RedBanner("DECLINED", kind = BannerKind.Neutral, trailing = "budget extension")
                 closed -> RedBanner("WINDOW CLOSED", kind = BannerKind.Neutral, trailing = "budget extension")
-                else -> RedBanner("BUDGET EXTENSION", kind = BannerKind.Neutral, trailing = "certificate")
+                else -> RedBanner("BUDGET EXTENSION", kind = BannerKind.Neutral, trailing = "trust session")
             }
         },
         bar = {
@@ -98,10 +98,11 @@ fun TrustExtendScreen(state: TrustExtendState, on: TrustExtendActions) {
             }
             closed -> SshubCard {
                 Text("Window closed.", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
-                Note("The approval window of 12 minutes ended. Nothing was signed. Open the request again.")
+                Note("The 12 minutes for this screen ended. Nothing was signed. Open the request again.")
             }
             else -> {
                 Text("Budget extension requested", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+                if (v.plain.isNotEmpty()) Text(v.plain, Modifier.padding(vertical = 4.dp), style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
                 Text(v.headline, style = SshubText.secondaryMono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Gap()
                 v.refusal?.let { r ->

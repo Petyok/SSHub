@@ -9,10 +9,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import uk.petruha.sshub.phone.core.ChannelKind
@@ -28,7 +26,6 @@ import uk.petruha.sshub.phone.ui.components.DiffEntry
 import uk.petruha.sshub.phone.ui.components.HexGroups
 import uk.petruha.sshub.phone.ui.components.HoldCover
 import uk.petruha.sshub.phone.ui.components.KeyValue
-import uk.petruha.sshub.phone.ui.components.MonoField
 import uk.petruha.sshub.phone.ui.components.Note
 import uk.petruha.sshub.phone.ui.components.ScreenFrame
 import uk.petruha.sshub.phone.ui.components.SecureWindow
@@ -55,6 +52,7 @@ class ReleaseActions(
     val onByHand: (Boolean) -> Unit = {},
     val onCopy: () -> Unit = {},
     val onAskAgain: () -> Unit = {},
+    val onScanId: () -> Unit = {},
 )
 
 /** Share release (spec 12 `release`, rules D8 to D13, D15, D16, D18, D19). Stateless: every number comes from `state`. */
@@ -70,7 +68,6 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
             WindowClosedBox()
             return@ScreenFrame
         }
-        if (review) WindowLine(windowLeft(state.openedAt, state.now))
         if (v.headPending && review) {
             StopBox("This phone does not sign yet.", Modifier.padding(bottom = 12.dp), live = true) {
                 Text(
@@ -80,35 +77,31 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
             }
         }
 
+        if (v.plain.isNotEmpty()) Text(v.plain, Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
         SshubCard {
             Text("requester", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(displayName(v.requesterName), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
             Text(v.requesterId, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            KeyValue("share", "${v.shareKind}, sharing round ${v.shareEpoch}, share ${v.shareIndex}", Modifier.padding(top = 8.dp))
             v.requesterKey?.let { HexGroups(it, Modifier.padding(top = 8.dp), groups = null, label = "Requester key") }
-            KeyValue("share", "${v.shareKind}, epoch ${v.shareEpoch}, share ${v.shareIndex}", Modifier.padding(top = 8.dp))
         }
 
-        // Lifetime of the challenge, one needle step per second (spec 8): `now` is whole seconds.
+        // Lifetime of the challenge, one needle step per second (spec 8): `now` is whole seconds. The one timer sits in this card.
         val total = (v.expiresAt - v.signedAt).coerceAtLeast(1L)
         val left = state.left
         val signedAgo = (state.now - v.signedAt).coerceAtLeast(0L)
         SshubCard(Modifier.padding(top = 12.dp)) {
-            FlowRow(
-                Modifier.fillMaxWidth().clearAndSetSemantics {
-                    contentDescription = announcement(left, released); liveRegion = LiveRegionMode.Polite
-                },
-                horizontalArrangement = Arrangement.SpaceBetween, verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    if (left > 0) "$left s left" else "expired", style = MaterialTheme.typography.headlineSmall,
-                    color = if (left > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.sshub.dangerText,
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                ExpiryLine(
+                    state.timerLeft, if (state.windowIsTimer) spokenWindow(state.timerLeft) else announcement(left, released),
+                    danger = state.timerLeft <= 0L,
                 )
                 Text("signed ${durationText(signedAgo)} ago", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             TickScale(
                 intervals = total.toInt(), major = 10, fraction = (total - left).toFloat() / total.toFloat(),
                 description = "Request valid for $total seconds, $left seconds left",
-                modifier = Modifier.padding(top = 8.dp), labels = Triple("signed", "", "expires after $total s"),
+                modifier = Modifier.padding(top = 8.dp), labels = Triple("signed", "", ""),
             )
         }
 
@@ -117,8 +110,10 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
             HexGroups(v.hostUid, groups = null, label = "Host id")
         }
         if (v.opRows.isNotEmpty()) {
-            SectionHeading("What you release", trailing = "${v.opRows.size} fields")
-            DiffBox(v.opRows.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
+            TechnicalDetails("${v.opRows.size} fields, ${v.opRows.count { it.danger }} flagged", startOpen = v.plain.isEmpty()) {
+                SectionHeading("What you release", trailing = "${v.opRows.size} fields")
+                DiffBox(v.opRows.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
+            }
         }
 
         SectionHeading("Binding words", trailing = "compare with the terminal")
@@ -183,9 +178,9 @@ private fun NeverMet(state: ReleaseState, on: ReleaseActions) {
         )
         Text(nameAndId(v.requesterName, required), style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
     }
-    MonoField(
-        state.typed, on.onTyped, Modifier.padding(top = 12.dp), placeholder = "Type $required",
-        error = if (mismatch) "does not match" else null, capitalize = true, label = "Typed requester id",
+    TypedIdField(
+        state.typed, on.onTyped, on.onScanId, Modifier.padding(top = 12.dp), placeholder = "Type $required",
+        error = if (mismatch) "does not match" else null, label = "Typed requester id",
     )
 }
 

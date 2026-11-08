@@ -77,7 +77,8 @@ internal fun EnrollChannel.label(): String = when (this) {
 
 internal const val QR_DESCRIPTION = "QR code with the enrolment offer. Use the text code below or ask the other device to read it"
 
-private val StepNames = listOf("Scan", "Show", "Keys", "Compare", "Confirm")
+/** The glossary's names of the five steps; the terminal and the page use the same ones. */
+private val StepNames = listOf("Terminal code", "Phone code", "Terminal keys", "Compare the words", "Finish")
 
 /** The five steps as chain squares joined by a line: done filled with a check, current amber, later empty. `n` 6 means all done. */
 @Composable
@@ -121,8 +122,8 @@ internal fun EnrollFrame(
     step: Int,
     onBack: (() -> Unit)?,
     bar: (@Composable () -> Unit)?,
-    title: String = "Enroll with $terminal",
-    trailing: String = "step $step of 5",
+    title: String = "Connect to $terminal",
+    trailing: String = "Step $step of 5",
     content: @Composable ColumnScope.() -> Unit,
 ) = ScreenFrame(
     title = title, onBack = onBack, bar = bar,

@@ -50,6 +50,37 @@ class SignerMismatchTest {
         assertTrue("the D17 block persists", again.signerMismatch.value)
     }
 
+    @Test fun backup_verified_is_sticky_and_persists() {
+        val f = file()
+        val s = FileSettingsStore(f)
+        assertFalse(s.backupVerified.value)
+        s.setBackupVerified(false)
+        assertFalse(FileSettingsStore(f).backupVerified.value)
+        s.setBackupVerified(true); s.setBackupVerified(false)
+        assertTrue(s.backupVerified.value)
+        assertTrue(FileSettingsStore(f).backupVerified.value)
+        assertTrue(f.readText().lines().contains("verified=1"))
+        val mem = InMemorySettingsStore()
+        mem.setBackupVerified(true); mem.setBackupVerified(false)
+        assertTrue(mem.backupVerified.value)
+    }
+
+    @Test fun update_needed_after_keeps_a_name_with_spaces_and_clears() {
+        val f = file()
+        val s = FileSettingsStore(f)
+        assertNull(s.updateNeededAfter.value)
+        s.setUpdateNeededAfter("old laptop")
+        assertEquals("old laptop", FileSettingsStore(f).updateNeededAfter.value)
+        assertTrue(f.readText().lines().contains("updatefor=old laptop"))
+        s.setUpdateNeededAfter("two\nlines")
+        assertEquals("two lines", FileSettingsStore(f).updateNeededAfter.value)
+        s.setUpdateNeededAfter(null)
+        assertNull(FileSettingsStore(f).updateNeededAfter.value)
+        val mem = InMemorySettingsStore()
+        mem.setUpdateNeededAfter("x"); assertEquals("x", mem.updateNeededAfter.value)
+        mem.setUpdateNeededAfter(" "); assertNull(mem.updateNeededAfter.value)
+    }
+
     @Test fun the_block_is_sticky_against_set_false() {
         val f = file()
         val s = FileSettingsStore(f)

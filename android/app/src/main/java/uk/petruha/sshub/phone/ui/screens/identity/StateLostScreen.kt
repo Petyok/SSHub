@@ -37,7 +37,7 @@ fun StateLostScreen(onContinue: () -> Unit, onLock: () -> Unit) {
             )
             Text(
                 "If you continue, this phone starts as a restored phone: it does not sign until it has taken its chain from two terminals, " +
-                    "the certificates and short codes it knew are not listed, and terminals met before are met again.",
+                    "the trust sessions and short codes it knew are not listed, and terminals met before are met again.",
                 style = MaterialTheme.typography.bodyMedium,
             )
         }

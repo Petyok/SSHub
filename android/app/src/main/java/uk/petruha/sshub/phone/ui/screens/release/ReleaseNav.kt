@@ -64,14 +64,16 @@ private fun NavBackStackEntry.long(name: String): Long = arguments?.getLong(name
 fun NavGraphBuilder.releaseGraph(env: AppEnv) {
     composable(ReleaseRoutes.RED, arguments = listOf(navArgument("token") { type = NavType.LongType })) { entry ->
         val token = entry.long("token")
-        val vm: RedViewModel = viewModel(key = "red-$token", factory = factory { RedViewModel(env.core, env.platform, token) })
+        val vm: RedViewModel = viewModel(key = "red-$token", factory = factory { RedViewModel(env.core, env.platform, token, env.settings) })
         val state by vm.state.collectAsStateWithLifecycle()
         val s = state
+        ConsumeScannedDeviceId(vm::typed)
         if (s == null) LaunchedEffect(Unit) { env.nav.popBackStack() }
         else RedScreen(
             s, RedActions(
                 onBack = { env.nav.popBackStack() }, onApprove = vm::approve, onDecline = vm::decline,
                 onToggleHash = vm::toggleHash, onCopy = vm::copy, onTyped = vm::typed,
+                onScanId = { env.nav.navigate(scanRoute(ScanPurpose.DeviceId)) },
             ),
         )
     }
@@ -80,12 +82,14 @@ fun NavGraphBuilder.releaseGraph(env: AppEnv) {
         val vm: ReleaseViewModel = viewModel(key = "release-$token", factory = factory { ReleaseViewModel(env.core, env.platform, token) })
         val state by vm.state.collectAsStateWithLifecycle()
         val s = state
+        ConsumeScannedDeviceId(vm::typed)
         if (s == null) LaunchedEffect(Unit) { env.nav.popBackStack() }
         else ShareReleaseScreen(
             s, ReleaseActions(
                 onBack = { env.nav.popBackStack() }, onApprove = vm::approve, onDecline = vm::decline, onTyped = vm::typed,
                 onChannel = vm::channel, onSound = vm::sound, onShortCode = vm::shortCode, onByHand = vm::byHand, onCopy = vm::copy,
                 onAskAgain = { env.nav.navigate(scanRoute(ScanPurpose.Request)) },
+                onScanId = { env.nav.navigate(scanRoute(ScanPurpose.DeviceId)) },
             ),
         )
     }

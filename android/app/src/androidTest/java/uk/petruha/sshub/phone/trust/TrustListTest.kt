@@ -33,7 +33,7 @@ class TrustListTest {
 
     @Test fun main_path_lists_active_expired_and_revoked_with_words() {
         rule.setScreen { TrustListScreen(list, listActions()) }
-        rule.onNodeWithText("4 certificates").assertExists()
+        rule.onNodeWithText("4 trust sessions").assertExists()
         rule.onAllNodesWithText("active").assertCountEquals(2)
         rule.onAllNodesWithText("expired").assertCountEquals(1)
         rule.onAllNodesWithText("revoked").assertCountEquals(1)
@@ -108,7 +108,7 @@ class TrustListTest {
     @Test fun empty_state_still_offers_scan() {
         rule.setScreen { TrustListScreen(TrustListState(emptyList()), listActions()) }
         rule.onNodeWithText("No trust sessions issued").assertExists()
-        rule.onNodeWithText("A terminal asks for one by showing a request. Scan it: this phone signs the certificate.").assertExists()
+        rule.onNodeWithText("A terminal asks for one by showing a request. Scan it: this phone signs the trust session.").assertExists()
         rule.onNodeWithText("Scan a request").assertExists()
         rule.assertTargets48()
     }
