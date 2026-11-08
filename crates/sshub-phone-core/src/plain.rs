@@ -127,6 +127,14 @@ pub fn plain_op(op: &Op, aliases: &BTreeMap<String, String>) -> String {
             extra_hosts,
             if *extra_hosts == 1 { "" } else { "s" }
         )),
+        OpBody::CertRenew { expiry, .. } => asked(format!(
+            "Renew a trust session: it will run until {}.",
+            day(*expiry)
+        )),
+        OpBody::PhoneHandover { name, .. } => asked(format!(
+            "Hand this phone's place over to {}: this phone stops being a device of yours.",
+            safe_text(name)
+        )),
         OpBody::CertHostOpened { .. } => "A trust session opened a host.".to_string(),
         OpBody::PhoneReenroll { .. } => asked(
             "Replace this phone with a new one. After a 7 day wait the new phone takes over, unless you cancel from this phone."

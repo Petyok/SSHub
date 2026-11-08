@@ -959,6 +959,7 @@ mod tests {
         // a frame of another kind
         let ops = sshub_sync_proto::wire::PhoneOpsWire {
             sender: None,
+            terminals: None,
             ops: vec![],
         }
         .encode();

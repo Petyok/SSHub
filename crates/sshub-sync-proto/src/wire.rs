@@ -376,6 +376,9 @@ pub struct PhoneOpsWire {
     /// only tells two lists apart (an honest terminal that is behind, or one animation scanned twice). It is not a proof
     /// of who sent the list. Phone-to-terminal exports carry none.
     pub sender: Option<[u8; 8]>,
+    /// Phase B: what the sender knows about the ring's terminals, as an optional trailing block after the sender block
+    /// (`0x02 || count u8 || newest_op_ts i64 BE`). UNSIGNED and informational. Blocks come in tag order.
+    pub terminals: Option<TerminalsBlock>,
 }
 
 impl PhoneOpsWire {
@@ -386,23 +389,47 @@ impl PhoneOpsWire {
             out.push(PHONE_OPS_SENDER_TAG);
             out.extend_from_slice(id);
         }
+        if let Some(t) = &self.terminals {
+            out.push(PHONE_OPS_TERMINALS_TAG);
+            out.push(t.count);
+            out.extend_from_slice(&t.newest_op_ts.to_be_bytes());
+        }
         out
     }
 
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         let body = unframe(bytes, KIND_PHONE_OPS)?;
         let (ops, used) = decode_op_list(body)?;
-        let sender = match &body[used..] {
-            [] => None,
-            [PHONE_OPS_SENDER_TAG, id @ ..] => match <[u8; 8]>::try_from(id) {
-                Ok(id) => Some(id),
-                Err(_) => {
-                    bail!("phone ops frame: the sender block is truncated or has trailing bytes")
-                }
-            },
-            _ => bail!("phone ops frame has trailing bytes"),
-        };
-        Ok(Self { ops, sender })
+        let mut rest = &body[used..];
+        let mut sender = None;
+        if let [PHONE_OPS_SENDER_TAG, tail @ ..] = rest {
+            let Some((id, tail)) = tail.split_first_chunk::<8>() else {
+                bail!("phone ops frame: the sender block is truncated");
+            };
+            sender = Some(*id);
+            rest = tail;
+        }
+        let mut terminals = None;
+        if let [PHONE_OPS_TERMINALS_TAG, tail @ ..] = rest {
+            let Some((b, tail)) = tail.split_first_chunk::<9>() else {
+                bail!("phone ops frame: the terminals block is truncated");
+            };
+            terminals = Some(TerminalsBlock {
+                count: b[0],
+                newest_op_ts: i64::from_be_bytes(b[1..].try_into().unwrap()),
+            });
+            rest = tail;
+        }
+        if !rest.is_empty() {
+            bail!(
+                "phone ops frame has trailing bytes, an unknown block or blocks out of tag order"
+            );
+        }
+        Ok(Self {
+            ops,
+            sender,
+            terminals,
+        })
     }
 }
 
@@ -644,7 +671,7 @@ pub struct HeadEvidence {
 }
 
 /// Kind 11 (contract 4j), type only: `cert_id(32) || expiry i64 BE || n u8 || n x (terminal(8) || head_seq u64 BE || head_ts i64 BE)`,
-/// `n <= MAX_RENEW_EVIDENCE`. Encode and decode are written by the proto lane.
+/// `n <= MAX_RENEW_EVIDENCE`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CertRenewRequestWire {
     pub cert_id: [u8; 32],
@@ -652,8 +679,7 @@ pub struct CertRenewRequestWire {
     pub evidence: Vec<HeadEvidence>,
 }
 
-/// Kind 12 (contract 4j), type only: `ed25519(32) || x25519(32) || mlkem_len u16 BE || mlkem || name_len u8 || name utf8 || terminal(8)`.
-/// Encode and decode are written by the proto lane.
+/// Kind 12 (contract 4j): `ed25519(32) || x25519(32) || mlkem_len u16 BE || mlkem || name_len u8 || name utf8 || terminal(8)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhoneHandoverRequestWire {
     pub new_phone: super::crypto::DevicePublic,
@@ -661,8 +687,106 @@ pub struct PhoneHandoverRequestWire {
     pub terminal: [u8; 8],
 }
 
-/// The optional `terminals` block of a kind 5 frame (contract 4j), type only: `0x02 || count u8 || newest_op_ts i64 BE`.
-/// UNSIGNED and informational. `PhoneOpsWire` gains `terminals: Option<TerminalsBlock>` in the proto lane.
+impl CertRenewRequestWire {
+    pub fn encode(&self) -> Vec<u8> {
+        assert!(
+            self.evidence.len() <= MAX_RENEW_EVIDENCE,
+            "too much evidence"
+        );
+        let mut out = frame_header(KIND_CERT_RENEW_REQUEST);
+        out.extend_from_slice(&self.cert_id);
+        out.extend_from_slice(&self.expiry.to_be_bytes());
+        out.push(self.evidence.len() as u8);
+        for e in &self.evidence {
+            out.extend_from_slice(&e.terminal);
+            out.extend_from_slice(&e.head_seq.to_be_bytes());
+            out.extend_from_slice(&e.head_ts.to_be_bytes());
+        }
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let body = unframe(bytes, KIND_CERT_RENEW_REQUEST)?;
+        if body.len() < 41 {
+            bail!("a certificate renewal request is truncated");
+        }
+        let n = body[40] as usize;
+        if n > MAX_RENEW_EVIDENCE {
+            bail!("a renewal request carries at most {MAX_RENEW_EVIDENCE} evidence entries");
+        }
+        if body.len() != 41 + n * 24 {
+            bail!("a certificate renewal request does not match its evidence count");
+        }
+        let evidence = body[41..]
+            .as_chunks::<24>()
+            .0
+            .iter()
+            .map(|c| HeadEvidence {
+                terminal: c[..8].try_into().unwrap(),
+                head_seq: u64::from_be_bytes(c[8..16].try_into().unwrap()),
+                head_ts: i64::from_be_bytes(c[16..].try_into().unwrap()),
+            })
+            .collect();
+        Ok(Self {
+            cert_id: body[..32].try_into().unwrap(),
+            expiry: i64::from_be_bytes(body[32..40].try_into().unwrap()),
+            evidence,
+        })
+    }
+
+    pub fn to_body(&self) -> super::oplog::OpBody {
+        super::oplog::OpBody::CertRenew {
+            cert_id: self.cert_id,
+            expiry: self.expiry,
+        }
+    }
+}
+
+impl PhoneHandoverRequestWire {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = frame_header(KIND_PHONE_HANDOVER_REQUEST);
+        out.extend_from_slice(&self.new_phone.ed25519_pub);
+        out.extend_from_slice(&self.new_phone.x25519_pub);
+        out.extend_from_slice(
+            &u16::try_from(self.new_phone.mlkem_pub.len())
+                .expect("ML-KEM key fits u16")
+                .to_be_bytes(),
+        );
+        out.extend_from_slice(&self.new_phone.mlkem_pub);
+        out.push(u8::try_from(self.name.len()).expect("name fits u8"));
+        out.extend_from_slice(self.name.as_bytes());
+        out.extend_from_slice(&self.terminal);
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let body = unframe(bytes, KIND_PHONE_HANDOVER_REQUEST)?;
+        let short = || anyhow::anyhow!("a phone handover request is truncated");
+        if body.len() < 66 {
+            return Err(short());
+        }
+        let mlkem_len = u16::from_be_bytes(body[64..66].try_into().unwrap()) as usize;
+        let name_at = 66 + mlkem_len;
+        let name_len = *body.get(name_at).ok_or_else(short)? as usize;
+        let term_at = name_at + 1 + name_len;
+        if body.len() != term_at + 8 {
+            bail!("a phone handover request does not match its lengths");
+        }
+        Ok(Self {
+            new_phone: super::crypto::DevicePublic {
+                ed25519_pub: body[..32].try_into().unwrap(),
+                x25519_pub: body[32..64].try_into().unwrap(),
+                mlkem_pub: body[66..name_at].to_vec(),
+            },
+            name: String::from_utf8(body[name_at + 1..term_at].to_vec())
+                .map_err(|_| anyhow::anyhow!("a handover name is not UTF-8"))?,
+            terminal: body[term_at..].try_into().unwrap(),
+        })
+    }
+}
+
+/// The optional `terminals` block of a kind 5 frame (contract 4j): `0x02 || count u8 || newest_op_ts i64 BE`.
+/// UNSIGNED and informational: the `terminals` field of `PhoneOpsWire`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalsBlock {
     pub count: u8,
@@ -730,10 +854,12 @@ mod tests {
         let plain = PhoneOpsWire {
             ops: ops.clone(),
             sender: None,
+            terminals: None,
         };
         let with = PhoneOpsWire {
             ops,
             sender: Some([7; 8]),
+            terminals: None,
         };
         // without the block (every frame written before it, and every phone export): decodes, no sender
         assert_eq!(PhoneOpsWire::decode(&plain.encode()).unwrap().sender, None);
@@ -761,6 +887,141 @@ mod tests {
         let at = tag.len() - 9;
         tag[at] = 2;
         assert!(PhoneOpsWire::decode(&tag).is_err());
+    }
+
+    #[test]
+    fn the_kind_5_terminals_block_is_optional_ordered_and_strict() {
+        let ops = vec![(b"a".to_vec(), [1; 64])];
+        let plain = PhoneOpsWire {
+            ops: ops.clone(),
+            sender: None,
+            terminals: None,
+        };
+        let t = TerminalsBlock {
+            count: 3,
+            newest_op_ts: -2,
+        };
+        let only = PhoneOpsWire {
+            terminals: Some(t),
+            ..plain.clone()
+        };
+        let both = PhoneOpsWire {
+            sender: Some([7; 8]),
+            ..only.clone()
+        };
+        // frames without the block decode as before
+        assert_eq!(PhoneOpsWire::decode(&plain.encode()).unwrap(), plain);
+        for w in [&only, &both] {
+            let bytes = w.encode();
+            assert_eq!(&PhoneOpsWire::decode(&bytes).unwrap(), w);
+            let n = bytes.len();
+            assert_eq!(&bytes[n - 10..n - 8], &[PHONE_OPS_TERMINALS_TAG, 3]);
+            assert_eq!(&bytes[n - 8..], &(-2i64).to_be_bytes());
+            // truncated at every length, trailing byte
+            for cut in 1..10 {
+                assert!(
+                    PhoneOpsWire::decode(&bytes[..n - cut]).is_err(),
+                    "cut {cut}"
+                );
+            }
+            let mut long = bytes.clone();
+            long.push(0);
+            assert!(PhoneOpsWire::decode(&long).is_err());
+            // an unknown tag after the known blocks
+            let mut unknown = bytes.clone();
+            unknown.extend_from_slice(&[3, 0]);
+            assert!(PhoneOpsWire::decode(&unknown).is_err());
+        }
+        // blocks out of tag order: terminals before sender
+        let mut swapped = plain.encode();
+        swapped.extend_from_slice(&[PHONE_OPS_TERMINALS_TAG, 3]);
+        swapped.extend_from_slice(&(-2i64).to_be_bytes());
+        swapped.push(PHONE_OPS_SENDER_TAG);
+        swapped.extend_from_slice(&[7; 8]);
+        assert!(PhoneOpsWire::decode(&swapped).is_err());
+        // two sender blocks, two terminals blocks
+        let mut twice = both.encode();
+        twice.extend_from_slice(&both.encode()[both.encode().len() - 10..]);
+        assert!(PhoneOpsWire::decode(&twice).is_err());
+    }
+
+    fn evidence(i: u8) -> HeadEvidence {
+        HeadEvidence {
+            terminal: [i; 8],
+            head_seq: u64::from(i) << 40,
+            head_ts: -i64::from(i),
+        }
+    }
+
+    #[test]
+    fn kind_11_carries_zero_to_32_evidence_entries_and_refuses_33() {
+        for n in [0u8, 1, 32] {
+            let req = CertRenewRequestWire {
+                cert_id: [5; 32],
+                expiry: 1_800_000_000,
+                evidence: (0..n).map(evidence).collect(),
+            };
+            let bytes = req.encode();
+            assert_eq!(bytes.len(), HEADER + 41 + 24 * n as usize);
+            assert_eq!(CertRenewRequestWire::decode(&bytes).unwrap(), req);
+            assert_eq!(
+                req.to_body(),
+                crate::oplog::OpBody::CertRenew {
+                    cert_id: [5; 32],
+                    expiry: 1_800_000_000
+                }
+            );
+            // trailing byte and truncation
+            let mut long = bytes.clone();
+            long.push(0);
+            assert!(CertRenewRequestWire::decode(&long).is_err());
+            assert!(CertRenewRequestWire::decode(&bytes[..bytes.len() - 1]).is_err());
+        }
+        // 33 entries on the wire (built by hand: the encoder refuses to write them)
+        let mut over = CertRenewRequestWire {
+            cert_id: [5; 32],
+            expiry: 1,
+            evidence: (0..32).map(evidence).collect(),
+        }
+        .encode();
+        over[HEADER + 40] = 33;
+        over.extend_from_slice(&[0; 24]);
+        assert!(CertRenewRequestWire::decode(&over).is_err());
+        assert!(CertRenewRequestWire::decode(&frame_header(KIND_CERT_RENEW_REQUEST)).is_err());
+        assert!(CertRenewRequestWire::decode(&frame_header(KIND_CERT_EXTEND_REQUEST)).is_err());
+    }
+
+    #[test]
+    fn kind_12_round_trips_with_the_longest_name_and_refuses_bad_lengths() {
+        for name in ["", "p", &"\u{1F4F1}".repeat(63), &"n".repeat(255)] {
+            let req = PhoneHandoverRequestWire {
+                new_phone: crate::crypto::DevicePublic {
+                    ed25519_pub: [1; 32],
+                    x25519_pub: [2; 32],
+                    mlkem_pub: vec![3; 1184],
+                },
+                name: name.into(),
+                terminal: [9; 8],
+            };
+            let bytes = req.encode();
+            assert_eq!(PhoneHandoverRequestWire::decode(&bytes).unwrap(), req);
+            assert_eq!(bytes.len(), HEADER + 66 + 1184 + 1 + name.len() + 8);
+            let mut long = bytes.clone();
+            long.push(0);
+            assert!(PhoneHandoverRequestWire::decode(&long).is_err());
+            for cut in [1, 8, 9] {
+                assert!(PhoneHandoverRequestWire::decode(&bytes[..bytes.len() - cut]).is_err());
+            }
+            // a name that is not UTF-8
+            if !name.is_empty() {
+                let mut bad = bytes.clone();
+                bad[HEADER + 66 + 1184 + 1] = 0xff;
+                assert!(PhoneHandoverRequestWire::decode(&bad).is_err());
+            }
+        }
+        assert!(
+            PhoneHandoverRequestWire::decode(&frame_header(KIND_PHONE_HANDOVER_REQUEST)).is_err()
+        );
     }
 
     #[test]
@@ -948,6 +1209,7 @@ mod phone_frame_tests {
         let ops = PhoneOpsWire {
             ops: vec![(b"a".to_vec(), [1; 64]), (b"bb".to_vec(), [2; 64])],
             sender: None,
+            terminals: None,
         };
         assert_eq!(PhoneOpsWire::decode(&ops.encode()).unwrap(), ops);
         let mut long = ops.encode();

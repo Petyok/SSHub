@@ -201,6 +201,7 @@ fn pasted_phone_ops_reach_the_log_once() {
     };
     let frame = PhoneOpsWire {
         sender: None,
+        terminals: None,
         ops: vec![(canonical, sig)],
     }
     .encode();
