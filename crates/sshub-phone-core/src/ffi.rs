@@ -1474,6 +1474,36 @@ mod tests {
     }
 
     #[test]
+    fn one_list_head_needs_the_tick_through_decide() {
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.lock_inner().unlocked.as_mut().unwrap().state = PhoneState::restored();
+        let id = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
+        let mut live = PhoneState::default();
+        for t in 0..3 {
+            chain::head_attest(&mut live, &id, 1_893_452_400 + t, None).unwrap();
+        }
+        let list = PhoneOpsWire {
+            sender: Some([1; 8]),
+            terminals: Some(TerminalsBlock {
+                count: 2,
+                newest_op_ts: 1_893_452_402,
+            }),
+            ops: chain::courier_ops(&live, 8),
+        }
+        .encode();
+        let v = c.take_chain(list).unwrap();
+        assert!(v.agreed && v.single_source);
+        assert_eq!((v.terminals_count, v.terminals_newest_at), (Some(2), Some(1_893_452_402)));
+        assert!(v.note.starts_with("Your ring has 2 terminals and I can reach only this one."), "{}", v.note);
+        let now = 1_893_452_500;
+        let e = c.decide(v.token, Decision::Approve { typed_id: None }, now).unwrap_err();
+        assert_eq!(e.reason(), chain::SINGLE_SOURCE_TICK_MESSAGE);
+        c.decide(v.token, Decision::AcceptSingleSource, now).unwrap();
+        assert!(!c.lock_inner().unlocked.as_ref().unwrap().state.head_pending);
+    }
+
+    #[test]
     fn the_exported_ops_come_with_their_rows() {
         let c = core();
         c.unlock(vec![0x42; 32]).unwrap();
