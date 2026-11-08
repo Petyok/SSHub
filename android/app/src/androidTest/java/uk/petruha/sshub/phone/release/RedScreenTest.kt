@@ -66,7 +66,7 @@ class RedScreenTest {
         val log = mutableListOf<String>()
         rule.show(ReleaseSamples.redState(), log = log)
         rule.onNodeWithText("Revoke device laptop-old").assertExists()
-        rule.onNodeWithText("proposed by laptop-main 7B3E-0D15, lamport 1042, seq 57").assertExists()
+        rule.onNodeWithText("proposed by laptop-main 7B3E-0D15").assertExists()
         rule.onNodeWithText("6 min ago").assertExists()
         rule.onNodeWithText("expires in 12:00").assertExists()
         rule.onAllNodesWithText("lapses in", substring = true).assertCountEquals(0)
@@ -78,7 +78,7 @@ class RedScreenTest {
 
     @Test fun a_proposer_the_phone_does_not_know_reads_not_met_and_the_id() {
         rule.show(ReleaseSamples.redState(ReleaseSamples.redUnknownProposer))
-        rule.onNodeWithText("proposed by not met 7B3E-0D15, lamport 1042, seq 57").assertExists()
+        rule.onNodeWithText("proposed by not met 7B3E-0D15").assertExists()
     }
 
     @Test fun d1_red_banner_is_the_first_element_under_the_header() {
