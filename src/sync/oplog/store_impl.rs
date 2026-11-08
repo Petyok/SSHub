@@ -461,6 +461,11 @@ impl LauncherStore {
         })
     }
 
+    /// The certificate's folded record (effective end date, renewals counted): see `oplog::cert_fold`.
+    pub fn sync_cert_record(&self, cert_id: &[u8; 32]) -> Result<Option<super::CertRecord>> {
+        self.with_conn(|conn| super::cert_record(conn, &super::merge::hex(cert_id)))
+    }
+
     pub fn sync_cert_revoked(&self, cert_id: &[u8; 32]) -> Result<bool> {
         self.with_conn(|conn| {
             Ok(conn.query_row(
