@@ -135,6 +135,12 @@ pub(crate) fn role(app: &mut App) {
 fn choose_role(app: &mut App, id: String, name: String) {
     let to = |role: DeviceRole, id: String| -> MenuFn {
         Box::new(move |app: &mut App| {
+            if role == DeviceRole::Holder {
+                let after = crate::sync::quorum::live_holder_count(&app.store).unwrap_or(0) + 1;
+                if paper_first(app, false, after) {
+                    return;
+                }
+            }
             report_job(app, move |env| {
                 admin::role(&env.store, &env.identity, &id, role, now())
             });
@@ -242,6 +248,9 @@ pub(crate) fn mode(app: &mut App) {
     }
     match app.sync.cred_mode {
         Some(super::sync::CredModeView::Vault) => {
+            if paper_first(app, true, 0) {
+                return;
+            }
             // Proposing needs no secret; the phrase is asked when the switch is finished.
             mode_job(app, String::new(), CredMode::Quorum);
         }
@@ -540,7 +549,7 @@ fn paper_panel(app: &mut App, wizard: bool) {
     }
     lines.push(String::new());
     lines.push(if wizard {
-        "Step 1 of 2: write the words on paper. Step 2: press Enter and type them back to check them. They are kept only until this program closes, so do both now.".into()
+        "Step 1 of 2: write the words on paper. Step 2: press Enter and type three of them back to check them. They are kept only until this program closes, so do both now.".into()
     } else {
         "Close this panel, then choose \"register what I wrote down\" and type them back.".into()
     });
@@ -549,25 +558,51 @@ fn paper_panel(app: &mut App, wizard: bool) {
     app.sync_info_with("Paper phrase", lines, Vec::new(), then);
 }
 
-/// The second half: the user types the words back from the paper; only an exact
-/// match registers them as the third factor.
+/// Three distinct word numbers (1 based, ascending) of the 24 that the user types back from the paper.
+fn paper_challenge() -> [usize; 3] {
+    let mut picked = Vec::with_capacity(3);
+    while picked.len() < 3 {
+        let n = rand_core::RngCore::next_u32(&mut rand_core::OsRng) as usize % 24 + 1;
+        if !picked.contains(&n) {
+            picked.push(n);
+        }
+    }
+    picked.sort_unstable();
+    [picked[0], picked[1], picked[2]]
+}
+
+/// `typed` holds exactly the words at the 1 based `positions` of `phrase`, in that order.
+fn paper_words_match(phrase: &str, positions: [usize; 3], typed: &str) -> bool {
+    let all: Vec<&str> = phrase.split_whitespace().collect();
+    let typed: Vec<&str> = typed.split_whitespace().collect();
+    typed.len() == 3 && positions.iter().zip(&typed).all(|(p, t)| all.get(p - 1) == Some(t))
+}
+
+/// The second half: the user types three words of the phrase back from the paper (chosen at random, no tick box);
+/// only a correct answer registers it as the third factor.
 pub(crate) fn paper_register(app: &mut App) {
     if app.sync_paper.is_none() {
         app.host_notice = Some("create a paper phrase first".into());
         return;
     }
+    let at = paper_challenge();
     app.sync_prompt(
         "Register the paper phrase",
-        "Type the 24 words from your paper (nothing is shown)",
+        format!(
+            "Type words {}, {} and {} from your paper, separated by spaces (nothing is shown). Without it you could not cut off a stolen device, and you could not recover a lost phone.",
+            at[0], at[1], at[2]
+        ),
         true,
-        |app, typed| {
-            let expected = app.sync_paper.take();
-            if expected.as_deref().map(|e| e.as_str()) != Some(typed.trim()) {
+        move |app, typed| {
+            let Some(expected) = app.sync_paper.take() else {
+                return;
+            };
+            if !paper_words_match(&expected, at, &typed) {
                 app.host_notice =
-                    Some("the words do not match: nothing registered, create a new phrase".into());
+                    Some("those are not the words on your paper: nothing registered, create a new phrase".into());
                 return;
             }
-            let phrase = typed.trim().to_string();
+            let phrase = expected.to_string();
             report_job(app, move |env| {
                 admin::factor_register(
                     &env.store,
@@ -580,6 +615,19 @@ pub(crate) fn paper_register(app: &mut App) {
             });
         },
     );
+}
+
+/// The paper phrase is a precondition of a switch to Quorum and of a third full device (design 3.1): when it is
+/// missing, say so and start the wizard instead of the change. `true` when the wizard took over.
+fn paper_first(app: &mut App, to_quorum: bool, holders_after: usize) -> bool {
+    match admin::paper_gate(&app.store, to_quorum, holders_after) {
+        Ok(()) => false,
+        Err(e) => {
+            paper_wizard(app);
+            app.host_notice = Some(format!("{e:#}"));
+            true
+        }
+    }
 }
 
 pub(crate) fn email_factor(app: &mut App) {

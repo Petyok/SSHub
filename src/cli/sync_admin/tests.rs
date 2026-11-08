@@ -45,6 +45,41 @@ fn ring(n: usize) -> Vec<Dev> {
         .collect()
 }
 
+fn with_paper(store: &LauncherStore) {
+    let phrase = crate::sync::crypto::bip39_encode(&[0x42; 32]);
+    crate::sync::quorum::paper_setup(store, &phrase).unwrap();
+}
+
+#[test]
+fn quorum_mode_needs_a_registered_paper() {
+    let r = ring(1);
+    let e = mode(&r[0].store, &r[0].id, CredMode::Quorum, None, "w", &[0; 16], 1_000)
+        .unwrap_err();
+    assert!(format!("{e:#}").contains("register the paper phrase first"), "{e:#}");
+    assert!(crate::sync::quorum::ops_of(&r[0].store, "ModeChange", None).unwrap().is_empty());
+}
+
+#[test]
+fn third_holder_needs_a_registered_paper() {
+    let r = ring(2);
+    let m = DeviceIdentity::generate();
+    r[0].store
+        .sync_register_device(
+            &m.public(),
+            "mirror",
+            DeviceRole::Mirror,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    let id = m.public().device_id().to_string();
+    let e = role(&r[0].store, &r[0].id, &id[..10], DeviceRole::Holder, 1_000).unwrap_err();
+    assert!(format!("{e:#}").contains("register the paper phrase first"), "{e:#}");
+    with_paper(&r[0].store);
+    role(&r[0].store, &r[0].id, &id[..10], DeviceRole::Holder, 1_000).unwrap();
+}
+
 #[test]
 fn every_verb_parses_its_synopsis() {
     assert_eq!(ok("sync-revoke", &["abc"]), Cmd::Revoke("abc".into()));
@@ -245,6 +280,7 @@ fn the_kit_sets_up_the_vault_and_keeps_the_ring_secret() {
 #[test]
 fn quorum_mode_needs_no_credentials_to_open_and_then_flips() {
     let r = ring(1);
+    with_paper(&r[0].store);
     let rep = mode(
         &r[0].store,
         &r[0].id,

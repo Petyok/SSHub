@@ -605,6 +605,8 @@ pub struct SyncView {
     pub health: crate::sync::health::Health,
     /// `None` when a stolen full computer can be cut off, else how many more computers are needed.
     pub cut_off_missing: Option<usize>,
+    /// A ring is set up but no paper phrase is registered (design 3.1): a standing line offers the wizard.
+    pub no_paper: bool,
     /// The Vault's ring secret is not in this profile's credential store (checked once, again after a job).
     pub ring_secret_missing: Option<bool>,
     /// A persistent row for a switch or export that was approved and waits to be finished.
@@ -702,6 +704,7 @@ impl App {
             _ if self.is_action(KeyAction::SyncReview, &key) => self.sync_open_review(),
             _ if self.is_action(KeyAction::SyncTrust, &key) => self.sync_open_trust(),
             _ if self.is_action(KeyAction::SyncAdmin, &key) => self.open_sync_admin(),
+            _ if self.is_action(KeyAction::SyncPaper, &key) => super::sync_flows::paper_wizard(self),
             _ if self.is_action(KeyAction::Connect, &key) => self.sync_open_selected(),
             _ => {}
         }

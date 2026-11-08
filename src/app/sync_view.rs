@@ -759,6 +759,7 @@ impl App {
         let now = crate::store::now_ts();
         sync.health = crate::sync::health::health(&store, this_device.as_deref(), now)?;
         sync.cut_off_missing = crate::sync::revocation::terminals_missing_to_cut_off(&store)?;
+        sync.no_paper = sync.configured && crate::sync::quorum::paper_pub(&store)?.is_none();
         if sync.ring_secret_missing.is_none() {
             // Only a Vault ring with a master key set up needs the ring secret on this machine.
             let needs = cred_mode == Some(CredModeView::Vault)

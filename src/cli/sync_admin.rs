@@ -602,6 +602,20 @@ pub(crate) fn find_op(store: &LauncherStore, prefix: &str) -> Result<Op> {
 
 // -------------------------------------------------------------------- verbs
 
+/// A registered paper phrase comes first (design 3.1): before a switch to Quorum, and before a change that leaves
+/// three or more full devices. Without it a stolen device cannot be cut off and a lost phone cannot be recovered.
+pub(crate) fn paper_gate(
+    store: &LauncherStore,
+    to_quorum: bool,
+    holders_after: usize,
+) -> Result<()> {
+    ensure!(
+        !(to_quorum || holders_after >= 3) || crate::sync::quorum::paper_pub(store)?.is_some(),
+        "register the paper phrase first (TUI: tab 7, M, Paper phrase; or `sshub sync-factor-register paper`): without it you could not cut off a stolen device, and you could not recover a lost phone"
+    );
+    Ok(())
+}
+
 pub(crate) fn role(
     store: &LauncherStore,
     id: &DeviceIdentity,
@@ -611,6 +625,10 @@ pub(crate) fn role(
 ) -> Result<Report> {
     let row = find_device(store, device)?;
     ensure!(row.role != to, "{} is already a {to:?}", short_id(&row.id));
+    if to == DeviceRole::Holder {
+        let after = crate::sync::quorum::live_holder_count(store)? + 1;
+        paper_gate(store, false, after)?;
+    }
     let op = store.sync_append_local(
         id,
         OpBody::DeviceRoleChange {
@@ -1158,6 +1176,7 @@ pub(crate) fn mode(
             );
         }
     }
+    paper_gate(store, to == CredMode::Quorum, 0)?;
     let body = crate::sync::modes::mode_change_body(store, &me, to, cosigner)?;
     let op = store.sync_append_local(id, body)?;
     op_report(

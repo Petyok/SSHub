@@ -784,38 +784,52 @@ fn revoking_needs_the_devices_name_typed_back() {
     );
 }
 
+/// The three word numbers the type-back prompt asks for.
+fn asked_words(app: &App) -> Vec<usize> {
+    let Some(crate::app::sync_ui::SyncUi::Prompt { lines, .. }) = &app.sync_ui else {
+        panic!("no prompt is open");
+    };
+    let text = lines.join(" ");
+    let rest = text.split("Type words ").nth(1).expect("the prompt names the words");
+    rest.split(" from").next().unwrap().replace(" and", "").split(',').map(|n| n.trim().parse().unwrap()).collect()
+}
+
 #[test]
-fn the_paper_phrase_is_shown_once_and_registered_only_when_typed_back_exactly() {
+fn paper_wizard_requires_three_correct_words() {
     let mut r = ring(None);
     crate::app::sync_flows::paper_wizard(&mut r.app);
     assert_eq!(r.app.mode, AppMode::SyncInfo);
     let words = r.app.sync_paper.clone().expect("held in memory");
-    assert_eq!(words.split_whitespace().count(), 24);
+    let all: Vec<&str> = words.split_whitespace().collect();
+    assert_eq!(all.len(), 24);
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
 
-    // A wrong copy registers nothing and drops the phrase.
+    // The whole phrase, or the wrong words, register nothing and drop the phrase.
     crate::app::sync_flows::paper_register(&mut r.app);
-    type_and_enter(&mut r.app, "wrong words");
+    let at = asked_words(&r.app);
+    assert_eq!(at.len(), 3);
+    assert!(at.windows(2).all(|w| w[0] < w[1]) && at.iter().all(|n| (1..=24).contains(n)));
+    type_and_enter(&mut r.app, &words);
     assert!(r.app.sync_paper.is_none());
-    assert!(
-        crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None)
-            .unwrap()
-            .is_empty()
-    );
+    assert!(crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None).unwrap().is_empty());
+    crate::app::sync_flows::paper_wizard(&mut r.app);
+    r.app.handle_key(key(KeyCode::Esc)).unwrap();
+    crate::app::sync_flows::paper_register(&mut r.app);
+    type_and_enter(&mut r.app, "wrong words here");
+    assert!(r.app.sync_paper.is_none());
+    assert!(crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None).unwrap().is_empty());
 
-    // The right copy registers it as the third factor.
+    // The three asked words, in order, register it as the third factor.
     crate::app::sync_flows::paper_wizard(&mut r.app);
     let words = r.app.sync_paper.clone().unwrap();
+    let all: Vec<&str> = words.split_whitespace().collect();
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
     crate::app::sync_flows::paper_register(&mut r.app);
-    type_and_enter(&mut r.app, &words);
-    pump(&mut r.app, "the registration", |a| {
-        a.mode == AppMode::SyncInfo
-    });
+    let typed: Vec<&str> = asked_words(&r.app).iter().map(|n| all[n - 1]).collect();
+    type_and_enter(&mut r.app, &typed.join(" "));
+    pump(&mut r.app, "the registration", |a| a.mode == AppMode::SyncInfo);
     assert_eq!(
-        crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None)
-            .unwrap()
-            .len(),
+        crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None).unwrap().len(),
         1
     );
 }
@@ -1217,6 +1231,42 @@ fn the_sync_view_says_how_many_more_computers_are_needed_to_cut_one_off() {
     r.app.active_tab = 6;
     let tab = crate::tui::screens::sync::tests_screen(&r.app, 120, 30);
     assert!(tab.contains("no, add 1 more computer"), "{tab}");
+}
+
+/// Design 3.1: a ring without a registered paper phrase shows a standing line, and one key opens the wizard.
+#[test]
+fn a_ring_without_paper_shows_the_standing_line_and_one_key_opens_the_wizard() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    assert!(r.app.sync.no_paper);
+    r.app.active_tab = 6;
+    let tab = crate::tui::screens::sync::tests_screen(&r.app, 160, 30);
+    assert!(
+        tab.contains("No paper phrase: you cannot cut off a lost device or recover a lost phone. Register it (press P)"),
+        "{tab}"
+    );
+    r.app.handle_key(key_char('P')).unwrap();
+    assert_eq!(r.app.mode, AppMode::SyncInfo);
+    assert!(r.app.sync_paper.is_some());
+}
+
+/// Design 3.1: the switch to Quorum starts the paper wizard first when no paper is registered.
+#[test]
+fn switching_to_quorum_without_paper_starts_the_wizard_not_the_ceremony() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    r.app.sync.cred_mode = Some(crate::app::sync::CredModeView::Vault);
+    crate::app::sync_flows::mode(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncInfo);
+    assert!(r.app.sync_paper.is_some());
+    assert!(r
+        .app
+        .host_notice
+        .as_deref()
+        .is_some_and(|n| n.contains("register the paper phrase first")));
+    assert!(crate::sync::quorum::ops_of(&r.app.store, "ModeChange", None)
+        .unwrap()
+        .is_empty());
 }
 
 /// U13-9: the status bar names the most urgent fact on every tab, from the store.

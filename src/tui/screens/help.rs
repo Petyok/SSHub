@@ -471,7 +471,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "",
-        desc: "In the M menu: master phrase exemption (Quorum only; with it this computer alone plus the master phrase opens every password), export of every saved password (propose; choose it again once the others approved: it continues; the file is written owner-only and never overwritten), the paper phrase wizard (write down, then type back) and a printable paper phrase sheet. A mode switch or export that was approved shows a Finish row on the Sync tab.",
+        desc: "In the M menu: master phrase exemption (Quorum only; with it this computer alone plus the master phrase opens every password), export of every saved password (propose; choose it again once the others approved: it continues; the file is written owner-only and never overwritten), the paper phrase wizard (write down, then type three random words back; P on the Sync tab opens it) and a printable paper phrase sheet. A mode switch or export that was approved shows a Finish row on the Sync tab.",
     },
     HelpItem::Entry {
         key: "",

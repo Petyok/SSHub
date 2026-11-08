@@ -102,6 +102,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             color(app, ColorRole::StatusWarning),
         ),
     });
+    if sync.no_paper {
+        lines.push(Line::styled(
+            format!(
+                "No paper phrase: you cannot cut off a lost device or recover a lost phone. Register it (press {})",
+                key_of(app, KeyAction::SyncPaper)
+            ),
+            color(app, ColorRole::StatusWarning),
+        ));
+    }
     if let Some(error) = &sync.last_error {
         lines.push(Line::styled(
             format!("Last sync failed: {error}"),
