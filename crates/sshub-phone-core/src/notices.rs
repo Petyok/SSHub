@@ -55,7 +55,7 @@ fn refused(reason: impl Into<String>) -> (Opened, Option<PendingNotice>) {
         Opened::Refused {
             view: RefusalView {
                 kind: crate::views::RefusalKind::Other,
- compared: Vec::new(),
+                compared: Vec::new(),
                 reason: reason.into(),
                 checks: Vec::new(),
             },

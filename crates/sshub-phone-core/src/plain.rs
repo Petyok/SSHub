@@ -181,7 +181,11 @@ pub fn plain_cert_request(req: &CertRequestWire, aliases: &BTreeMap<String, Stri
         scope_phrase(&req.scope),
         day(req.expiry),
         req.max_new_hosts_per_day,
-        if req.max_new_hosts_per_day == 1 { "" } else { "s" }
+        if req.max_new_hosts_per_day == 1 {
+            ""
+        } else {
+            "s"
+        }
     )
 }
 
@@ -239,7 +243,16 @@ mod tests {
             let id = x["id"].as_str().unwrap();
             let s = plain_of(id, &none);
             assert!(!s.is_empty() && s.ends_with('.'), "{id}: {s}");
-            for bad in ["lamport", "seq", "epoch", "DeviceAdd", "HeadAttest", "Upsert", "ShareRelease", "Red op"] {
+            for bad in [
+                "lamport",
+                "seq",
+                "epoch",
+                "DeviceAdd",
+                "HeadAttest",
+                "Upsert",
+                "ShareRelease",
+                "Red op",
+            ] {
                 assert!(!s.contains(bad), "{id}: {s}");
             }
         }
@@ -251,20 +264,44 @@ mod tests {
         names.insert("723ed85f0566df0c".to_string(), "laptop-2".to_string());
         let holder = plain_of("device-add-holder", &names);
         assert!(holder.starts_with("Make "), "{holder}");
-        assert!(holder.contains("full device") && holder.contains("one piece of every saved password"), "{holder}");
+        assert!(
+            holder.contains("full device") && holder.contains("one piece of every saved password"),
+            "{holder}"
+        );
         assert!(holder.ends_with("Asked by laptop-2."), "{holder}");
         let mirror = plain_of("device-add-mirror", &names);
-        assert!(mirror.contains("view-only copy") && mirror.contains("no piece of any password"), "{mirror}");
+        assert!(
+            mirror.contains("view-only copy") && mirror.contains("no piece of any password"),
+            "{mirror}"
+        );
         // an unknown device is "a device you have not met" with its id
         let anon = plain_of("device-add-holder", &BTreeMap::new());
-        assert!(anon.ends_with("Asked by a device you have not met (723ed85f0566df0c)."), "{anon}");
+        assert!(
+            anon.ends_with("Asked by a device you have not met (723ed85f0566df0c)."),
+            "{anon}"
+        );
         let cert = plain_of("cert-issue-hosts", &names);
-        assert!(cert.starts_with("Let ") && cert.contains("without asking until 20") && cert.contains("new host"), "{cert}");
+        assert!(
+            cert.starts_with("Let ")
+                && cert.contains("without asking until 20")
+                && cert.contains("new host"),
+            "{cert}"
+        );
         let release = plain_of("share-release-u64-max", &names);
         assert!(release.starts_with("Give "), "{release}");
-        assert!(release.contains("your piece of the saved password of host "), "{release}");
+        assert!(
+            release.contains("your piece of the saved password of host "),
+            "{release}"
+        );
         // the host id is the grouped form
-        assert!(release.contains(' ') && release.matches(|c: char| c.is_ascii_uppercase() || c.is_ascii_digit()).count() >= 32, "{release}");
+        assert!(
+            release.contains(' ')
+                && release
+                    .matches(|c: char| c.is_ascii_uppercase() || c.is_ascii_digit())
+                    .count()
+                    >= 32,
+            "{release}"
+        );
     }
 
     #[test]
@@ -281,7 +318,8 @@ mod tests {
         let texts: Vec<String> = ids.iter().map(|i| plain_of(i, &BTreeMap::new())).collect();
         for t in &texts {
             assert!(
-                t.contains("two of your devices to agree") || t.contains("master phrase will open saved passwords"),
+                t.contains("two of your devices to agree")
+                    || t.contains("master phrase will open saved passwords"),
                 "{t}"
             );
         }
