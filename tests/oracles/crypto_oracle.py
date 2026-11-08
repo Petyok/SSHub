@@ -279,6 +279,13 @@ def run(path):
             wl = Mnemonic("english").wordlist
             head = int.from_bytes(h(i["transcript_hash"])[:6], "big")
             check(vid, "-".join(wl[(head >> (48 - 11 * (k + 1))) & 0x7FF] for k in range(4)) == o["words"])
+        elif p == "handover_words":
+            wl = Mnemonic("english").wordlist
+            name = i["name"].encode("utf-8")
+            digest = blake3.blake3(b"sshub/handover/v1" + h(i["ed25519_pub"]) + h(i["x25519_pub"]) + h(i["mlkem_pub"])
+                                   + bytes([len(name)]) + name + h(i["old_phone_id"])).digest()
+            head = int.from_bytes(digest[:11], "big")
+            check(vid, [wl[(head >> (88 - 11 * (k + 1))) & 0x7FF] for k in range(8)] == o["words"])
         elif p == "shamir_split":
             sh = shamir_split(h(i["secret"]), par["k"], par["indices"], h(par["rng_seed"]))
             check(vid, [(x, b.hex()) for x, b in sh] == [(q["index"], q["bytes_hex"]) for q in o["shares"]])

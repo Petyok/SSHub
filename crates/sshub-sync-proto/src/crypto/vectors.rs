@@ -11,10 +11,10 @@ use serde_json::{json, Value};
 use super::argon::{argon2_derive, Argon2Profile, ARGON2_EMAIL, ARGON2_MASTER, ARGON2_SNAPSHOT};
 use super::dek::dek_seal_with;
 use super::hash::{chain_hash, derive_key, derive_xof};
-use super::identity::{verify, DeviceIdentity};
+use super::identity::{verify, DeviceIdentity, DevicePublic};
 use super::mlkem;
 use super::paper::{paper_derive, PaperDomain};
-use super::sas::sas_words;
+use super::sas::{handover_words, sas_words};
 use super::shamir::{
     reshare_combine, reshare_contribute_with, shamir_combine, split_at_indices, Share,
 };
@@ -347,6 +347,31 @@ pub(super) fn build(include_slow: bool) -> Vec<Value> {
             json!({}),
             json!({ "transcript_hash": hx(&hash) }),
             json!({ "words": sas_words(&hash) }),
+        ));
+    }
+
+    // Handover words: eight BIP39 words from the first 88 bits of a BLAKE3 over the new phone, its name and the old phone.
+    for (id, name, mlkem_len, old) in [
+        ("handover-short-name", "new phone", 5usize, [0x09u8; 8]),
+        ("handover-long-name", &"n".repeat(255), 1184, [0xA5; 8]),
+    ] {
+        let phone = DevicePublic {
+            ed25519_pub: [0x01; 32],
+            x25519_pub: [0x02; 32],
+            mlkem_pub: counting(mlkem_len, 0x30),
+        };
+        v.push(vector(
+            id,
+            "handover_words",
+            json!({}),
+            json!({
+                "ed25519_pub": hx(&phone.ed25519_pub),
+                "x25519_pub": hx(&phone.x25519_pub),
+                "mlkem_pub": hx(&phone.mlkem_pub),
+                "name": name,
+                "old_phone_id": hx(&old),
+            }),
+            json!({ "words": handover_words(&phone, name, &old) }),
         ));
     }
 
