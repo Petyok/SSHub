@@ -561,12 +561,36 @@ pub(crate) fn pending_view(
     }
     PendingOpView {
         device,
+        author: op.device_id.to_string(),
         summary,
         changes,
         hash: op.hash(),
         reason: reason_text,
         red: red_view(store, op),
     }
+}
+
+/// Group approval (design 7c): only a change held for being `stale` that touches no dangerous field and is no
+/// ceremony. Everything else (address, jump host, command, deletes, share requests, big changes, any other reason)
+/// stays per change with its full diff.
+pub(crate) fn groupable(v: &PendingOpView) -> bool {
+    v.reason.as_deref() == Some("stale")
+        && v.red.is_none()
+        && !v.changes.is_empty()
+        && v.changes.iter().all(|c| !c.dangerous)
+}
+
+/// The hashes held for the same device as `review[selected]` that group approval would approve; empty when the
+/// selected change is not groupable.
+pub(crate) fn stale_group(review: &[PendingOpView], selected: usize) -> Vec<[u8; 32]> {
+    let Some(sel) = review.get(selected).filter(|v| groupable(v)) else {
+        return Vec::new();
+    };
+    review
+        .iter()
+        .filter(|v| v.author == sel.author && groupable(v))
+        .map(|v| v.hash)
+        .collect()
 }
 
 /// What a reason a change waits for means, in the glossary's words (the stored codes stay in JSON).
@@ -890,6 +914,32 @@ impl App {
             ),
             _ => {}
         }
+    }
+
+    /// `A` in the review: approve, on this device, every change of the highlighted change's device that is held only
+    /// for being away and touches no dangerous field (design 7c). Nothing else is approved.
+    pub(crate) fn sync_approve_group(&mut self) {
+        let group = stale_group(&self.sync.review, self.sync.review_selected);
+        if group.is_empty() {
+            self.host_notice = Some(
+                "group approval is only for changes held for being away that touch no address, jump host or command: approve this one on its own".into(),
+            );
+            return;
+        }
+        let name = self.sync.review[self.sync.review_selected].device.clone();
+        let now = crate::store::now_ts();
+        let done = group
+            .iter()
+            .filter(|h| crate::sync::ceremony::resolve(&self.store, h, true, now).is_ok())
+            .count();
+        self.refresh_sync_view();
+        let _ = self.reload_hosts();
+        if self.sync.review.is_empty() {
+            self.mode = AppMode::Normal;
+        }
+        self.host_notice = Some(format!(
+            "approved {done} change(s) from {name} on this device only: your next edits will be held on other devices until approved there"
+        ));
     }
 
     /// Approve or reject the highlighted pending operation in the store.

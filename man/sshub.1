@@ -448,6 +448,11 @@ or
 the change whose id starts with
 .I ID
 (at least 6 hex digits, unique) is resolved in the store like in the TUI.
+.B \-\-approve\-all
+resolves every waiting change that has no ceremony and no doubtful reason; with
+.BI \-\-device \ DEVICE
+it approves, on this device only, just the changes of that device that wait only because it was away and touch
+no address, jump host, remote command, user or key.
 Never creates a device key. Exit 0 on success or empty queue, 1 on a store
 error, 2 on an unknown or ambiguous id or bad options.
 .TP

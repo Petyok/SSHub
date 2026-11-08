@@ -302,6 +302,16 @@ pub fn render_review(frame: &mut Frame, app: &App) {
             app.theme().style(StyleRole::TextMuted),
         ));
     }
+    let group = crate::app::sync_view::stale_group(&sync.review, selected).len();
+    if group > 0 {
+        body.push(Line::styled(
+            format!(
+                "  {group} change(s) from {} are held for being away; none touches an address, jump host or command. {} approves them all on this device.",
+                op.device, "A"
+            ),
+            app.theme().style(StyleRole::TextMuted),
+        ));
+    }
     if let Some(red) = &op.red {
         body.push(Line::raw(""));
         body.push(Line::styled(
@@ -353,6 +363,8 @@ pub fn render_review(frame: &mut Frame, app: &App) {
     }
     let hint = if op.red.is_some() {
         "\u{2191}\u{2193} select  a add my approval  p paper phrase  e emailed code  r reject  Esc close"
+    } else if group > 0 {
+        "\u{2191}\u{2193} select  a approve  A approve all from this device  r reject  Esc close"
     } else {
         "\u{2191}\u{2193} select  a approve  r reject  Esc close"
     };

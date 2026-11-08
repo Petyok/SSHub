@@ -455,11 +455,11 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Enter",
-        desc: "Details of the selected device (with its id as a QR for the phone app). A device that missed some changes or was away too long: sync it first; a COMPROMISED one: show the proof",
+        desc: "Details of the selected device (with its id as a QR for the phone app). A device that was away: nothing is blocked, and if a round reports behind, Enter re-enrolls it; a COMPROMISED one: show the proof",
     },
     HelpItem::Entry {
         key: "R",
-        desc: "Review every change waiting for approval, with why it waits (a approve, r reject, Esc close). A big change shows its three approvals: a adds this device's approval, p types the paper phrase, e the emailed code",
+        desc: "Review every change waiting for approval, with why it waits (a approve, r reject, Esc close; A approves every change of the same device that waits only because it was away and touches no address, jump host or command). A big change shows its three approvals: a adds this device's approval, p types the paper phrase, e the emailed code",
     },
     HelpItem::Entry {
         key: "t",

@@ -140,15 +140,15 @@ impl DeviceView {
         let days = self.last_seen.map(|t| ((now - t).max(0)) / 86_400);
         match (self.status, days) {
             (DeviceStatusView::Behind | DeviceStatusView::Stale, Some(d)) if !self.this => Some(format!(
-                "{} missed {d} days: approve it back from the phone or another laptop. Press Enter to sync it first.",
+                "{} was away {d} days; nothing is blocked. If a round reports 'behind', press Enter to re-enroll it.",
                 self.name
             )),
             (DeviceStatusView::Behind | DeviceStatusView::Stale, None) if !self.this => Some(format!(
-                "{} has not synced yet: approve it back from the phone or another laptop. Press Enter to sync it first.",
+                "{} has not synced yet; nothing is blocked. Press Enter to sync it first.",
                 self.name
             )),
             (DeviceStatusView::Behind | DeviceStatusView::Stale, _) => Some(
-                "This device missed some changes: approve it back from the phone or another laptop."
+                "This device was away or missed some changes; nothing is blocked."
                     .into(),
             ),
             (DeviceStatusView::Suspect, _) => Some(format!(
@@ -269,6 +269,8 @@ pub struct RedView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingOpView {
     pub device: String,
+    /// Id of the device that wrote the op (the name in `device` is not unique).
+    pub author: String,
     pub summary: String,
     pub changes: Vec<ChangeView>,
     /// Hash of the op, for approving or rejecting it in the store.
@@ -1482,6 +1484,8 @@ impl App {
                     self.sync.review_selected = (self.sync.review_selected + 1).min(last);
                 } else if up {
                     self.sync.review_selected = self.sync.review_selected.saturating_sub(1);
+                } else if key.code == KeyCode::Char('A') {
+                    self.sync_approve_group();
                 } else if let KeyCode::Char(c @ ('a' | 'r' | 'p' | 'e')) = key.code {
                     if key.modifiers.is_empty() {
                         self.sync_review_key(c);
@@ -1626,6 +1630,7 @@ pub(crate) fn sample_sync_view() -> SyncView {
             hash: [0; 32],
             reason: None,
             red: None,
+            author: String::new(),
             device: "server".into(),
             summary: "edit host web-1".into(),
             changes: vec![ChangeView {

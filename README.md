@@ -636,6 +636,7 @@ What sync does not protect against (the design's honest list, word for word):
 | `M` | Sync tab | Manage your devices: overview, trust sessions, revoke a device, roles, credential mode (propose, then finish the switch once the ring agreed), add my phone, paste phone ops, recovery, paper and emailed-code factors, exemption, bulk export, move local secrets into the ring, import the Vault kit |
 | `K` | Sync tab | Register the paper phrase: the 24 words are shown, you type three of them back (chosen at random). Required before a switch to Quorum or a third full device; the Sync tab shows a standing line until it is done |
 | `A` | Hosts tab | Make the selected host one of your sync devices |
+| `A` | Review | Approve, on this device only, every change of the selected change's device that waits only because the device was away and touches no address, jump host, remote command, user or key; `sshub sync-review --approve-all --device <id>` does the same. Anything else stays one by one with its full diff |
 | `a` `r` `p` `e` | Review | `a` approve (for a big change: add this device's approval), `r` reject, `p` type the paper phrase (24 words, nothing is shown), `e` type the emailed code, `Esc` close |
 
 All seven sync keys (tab, now, review, trust, manage, paper, and `A` on the hosts tab) are rebindable in the keybind editor. A device that signed two different histories (a fork) takes over the whole screen and names the device; `Esc` closes the alert and the badge stays red. The tab bar shows `⇅N ⏳Nops`, red when a device is compromised.

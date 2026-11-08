@@ -437,3 +437,40 @@ fn the_private_agent_and_its_directory_go_with_a_group_sigterm() {
         group_signal_leaves_nothing(libc::SIGTERM);
     }
 }
+
+/// Design 7c: group approval takes a change only when it is held as `stale` and touches no dangerous field.
+#[test]
+fn group_approval_is_only_for_stale_changes_with_safe_fields() {
+    use crate::app::sync::{ChangeView, PendingOpView};
+    use crate::app::sync_view::{groupable, stale_group};
+    let view = |author: &str, reason: &str, dangerous: bool| PendingOpView {
+        device: "laptop".into(),
+        author: author.into(),
+        summary: "change host web".into(),
+        changes: vec![ChangeView {
+            field: if dangerous { "address" } else { "notes" }.into(),
+            from: "-".into(),
+            to: "x".into(),
+            dangerous,
+        }],
+        hash: [author.len() as u8 + reason.len() as u8 + u8::from(dangerous); 32],
+        reason: Some(reason.into()),
+        red: None,
+    };
+    assert!(groupable(&view("a", "stale", false)));
+    assert!(!groupable(&view("a", "stale", true)));
+    for other in ["resurrection", "revoked-author", "not-holder", "revoke-conflict", "tier"] {
+        assert!(!groupable(&view("a", other, false)), "{other}");
+    }
+    let mut mine = view("a", "stale", false);
+    mine.hash = [1; 32];
+    let mut also = view("a", "stale", false);
+    also.hash = [2; 32];
+    let mut theirs = view("b", "stale", false);
+    theirs.hash = [3; 32];
+    let mut risky = view("a", "stale", true);
+    risky.hash = [4; 32];
+    let review = vec![mine, theirs, also, risky];
+    assert_eq!(stale_group(&review, 0), vec![[1; 32], [2; 32]]);
+    assert!(stale_group(&review, 3).is_empty());
+}

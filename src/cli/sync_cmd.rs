@@ -76,7 +76,9 @@ pub fn run(
             parsed.json,
         ),
         "sync-status" => status(&paths, parsed.json),
-        "sync-review" if parsed.approve_all => approve_all(&paths, parsed.json),
+        "sync-review" if parsed.approve_all => {
+            approve_all(&paths, parsed.json, parsed.device.as_deref())
+        }
         "sync-review" => review(&paths, parsed.json, parsed.resolve.as_ref()),
         other => anyhow::bail!("unknown sync command: {other}"),
     };
@@ -105,6 +107,8 @@ struct Parsed {
     resolve: Option<(bool, String)>,
     /// `sync-review --approve-all`: every pending change that has no ceremony (see [`approve_all`]).
     approve_all: bool,
+    /// `sync-review --approve-all --device <id>`: group approval of one device's `stale` changes.
+    device: Option<String>,
 }
 
 /// Arguments after the (already extracted) global profile flags.
@@ -115,6 +119,7 @@ fn parse_args(cmd: &str, args: &[String]) -> Result<Parsed, String> {
         json: false,
         resolve: None,
         approve_all: false,
+        device: None,
     };
     let mut i = 0;
     while i < args.len() {
@@ -130,6 +135,13 @@ fn parse_args(cmd: &str, args: &[String]) -> Result<Parsed, String> {
         } else if cmd == "sync-review" && a == "--approve-all" {
             out.approve_all = true;
             i += 1;
+        } else if cmd == "sync-review" && a == "--device" {
+            let id = args
+                .get(i + 1)
+                .filter(|v| !v.starts_with('-'))
+                .ok_or("--device requires a device id")?;
+            out.device = Some(id.clone());
+            i += 2;
         } else if cmd == "sync-review" && (a == "--approve" || a == "--reject") {
             let id = args
                 .get(i + 1)
@@ -146,6 +158,9 @@ fn parse_args(cmd: &str, args: &[String]) -> Result<Parsed, String> {
             out.positionals.push(a.to_string());
             i += 1;
         }
+    }
+    if out.device.is_some() && !out.approve_all {
+        return Err("--device goes with --approve-all".into());
     }
     let max = match cmd {
         "sync-join" => 1,
@@ -795,15 +810,52 @@ fn resolve_prefix(hashes: &[[u8; 32]], prefix: &str) -> Result<[u8; 32], String>
 /// a request, with grants) and ops of unknown authors are left for `--approve <id>`. One process, one pass: a
 /// ring that received thousands of changes cannot be reviewed one `--approve` call at a time (each call lists the
 /// whole queue).
-fn approve_all(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
+fn approve_all(paths: &ProfilePaths, json_out: bool, device: Option<&str>) -> Result<i32> {
     let store = open_store(paths)?;
-    let (approved, left) = approve_all_on(&store, crate::store::now_ts())?;
+    let now = crate::store::now_ts();
+    if let Some(spec) = device {
+        let row = super::sync_admin::find_device(&store, spec)?;
+        let (approved, left) = approve_stale_of(&store, &row.id.to_string(), now)?;
+        if json_out {
+            println!(
+                "{}",
+                json!({ "approved": approved, "left": left, "device": row.name })
+            );
+        } else {
+            println!(
+                "Approved {approved} change(s) from {} on this device only: your next edits will be held on other devices until approved there. {left} left for `sync-review --approve <id>`",
+                row.name
+            );
+        }
+        return Ok(0);
+    }
+    let (approved, left) = approve_all_on(&store, now)?;
     if json_out {
         println!("{}", json!({ "approved": approved, "left": left }));
     } else {
         println!("Approved {approved} change(s); {left} left for `sync-review --approve <id>`");
     }
     Ok(0)
+}
+
+/// `(approved, left)` of group approval for one device: only changes held as `stale` that touch no dangerous field
+/// (design 7c); every other waiting change stays for `--approve <id>` with its full diff.
+fn approve_stale_of(store: &LauncherStore, author: &str, now: i64) -> Result<(usize, usize)> {
+    use crate::app::sync_view::{groupable, pending_view};
+    let rows = store.sync_devices()?;
+    let (mut approved, mut left) = (0usize, 0usize);
+    for (op, reason) in store.sync_pending_with_reasons()? {
+        let view = pending_view(store, &op, &rows, Some(reason));
+        if view.author == author
+            && groupable(&view)
+            && crate::sync::ceremony::resolve(store, &op.hash(), true, now).is_ok()
+        {
+            approved += 1;
+        } else {
+            left += 1;
+        }
+    }
+    Ok((approved, left))
 }
 
 /// `(approved, left)` of one [`approve_all`] pass.
@@ -1300,5 +1352,100 @@ mod tests {
         );
         assert_eq!(approve_all_on(&a, 1_000).unwrap(), (0, 1));
         assert_eq!(a.sync_pending().unwrap().len(), 1);
+    }
+    #[test]
+    fn group_approval_takes_only_stale_changes_without_a_dangerous_field_of_that_device() {
+        use crate::sync::crypto::DeviceIdentity;
+        use crate::sync::oplog::{
+            Attendance, DeviceKind, DeviceRole, HostFields, OpBody, VerifiedBy,
+        };
+        let a = LauncherStore::open_in_memory().unwrap();
+        let (b, c) = (DeviceIdentity::generate(), DeviceIdentity::generate());
+        let (sb, sc) = (
+            LauncherStore::open_in_memory().unwrap(),
+            LauncherStore::open_in_memory().unwrap(),
+        );
+        for s in [&a, &sb, &sc] {
+            for id in [&b, &c] {
+                s.sync_register_device(
+                    &id.public(),
+                    "peer",
+                    DeviceRole::Holder,
+                    Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+            }
+        }
+        let upsert = |s: &LauncherStore, id: &DeviceIdentity, n: u8, f: HostFields| {
+            s.sync_append_local(
+                id,
+                OpBody::HostUpsert {
+                    host_uid: [n; 16],
+                    fields: f,
+                },
+            )
+            .unwrap()
+        };
+        let named = |name: &str| HostFields {
+            name: Some(name.into()),
+            address: Some("10.0.0.1".into()),
+            ..Default::default()
+        };
+        let notes = |t: &str| HostFields {
+            notes: Some(Some(t.into())),
+            ..Default::default()
+        };
+        // b and c each create a host and delete it, then edit it again: a holds the edit as a resurrection.
+        let mut held = Vec::new();
+        for (s, id, n) in [(&sb, &b, 1u8), (&sc, &c, 2u8)] {
+            let create = upsert(s, id, n, named("web"));
+            let del =
+                s.sync_append_local(id, OpBody::HostDelete { host_uid: [n; 16] })
+                    .unwrap();
+            let edit = upsert(s, id, n, notes("back"));
+            for op in [create, del] {
+                a.sync_ingest(op).unwrap();
+                approve_all_on(&a, 1_000).unwrap();
+            }
+            a.sync_ingest(edit.clone()).unwrap();
+            held.push(edit);
+        }
+        // b also changes an address of a live host: dangerous.
+        let dangerous = upsert(&sb, &b, 3, named("db"));
+        a.sync_ingest(dangerous.clone()).unwrap();
+        held.push(dangerous);
+        for op in &held {
+            a.with_conn(|conn| {
+                conn.execute(
+                    "UPDATE sync_ops SET reason = 'stale' WHERE op_hash = ?1",
+                    rusqlite::params![op.hash().to_vec()],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        }
+        assert_eq!(a.sync_pending().unwrap().len(), 3);
+        let who = b.public().device_id().to_string();
+        // Only b's safe change goes; b's address change and c's change stay.
+        assert_eq!(approve_stale_of(&a, &who, 1_000).unwrap(), (1, 2));
+        let left: Vec<_> = a.sync_pending().unwrap().iter().map(|o| o.hash()).collect();
+        assert_eq!(left.len(), 2);
+        assert!(!left.contains(&held[0].hash()));
+        assert!(left.contains(&held[1].hash()) && left.contains(&held[2].hash()));
+    }
+
+    #[test]
+    fn device_goes_with_approve_all_only() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            parse_args("sync-review", &s(&["--approve-all", "--device", "ab12"]))
+                .unwrap()
+                .device
+                .as_deref(),
+            Some("ab12")
+        );
+        assert!(parse_args("sync-review", &s(&["--device", "ab12"])).is_err());
     }
 }
