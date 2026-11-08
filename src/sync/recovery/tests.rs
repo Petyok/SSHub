@@ -1578,10 +1578,19 @@ mod over_the_log {
         let alerts = open_for_alert_for(&w.d[A].store, &w.d[A].did, now).unwrap();
         assert_eq!(alerts.len(), 1);
         assert_eq!(alerts[0].hash(), op.hash());
-        assert_eq!(open_for_alert(&w.d[A].store, &w.d[A].id, now).unwrap().len(), 1);
+        assert_eq!(
+            open_for_alert(&w.d[A].store, &w.d[A].id, now)
+                .unwrap()
+                .len(),
+            1
+        );
         // Not for the requester itself, nor for a device nobody sits at.
-        assert!(open_for_alert_for(&w.d[A].store, &w.d[R].did, now).unwrap().is_empty());
-        assert!(open_for_alert_for(&w.d[A].store, &w.d[H].did, now).unwrap().is_empty());
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[R].did, now)
+            .unwrap()
+            .is_empty());
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[H].did, now)
+            .unwrap()
+            .is_empty());
         append(
             &w.d[P],
             OpBody::PhoneReenrollCancel {
@@ -1591,6 +1600,8 @@ mod over_the_log {
             },
         );
         w.sync();
-        assert!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now).unwrap().is_empty());
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
+            .unwrap()
+            .is_empty());
     }
 }
