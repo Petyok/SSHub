@@ -1692,3 +1692,50 @@ fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_en
         }
     }
 }
+
+// ------------------------------------------------------------- verdicts are a pure function of the log (D0)
+
+/// Three terminals and the phone in Quorum mode with the paper registered, both by finished ceremonies.
+fn quorum_ring() -> Vec<Dev> {
+    use crate::sync::quorum::paper_registration;
+    use crate::sync::quorum::tests::{complete, ring_phone};
+    let d = ring_phone(3);
+    let phrase = bip39_encode(&[0x77; 32]);
+    let reg = append(&d[0], paper_registration(&phrase).unwrap());
+    complete(&d, &reg, 1, None);
+    let mc = append(
+        &d[0],
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            migrated_on: d[0].did.clone(),
+            cosigner: None,
+        },
+    );
+    complete(&d, &mc, 1, Some(&phrase));
+    d
+}
+
+#[test]
+fn log_live_counts_only_devices_with_an_op_before_the_instant_and_inside_the_window() {
+    let d = quorum_ring();
+    sync(&d);
+    let rows = effective_devices(&d[1].store, None).unwrap();
+    let ids = |t: i64| -> Vec<String> {
+        let mut v: Vec<String> = log_live(&d[1].store, rows.clone(), t)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        v.sort();
+        v
+    };
+    let now = crate::store::now_ts();
+    // Terminal 1 approved and terminal 0 proposed (both wrote ops); terminal 2 never wrote anything.
+    let live = ids(now + 60);
+    assert!(live.contains(&d[0].did) && live.contains(&d[1].did), "{live:?}");
+    assert!(!live.contains(&d[2].did), "a device with no op is not live: {live:?}");
+    // Before any op was written nobody is live; a window later nobody is.
+    assert!(ids(0).is_empty());
+    assert!(ids(now + LIVE_DEVICE_WINDOW_SECS + 3600).is_empty());
+}
+

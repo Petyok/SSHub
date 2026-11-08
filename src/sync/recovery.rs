@@ -271,7 +271,6 @@ pub fn replay(events: impl IntoIterator<Item = Event>) -> Result<Recovery> {
 // ------------------------------------------------------------------ over the log
 
 use super::crypto::{verify, DeviceIdentity, ALG_CURRENT};
-use super::limits::LIVE_DEVICE_WINDOW_SECS;
 use super::oplog::{DeviceKind, DeviceRow, DeviceStatus, HeadAttest, Op, OpBody, ThirdFactor};
 use super::quorum::{paper_recover_pub, phone_device};
 use crate::store::LauncherStore;
@@ -342,33 +341,7 @@ pub fn liveness_set(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Ve
 }
 
 fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
-    fresh_in(store, super::ceremony::effective_devices(store, None)?, now)
-}
-
-/// The devices known to be alive AT `t`, decided from the LOG only, so every device that holds the same ops judges the
-/// same set: a device that wrote an op stamped BEFORE `t` (strictly: the requester cannot know an op written in its own second) and within the live window before it. Contact is local
-/// knowledge (a device learned from an op has `last_seen` 0 until its first round, and two devices disagree about who
-/// they talked to), and a recovery judged on it was rejected on every device whose contacts differed from the
-/// requester's. A device that never writes anything is not required; the live phone's veto does not depend on the set.
-fn fresh_in(store: &LauncherStore, devices: Vec<DeviceRow>, t: i64) -> Result<Vec<DeviceRow>> {
-    let wrote: std::collections::BTreeMap<String, i64> = store.with_conn(|c| {
-        let mut st = c.prepare(
-            "SELECT device_id, MAX(timestamp) FROM sync_ops
-             WHERE timestamp < ?1 AND COALESCE(reason, '') <> 'unknown-author'
-               AND state NOT IN ('rejected', 'void') GROUP BY device_id",
-        )?;
-        let rows = st.query_map([t], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
-    })?;
-    Ok(devices
-        .into_iter()
-        .filter(|d| {
-            !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
-                && wrote
-                    .get(&d.id)
-                    .is_some_and(|w| t - *w <= LIVE_DEVICE_WINDOW_SECS)
-        })
-        .collect())
+    super::ceremony::log_live(store, super::ceremony::effective_devices(store, None)?, now)
 }
 
 fn attended_live(row: &DeviceRow) -> bool {
@@ -522,7 +495,7 @@ fn validate_phone_reenroll_upto(
     // this store hold the same chain position they must agree on the head.
     let heads = store.sync_chain_heads()?;
     let mut liveness_ok = true;
-    for d in fresh_in(store, devices.clone(), *initiated_at)? {
+    for d in super::ceremony::log_live(store, devices.clone(), *initiated_at)? {
         // A device that joined after the request cannot have been in its liveness set (and enrolling one
         // during the lock must not stop a recovery).
         if super::ceremony::joined_after(store, &d.id, op.lamport)? {

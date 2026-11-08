@@ -352,6 +352,33 @@ fn terminal_holder(d: &DeviceRow) -> bool {
         && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
 }
 
+/// The devices of `devices` known to be alive AT `t`, decided from the LOG only, so every device that holds the same ops
+/// judges the same set: a device that wrote an op stamped BEFORE `t` (strictly: the author of an op at `t` cannot know an
+/// op written in its own second) and within `LIVE_DEVICE_WINDOW_SECS` before it. Contact (`last_seen`) is local knowledge:
+/// a device learned from an op has `last_seen` 0 until its first round, and two devices disagree about who they talked to,
+/// so a verdict that read it was rejected on the devices whose contacts differed from the proposer's. A device that never
+/// writes anything is not live here; revoked and compromised devices never are.
+pub(crate) fn log_live(store: &LauncherStore, devices: Vec<DeviceRow>, t: i64) -> Result<Vec<DeviceRow>> {
+    let wrote: std::collections::BTreeMap<String, i64> = store.with_conn(|c| {
+        let mut st = c.prepare(
+            "SELECT device_id, MAX(timestamp) FROM sync_ops
+             WHERE timestamp < ?1 AND COALESCE(reason, '') <> 'unknown-author'
+               AND state NOT IN ('rejected', 'void') GROUP BY device_id",
+        )?;
+        let rows = st.query_map([t], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    })?;
+    Ok(devices
+        .into_iter()
+        .filter(|d| {
+            !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+                && wrote
+                    .get(&d.id)
+                    .is_some_and(|w| t - *w <= LIVE_DEVICE_WINDOW_SECS)
+        })
+        .collect())
+}
+
 /// When `op` counts as having happened: its own stamp, but never later than the moment this device first
 /// saw it. The stamp is chosen by the author, so a future date cannot stretch the ceremony window, and a
 /// proof's age is measured the same way.
