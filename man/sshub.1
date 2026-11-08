@@ -550,6 +550,9 @@ Add the paper phrase or the emailed code to a big change; the secret is read wit
 .B sshub sync\-factor\-register \fBpaper\fR|\fBemail\fR \fR[\fB\-\-sender\fR \fIDEVICE\fR]
 Register the paper phrase or the emailed code. The emailed code is kept, sealed, only on its sender: register it on
 the device that will mail it (\fB\-\-sender\fR may only name this device).
+The paper phrase must be registered before a switch to Quorum and before a change that leaves three or more full
+devices: \fBsync\-mode quorum\fR and \fBsync\-role \fIDEVICE\fR \fBholder\fR refuse without it. In the terminal screen the key
+\fBK\fR on the Sync tab opens the wizard (24 words shown, three random ones typed back).
 .TP
 .B sshub sync\-phone\-enroll
 Add the phone from this terminal as text. Prints the terminal's frames; read the phone's frames
