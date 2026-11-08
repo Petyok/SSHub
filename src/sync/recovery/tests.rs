@@ -1568,4 +1568,52 @@ mod over_the_log {
             ReenrollVerdict::CancelledByPhone
         );
     }
+
+    #[test]
+    fn an_open_recovery_alerts_the_other_attended_terminals_and_a_cancelled_one_does_not() {
+        use crate::sync::recovery::{open_for_alert, open_for_alert_for};
+        let w = world();
+        // A device records itself at enrollment; the fixture does not for the terminals.
+        w.d[A]
+            .store
+            .sync_register_device(
+                &w.d[A].id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        let op = w.reenroll(false, None, None);
+        let now = op.timestamp + 60;
+        let alerts = open_for_alert_for(&w.d[A].store, &w.d[A].did, now).unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].hash(), op.hash());
+        assert_eq!(
+            open_for_alert(&w.d[A].store, &w.d[A].id, now)
+                .unwrap()
+                .len(),
+            1
+        );
+        // Not for the requester itself, nor for a device nobody sits at.
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[R].did, now)
+            .unwrap()
+            .is_empty());
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[H].did, now)
+            .unwrap()
+            .is_empty());
+        append(
+            &w.d[P],
+            OpBody::PhoneReenrollCancel {
+                reenroll_hash: op.hash(),
+                by_phone: true,
+                third_factor: None,
+            },
+        );
+        w.sync();
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
+            .unwrap()
+            .is_empty());
+    }
 }
