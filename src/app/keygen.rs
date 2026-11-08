@@ -1,12 +1,39 @@
 use super::*;
 
+fn key_stem(key_type: KeygenType) -> &'static str {
+    match key_type {
+        KeygenType::Ed25519 => "id_ed25519_sshub",
+        KeygenType::Rsa4096 => "id_rsa_sshub",
+    }
+}
+
+/// First `stem`, `stem_2`, `stem_3`, ... with neither the key nor its `.pub`
+/// present in `dir`, so the default target never trips the "already exists" refusal.
+pub(crate) fn free_key_name(dir: &std::path::Path, stem: &str) -> String {
+    (1..)
+        .map(|n| {
+            if n == 1 {
+                stem.to_string()
+            } else {
+                format!("{stem}_{n}")
+            }
+        })
+        .find(|name| !dir.join(name).exists() && !dir.join(format!("{name}.pub")).exists())
+        .expect("unbounded range always yields a free name")
+}
+
+fn default_key_path(key_type: KeygenType) -> String {
+    let dir = crate::ssh::expand_tilde("~/.ssh");
+    format!("~/.ssh/{}", free_key_name(&dir, key_stem(key_type)))
+}
+
 impl App {
     pub(crate) fn enter_keygen_form(&mut self) -> Result<()> {
         let form = KeygenFormEdit {
             key_type: KeygenType::Ed25519,
             passphrase: String::new(),
             comment: String::new(),
-            target_path: "~/.ssh/id_ed25519_sshub".to_string(),
+            target_path: default_key_path(KeygenType::Ed25519),
             field: KeygenFormField::KeyType,
             cursor: 0,
             dirty: false,
@@ -93,17 +120,24 @@ impl App {
         match created_result {
             Ok(created) => {
                 if has_password {
-                    if let Err(e) = self.password_store.set(
+                    match self.password_store.set(
                         &crate::credentials::identity_key(created.id),
                         &form.passphrase,
                     ) {
-                        self.identity_notice = Some(format!(
-                            "Key generated, but storing the passphrase failed: {e}"
-                        ));
+                        Ok(()) => {
+                            self.identity_notice =
+                                Some(format!("Generated key and identity '{}'", identity_name))
+                        }
+                        Err(e) => {
+                            self.identity_notice = Some(format!(
+                                "Key generated, but storing the passphrase failed: {e}"
+                            ))
+                        }
                     }
+                } else {
+                    self.identity_notice =
+                        Some(format!("Generated key and identity '{}'", identity_name));
                 }
-                self.identity_notice =
-                    Some(format!("Generated key and identity '{}'", identity_name));
             }
             Err(e) => {
                 self.identity_notice = Some(format!(
@@ -199,10 +233,8 @@ impl App {
         };
 
         // Auto-update path if it's still the default path
-        if old_type == KeygenType::Ed25519 && form.target_path == "~/.ssh/id_ed25519_sshub" {
-            form.target_path = "~/.ssh/id_rsa_sshub".to_string();
-        } else if old_type == KeygenType::Rsa4096 && form.target_path == "~/.ssh/id_rsa_sshub" {
-            form.target_path = "~/.ssh/id_ed25519_sshub".to_string();
+        if form.target_path == default_key_path(old_type) {
+            form.target_path = default_key_path(form.key_type);
         }
 
         form.dirty = true;
@@ -223,7 +255,9 @@ impl App {
                 self.keygen_form_field_next();
             }
             KeyCode::BackTab | KeyCode::Up => self.keygen_form_field_prev(),
-            KeyCode::Left | KeyCode::Right if field == KeygenFormField::KeyType => {
+            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ')
+                if field == KeygenFormField::KeyType =>
+            {
                 let delta = if key.code == KeyCode::Left { -1 } else { 1 };
                 self.keygen_form_cycle_type(delta);
             }

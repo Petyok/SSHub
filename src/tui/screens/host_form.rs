@@ -87,6 +87,12 @@ pub fn render_host_form(
                 "Name (alias)",
                 if editing {
                     text_input::with_cursor(&form.name, form.cursor)
+                } else if form.name.trim().is_empty() {
+                    // A save falls back to the address for an empty name.
+                    match form.address.trim() {
+                        "" => "(defaults to address)".to_string(),
+                        address => format!("(defaults to {address})"),
+                    }
                 } else {
                     display_text(&form.name)
                 },
@@ -249,6 +255,7 @@ pub fn render_host_form(
                 HostFormField::ProxyJump => form.proxy_jump.trim().is_empty(),
                 HostFormField::Username => form.username.trim().is_empty(),
                 HostFormField::SecretLookup => form.secret_lookup.trim().is_empty(),
+                HostFormField::Name => form.name.trim().is_empty(),
                 HostFormField::RemoteCommand => form.remote_command.trim().is_empty(),
                 HostFormField::ForwardAgent => form.forward_agent.is_none(),
                 HostFormField::Transport => form.transport.is_none(),

@@ -716,7 +716,7 @@ mod tests {
         app.save_group_form().unwrap();
         assert!(app.group_form.is_some(), "the form stays open");
         assert!(app
-            .host_notice
+            .group_notice
             .as_deref()
             .is_some_and(|n| n.contains("ProxyJump")));
         assert!(app

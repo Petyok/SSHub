@@ -222,9 +222,56 @@ pub(crate) fn host_detail_esc_discards_unsaved_edits() {
 }
 
 #[test]
-pub(crate) fn favourite_toggle_works_in_host_detail() {
+pub(crate) fn host_detail_letters_type_and_ctrl_f_toggles_favourite() {
     let mut app = test_app(vec![("web", host("web"))]);
     app.enter_host_detail().unwrap();
-    app.handle_key(key_char('f')).unwrap();
+    // Tags is a text field: f / j / k are text, not favorite / move binds.
+    for c in "fjk".chars() {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    let edit = app.detail_edit.as_ref().unwrap();
+    assert_eq!(edit.tags, "fjk");
+    assert_eq!(edit.field, DetailEditField::Tags);
+    assert!(!app.hosts[0].favorite());
+
+    app.handle_key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL))
+        .unwrap();
     assert!(app.hosts[0].favorite());
+}
+
+fn ctrl(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+}
+
+#[test]
+pub(crate) fn palette_reload_dropping_hosts_rebuilds_results() {
+    let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
+    app.handle_key(ctrl('p')).unwrap();
+    assert_eq!(app.mode, AppMode::Palette);
+    assert_eq!(app.palette_results.len(), 2);
+    app.palette_selected = 1;
+
+    // ~/.ssh/config loses a host while the palette is open.
+    app.resolver = Box::new(MockResolver::new(vec![("web", host("web"))]));
+    app.reload_hosts().unwrap();
+
+    assert_eq!(app.palette_results.len(), 1);
+    assert!(app.palette_results.iter().all(|&i| i < app.hosts.len()));
+    assert_eq!(app.palette_selected, 0);
+}
+
+#[test]
+pub(crate) fn palette_ctrl_e_edits_the_highlighted_host() {
+    let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
+    app.handle_key(ctrl('p')).unwrap();
+    app.handle_key(key_char('d')).unwrap();
+    app.handle_key(key_char('b')).unwrap();
+    app.handle_key(ctrl('e')).unwrap();
+
+    assert!(
+        matches!(app.mode, AppMode::HostForm | AppMode::HostDetail),
+        "Ctrl+E opened {:?}",
+        app.mode
+    );
+    assert_eq!(app.selected_entry().map(|e| e.name()), Some("db"));
 }

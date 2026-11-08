@@ -270,3 +270,44 @@ fn bookmark_jump_loads_another_segment_of_the_same_host() {
     assert_eq!(s.current_seg.as_deref(), Some("1000-1-0.log"));
     assert_eq!(s.scroll, 2);
 }
+
+#[test]
+fn slash_filters_the_hosts_list_and_enter_opens_the_match() {
+    let (mut app, _tmp, root) = app_with_logs();
+    write_seg(&root.join("db-1"), "3000-1-0.log", b"select 1\n");
+    app.open_log_browser_at(root).unwrap();
+    assert_eq!(app.log_browser.as_ref().unwrap().hosts.len(), 2);
+
+    app.handle_key(ch('/')).unwrap();
+    // `q` and `b` are bound keys elsewhere; here they are query text.
+    type_text(&mut app, "db");
+    let s = app.log_browser.as_ref().unwrap();
+    assert_eq!(app.mode, AppMode::LogBrowser);
+    assert_eq!(s.list_query, "db");
+    let view = s.list_view();
+    assert_eq!(view.len(), 1);
+    assert_eq!(s.hosts[view[0]].dir_name, "db-1");
+
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // keep the filter
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // open the match
+    let s = app.log_browser.as_ref().unwrap();
+    assert_eq!(s.view, LogBrowserView::Segments);
+    assert_eq!(s.current_host.as_deref(), Some("db-1"));
+    assert!(
+        s.list_query.is_empty(),
+        "the hosts filter stays on the hosts pane"
+    );
+}
+
+#[test]
+fn segments_list_pages_with_end_and_home() {
+    let (mut app, _tmp, root) = app_with_logs();
+    app.open_log_browser_at(root).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // host -> segments
+    app.handle_key(key(KeyCode::End)).unwrap();
+    assert_eq!(app.log_browser.as_ref().unwrap().seg_sel, 1);
+    app.handle_key(key(KeyCode::Home)).unwrap();
+    assert_eq!(app.log_browser.as_ref().unwrap().seg_sel, 0);
+    app.handle_key(key(KeyCode::PageDown)).unwrap();
+    assert_eq!(app.log_browser.as_ref().unwrap().seg_sel, 1);
+}

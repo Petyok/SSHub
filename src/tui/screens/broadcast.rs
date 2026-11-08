@@ -627,28 +627,23 @@ pub fn render_pick_target(frame: &mut Frame, app: &App) {
     let visible = popup.height.saturating_sub(3) as usize;
 
     let buf = frame.buffer_mut();
-    if setup.options.is_empty() {
-        buf.set_string(
-            row_x,
-            list_top,
-            "(no groups or tags)",
-            theme.style(StyleRole::PopupLegend),
-        );
+    let view = setup.visible_options();
+    if view.is_empty() {
+        let empty = if setup.options.is_empty() {
+            "(no groups or tags)"
+        } else {
+            "(no match)"
+        };
+        buf.set_string(row_x, list_top, empty, theme.style(StyleRole::PopupLegend));
     } else {
         let scroll = setup
             .menu_selected
             .saturating_sub(visible.saturating_sub(1));
-        for (i, opt) in setup.options.iter().skip(scroll).take(visible).enumerate() {
+        for (i, &opt) in view.iter().skip(scroll).take(visible).enumerate() {
             let idx = scroll + i;
             let ry = list_top + i as u16;
             let is_sel = idx == setup.menu_selected;
-            let text = match opt {
-                crate::app::BroadcastTarget::Group { label, .. } => {
-                    format!("group: {label}")
-                }
-                crate::app::BroadcastTarget::Tag { name } => format!("#{name}"),
-                crate::app::BroadcastTarget::Hosts { label, .. } => label.clone(),
-            };
+            let text = setup.options[opt].menu_label();
             let style = theme.style(if is_sel {
                 StyleRole::PickerRowSelected
             } else {
@@ -668,14 +663,17 @@ pub fn render_pick_target(frame: &mut Frame, app: &App) {
         }
     }
 
+    // The legend doubles as the filter line once something is typed.
     let hint_y = popup.y + popup.height.saturating_sub(2);
+    let hint = if setup.query.is_empty() {
+        "type to filter \u{00b7} \u{2191}/\u{2193} \u{00b7} Enter \u{00b7} Esc cancel".to_string()
+    } else {
+        format!("filter: {}\u{2581} \u{00b7} Esc clear", setup.query)
+    };
     buf.set_string(
         row_x,
         hint_y,
-        crate::tui::text::ellipsize(
-            "\u{2191}/\u{2193} select \u{00b7} Enter \u{00b7} Esc cancel",
-            inner_w,
-        ),
+        crate::tui::text::ellipsize(&hint, inner_w),
         theme.style(StyleRole::PopupLegend),
     );
 }
@@ -1201,6 +1199,7 @@ mod tests {
                 },
             ],
             menu_selected: 0,
+            query: String::new(),
             target_label: "group: prod".into(),
             command: "uptime".into(),
             cursor: 6,

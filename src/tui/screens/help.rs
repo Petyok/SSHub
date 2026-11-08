@@ -113,7 +113,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "d",
-        desc: "Delete selected host",
+        desc: "Delete selected host; on a group header, delete the group",
     },
     HelpItem::Entry {
         key: "Shift+D",
@@ -161,7 +161,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Shift+P",
-        desc: "Push public key to host",
+        desc: "Push public key to host: a popup shows progress, then the result (Esc cancels, Enter/Esc closes; Enter opens a terminal if ssh asks for input)",
     },
     HelpItem::Entry {
         key: "Shift+U",
@@ -173,7 +173,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "b",
-        desc: "Broadcast a command to a group or tag (target, command, preview, y runs)",
+        desc: "Broadcast a command to a group or tag (type to filter targets, command, preview: Esc back, y runs)",
     },
     HelpItem::Entry {
         key: "x",
@@ -187,11 +187,11 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "a",
-        desc: "Add new tunnel",
+        desc: "Add new tunnel (SSH server required; blank dest port = local port)",
     },
     HelpItem::Entry {
         key: "e",
-        desc: "Edit selected tunnel",
+        desc: "Edit selected tunnel (a running one restarts)",
     },
     HelpItem::Entry {
         key: "d",
@@ -236,8 +236,8 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Add identity (key or user+password)",
     },
     HelpItem::Entry {
-        key: "e",
-        desc: "Edit identity",
+        key: "e / Enter",
+        desc: "Edit identity (an empty name defaults to the key file name, else the user)",
     },
     HelpItem::Entry {
         key: "d",
@@ -245,7 +245,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "g",
-        desc: "Generate SSH key pair (ed25519 or rsa-4096)",
+        desc: "Generate SSH key pair (ed25519 or rsa-4096; Space or ←→ switches the type; the default path is the first free id_<type>_sshub[_N])",
     },
     HelpItem::Entry {
         key: "p",
@@ -257,7 +257,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Shift+P",
-        desc: "Push public key to a remote host",
+        desc: "Push public key to a remote host: a popup shows progress, then the result (Esc cancels, Enter/Esc closes; Enter opens a terminal if ssh asks for input)",
     },
     HelpItem::Entry {
         key: "H",
@@ -282,8 +282,16 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Blank,
     HelpItem::Section("audit (tab 5)"),
     HelpItem::Entry {
+        key: "/",
+        desc: "Filter events by host, user, status or note (fuzzy); Enter keeps it, Esc clears",
+    },
+    HelpItem::Entry {
+        key: "PgUp PgDn",
+        desc: "Page through events (Home / End jump to the newest / oldest)",
+    },
+    HelpItem::Entry {
         key: "f",
-        desc: "Cycle filter (all/ok/fail)",
+        desc: "Cycle status filter (all/ok/fail)",
     },
     HelpItem::Entry {
         key: "r",
@@ -317,7 +325,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "#",
-        desc: "Tag picker: toggles a tag: term in the filter",
+        desc: "Tag picker: type to narrow it; Enter toggles a tag: term in the filter",
     },
     HelpItem::Entry {
         key: "B",
@@ -409,7 +417,19 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Section("search & tags"),
     HelpItem::Entry {
         key: "/",
-        desc: "Fuzzy palette (type to search, Enter connects)",
+        desc: "Filter hosts (fuzzy); \u{2191}/\u{2193} select, Enter applies, Esc clears",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "Applied filter: every host key works on it; / refines, Esc clears",
+    },
+    HelpItem::Entry {
+        key: "Ctrl+P",
+        desc: "Quick-connect palette (type to search, Enter connects)",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "In the palette: Ctrl+E edit, Ctrl+F SFTP, Ctrl+K push key, Ctrl+N duplicate, Ctrl+D delete",
     },
     HelpItem::Entry {
         key: "",
@@ -458,12 +478,16 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Collapse / expand all groups",
     },
     HelpItem::Entry {
-        key: "Enter",
-        desc: "In host form on Group: open dropdown (+ create new)",
+        key: "Enter / Space",
+        desc: "In host form on Group / Identity: open dropdown (+ create new group)",
+    },
+    HelpItem::Entry {
+        key: "type",
+        desc: "In a form dropdown (Group, Identity, Parent): fuzzy filter; ↑/↓ move; Enter adds the group and closes, Space toggles a group",
     },
     HelpItem::Entry {
         key: "Shift+G",
-        desc: "Manage groups",
+        desc: "Manage groups (/ filters the list; Enter keeps the filter, Esc clears it)",
     },
     HelpItem::Entry {
         key: "Ctrl+G",
@@ -475,15 +499,15 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Space",
-        desc: "In group form: choose dropdown / cycle transport & forwarding default",
+        desc: "In group form: choose dropdown / cycle transport & forwarding default (Enter: next field, saves on the last; Esc asks before dropping edits)",
     },
     HelpItem::Entry {
         key: "e / Ctrl+G",
         desc: "On a group header: edit the group, including its default identity",
     },
     HelpItem::Entry {
-        key: "Ctrl+Shift+G",
-        desc: "Delete selected group",
+        key: "Alt+Shift+G",
+        desc: "Delete selected group (also d on a group header; Favorites is built in)",
     },
     HelpItem::Blank,
     HelpItem::Section("import / export"),
@@ -522,15 +546,15 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Ctrl+K",
-        desc: "Edit all keybindings (navigation, tabs, session, …)",
+        desc: "Edit all keybindings (navigation, tabs, session, …); a key another action already uses is kept and named",
     },
     HelpItem::Entry {
         key: "Shift+L",
-        desc: "Browse session logs (search with /, bookmark with b)",
+        desc: "Browse session logs (/ filters hosts and segments; in a log, / searches, b bookmarks)",
     },
     HelpItem::Entry {
         key: "Shift+S",
-        desc: "Manage command snippets (add/edit/delete)",
+        desc: "Manage command snippets (add/edit/delete; / filters)",
     },
     HelpItem::Profiles,
     HelpItem::Entry {
@@ -549,7 +573,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "New session tab (pick host)",
     },
     HelpItem::Entry {
-        key: "Ctrl+Shift+T",
+        key: "Alt+Shift+T",
         desc: "Open a local shell tab",
     },
     HelpItem::Entry {
@@ -561,7 +585,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Detach to dashboard (session keeps running)",
     },
     HelpItem::Entry {
-        key: "Ctrl+Shift+F",
+        key: "Alt+Shift+F",
         desc: "Open SFTP for this host (session keeps running)",
     },
     HelpItem::Entry {
@@ -593,12 +617,12 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Previous / next session tab (alternate)",
     },
     HelpItem::Entry {
-        key: "Ctrl+Shift+S",
+        key: "Alt+Shift+S",
         desc: "Focus session from dashboard",
     },
     HelpItem::Entry {
         key: "Alt+S",
-        desc: "Switch to an open session (searchable)",
+        desc: "Switch to an open session (searchable; Ctrl+X closes the selected tab)",
     },
     HelpItem::Entry {
         key: "Alt+V / Alt+J",
@@ -715,7 +739,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Esc",
-        desc: "Disconnect · back to picker",
+        desc: "Disconnect · back to picker (asks first while transfers run or are queued)",
     },
     HelpItem::Entry { key: "", desc: "" },
     HelpItem::Entry {

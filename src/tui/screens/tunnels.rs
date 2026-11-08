@@ -60,10 +60,17 @@ pub fn render_tunnels(frame: &mut Frame, area: Rect, app: &App) {
         );
     }
 
-    if let Some(ref notice) = app.tunnel_notice {
+    if let Some(notice) = &app.tunnel_notice {
         let nx = inner_x + summary.len() as u16 + 3;
-        if nx + notice.len() as u16 <= inner_x + inner_w {
-            buf.set_string(nx, summary_y, notice, theme.style(StyleRole::TunnelsNotice));
+        // Shortened, never dropped: a long `Failed: …` chain must still show.
+        let room = (inner_x + inner_w).saturating_sub(nx) as usize;
+        if room > 0 {
+            buf.set_string(
+                nx,
+                summary_y,
+                crate::tui::text::ellipsize(notice, room),
+                theme.style(StyleRole::TunnelsNotice),
+            );
         }
     }
 
@@ -568,6 +575,19 @@ pub fn render_tunnel_form(frame: &mut Frame, app: &App) {
     let avail = inner.width.saturating_sub(2) as usize;
     let footer_top = inner.y + inner.height.saturating_sub(2);
     let footer_bottom = inner.y + inner.height.saturating_sub(1);
+    // Validation lands on the form itself, one blank row under the fields
+    // (the tab's summary row sits behind the popup).
+    let notice_y = inner.y + fields.len() as u16 + 1;
+    if let Some(notice) = &app.tunnel_notice {
+        if notice_y < footer_top {
+            buf.set_string(
+                inner.x + 1,
+                notice_y,
+                crate::tui::text::ellipsize(notice, avail),
+                theme.style(StyleRole::TunnelsError),
+            );
+        }
+    }
     if footer_top > inner.y + fields.len() as u16 {
         let copy = app.copy_field_hint();
         let keys = if copy.is_empty() {
@@ -1001,6 +1021,26 @@ mod tests {
         app.tunnel_notice = Some("started".into());
         let buf = tab(&app);
         assert_eq!(fg_at_text(&buf, "started"), marker(NOTICE));
+    }
+
+    /// #20: a notice longer than the summary row is shortened, not dropped,
+    /// and the form popup draws its own validation message.
+    #[test]
+    fn long_tunnel_notices_are_ellipsized_and_shown_in_the_form() {
+        let row = |buf: &Buffer, y: u16| -> String {
+            (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()
+        };
+        let mut app = tunnel_app(1);
+        app.tunnel_notice = Some(format!("Failed: {}", "x".repeat(200)));
+        let buf = tab(&app);
+        let summary = row(&buf, 0);
+        assert!(summary.contains("Failed: x"), "{summary}");
+        assert!(summary.contains('\u{2026}'), "{summary}");
+
+        let mut app = form_app(role_marker_theme("tunnel-form", &form_markers()), false);
+        app.tunnel_notice = Some("Pick an SSH server".into());
+        let buf = frame_at(Rect::new(0, 0, 80, 24), |f| render_tunnel_form(f, &app));
+        crate::test_support::find_text(&buf, "Pick an SSH server");
     }
 
     /// A tunnel still working its way back reads as a notice; one that has

@@ -387,6 +387,7 @@ fn run_terminal_loop(
             }
         }
         app.poll_authentication();
+        app.poll_key_push();
 
         // Every session's PTY was drained above, but only the one on screen may
         // put an OSC 52 write on the host clipboard; the rest is dropped now

@@ -501,3 +501,325 @@ pub(crate) fn no_match_filter_leaves_identity_actions_inert() {
     assert!(app.identity_form.is_none(), "edit must not open");
     assert_eq!(app.mode, AppMode::Normal);
 }
+
+#[test]
+pub(crate) fn group_form_cursor_follows_the_focused_field() {
+    let mut app = test_app(vec![]);
+    let group = crate::store::HostGroup {
+        id: 1,
+        name: "spbu-prod".into(),
+        sort_order: 0,
+        default_identity_id: None,
+        default_username: Some("sm-adm".into()),
+        default_port: None,
+        default_proxy_jump: None,
+        default_transport: None,
+        default_forward_agent: None,
+        parent_id: None,
+        reserved: false,
+    };
+    app.enter_group_form(Some(&group)).unwrap();
+    // Name → Parent → Identity → Username: the name's cursor (9) must not
+    // carry over to the shorter username, where Backspace used to panic.
+    while app.group_form.as_ref().unwrap().field != GroupFormField::Username {
+        app.handle_key(key(KeyCode::Down)).unwrap();
+    }
+    for _ in 0.."sm-adm".len() + 1 {
+        app.handle_key(key(KeyCode::Backspace)).unwrap();
+    }
+    assert_eq!(app.group_form.as_ref().unwrap().default_username, "");
+}
+
+fn grp(id: i64, name: &str) -> crate::store::HostGroup {
+    crate::store::HostGroup {
+        id,
+        name: name.into(),
+        sort_order: id as i32,
+        default_identity_id: None,
+        default_username: None,
+        default_port: None,
+        default_proxy_jump: None,
+        default_transport: None,
+        default_forward_agent: None,
+        parent_id: None,
+        reserved: false,
+    }
+}
+
+#[test]
+fn group_parent_picker_filters_as_you_type_and_picks_the_match() {
+    let mut app = test_app(vec![]);
+    app.groups = vec![grp(1, "alpha"), grp(2, "spbu-prod"), grp(3, "web")];
+    app.enter_group_form(None).unwrap();
+    app.open_group_field_picker(GroupFormField::Parent);
+    type_str(&mut app, "spbu");
+    let (none, options) = app.group_field_picker_options();
+    assert_eq!(none, "(top level)", "the none slot stays pinned");
+    assert_eq!(options, vec![(2, "spbu-prod".to_string())]);
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::GroupForm);
+    assert_eq!(app.group_form.as_ref().unwrap().parent_id, Some(2));
+}
+
+#[test]
+fn host_identity_picker_maps_the_filtered_row_to_the_right_identity() {
+    let mut app = test_app(vec![]);
+    app.identities = vec![
+        ident(1, "work", "/k/id_work"),
+        ident(2, "home", "/k/id_home"),
+        ident(3, "deploy", "/k/id_ci"),
+    ];
+    app.enter_host_form(None, false).unwrap();
+    app.open_field_picker(PickerKind::Identity);
+    type_str(&mut app, "dep");
+    // "(inherit from group)" stays first; the match is visible row 1, full row 3.
+    assert_eq!(app.field_picker_rows(), vec![0, 3]);
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::HostForm);
+    let index = app.host_form.as_ref().unwrap().identity_index;
+    assert_eq!(app.identities[index - 1].id, 3);
+}
+
+#[test]
+fn host_group_picker_space_toggles_the_filtered_group() {
+    let mut app = test_app(vec![]);
+    let mut ids = HashMap::new();
+    for (i, name) in ["alpha", "spbu-prod", "web"].into_iter().enumerate() {
+        let g = app
+            .store
+            .create_group(&crate::store::NewHostGroup {
+                name: name.into(),
+                sort_order: i as i32,
+                ..Default::default()
+            })
+            .unwrap();
+        ids.insert(name, g.id);
+    }
+    app.enter_host_form(None, false).unwrap();
+    app.open_field_picker(PickerKind::Group);
+    type_str(&mut app, "spbu");
+    app.handle_key(key_char(' ')).unwrap();
+    assert_eq!(
+        app.field_picker.as_ref().unwrap().query,
+        "spbu",
+        "Space is not query text"
+    );
+    let selected: Vec<i64> = app
+        .host_form
+        .as_ref()
+        .unwrap()
+        .group_ids
+        .iter()
+        .copied()
+        .collect();
+    assert_eq!(selected, vec![ids["spbu-prod"]]);
+}
+
+fn store_group(app: &App, name: &str) -> i64 {
+    app.store
+        .create_group(&crate::store::NewHostGroup {
+            name: name.into(),
+            ..Default::default()
+        })
+        .unwrap()
+        .id
+}
+
+/// #3: Enter on a group row adds it (it used to only close the dropdown).
+#[test]
+fn host_group_picker_enter_adds_the_highlighted_group_and_closes() {
+    let mut app = test_app(vec![]);
+    store_group(&app, "alpha");
+    let prod = store_group(&app, "spbu-prod");
+    app.enter_host_form(None, false).unwrap();
+    app.open_field_picker(PickerKind::Group);
+    type_str(&mut app, "spbu");
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::HostForm);
+    let form = app.host_form.as_ref().unwrap();
+    assert_eq!(
+        form.group_ids.iter().copied().collect::<Vec<_>>(),
+        vec![prod]
+    );
+    assert!(form.dirty);
+}
+
+/// #19: Space opens the Group and Identity dropdowns, like Enter.
+#[test]
+fn host_form_space_opens_group_and_identity_pickers() {
+    let mut app = test_app(vec![]);
+    app.enter_host_form(None, false).unwrap();
+    for (field, kind) in [
+        (HostFormField::Group, PickerKind::Group),
+        (HostFormField::Identity, PickerKind::Identity),
+    ] {
+        app.host_form.as_mut().unwrap().field = field;
+        app.handle_key(key_char(' ')).unwrap();
+        assert_eq!(app.mode, AppMode::FieldPicker);
+        assert_eq!(app.field_picker.as_ref().unwrap().kind, kind);
+        app.handle_key(key(KeyCode::Esc)).unwrap();
+    }
+}
+
+/// #5b/c: Enter moves to the next field (Name no longer saves; Port no longer
+/// ignores it) and saves on the last field.
+#[test]
+fn group_form_enter_advances_and_saves_on_the_last_field() {
+    let mut app = test_app(vec![]);
+    app.enter_group_form(None).unwrap();
+    type_str(&mut app, "ops");
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::GroupForm);
+    assert_eq!(
+        app.group_form.as_ref().unwrap().field,
+        GroupFormField::Parent
+    );
+    app.group_form.as_mut().unwrap().field = GroupFormField::Port;
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        app.group_form.as_ref().unwrap().field,
+        GroupFormField::ProxyJump
+    );
+    app.group_form.as_mut().unwrap().field = GroupFormField::ForwardAgent;
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.groups.iter().any(|g| g.name == "ops"));
+}
+
+/// #5a: Esc on an edited group form asks first; `n` drops the edits.
+#[test]
+fn group_form_esc_with_edits_asks_before_discarding() {
+    let mut app = test_app(vec![]);
+    app.enter_group_form(None).unwrap();
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(
+        app.mode,
+        AppMode::Normal,
+        "an untouched form closes at once"
+    );
+
+    app.enter_group_form(None).unwrap();
+    type_str(&mut app, "x");
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::ConfirmDiscard);
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::GroupForm, "Esc in the dialog goes back");
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    app.handle_key(key_char('n')).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.group_form.is_none());
+    assert!(app.groups.is_empty());
+}
+
+/// #5d: validation errors land on the popup's own line (`group_notice`).
+#[test]
+fn group_form_validation_error_is_shown_in_the_popup() {
+    let mut app = test_app(vec![]);
+    app.enter_group_form(None).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
+    assert_eq!(app.mode, AppMode::GroupForm);
+    assert_eq!(app.group_notice.as_deref(), Some("Group name is required"));
+    assert!(app.host_notice.is_none());
+}
+
+/// Row index of the header of the section whose group satisfies `pred`.
+fn header_row(app: &App, pred: impl Fn(&crate::store::HostGroup) -> bool) -> usize {
+    app.nav_rows
+        .iter()
+        .position(|r| {
+            matches!(r, NavRow::Header(si)
+                if app.group_sections[*si].group.as_ref().is_some_and(&pred))
+        })
+        .expect("header row")
+}
+
+/// #7a/d: `d` on a group header asks to delete the group; `n` returns to the
+/// host list (not the Group manager).
+#[test]
+fn d_on_a_group_header_deletes_the_group_and_returns_to_the_host_list() {
+    let mut app = test_app(vec![]);
+    let gid = store_group(&app, "web");
+    let mut nh = crate::store::NewHost::launcher("w1", "10.0.0.1");
+    nh.group_id = Some(gid);
+    app.store.create_host(&nh).unwrap();
+    app.reload_hosts().unwrap();
+    app.selected = header_row(&app, |g| g.id == gid);
+
+    app.handle_key(key_char('d')).unwrap();
+    assert_eq!(app.mode, AppMode::ConfirmDelete);
+    assert!(matches!(
+        app.pending_delete,
+        Some(PendingDelete::Group { id, return_to_manage: false, .. }) if id == gid
+    ));
+    app.handle_key(key_char('n')).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+
+    app.handle_key(key_char('d')).unwrap();
+    app.handle_key(key_char('y')).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert_eq!(app.host_notice.as_deref(), Some("Group 'web' deleted"));
+    assert!(app.groups.is_empty());
+}
+
+/// #7b/c: the built-in Favorites header refuses edit and delete with a notice.
+#[test]
+fn favorites_header_refuses_edit_and_delete_with_a_notice() {
+    let mut app = test_app(vec![]);
+    let host = app
+        .store
+        .create_host(&crate::store::NewHost::launcher("w1", "10.0.0.1"))
+        .unwrap();
+    let fav = app.store.favorites_group_id().unwrap();
+    app.store.add_host_to_group(host.id, fav).unwrap();
+    app.reload_hosts().unwrap();
+    for k in ['e', 'd'] {
+        app.selected = header_row(&app, |g| g.reserved);
+        app.host_notice = None;
+        app.handle_key(key_char(k)).unwrap();
+        assert_eq!(app.mode, AppMode::Normal, "{k}");
+        assert!(app.pending_delete.is_none(), "{k}");
+        assert!(
+            app.host_notice
+                .as_deref()
+                .is_some_and(|n| n.contains("Favorites")),
+            "{k}: {:?}",
+            app.host_notice
+        );
+    }
+}
+
+/// #14: `/` filters the Group manager; letters are text while typing, and the
+/// actions apply to the filtered selection.
+#[test]
+fn group_manager_slash_filters_and_actions_follow_the_match() {
+    let mut app = test_app(vec![]);
+    store_group(&app, "alpha");
+    let prod = store_group(&app, "beta-prod");
+    store_group(&app, "gamma");
+    app.enter_group_manage().unwrap();
+
+    app.handle_key(key_char('/')).unwrap();
+    type_str(&mut app, "prod");
+    assert_eq!(app.mode, AppMode::GroupManage, "letters are filter text");
+    let view = app.group_manage_view();
+    assert_eq!(view.len(), 1);
+    assert_eq!(app.groups[app.group_manage_selected].id, prod);
+
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert!(!app.group_manage_filtering);
+    app.handle_key(key_char('d')).unwrap();
+    assert!(matches!(
+        app.pending_delete,
+        Some(PendingDelete::Group { id, return_to_manage: true, .. }) if id == prod
+    ));
+    app.handle_key(key_char('n')).unwrap();
+    assert_eq!(app.mode, AppMode::GroupManage);
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert!(
+        app.group_manage_query.is_empty(),
+        "first Esc clears the filter"
+    );
+    assert_eq!(app.mode, AppMode::GroupManage);
+    assert_eq!(app.group_manage_view().len(), 3);
+}

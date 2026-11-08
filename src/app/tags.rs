@@ -3,7 +3,7 @@ use super::*;
 impl App {
     pub(crate) fn open_tag_filter(&mut self) {
         self.mode = AppMode::TagFilter;
-        self.search_query.clear();
+        self.tag_filter_query.clear();
         self.tag_filter_selected = 0;
     }
 
@@ -12,7 +12,7 @@ impl App {
     /// selected tags always appear even if they no longer match the query, so
     /// they can be toggled back off.
     pub fn tag_filter_rows(&self) -> Vec<String> {
-        let query = self.search_query.to_lowercase();
+        let query = self.tag_filter_query.to_lowercase();
         let mut rows = vec!["(all)".to_string()];
         let mut tags: Vec<String> = self
             .hosts
@@ -65,9 +65,8 @@ impl App {
             // Esc closes without changing the current selection (toggles made
             // with Space are already applied live).
             KeyCode::Esc => {
-                self.search_query.clear();
+                self.tag_filter_query.clear();
                 self.mode = AppMode::Normal;
-                self.rebuild_filter();
             }
             // Enter confirms and closes. It never removes a tag: it clears all
             // on "(all)", adds the highlighted tag if it isn't active yet (the
@@ -82,7 +81,7 @@ impl App {
                     }
                     _ => {}
                 }
-                self.search_query.clear();
+                self.tag_filter_query.clear();
                 self.mode = AppMode::Normal;
                 self.rebuild_filter();
             }
@@ -104,11 +103,14 @@ impl App {
                 }
             }
             KeyCode::Backspace => {
-                self.search_query.pop();
+                self.tag_filter_query.pop();
                 self.reset_tag_filter_selection();
             }
-            KeyCode::Char(c) if key.modifiers.is_empty() && !c.is_control() => {
-                self.search_query.push(c);
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                self.tag_filter_query.push(c);
                 self.reset_tag_filter_selection();
             }
             _ => {}
@@ -121,7 +123,7 @@ impl App {
     /// query is empty.
     pub(crate) fn reset_tag_filter_selection(&mut self) {
         let has_match = self.tag_filter_rows().len() > 1;
-        self.tag_filter_selected = if !self.search_query.is_empty() && has_match {
+        self.tag_filter_selected = if !self.tag_filter_query.is_empty() && has_match {
             1
         } else {
             0

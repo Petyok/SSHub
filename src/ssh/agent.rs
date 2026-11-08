@@ -58,10 +58,25 @@ pub fn agent_add_argv(key_path: &str, cert_path: Option<&str>) -> Vec<String> {
 
 /// `ssh-add <key> [<cert>]`: the cert rides along as a second identity file
 /// so non-`<key>-cert.pub` paths load too (the default name ssh-add would
-/// pick up on its own is just the common case, not the rule).
-pub fn add_key_with_cert(key_path: &str, cert_path: Option<&str>) -> Result<()> {
+/// pick up on its own is just the common case, not the rule). A stored
+/// `passphrase` reaches ssh-add through the askpass helper, never argv.
+pub fn add_key_with_cert(
+    key_path: &str,
+    cert_path: Option<&str>,
+    passphrase: Option<&str>,
+) -> Result<()> {
     let argv = agent_add_argv(key_path, cert_path);
-    let output = Command::new(&argv[0]).args(&argv[1..]).output()?;
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
+    let _askpass = match passphrase.filter(|p| !p.is_empty()) {
+        Some(p) => {
+            let askpass = super::keyfile::KeygenAskpass::new(p)?;
+            cmd.envs(askpass.env());
+            Some(askpass)
+        }
+        None => None,
+    };
+    let output = cmd.output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("ssh-add failed: {}", stderr.trim());
@@ -154,8 +169,13 @@ mod tests {
         }
         let old_path = std::env::var("PATH").unwrap_or_default();
         std::env::set_var("PATH", format!("{}:{old_path}", dir.path().display()));
-        add_key_with_cert("/home/u/.ssh/id_ed25519", Some("/home/u/.ssh/id-cert.pub")).unwrap();
-        add_key_with_cert("/home/u/.ssh/id_other", None).unwrap();
+        add_key_with_cert(
+            "/home/u/.ssh/id_ed25519",
+            Some("/home/u/.ssh/id-cert.pub"),
+            None,
+        )
+        .unwrap();
+        add_key_with_cert("/home/u/.ssh/id_other", None, None).unwrap();
         std::env::set_var("PATH", old_path);
 
         let recorded = std::fs::read_to_string(&recorder).unwrap();

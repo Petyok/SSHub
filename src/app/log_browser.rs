@@ -6,6 +6,8 @@ use std::path::PathBuf;
 
 /// Lines moved per PageUp / PageDown in the viewer.
 const VIEWER_PAGE: usize = 20;
+/// Rows moved per PageUp / PageDown in the Hosts and Segments lists.
+const LIST_PAGE: isize = 10;
 
 impl LogBrowserState {
     /// Bookmarks belonging to the host currently open, newest first.
@@ -18,6 +20,74 @@ impl LogBrowserState {
                 .collect(),
             None => Vec::new(),
         }
+    }
+
+    /// Indices of the Hosts or Segments list on screen: all of them, or those
+    /// whose name fuzzy-matches `list_query`, best first.
+    pub fn list_view(&self) -> Vec<usize> {
+        let names: Vec<Vec<String>> = match self.view {
+            LogBrowserView::Hosts => self
+                .hosts
+                .iter()
+                .map(|h| vec![h.dir_name.clone()])
+                .collect(),
+            LogBrowserView::Segments => self
+                .segments
+                .iter()
+                .map(|s| vec![s.file_name.clone()])
+                .collect(),
+            LogBrowserView::Viewer => return Vec::new(),
+        };
+        crate::search::fuzzy_indices(&self.list_query, &names)
+    }
+
+    /// Selected index (into `hosts` or `segments`) of the list on screen.
+    pub fn list_sel(&self) -> usize {
+        match self.view {
+            LogBrowserView::Segments => self.seg_sel,
+            _ => self.host_sel,
+        }
+    }
+
+    fn set_list_sel(&mut self, sel: usize) {
+        match self.view {
+            LogBrowserView::Segments => self.seg_sel = sel,
+            _ => self.host_sel = sel,
+        }
+    }
+
+    /// Step the selection through the visible rows; saturates at both ends,
+    /// so `isize::MIN` / `isize::MAX` jump to the first / last row.
+    fn move_list(&mut self, delta: isize) {
+        let view = self.list_view();
+        if view.is_empty() {
+            return;
+        }
+        let sel = self.list_sel();
+        let pos = view.iter().position(|&i| i == sel).unwrap_or(0) as isize;
+        let next = pos.saturating_add(delta).clamp(0, view.len() as isize - 1);
+        self.set_list_sel(view[next as usize]);
+    }
+
+    /// Keep the selection on a visible row after the filter changed.
+    fn snap_list(&mut self) {
+        let view = self.list_view();
+        if !view.contains(&self.list_sel()) {
+            self.set_list_sel(view.first().copied().unwrap_or(0));
+        }
+    }
+
+    /// The selected row, or `None` when the filter hides it.
+    fn visible_list_sel(&self) -> Option<usize> {
+        let sel = self.list_sel();
+        self.list_view().contains(&sel).then_some(sel)
+    }
+
+    /// Leave the Hosts / Segments pane: its filter stays behind.
+    fn change_list_pane(&mut self, view: LogBrowserView) {
+        self.view = view;
+        self.list_query.clear();
+        self.list_filtering = false;
     }
 }
 
@@ -57,6 +127,8 @@ impl App {
             bookmark_sel: 0,
             bookmarks,
             notice: None,
+            list_query: String::new(),
+            list_filtering: false,
         });
         self.mode = AppMode::LogBrowser;
         Ok(())
@@ -77,27 +149,16 @@ impl App {
     // ── Hosts pane ──────────────────────────────────────────────
 
     fn log_key_hosts(&mut self, key: KeyEvent) -> Result<()> {
-        if self.is_action(KeyAction::Quit, &key) {
+        if self.is_action(KeyAction::Quit, &key) && !self.log_list_filtering() {
             self.request_quit();
+            return Ok(());
+        }
+        if self.log_list_key(&key) {
             return Ok(());
         }
         if self.is_action(KeyAction::Cancel, &key) || self.is_action(KeyAction::TabHosts, &key) {
             self.log_browser = None;
             self.mode = AppMode::Normal;
-            return Ok(());
-        }
-        if self.is_action(KeyAction::MoveDown, &key) {
-            if let Some(s) = self.log_browser.as_mut() {
-                if !s.hosts.is_empty() {
-                    s.host_sel = (s.host_sel + 1).min(s.hosts.len() - 1);
-                }
-            }
-            return Ok(());
-        }
-        if self.is_action(KeyAction::MoveUp, &key) {
-            if let Some(s) = self.log_browser.as_mut() {
-                s.host_sel = s.host_sel.saturating_sub(1);
-            }
             return Ok(());
         }
         if key.code == KeyCode::Enter {
@@ -106,45 +167,94 @@ impl App {
         Ok(())
     }
 
+    fn log_list_filtering(&self) -> bool {
+        self.log_browser.as_ref().is_some_and(|s| s.list_filtering)
+    }
+
+    /// Keys the Hosts and Segments lists share: the `/` filter (Enter keeps
+    /// it, Esc drops it), movement and paging. `true` when the key was taken.
+    fn log_list_key(&mut self, key: &KeyEvent) -> bool {
+        let cancel = self.is_action(KeyAction::Cancel, key);
+        let connect = self.is_action(KeyAction::Connect, key);
+        let search = self.is_action(KeyAction::Search, key);
+        let down = self.is_action(KeyAction::MoveDown, key);
+        let up = self.is_action(KeyAction::MoveUp, key);
+        let Some(s) = self.log_browser.as_mut() else {
+            return false;
+        };
+        s.notice = None;
+        if s.list_filtering {
+            match key.code {
+                _ if cancel => {
+                    s.list_query.clear();
+                    s.list_filtering = false;
+                }
+                _ if connect => s.list_filtering = false,
+                KeyCode::Char(c)
+                    if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                        && !c.is_control() =>
+                {
+                    s.list_query.push(c);
+                }
+                KeyCode::Backspace => {
+                    s.list_query.pop();
+                }
+                KeyCode::Up => s.move_list(-1),
+                KeyCode::Down => s.move_list(1),
+                KeyCode::PageUp => s.move_list(-LIST_PAGE),
+                KeyCode::PageDown => s.move_list(LIST_PAGE),
+                _ => {}
+            }
+            s.snap_list();
+            return true;
+        }
+        match key.code {
+            _ if search => s.list_filtering = true,
+            _ if cancel && !s.list_query.is_empty() => {
+                s.list_query.clear();
+                s.snap_list();
+            }
+            _ if down => s.move_list(1),
+            _ if up => s.move_list(-1),
+            KeyCode::PageDown => s.move_list(LIST_PAGE),
+            KeyCode::PageUp => s.move_list(-LIST_PAGE),
+            KeyCode::Home => s.move_list(isize::MIN),
+            KeyCode::End => s.move_list(isize::MAX),
+            _ => return false,
+        }
+        true
+    }
+
     fn log_open_selected_host(&mut self) {
         let Some(s) = self.log_browser.as_mut() else {
             return;
         };
-        let Some(host) = s.hosts.get(s.host_sel) else {
+        let Some(i) = s.visible_list_sel() else {
+            s.notice = Some("No host to open".into());
             return;
         };
+        let host = &s.hosts[i];
         let dir = host.dir_name.clone();
         let segments = lb::list_segments(&s.logs_root.join(&dir));
         s.current_host = Some(dir);
         s.segments = segments;
         s.seg_sel = 0;
-        s.view = LogBrowserView::Segments;
+        s.change_list_pane(LogBrowserView::Segments);
     }
 
     // ── Segments pane ───────────────────────────────────────────
 
     fn log_key_segments(&mut self, key: KeyEvent) -> Result<()> {
-        if self.is_action(KeyAction::Quit, &key) {
+        if self.is_action(KeyAction::Quit, &key) && !self.log_list_filtering() {
             self.request_quit();
+            return Ok(());
+        }
+        if self.log_list_key(&key) {
             return Ok(());
         }
         if self.is_action(KeyAction::Cancel, &key) {
             if let Some(s) = self.log_browser.as_mut() {
-                s.view = LogBrowserView::Hosts;
-            }
-            return Ok(());
-        }
-        if self.is_action(KeyAction::MoveDown, &key) {
-            if let Some(s) = self.log_browser.as_mut() {
-                if !s.segments.is_empty() {
-                    s.seg_sel = (s.seg_sel + 1).min(s.segments.len() - 1);
-                }
-            }
-            return Ok(());
-        }
-        if self.is_action(KeyAction::MoveUp, &key) {
-            if let Some(s) = self.log_browser.as_mut() {
-                s.seg_sel = s.seg_sel.saturating_sub(1);
+                s.change_list_pane(LogBrowserView::Hosts);
             }
             return Ok(());
         }
@@ -158,9 +268,11 @@ impl App {
         let Some(s) = self.log_browser.as_mut() else {
             return;
         };
-        let Some(seg) = s.segments.get(s.seg_sel) else {
+        let Some(i) = s.visible_list_sel() else {
+            s.notice = Some("No segment to open".into());
             return;
         };
+        let seg = &s.segments[i];
         let Some((lines, truncated)) = lb::read_segment_lines(&seg.path, lb::VIEWER_READ_CAP)
         else {
             // Missing or unreadable (e.g. pruned by retention). Stay on the
@@ -209,6 +321,7 @@ impl App {
             if let Some(s) = self.log_browser.as_mut() {
                 s.view = LogBrowserView::Segments;
                 s.notice = None;
+                s.snap_list();
             }
             return Ok(());
         }

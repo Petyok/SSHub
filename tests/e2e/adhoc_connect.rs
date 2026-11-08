@@ -53,7 +53,8 @@ fn app_with_saved_host() -> App {
 }
 
 fn open_palette_and_type(app: &mut App, query: &str) {
-    app.handle_key(key_char('/')).unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL))
+        .unwrap();
     assert_eq!(app.mode, AppMode::Palette);
     for c in query.chars() {
         app.handle_key(key_char(c)).unwrap();
