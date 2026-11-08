@@ -571,7 +571,7 @@ pub(crate) fn find_device(store: &LauncherStore, spec: &str) -> Result<DeviceRow
 pub(crate) fn find_op(store: &LauncherStore, prefix: &str) -> Result<Op> {
     ensure!(
         prefix.len() >= 6 && prefix.bytes().all(|b| b.is_ascii_hexdigit()),
-        "an op id is at least 6 hex digits (see `sshub sync-review`)"
+        "a change id is at least 6 hex digits (see `sshub sync-review`)"
     );
     let want = prefix.to_ascii_lowercase();
     store.with_conn(|conn| {
@@ -1181,6 +1181,24 @@ pub(crate) fn exemption_off(
     )
 }
 
+/// Whether an export this device proposed can still be written: it is still being approved, or approved and its
+/// window (counted from when the ceremony completed) is still open.
+pub(crate) fn export_pending(store: &LauncherStore, op: &crate::sync::oplog::Op, now: i64) -> bool {
+    let OpBody::BulkExport {
+        requester,
+        window_secs,
+    } = &op.body
+    else {
+        return false;
+    };
+    match ceremony::red_status(store, op, now) {
+        // Not complete yet: still being approved. Complete: usable until the window after completion ends.
+        Ok(st) if !st.complete => true,
+        Ok(st) => now < st.complete_at + i64::from(*window_secs) && requester == &op.device_id,
+        Err(_) => false,
+    }
+}
+
 /// Propose the export, wait (up to `wait` seconds) until its ceremony is
 /// complete, then export inside the window. Returns the report.
 pub(crate) fn export_flow(
@@ -1344,7 +1362,7 @@ pub(crate) fn import_kit(
 
 pub fn print_help(cmd: &str) {
     let (synopsis, text) = match cmd {
-        "sync-revoke" => ("sync-revoke <device> [--format plain|json]", "Revoke a device: Yellow for a mirror, Red for a holder (needs three holders before it). Prints the ceremony status and runs this device's revocation steps (rotate wrap keys, reshare, retire)."),
+        "sync-revoke" => ("sync-revoke <device> [--format plain|json]", "Remove a device: one approval for a view-only copy, a big change for a full device. Removing a full device needs three computers or servers you control, the one you remove included, so that two others can approve with the phone. Prints the ceremony status and runs this device's revocation steps (rotate wrap keys, reshare, retire)."),
         "sync-role" => ("sync-role <device> holder|mirror [--format plain|json]", "Promote a mirror to holder or demote a holder (Red)."),
         "sync-approve" => ("sync-approve <op-id> [--format plain|json]", "Approve a pending Red op as this attended device (the second-device vote)."),
         "sync-factor" => ("sync-factor <op-id> (--paper | --email-code) [--format plain|json]", "Add the third factor to a Red op. The 24 paper words or the emailed code are read without echo."),

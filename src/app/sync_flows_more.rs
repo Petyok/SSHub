@@ -69,12 +69,12 @@ pub(crate) fn exemption_on(app: &mut App) {
         "Whoever has this machine and the six words has all of your credentials.".into(),
         String::new(),
         "Safer ways to open credentials without a second device on hand:".into(),
-        "  - a trust session (a certificate that lets a holder release shares),".into(),
+        "  - a trust session (the phone lets a computer open some hosts without asking),".into(),
         "  - the Vault mode (master phrase and ring secret, no quorum).".into(),
         String::new(),
-        "Enabling is a Red change authored by the exempt machine itself: it runs".into(),
+        "Enabling is a big change made by the exempt computer itself: it runs".into(),
         "here, on THIS machine, and cannot be done for another one. A second".into(),
-        "attended device and a third factor must approve it. Esc cancels.".into(),
+        "device with a person at the keyboard and the paper phrase or emailed code must approve it. Esc cancels.".into(),
     ];
     app.sync_prompt(
         "Master-phrase exemption: enable on this machine",
@@ -134,7 +134,27 @@ pub(crate) fn exemption_off(app: &mut App) {
 
 // ------------------------------------------------------------ bulk export
 
+/// This device's export that was proposed and has not expired: the one a second visit continues.
+pub(crate) fn open_export(app: &App) -> Option<crate::sync::oplog::Op> {
+    let me = app.sync.this_device.clone()?;
+    crate::sync::quorum::ops_of(&app.store, "BulkExport", Some(&me))
+        .ok()?
+        .into_iter()
+        .rev()
+        .find(|o| {
+            ceremony::red_status(&app.store, o, now())
+                .is_ok_and(|st| !st.expired && st.blocked.is_none())
+                && admin::export_pending(&app.store, o, now())
+        })
+}
+
 pub(crate) fn export_start(app: &mut App) {
+    // An export that was proposed earlier is continued here: no op id to carry back.
+    if let Some(op) = open_export(app) {
+        return export_path(app, move |app, out| {
+            report_job(app, move |env| export_step(env, &op, &out, false));
+        });
+    }
     app.sync_prompt(
         "Export every credential",
         format!("Window in seconds, empty for {EXPORT_DEFAULT_SECS} (at most {EXPORT_MAX_SECS})"),
@@ -165,28 +185,6 @@ pub(crate) fn export_start(app: &mut App) {
                         },
                     )?;
                     export_step(env, &op, &out, true)
-                });
-            });
-        },
-    );
-}
-
-pub(crate) fn export_continue(app: &mut App) {
-    app.sync_prompt(
-        "Export: continue",
-        "The op id of the export (the 8 hex digits shown when it was proposed)",
-        false,
-        |app, id| {
-            let id = id.trim().to_string();
-            export_path(app, move |app, out| {
-                report_job(app, move |env| {
-                    let op = admin::find_op(&env.store, &id)?;
-                    let mine = env.identity.public().device_id();
-                    anyhow::ensure!(
-                        matches!(&op.body, OpBody::BulkExport { requester, .. } if *requester == mine),
-                        "that op is not a bulk export proposed by this device"
-                    );
-                    export_step(env, &op, &out, false)
                 });
             });
         },
@@ -231,7 +229,7 @@ fn export_step(
         };
         let mut r = admin::op_report(&env.store, op, head, at)?;
         r.lines.push(
-            "Approve it from the other devices, then choose \"Export: continue\" and give the op id."
+            "Approve it from the other devices, then choose \"Export every credential\" again: it continues this export."
                 .into(),
         );
         r.lines

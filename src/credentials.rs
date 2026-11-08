@@ -989,7 +989,7 @@ pub fn locked_refs(store: &dyn PasswordStore, refs: &[SecretRef]) -> Vec<SecretR
 /// What a caller with no way to open credentials says when one is locked.
 pub fn needs_share_message() -> UnlockError {
     UnlockError::NeedsShares(
-        "open it from the Sync tab (7) of the TUI, with a sync worker running".into(),
+        "it is saved in your synced devices and is locked: open it in the terminal screen (sshub, then connect or tab 7) while its sync worker runs, or start a trust session there".into(),
     )
 }
 

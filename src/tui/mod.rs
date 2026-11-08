@@ -1618,8 +1618,10 @@ fn footer_keybinds(
             ("?".into(), "help"),
             ("q".into(), "quit"),
         ],
-        6 if app.sync.configured => vec![
+        6 if app.sync.configured => {
+            let mut v: Vec<(String, &'static str)> = vec![
             ("\u{2191}\u{2193}".into(), "select"),
+            ("Enter".into(), "details"),
             (
                 screens::map::key_label(
                     app.config
@@ -1642,7 +1644,7 @@ fn footer_keybinds(
                         .keybinds
                         .primary(crate::config::KeyAction::SyncTrust),
                 ),
-                "trust",
+                "trust session",
             ),
             (
                 screens::map::key_label(
@@ -1652,9 +1654,22 @@ fn footer_keybinds(
                 ),
                 "manage",
             ),
-            ("?".into(), "help"),
-            ("q".into(), "quit"),
-        ],
+            ];
+            // The drop-phone key only does something while the Bluetooth channel runs.
+            if crate::app::sync_phone::ble_active(app) {
+                v.push((
+                    screens::map::key_label(
+                        app.config
+                            .keybinds
+                            .primary(crate::config::KeyAction::SyncBleDrop),
+                    ),
+                    "drop phone",
+                ));
+            }
+            v.push(("?".into(), "help"));
+            v.push(("q".into(), "quit"));
+            v
+        }
         6 => vec![("?".into(), "help"), ("q".into(), "quit")],
         _ => vec![("q".into(), "quit")],
     };
@@ -1666,7 +1681,7 @@ fn footer_keybinds(
                     .keybinds
                     .primary(crate::config::KeyAction::SyncEnroll),
             ),
-            "my device",
+            "add as sync device",
         ));
     }
     if matches!(app.active_tab, 2 | 3) && app.list_filter_editing {
@@ -3055,7 +3070,7 @@ mod tests {
         }
         app.active_tab = 0;
         let hosts = buffer_text(&render_to_buffer(&app, 200, 30));
-        assert!(hosts.contains("t my device"), "{hosts}");
+        assert!(hosts.contains("A add as sync device"), "{hosts}");
     }
 
     #[test]

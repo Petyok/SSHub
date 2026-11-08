@@ -1,4 +1,4 @@
-//! Compact "sync net" summary in the dashboard's right column, carved out of
+//! Compact "your devices" summary in the dashboard's right column, carved out of
 //! the Recent panel. Drawn only once a ring is configured; it reuses the auth
 //! panel's roles (no roles of its own) and turns entirely to the error colour
 //! when the ring is compromised.
@@ -19,7 +19,7 @@ pub fn render_sync_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let sync = &app.sync;
     let text = theme.style(StyleRole::TextPrimary);
     let muted = theme.style(StyleRole::TextMuted);
-    render_panel_box(buf, area, "sync net", AUTH_PANEL.plain(), false, theme);
+    render_panel_box(buf, area, "your devices", AUTH_PANEL.plain(), false, theme);
 
     let x = area.x + 2;
     let w = area.width.saturating_sub(4) as usize;
@@ -42,9 +42,9 @@ pub fn render_sync_panel(buf: &mut Buffer, area: Rect, app: &App) {
     let mut rest = sync
         .trust
         .as_ref()
-        .map_or("no cert".to_string(), |t| format!("cert {}d", t.term_days));
+        .map_or("no trust session".to_string(), |t| format!("trust {}d", t.term_days));
     if sync.pending > 0 {
-        rest.push_str(&format!("  \u{23f3}{}ops", sync.pending));
+        rest.push_str(&format!("  \u{23f3}{} waiting", sync.pending));
     }
     if col + 1 < right {
         put_clamped(buf, col + 1, row, &rest, text, (right - col - 1) as usize);
@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn hidden_when_sync_is_not_configured() {
         let app = test_app(vec![]);
-        assert!(!text(&dashboard(&app)).contains("sync net"));
+        assert!(!text(&dashboard(&app)).contains("your devices"));
     }
 
     #[test]
@@ -95,7 +95,7 @@ mod tests {
         let mut app = test_app(vec![]);
         app.sync = sample_sync_view();
         let s = text(&dashboard(&app));
-        for want in ["sync net", "cert 30d", "2ops", "recent sessions"] {
+        for want in ["your devices", "cert 30d", "2ops", "recent sessions"] {
             assert!(s.contains(want), "{want}");
         }
     }
@@ -114,10 +114,10 @@ mod tests {
         let (tx, ty) = (0..buf.area.height)
             .flat_map(|y| (0..buf.area.width).map(move |x| (x, y)))
             .find(|&(x, y)| {
-                (0..8)
+                (0..12)
                     .map(|i| buf.cell((x + i, y)).map_or("", |c| c.symbol()))
                     .collect::<String>()
-                    == "sync net"
+                    == "your devices"
             })
             .expect("panel drawn");
         let mut checked = 0;

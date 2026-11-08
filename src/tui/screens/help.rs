@@ -172,8 +172,8 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "What's new: release notes of this version or the installed update",
     },
     HelpItem::Entry {
-        key: "t",
-        desc: "Make the selected host one of your sync devices (once sync is set up)",
+        key: "A",
+        desc: "Add the selected host as a sync device: enroll it over ssh (once sync is set up)",
     },
     HelpItem::Entry {
         key: "b",
@@ -455,27 +455,27 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Enter",
-        desc: "Compromised device: show the proof and next steps. Behind or stale device: sync it, then re-enroll it if it is still behind",
+        desc: "Details of the selected device (with its id as a QR for the phone app). A device that missed some changes or was away too long: sync it first; a COMPROMISED one: show the proof",
     },
     HelpItem::Entry {
         key: "R",
-        desc: "Review every change waiting for approval, with why it waits (a approve, r reject, Esc close). A Red change shows its ceremony: a adds this device's approval, p types the paper phrase, e the emailed code",
+        desc: "Review every change waiting for approval, with why it waits (a approve, r reject, Esc close). A big change shows its three approvals: a adds this device's approval, p types the paper phrase, e the emailed code",
     },
     HelpItem::Entry {
         key: "t",
-        desc: "Open a trust session: pick the scope first (a group, or hosts marked with Space), then the term (7, 30 or 90 days)",
+        desc: "Trust session: the phone lets a computer open some hosts without asking. Pick which hosts first (a group, or hosts marked with Space), then confirm days and new hosts a day on one screen",
     },
     HelpItem::Entry {
         key: "M",
-        desc: "Manage the ring: revoke a device, change roles, switch the credential mode, add my phone, paste phone ops, show a restored phone's chain, recovery, paper",
+        desc: "Manage, in groups: Devices (remove, full device or view-only copy), Phone, Passwords (Vault or Quorum, kit, paper phrase), Recovery, Advanced (trust sessions, exemption, export). What does not apply now says why",
     },
     HelpItem::Entry {
         key: "",
-        desc: "In the M menu: master-phrase exemption (enable on this machine, or switch off for a device: with it this machine alone plus the master phrase opens every credential), bulk export (propose, then Export: continue once the other devices approved; the file is written owner-only and never overwritten), and a printable paper phrase sheet (while the words are still in memory).",
+        desc: "In the M menu: master phrase exemption (Quorum only; with it this computer alone plus the master phrase opens every password), export of every saved password (propose; choose it again once the others approved: it continues; the file is written owner-only and never overwritten), the paper phrase wizard (write down, then type back) and a printable paper phrase sheet. A mode switch or export that was approved shows a Finish row on the Sync tab.",
     },
     HelpItem::Entry {
         key: "",
-        desc: "Unlock dialog (Quorum): under the host name it shows the host id, 32 hex digits in groups of four, and the challenge's four binding words. The phone's release screen shows the same two: compare both before approving there",
+        desc: "Unlock dialog (Quorum): under the host name it shows the host id, 32 hex digits in groups of four, and four check words. The phone's approval screen shows the same two: compare both before approving there",
     },
     HelpItem::Entry {
         key: "Ctrl+B",
@@ -487,7 +487,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "",
-        desc: "Not set up yet: t on the hosts tab enrolls a machine as one of your devices; sshub sync-join <device> joins a blank machine. Enrollment shows four words to compare; when the other end has no screen they prove nothing and you approve the admission on trust in the SSH host key (the device list says how each one was verified). A fork takes over the screen and names the device.",
+        desc: "Not set up yet: A on the hosts tab enrolls a machine as one of your devices; sshub sync-join <device> joins a blank machine. Enrollment shows four words to compare; when the other end has no screen they prove nothing and you approve the admission on trust in the SSH host key (the device list says how each one was verified). A fork takes over the screen and names the device.",
     },
     HelpItem::Blank,
     HelpItem::Section("groups"),

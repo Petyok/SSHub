@@ -40,13 +40,26 @@ pub enum DeviceStatusView {
 }
 
 impl DeviceStatusView {
+    /// The word a person reads (glossary): the design terms stay in the details view.
     pub fn label(self) -> &'static str {
+        match self {
+            Self::Operational => "in sync",
+            Self::Behind => "missed some changes",
+            Self::Stale => "away too long",
+            Self::Suspect => "needs a look",
+            Self::Compromised => "COMPROMISED",
+            Self::Revoked => "removed",
+        }
+    }
+
+    /// The design term, for the details view.
+    pub fn design_term(self) -> &'static str {
         match self {
             Self::Operational => "operational",
             Self::Behind => "behind",
             Self::Stale => "stale",
             Self::Suspect => "suspect",
-            Self::Compromised => "COMPROMISED",
+            Self::Compromised => "compromised",
             Self::Revoked => "revoked",
         }
     }
@@ -106,6 +119,112 @@ pub struct DeviceView {
     pub verified_by: Option<crate::sync::oplog::VerifiedBy>,
     /// This machine itself (enrollment records it in the ring).
     pub this: bool,
+    /// The phone (not a computer or server).
+    pub phone: bool,
+}
+
+impl DeviceView {
+    /// What kind of device this is, in the glossary's words.
+    pub fn role_word(&self) -> &'static str {
+        if self.phone {
+            return "phone";
+        }
+        match self.role {
+            DeviceRoleView::Holder => "full device",
+            DeviceRoleView::Mirror => "view-only copy",
+        }
+    }
+
+    /// One plain sentence about what a state means and what to do, when it needs one.
+    pub fn explain(&self, now: i64) -> Option<String> {
+        let days = self.last_seen.map(|t| ((now - t).max(0)) / 86_400);
+        match (self.status, days) {
+            (DeviceStatusView::Behind | DeviceStatusView::Stale, Some(d)) if !self.this => Some(format!(
+                "{} missed {d} days: approve it back from the phone or another laptop. Press Enter to sync it first.",
+                self.name
+            )),
+            (DeviceStatusView::Behind | DeviceStatusView::Stale, None) if !self.this => Some(format!(
+                "{} has not synced yet: approve it back from the phone or another laptop. Press Enter to sync it first.",
+                self.name
+            )),
+            (DeviceStatusView::Behind | DeviceStatusView::Stale, _) => Some(
+                "This device missed some changes: approve it back from the phone or another laptop."
+                    .into(),
+            ),
+            (DeviceStatusView::Suspect, _) => Some(format!(
+                "{}'s history looks wrong but is not proven bad: sync it again, and look at it before you approve anything it asks.",
+                self.name
+            )),
+            (DeviceStatusView::Compromised, _) => Some(format!(
+                "{} signed two different histories: treat it as stolen. Press Enter for the proof.",
+                self.name
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// The SSH key fingerprint known for `spec` (a launcher host name or `[user@]host[:port]`), if known_hosts has it.
+fn host_fingerprint(store: &crate::store::LauncherStore, spec: &str) -> Option<String> {
+    let h = crate::sync::runtime::resolve_host(store, spec).ok()?;
+    let name = h.hostname.clone().unwrap_or_else(|| spec.to_string());
+    let target = match h.port {
+        Some(p) if p != 22 => format!("[{name}]:{p}"),
+        _ => name,
+    };
+    crate::known_hosts::fingerprint_for_host(&target)
+}
+
+/// What the device-details QR carries: the plain text the phone app scans in place of a typed id.
+pub fn device_qr_payload(device_id: &str) -> Vec<u8> {
+    format!("sshub:dev:1:{}", device_id.to_lowercase()).into_bytes()
+}
+
+/// The lines that need a person's attention above the device table, most urgent first: `(text, urgent)`.
+pub fn attention_lines(sync: &SyncView) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    if let Some(row) = &sync.finish_row {
+        out.push((row.clone(), false));
+    }
+    if sync.ring_secret_missing == Some(true) {
+        out.push((
+            "This computer has no ring secret, so it cannot open saved passwords. Press M, then Import the Vault kit.".into(),
+            false,
+        ));
+    }
+    let h = &sync.health;
+    if let Some(left) = h.red_expires_in {
+        if left <= 86_400 {
+            out.push((
+                format!(
+                    "A big change waiting for approvals is dropped in {}: press R to finish it or propose it again.",
+                    crate::sync::health::human_left(left)
+                ),
+                true,
+            ));
+        }
+    }
+    if h.phone_expired {
+        out.push((
+            "Trust sessions stopped: the phone has not touched any of your computers for 14 days. Open the phone app and scan something from a terminal.".into(),
+            true,
+        ));
+    } else if h.phone_warn {
+        out.push((
+            format!(
+                "The phone has not touched any of your computers for {} days. Trust sessions stop at 14: open the phone app and scan something from a terminal.",
+                h.phone_unseen_days.unwrap_or(7)
+            ),
+            false,
+        ));
+    }
+    if let Some(d) = h.offline_days {
+        out.push((
+            format!("No other device has been reached for {d} days: check the connection or the other devices."),
+            false,
+        ));
+    }
+    out
 }
 
 /// The active trust session, if one is open.
@@ -240,6 +359,8 @@ pub struct SasView {
     /// A human at the other end sees the same words. When false the words prove
     /// nothing and the admission rests on the SSH host key.
     pub peer_has_screen: bool,
+    /// The SSH key fingerprint of a peer without a screen, read from known_hosts (`SHA256:...`), when found.
+    pub ssh_fingerprint: Option<String>,
 }
 
 /// The fork alert: which device equivocated.
@@ -286,6 +407,8 @@ pub enum OnboardingStep {
     Retype,
     /// Choosing where the two sheets go; Enter writes them.
     Kit,
+    /// The ring secret on screen, for copying by hand when there is no printer.
+    ShowRing,
     /// Both sheets are written.
     Done,
 }
@@ -448,6 +571,8 @@ pub struct SyncView {
     /// Hosts marked with Space in the scope step; when any, they are the scope.
     pub trust_marked: Vec<crate::sync::oplog::HostUid>,
     pub trust_ttl_selected: usize,
+    /// New hosts a day the trust session may open, set on the confirm screen (1 to 50).
+    pub trust_budget: u32,
     pub unlock: Option<UnlockView>,
     pub sas: Option<SasView>,
     /// Set by a fork proof; stays set after the alert is dismissed.
@@ -476,6 +601,14 @@ pub struct SyncView {
     pub migrating: bool,
     /// This device's id, once the worker has loaded its identity.
     pub this_device: Option<String>,
+    /// What needs a look, for the status bar and the tab header.
+    pub health: crate::sync::health::Health,
+    /// `None` when a stolen full computer can be cut off, else how many more computers are needed.
+    pub cut_off_missing: Option<usize>,
+    /// The Vault's ring secret is not in this profile's credential store (checked once, again after a job).
+    pub ring_secret_missing: Option<bool>,
+    /// A persistent row for a switch or export that was approved and waits to be finished.
+    pub finish_row: Option<String>,
     /// A behind peer and the host to re-enroll it through, after a round said so.
     pub reenroll: Option<(String, String)>,
     identify_after: bool,
@@ -526,9 +659,15 @@ impl App {
         if sync.pending > 0 {
             text.push_str(&format!(" \u{23f3}{}ops", sync.pending));
         }
-        let role = if sync.compromised() {
+        let line = crate::sync::health::status_line(&sync.health);
+        if let Some(line) = &line {
+            text.push_str(&format!("  {line}"));
+        }
+        let urgent = sync.health.red_expires_in.is_some_and(|l| l <= 86_400)
+            || sync.health.phone_expired;
+        let role = if sync.compromised() || urgent {
             ColorRole::StatusError
-        } else if sync.pending > 0 {
+        } else if sync.pending > 0 || line.is_some() {
             ColorRole::StatusWarning
         } else {
             ColorRole::StatusSuccess
@@ -634,8 +773,49 @@ impl App {
                     }
                 }
             }
-            _ => {}
+            _ => self.sync_device_details(&d),
         }
+    }
+
+    /// Enter on a device that needs no action: what it is, in plain words with the design terms after them,
+    /// and its id as a QR the phone app can scan instead of typing it (U13-16).
+    fn sync_device_details(&mut self, d: &DeviceView) {
+        let verified = match d.verified_by {
+            Some(crate::sync::oplog::VerifiedBy::Sas) => "the four check words matched",
+            Some(crate::sync::oplog::VerifiedBy::SshHostKey) => "you trusted its SSH host key",
+            None => "not recorded",
+        };
+        let design_role = match d.role {
+            DeviceRoleView::Holder => "holder",
+            DeviceRoleView::Mirror => "mirror",
+        };
+        let mut lines = vec![
+            format!("{}{}", d.name, if d.this { " (this device)" } else { "" }),
+            format!("Kind: {} (design term: {design_role})", d.role_word()),
+            format!(
+                "State: {} (design term: {})",
+                d.status.label(),
+                d.status.design_term()
+            ),
+            format!(
+                "Has a person at the keyboard: {}",
+                if d.unattended { "no, it runs on its own" } else { "yes" }
+            ),
+            format!("Admitted because: {verified}"),
+            format!("Its last signed change: number {} (design term: head)", d.head_seq),
+        ];
+        if d.exempt {
+            lines.push("Opens passwords with the master phrase (exemption).".into());
+        }
+        lines.push(format!("Device id: {}", d.id));
+        lines.push(String::new());
+        lines.push("The QR is its id. In the phone app, scan it instead of typing the id.".into());
+        self.sync_info_with(
+            "Device details",
+            lines,
+            vec![device_qr_payload(&d.id)],
+            None,
+        );
     }
 
     pub(crate) fn sync_open_trust_pub(&mut self) {
@@ -667,6 +847,7 @@ impl App {
                 super::sync_trust::default_scope(&self.store, &self.sync.trust_scopes);
             self.sync.trust_marked.clear();
             self.sync.trust_ttl_selected = TRUST_TTL_DEFAULT;
+            self.sync.trust_budget = 10;
             self.mode = AppMode::TrustSessionScope;
         }
     }
@@ -700,7 +881,8 @@ impl App {
     pub(crate) fn advance_sync_qr(&mut self, now: std::time::Instant) {
         let count = match (self.mode, self.sync_ui.as_ref()) {
             (AppMode::SyncUnlock, _) => self.sync.unlock.as_ref().map_or(0, |u| u.frames.len()),
-            (AppMode::SyncPrompt, Some(super::sync_ui::SyncUi::Prompt { frames, .. })) => {
+            (AppMode::SyncPrompt, Some(super::sync_ui::SyncUi::Prompt { frames, .. }))
+            | (AppMode::SyncInfo, Some(super::sync_ui::SyncUi::Info { frames, .. })) => {
                 frames.len()
             }
             _ => return,
@@ -746,6 +928,7 @@ impl App {
         self.poll_unlock_resume();
         self.forward_sync_intents();
         super::sync_phone::tick(self);
+        super::sync_trust::tick(self);
         while let Some(Ok(event)) = self.sync_worker.as_ref().map(|w| w.try_recv()) {
             self.apply_sync_event(event);
         }
@@ -812,16 +995,26 @@ impl App {
     fn apply_sync_event(&mut self, event: crate::sync::client::SyncEvent) {
         use crate::sync::client::SyncEvent;
         let sync = &mut self.sync;
+        if matches!(event, SyncEvent::Notice(_)) {
+            // A job may have imported the kit: look for the ring secret again.
+            sync.ring_secret_missing = None;
+        }
         match event {
             SyncEvent::Progress(line) => sync.progress = Some(line),
             SyncEvent::PendingArrived(n) => sync.pending += n,
             SyncEvent::SasPrompt(info) => {
                 let peer = sync.enrolling.clone().unwrap_or_else(|| "peer".into());
+                // A server nobody sits at has no words to compare: the question is whether this is your server,
+                // and its SSH key fingerprint is what answers it.
+                let ssh_fingerprint = (!info.peer_has_screen)
+                    .then(|| host_fingerprint(&self.store, &peer))
+                    .flatten();
                 self.open_sync_sas(SasView {
                     peer,
                     peer_name: info.peer_name,
                     words: info.words,
                     peer_has_screen: info.peer_has_screen,
+                    ssh_fingerprint,
                 });
             }
             SyncEvent::Notice(message) if message.is_empty() => {}
@@ -897,7 +1090,7 @@ impl App {
                         "{name} is behind: it could not prove it is current, so nothing moved. Select it and press Enter to re-enroll it through {h} (a repeat ceremony; nothing about its role changes)"
                     ),
                     None => format!(
-                        "{name} is behind and no host is known for it: press t on its host in the hosts tab to re-enroll it"
+                        "{name} is behind and no host is known for it: select its host in the hosts tab and press A to enroll it again"
                     ),
                 });
                 self.sync.reenroll = host.map(|h| (id, h));
@@ -960,6 +1153,7 @@ impl App {
     /// One key of the Vault onboarding: show, retype two words, write the kit,
     /// finish. Nothing leaves this screen except the final intent.
     fn onboarding_key(&mut self, key: KeyEvent) {
+        use crate::app::kit;
         enum Next {
             Stay,
             WriteKit,
@@ -1005,6 +1199,20 @@ impl App {
                 KeyCode::Char(c) if editing && !c.is_control() => o.typed.push(c),
                 _ => {}
             },
+            OnboardingStep::ShowRing => {
+                if key.code == KeyCode::Enter {
+                    next = Next::Finish;
+                } else if key.code == KeyCode::Esc {
+                    o.step = OnboardingStep::Kit;
+                }
+            }
+            OnboardingStep::Kit
+                if key.code == KeyCode::Char('s') && key.modifiers == KeyModifiers::CONTROL =>
+            {
+                // No printer: show the ring secret to copy by hand. The master phrase was written already.
+                o.notice = None;
+                o.step = OnboardingStep::ShowRing;
+            }
             OnboardingStep::Kit => {
                 let field = if o.path_field == 0 {
                     &mut o.phrase_path
@@ -1026,6 +1234,25 @@ impl App {
             OnboardingStep::Done => {
                 if key.code == KeyCode::Enter {
                     next = Next::Finish;
+                } else if key.code == KeyCode::Char('d') && key.modifiers.is_empty() {
+                    // After printing: take the two files off the disk now.
+                    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+                    let expand = |raw: &str| match (raw.trim().strip_prefix("~/"), &home) {
+                        (Some(rest), Some(home)) => home.join(rest),
+                        _ => std::path::PathBuf::from(raw.trim()),
+                    };
+                    let failed: Vec<String> = [&o.phrase_path, &o.ring_path]
+                        .into_iter()
+                        .filter_map(|p| {
+                            let p = expand(p);
+                            kit::wipe_file(&p).err().map(|e| format!("{}: {e}", p.display()))
+                        })
+                        .collect();
+                    o.notice = Some(if failed.is_empty() {
+                        "Both files are deleted. Only the paper is left.".to_string()
+                    } else {
+                        failed.join("; ")
+                    });
                 }
             }
         }
@@ -1305,12 +1532,21 @@ impl App {
                     self.mode = AppMode::TrustSessionScope;
                 } else if confirm {
                     self.mode = AppMode::Normal;
-                    super::sync_trust::begin(self, TRUST_TTL_DAYS[self.sync.trust_ttl_selected]);
+                    super::sync_trust::begin(
+                        self,
+                        TRUST_TTL_DAYS[self.sync.trust_ttl_selected],
+                        self.sync.trust_budget,
+                    );
                 } else if down {
                     self.sync.trust_ttl_selected =
                         (self.sync.trust_ttl_selected + 1).min(TRUST_TTL_DAYS.len() - 1);
                 } else if up {
                     self.sync.trust_ttl_selected = self.sync.trust_ttl_selected.saturating_sub(1);
+                } else if key.code == KeyCode::Right {
+                    self.sync.trust_budget =
+                        (self.sync.trust_budget + 1).min(crate::sync::limits::CERT_NEW_HOSTS_PER_DAY);
+                } else if key.code == KeyCode::Left {
+                    self.sync.trust_budget = self.sync.trust_budget.saturating_sub(1).max(1);
                 }
             }
             AppMode::SyncReleaseConfirm => {
@@ -1356,6 +1592,7 @@ pub(crate) fn sample_sync_view() -> SyncView {
         head_seq: 7,
         verified_by: Some(crate::sync::oplog::VerifiedBy::Sas),
         this: false,
+        phone: false,
     };
     SyncView {
         configured: true,
@@ -1427,6 +1664,7 @@ pub(crate) fn sample_sync_view_with_modals() -> SyncView {
             peer_name: "laptop".into(),
             words: "harbor-globe-lantern-mint".into(),
             peer_has_screen: true,
+            ssh_fingerprint: None,
         }),
         fork: Some(ForkView {
             device: "server".into(),
@@ -1669,6 +1907,7 @@ mod tests {
             peer_name: "laptop".into(),
             words: "harbor-globe-lantern-mint".into(),
             peer_has_screen: true,
+            ssh_fingerprint: None,
         });
         app.handle_key(press(KeyCode::Enter)).unwrap();
         app.open_sync_release_confirm(ReleaseView {

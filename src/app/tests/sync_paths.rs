@@ -658,7 +658,7 @@ fn a_red_change_shows_its_ceremony_and_takes_effect_only_when_all_proofs_are_in(
         .app
         .host_notice
         .as_deref()
-        .is_some_and(|n| n.contains("Red change")));
+        .is_some_and(|n| n.contains("big change")));
     assert_eq!(r.app.store.sync_pending().unwrap().len(), 1);
 
     // `a` adds this device's approval; the change still waits for the phone.
@@ -666,7 +666,7 @@ fn a_red_change_shows_its_ceremony_and_takes_effect_only_when_all_proofs_are_in(
     pump(&mut r.app, "the approval", |a| {
         a.host_notice
             .as_deref()
-            .is_some_and(|n| n.starts_with("proof added"))
+            .is_some_and(|n| n.starts_with("approval added"))
     });
     let red = r.app.sync.review[0].red.clone().unwrap();
     assert!(!red.missing.iter().any(|m| m.contains("second")), "{red:?}");
@@ -700,7 +700,7 @@ fn the_paper_phrase_is_typed_without_echo_and_added_as_a_factor_proof() {
     pump(&mut r.app, "the factor proof", |a| {
         a.host_notice
             .as_deref()
-            .is_some_and(|n| n.starts_with("proof added"))
+            .is_some_and(|n| n.starts_with("approval added"))
     });
     // The words are in no file of the profile.
     let mut hits = Vec::new();
@@ -750,8 +750,25 @@ fn the_role_flow_proposes_a_change_for_the_chosen_device_through_the_worker() {
 #[test]
 fn revoking_needs_the_devices_name_typed_back() {
     let mut r = ring(None);
+    // A view-only copy: removing it needs no share round, so the name is the only gate.
+    append(
+        &r.d[1],
+        OpBody::DeviceRoleChange {
+            device_id: r.d[2].did.clone(),
+            to: crate::sync::oplog::DeviceRole::Mirror,
+        },
+    );
     mark_this_device(&mut r);
     crate::app::sync_flows::revoke(&mut r.app);
+    // The menu lists the other devices in table order: pick the view-only copy.
+    let others: Vec<_> = r.app.sync.devices.iter().filter(|d| !d.this).collect();
+    let at = others
+        .iter()
+        .position(|d| d.role == crate::app::sync::DeviceRoleView::Mirror)
+        .expect("the view-only copy");
+    for _ in 0..at {
+        r.app.handle_key(key(KeyCode::Down)).unwrap();
+    }
     enter(&mut r.app);
     assert_eq!(r.app.mode, AppMode::SyncPrompt);
     type_and_enter(&mut r.app, "not the name");
@@ -938,8 +955,10 @@ fn space_marks_hosts_and_the_request_lists_exactly_those() {
     assert_eq!(r.app.sync.trust_marked.len(), 1);
     r.app.handle_key(key_char(' ')).unwrap();
     enter(&mut r.app); // scope
-    enter(&mut r.app); // term
-    type_and_enter(&mut r.app, "5");
+    for _ in 0..5 {
+        r.app.handle_key(key(KeyCode::Left)).unwrap();
+    }
+    enter(&mut r.app); // days and budget on one screen
     let wire = CertRequestWire::decode(&decode_frames(&frames_of_prompt(&r.app))).unwrap();
     let mut want = vec![h1, h2];
     want.sort_unstable();
@@ -967,9 +986,17 @@ fn the_trust_flow_shows_the_phone_a_request_and_takes_its_answer_into_the_ceremo
     assert_eq!(r.app.mode, AppMode::TrustSessionScope);
     r.app.sync.trust_scope_selected = pick;
     enter(&mut r.app); // scope
-    enter(&mut r.app); // term: the default month
-    assert_eq!(r.app.mode, AppMode::SyncPrompt, "the budget is asked");
-    type_and_enter(&mut r.app, "5");
+    assert_eq!(
+        r.app.mode,
+        AppMode::TrustSessionTtl,
+        "days and new hosts a day share one screen"
+    );
+    assert_eq!(r.app.sync.trust_budget, 10, "defaults are prefilled");
+    for _ in 0..5 {
+        r.app.handle_key(key(KeyCode::Left)).unwrap();
+    }
+    enter(&mut r.app); // the one confirm: the default month, 5 new hosts a day
+    assert_eq!(r.app.mode, AppMode::SyncPrompt, "the request QR with the answer field");
     // The request is a looping QR whose bytes say what was asked.
     let wire = CertRequestWire::decode(&decode_frames(&frames_of_prompt(&r.app))).unwrap();
     assert_eq!(wire.scope, CertScope::Hosts(vec![huid]));
@@ -1097,13 +1124,11 @@ fn the_switch_back_to_vault_gathers_the_shares_through_the_unlock_dialog_and_rew
     // Step one: propose, naming a co-signing full device (the other terminal).
     crate::app::sync_flows::mode(&mut r.app);
     assert_eq!(r.app.mode, AppMode::SyncMenu);
-    let names: Vec<String> = r.app.sync.devices.iter().filter(|d| !d.this).map(|d| d.name.clone()).collect();
-    assert!(names.len() >= 2, "{names:?}");
-    r.app.handle_key(key(KeyCode::Down)).unwrap();
+    // Only a full computer can co-sign (the phone is not offered): the one other computer is the first entry.
     enter(&mut r.app);
     pump(&mut r.app, "the proposal panel", |a| a.mode == AppMode::SyncInfo);
-    let ops = crate::sync::quorum::ops_of(&r.app.store, "ModeChange", None).unwrap();
-    assert_eq!(ops.len(), 1, "one ModeChange was appended");
+    let ops = crate::sync::quorum::ops_of(&r.app.store, "ModeChange", Some(&r.d[1].did)).unwrap();
+    assert_eq!(ops.len(), 1, "this device appended one ModeChange");
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
     r.app.refresh_sync_view();
 
@@ -1132,5 +1157,35 @@ fn the_switch_back_to_vault_gathers_the_shares_through_the_unlock_dialog_and_rew
     assert_eq!(
         crate::sync::ceremony::effective_cred_mode(&r.app.store).unwrap(),
         CredMode::Vault
+    );
+}
+
+/// U13-1: a ring with two computers cannot cut a stolen one off. The dialog says so at once, in a sentence a person
+/// can act on, instead of asking for the name first and failing afterwards.
+#[test]
+fn revoking_a_full_device_says_at_once_when_the_ring_has_too_few_computers() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    crate::app::sync_flows::revoke(&mut r.app);
+    let others: Vec<_> = r.app.sync.devices.iter().filter(|d| !d.this).collect();
+    let at = others
+        .iter()
+        .position(|d| !d.phone)
+        .expect("the other computer");
+    for _ in 0..at {
+        r.app.handle_key(key(KeyCode::Down)).unwrap();
+    }
+    enter(&mut r.app); // the other computer, a full device
+    assert_eq!(r.app.mode, AppMode::SyncInfo, "no name prompt");
+    let text = match &r.app.sync_ui {
+        Some(crate::app::sync_ui::SyncUi::Info { lines, .. }) => lines.join(" "),
+        _ => panic!("the info panel is not open"),
+    };
+    assert!(text.contains("3 computers or servers you control"), "{text}");
+    assert!(text.contains("You have 2"), "{text}");
+    assert!(
+        crate::sync::quorum::ops_of(&r.app.store, "DeviceRevoke", None)
+            .unwrap()
+            .is_empty()
     );
 }

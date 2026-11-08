@@ -53,10 +53,7 @@ pub(super) fn pick_device(
 }
 
 fn role_label(d: &DeviceView) -> &'static str {
-    match d.role {
-        super::sync::DeviceRoleView::Holder => "holder",
-        super::sync::DeviceRoleView::Mirror => "mirror",
-    }
+    d.role_word()
 }
 
 fn read_ring_secret(env: &JobEnv) -> Result<[u8; 16]> {
@@ -147,11 +144,11 @@ fn choose_role(app: &mut App, id: String, name: String) {
         format!("Role of {name}"),
         vec![
             (
-                "Holder: holds shares, votes on Red changes".to_string(),
+                "Full device: holds a piece of every password, approves big changes".to_string(),
                 to(DeviceRole::Holder, id.clone()),
             ),
             (
-                "Mirror: syncs the ring, holds no share".to_string(),
+                "View-only copy: gets your hosts, holds no piece of any password".to_string(),
                 to(DeviceRole::Mirror, id),
             ),
         ],
@@ -189,9 +186,10 @@ fn mode_job(app: &mut App, phrase: String, to: CredMode) {
 pub(crate) fn unfinished_switch(app: &App) -> Option<(CredMode, bool)> {
     let me = app.sync.this_device.clone()?;
     let mc = crate::sync::modes::own_mode_change(&app.store, &me).ok()??;
-    let crate::sync::oplog::OpBody::ModeChange { to, .. } = mc.body else {
+    let crate::sync::oplog::OpBody::ModeChange { to, .. } = &mc.body else {
         return None;
     };
+    let to = *to;
     if !crate::sync::ceremony::in_force(&app.store, &mc).ok()? {
         return Some((to, false));
     }
@@ -207,6 +205,21 @@ pub(crate) fn unfinished_switch(app: &App) -> Option<(CredMode, bool)> {
         crate::sync::modes::mode_migration(&app.store, &public, &|_| anyhow::bail!("pending"))
             .is_err();
     pending.then_some((to, true))
+}
+
+/// The persistent row of the Sync tab for a switch or an export that was approved and waits to be finished.
+pub(crate) fn finish_row(app: &App) -> Option<String> {
+    if let Some((to, true)) = unfinished_switch(app) {
+        return Some(format!(
+            "Finish: the switch to {} is approved. Press M, Passwords, then Switch to finish it.",
+            if to == CredMode::Quorum { "Quorum" } else { "Vault" }
+        ));
+    }
+    let op = super::sync_flows_more::open_export(app)?;
+    let st = crate::sync::ceremony::red_status(&app.store, &op, now()).ok()?;
+    st.complete.then(|| {
+        "Finish: the export is approved. Press M, Advanced, Export every saved password.".into()
+    })
 }
 
 pub(crate) fn mode(app: &mut App) {
@@ -232,6 +245,7 @@ pub(crate) fn mode(app: &mut App) {
             app,
             "Switch back to Vault: which full device co-signs?",
             |d| d.role == super::sync::DeviceRoleView::Holder
+                && !d.phone
                 && d.status != DeviceStatusView::Revoked,
             propose_vault,
         ),
@@ -350,68 +364,92 @@ enum RecoveryStep {
     Cancel,
 }
 
+/// Pick the recovery from a list (no id to type), then approve or cancel it.
 fn recovery_by_id(app: &mut App, step: RecoveryStep) {
-    app.sync_prompt(
+    let ops = admin::all_recoveries(&app.store).unwrap_or_default();
+    if ops.is_empty() {
+        app.host_notice = Some("no recovery was started".into());
+        return;
+    }
+    let items: Vec<(String, MenuFn)> = ops
+        .iter()
+        .map(|op| {
+            let who = app
+                .sync
+                .devices
+                .iter()
+                .find(|d| d.id == op.device_id)
+                .map_or_else(|| op.device_id.clone(), |d| d.name.clone());
+            let age_h = (now() - op.timestamp).max(0) / 3_600;
+            let label = format!("Recovery started by {who}, {age_h} h ago ({})", hex8(&op.hash()));
+            let id: String = hex8(&op.hash());
+            (
+                label,
+                Box::new(move |app: &mut App| recovery_chosen(app, step, id)) as MenuFn,
+            )
+        })
+        .collect();
+    app.sync_menu(
         match step {
-            RecoveryStep::Approve => "Approve a recovery",
-            RecoveryStep::Cancel => "Cancel a recovery",
+            RecoveryStep::Approve => "Approve which recovery?",
+            RecoveryStep::Cancel => "Cancel which recovery?",
         },
-        "Recovery id (the first characters shown by the status list)",
-        false,
-        move |app, prefix| match step {
-            RecoveryStep::Approve => app.run_sync_job(move |env| {
-                let op = admin::find_op(&env.store, prefix.trim())?;
-                env.store
-                    .sync_append_local(&env.identity, crate::sync::recovery::approve_body(&op)?)?;
-                Ok(format!("approved recovery {}", hex8(&op.hash())))
-            }),
-            RecoveryStep::Cancel => {
-                let pick = |kind: admin::FactorKind, prefix: String| -> MenuFn {
-                    Box::new(move |app: &mut App| {
-                        app.sync_prompt(
-                            "Cancel a recovery",
-                            match kind {
-                                admin::FactorKind::Paper => {
-                                    "Type the 24 words of the paper phrase (nothing is shown)"
-                                }
-                                admin::FactorKind::Email => {
-                                    "Type the emailed code (nothing is shown)"
-                                }
-                            },
-                            true,
-                            move |app, secret| {
-                                app.run_sync_job(move |env| {
-                                    Ok(admin::recovery_cancel(
-                                        &env.store,
-                                        &env.identity,
-                                        prefix.trim(),
-                                        kind,
-                                        &secret,
-                                        now(),
-                                    )?
-                                    .lines
-                                    .join("\n"))
-                                });
-                            },
-                        );
-                    })
-                };
-                app.sync_menu(
-                    "Cancel with which third factor?",
-                    vec![
-                        (
-                            "Paper phrase".to_string(),
-                            pick(admin::FactorKind::Paper, prefix.clone()),
-                        ),
-                        (
-                            "Emailed code".to_string(),
-                            pick(admin::FactorKind::Email, prefix),
-                        ),
-                    ],
-                );
-            }
-        },
+        items,
     );
+}
+
+fn recovery_chosen(app: &mut App, step: RecoveryStep, prefix: String) {
+    match step {
+        RecoveryStep::Approve => app.run_sync_job(move |env| {
+            let op = admin::find_op(&env.store, prefix.trim())?;
+            env.store
+                .sync_append_local(&env.identity, crate::sync::recovery::approve_body(&op)?)?;
+            Ok(format!("approved recovery {}", hex8(&op.hash())))
+        }),
+        RecoveryStep::Cancel => {
+            let pick = |kind: admin::FactorKind, prefix: String| -> MenuFn {
+                Box::new(move |app: &mut App| {
+                    app.sync_prompt(
+                        "Cancel a recovery",
+                        match kind {
+                            admin::FactorKind::Paper => {
+                                "Type the 24 words of the paper phrase (nothing is shown)"
+                            }
+                            admin::FactorKind::Email => "Type the emailed code (nothing is shown)",
+                        },
+                        true,
+                        move |app, secret| {
+                            app.run_sync_job(move |env| {
+                                Ok(admin::recovery_cancel(
+                                    &env.store,
+                                    &env.identity,
+                                    prefix.trim(),
+                                    kind,
+                                    &secret,
+                                    now(),
+                                )?
+                                .lines
+                                .join("\n"))
+                            });
+                        },
+                    );
+                })
+            };
+            app.sync_menu(
+                "Cancel with which third approval?",
+                vec![
+                    (
+                        "Paper phrase".to_string(),
+                        pick(admin::FactorKind::Paper, prefix.clone()),
+                    ),
+                    (
+                        "Emailed code".to_string(),
+                        pick(admin::FactorKind::Email, prefix),
+                    ),
+                ],
+            );
+        }
+    }
 }
 
 fn recovery_start(app: &mut App) {
@@ -454,12 +492,22 @@ fn recovery_start(app: &mut App) {
 // ------------------------------------------------------------------- paper
 
 pub(crate) fn paper_setup(app: &mut App) {
+    paper_panel(app, false);
+}
+
+/// The paper phrase as one wizard: the words are shown, you write them down and press Enter, and the type-back
+/// check opens by itself. Nothing is registered until you typed them back exactly.
+pub(crate) fn paper_wizard(app: &mut App) {
+    paper_panel(app, true);
+}
+
+fn paper_panel(app: &mut App, wizard: bool) {
     let mut seed = zeroize::Zeroizing::new([0u8; 32]);
     rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut *seed);
     let words = zeroize::Zeroizing::new(bip39_encode(&seed));
     let mut lines = vec![
-        "Write these 24 words on paper, now. They are shown once and are the third factor".into(),
-        "of every Red change. Anyone with them and a phone proof can act for you.".into(),
+        "Write these 24 words on paper, now. They are shown once. They are the paper phrase: the".into(),
+        "third approval of every big change. Keep the paper offline and never photograph it.".into(),
         String::new(),
     ];
     let all: Vec<&str> = words.split_whitespace().collect();
@@ -472,11 +520,14 @@ pub(crate) fn paper_setup(app: &mut App) {
         ));
     }
     lines.push(String::new());
-    lines.push(
-        "Close this panel, then choose \"register what I wrote down\" and type them back.".into(),
-    );
+    lines.push(if wizard {
+        "Step 1 of 2: write the words on paper. Step 2: press Enter and type them back to check them. They are kept only until this program closes, so do both now.".into()
+    } else {
+        "Close this panel, then choose \"register what I wrote down\" and type them back.".into()
+    });
     app.sync_paper = Some(words);
-    app.sync_info("Paper phrase", lines);
+    let then: Option<MenuFn> = wizard.then(|| Box::new(paper_register) as MenuFn);
+    app.sync_info_with("Paper phrase", lines, Vec::new(), then);
 }
 
 /// The second half: the user types the words back from the paper; only an exact

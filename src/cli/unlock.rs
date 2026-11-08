@@ -109,7 +109,7 @@ impl ShareSource for PromptShares {
         let holders = self.holders();
         if holders.is_empty() || self.wait.is_zero() {
             return Err(UnlockError::NeedsShares(
-                "no holder can be asked from here (none has a known host, or SSHUB_UNLOCK_WAIT is 0): open it in the TUI of a device that can, or use a trust session".into(),
+                "No full device can be asked from here (none has a known host, or SSHUB_UNLOCK_WAIT is 0). Do one of these: open this host once in the terminal screen of this computer (the run then inherits it), set SSHUB_UNLOCK_WAIT above 0 and approve on another full device, or start a trust session (terminal screen, tab 7, then t).".into(),
             ));
         }
         let rt = &self.runtime;
@@ -117,7 +117,7 @@ impl ShareSource for PromptShares {
             .map_err(|e| UnlockError::Failed(format!("{e:#}")))?;
         let names: Vec<&str> = holders.iter().map(|(_, n)| n.as_str()).collect();
         eprintln!(
-            "Asked {} for a share. Waiting up to {} s: approve it there in the TUI or with `sshub sync-review --approve {}`.",
+            "Asked {} to approve. Waiting up to {} s: on that device press R in the terminal screen and a, or run `sshub sync-review --approve {}`.",
             super::theme::sanitize_foreign(&names.join(" or ")),
             self.wait.as_secs(),
             crate::cli::sync_cmd::op_id(&req.op.hash()),

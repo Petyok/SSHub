@@ -140,6 +140,26 @@ fn fingerprint_line(line: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// The SHA256 fingerprint of the key `ssh-keygen -F <host>` finds in the user's known_hosts (hashed names too),
+/// `None` when there is none or ssh-keygen is missing.
+pub fn fingerprint_for_host(host: &str) -> Option<String> {
+    let out = Command::new("ssh-keygen")
+        .args(["-l", "-F", host, "-f"])
+        .arg(known_hosts_path())
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .find_map(|l| l.split_whitespace().find(|t| t.starts_with("SHA256:")))
+        .map(str::to_string)
+}
+
 pub fn load_known_hosts(path: &Path) -> Result<Vec<KnownHostEntry>> {
     let content =
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;

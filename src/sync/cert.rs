@@ -105,7 +105,7 @@ pub fn cert_allows(
     );
     ensure!(
         now - phone_head_ts <= PHONE_FRESH_SECS,
-        "the phone has not been seen recently enough to vouch for a trust session"
+        "the phone has not touched any of your computers for 14 days, so this trust session stopped: open the phone app and scan something from a terminal"
     );
     let epoch = store.sync_epoch(&cert.issuer)?;
     ensure!(

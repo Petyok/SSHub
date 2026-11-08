@@ -280,11 +280,11 @@ pub fn recovery_notice(
     })
 }
 
-/// The one op of the log whose hash starts with `prefix` (lowercase hex, at least 4 characters).
+/// The one op of the log whose hash starts with `prefix` (lowercase hex, at least 6 digits).
 pub fn op_by_hash_prefix(store: &LauncherStore, prefix: &str) -> Result<Op> {
     let p = prefix.to_lowercase();
-    if p.len() < 4 || !p.chars().all(|c| c.is_ascii_hexdigit()) {
-        bail!("'{prefix}' is not an op id (at least 4 hex characters)");
+    if p.len() < 6 || !p.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("'{prefix}' is not a change id (at least 6 hex digits, see `sshub sync-review`)");
     }
     let rows: Vec<(Vec<u8>, Vec<u8>)> = store.with_conn(|c| {
         let mut stmt = c.prepare(

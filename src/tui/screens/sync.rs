@@ -45,28 +45,31 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let sync = &app.sync;
     let inner = area.inner(Margin::new(if area.width >= 80 { 2 } else { 0 }, 0));
 
-    let mut lines: Vec<Line> = vec![Line::styled("Sync Net", theme.style(StyleRole::TextBright))];
+    let mut lines: Vec<Line> = vec![Line::styled(
+        "Your devices",
+        theme.style(StyleRole::TextBright),
+    )];
     if !sync.configured {
         let enroll = key_of(app, KeyAction::SyncEnroll);
         lines.extend([
             Line::raw(""),
-            Line::styled("sync is not set up on this profile", text),
+            Line::styled("Sync is not set up on this profile.", text),
             Line::raw(""),
             Line::styled(
-                "Sync keeps hosts and credentials the same on your own devices, \
+                "Sync keeps your hosts and saved passwords the same on your own computers, \
                  encrypted end to end, with no server in the middle.",
                 muted,
             ),
             Line::raw(""),
             Line::styled(
                 format!(
-                    "Start a ring: on the hosts tab select a machine that runs sshub \
-                     and press {enroll} to make it one of your devices."
+                    "Start: on the hosts tab select a computer that runs sshub \
+                     and press {enroll} to add it as a sync device."
                 ),
                 text,
             ),
             Line::styled(
-                "Join a ring: on a blank machine run `sshub sync-join <a reachable device>`.",
+                "Join: on a blank computer run `sshub sync-join <a reachable device>`.",
                 text,
             ),
         ]);
@@ -75,66 +78,67 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     }
 
     let mode = sync.cred_mode.map_or("-", |m| m.label());
-    let trust = sync
-        .trust
-        .as_ref()
-        .map_or("no trust session".to_string(), |t| {
-            format!(
-                "trust: {}, {}d, {} hosts opened",
-                t.scope, t.term_days, t.hosts_opened
-            )
-        });
     lines.push(Line::styled(
-        format!("credentials: {mode}   pending: {}   {trust}", sync.pending),
+        format!("Passwords: {mode}   Waiting for approval: {}", sync.pending),
         muted,
     ));
+    // U13-1: can a stolen computer be cut off?
+    lines.push(match sync.cut_off_missing {
+        None => Line::styled("Can cut off a stolen device: yes", muted),
+        Some(n) => Line::styled(
+            format!(
+                "Can cut off a stolen device: no, add {n} more computer{}",
+                if n == 1 { "" } else { "s" }
+            ),
+            color(app, ColorRole::StatusWarning),
+        ),
+    });
     if let Some(error) = &sync.last_error {
         lines.push(Line::styled(
-            format!("last sync failed: {error}"),
+            format!("Last sync failed: {error}"),
             color(app, ColorRole::StatusError),
         ));
     } else if sync.syncing {
         let step = sync.progress.as_deref().unwrap_or("connecting");
-        lines.push(Line::styled(format!("syncing: {step}"), muted));
+        lines.push(Line::styled(format!("Syncing: {step}"), muted));
+    }
+    for (line, urgent) in crate::app::sync::attention_lines(sync) {
+        lines.push(Line::styled(
+            line,
+            color(
+                app,
+                if urgent {
+                    ColorRole::StatusError
+                } else {
+                    ColorRole::StatusWarning
+                },
+            ),
+        ));
     }
     lines.push(Line::raw(""));
     lines.push(Line::styled(
         format!(
-            "  {:<18} {:<8} {:<13} {:<10} {}",
-            "device", "role", "status", "contact", "head"
+            "  {:<18} {:<16} {:<22} {}",
+            "device", "kind", "state", "last in sync"
         ),
         muted,
     ));
     let selected = sync.selected.min(sync.devices.len().saturating_sub(1));
     for (i, d) in sync.devices.iter().enumerate() {
         let (glyph, role) = d.status.glyph();
-        let role_label = match d.role {
-            crate::app::sync::DeviceRoleView::Holder => "holder",
-            crate::app::sync::DeviceRoleView::Mirror => "mirror",
-        };
         let mut row = format!(
-            " {:<18} {:<8} {:<13} {:<10} #{}",
+            " {:<18} {:<16} {:<22} {}",
             if d.this {
                 format!("{} (this)", d.name)
             } else {
                 d.name.clone()
             },
-            role_label,
+            d.role_word(),
             d.status.label(),
             ago(d.last_seen),
-            d.head_seq
         );
-        if let Some(v) = d.verified_by {
-            row.push_str(match v {
-                crate::sync::oplog::VerifiedBy::Sas => "  verified: sas",
-                crate::sync::oplog::VerifiedBy::SshHostKey => "  verified: ssh host key",
-            });
-        }
         if d.unattended {
-            row.push_str("  unattended");
-        }
-        if d.exempt {
-            row.push_str("  exemption: master phrase");
+            row.push_str("  runs on its own");
         }
         let style = if i == selected {
             theme.style(StyleRole::PickerRowSelected)
@@ -149,7 +153,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(row, style),
         ]));
     }
-    frame.render_widget(Paragraph::new(lines), inner);
+    if let Some(d) = sync.devices.get(selected) {
+        if let Some(note) = d.explain(crate::store::now_ts()) {
+            lines.push(Line::raw(""));
+            lines.push(Line::styled(note, color(app, ColorRole::StatusWarning)));
+        }
+    }
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 /// Size of a popup for `body` plus `extra` rows below it, before the terminal
@@ -274,7 +284,7 @@ pub fn render_review(frame: &mut Frame, app: &App) {
     if let Some(red) = &op.red {
         body.push(Line::raw(""));
         body.push(Line::styled(
-            "Red change: it takes effect only with all three proofs",
+            "Big change: it takes effect only with all three approvals",
             color(app, ColorRole::StatusWarning),
         ));
         for have in &red.have {
@@ -291,13 +301,13 @@ pub fn render_review(frame: &mut Frame, app: &App) {
         }
         if red.single_machine {
             body.push(Line::styled(
-                "  one attended holder only: the second device is waived, the paper is required",
+                "  only one computer has a person at the keyboard: the second device is not needed, the paper phrase is",
                 app.theme().style(StyleRole::TextMuted),
             ));
         }
         if let Some(why) = &red.blocked {
             body.push(Line::styled(
-                format!("  impossible as it stands: {why}"),
+                format!("  cannot go through as it stands: {why}"),
                 color(app, ColorRole::StatusError),
             ));
         }
@@ -309,19 +319,19 @@ pub fn render_review(frame: &mut Frame, app: &App) {
         }
         if let Some(why) = &red.rule_violation {
             body.push(Line::styled(
-                format!("  rule broken: {why}"),
+                format!("  not allowed: {why}"),
                 color(app, ColorRole::StatusError),
             ));
         }
         if red.expired {
             body.push(Line::styled(
-                "  the time for this ceremony ran out: reject it and propose it again",
+                "  the time for this approval round ran out: reject it and propose it again",
                 color(app, ColorRole::StatusError),
             ));
         }
     }
     let hint = if op.red.is_some() {
-        "\u{2191}\u{2193} select  a add my approval  p paper  e emailed code  r reject  Esc close"
+        "\u{2191}\u{2193} select  a add my approval  p paper phrase  e emailed code  r reject  Esc close"
     } else {
         "\u{2191}\u{2193} select  a approve  r reject  Esc close"
     };
@@ -460,37 +470,69 @@ pub fn render_sas(frame: &mut Frame, app: &App) {
         return;
     };
     let theme = app.theme();
+    if !s.peer_has_screen {
+        // A server nobody sits at: no words to compare. The question is whether this is your server.
+        let mut body = vec![
+            Line::styled(
+                format!("Is {} your server?", s.peer),
+                theme.style(StyleRole::TextBright),
+            ),
+            Line::raw(""),
+        ];
+        match &s.ssh_fingerprint {
+            Some(fp) => {
+                body.push(Line::styled(
+                    "Its SSH key fingerprint is:",
+                    theme.style(StyleRole::TextPrimary),
+                ));
+                body.push(Line::styled(fp.clone(), theme.style(StyleRole::TextBright)));
+                body.push(Line::raw(""));
+                body.push(Line::styled(
+                    "Check it the way you trust: your provider's panel, or `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the server.",
+                    theme.style(StyleRole::TextMuted),
+                ));
+            }
+            None => body.push(Line::styled(
+                "ssh already refused any key it did not know when it connected, but sshub could not read the fingerprint to show it here.",
+                theme.style(StyleRole::PopupWarning),
+            )),
+        }
+        body.push(Line::raw(""));
+        body.push(Line::styled(
+            format!("Add {} as a device of yours?", s.peer_name),
+            theme.style(StyleRole::TextPrimary),
+        ));
+        modal(
+            frame,
+            app,
+            "Add this server",
+            76,
+            body,
+            "y yes, it is my server  n / Esc no",
+        );
+        return;
+    }
     let mut body = vec![
         Line::styled(
-            format!("Enrolling with {}", s.peer),
+            format!("Adding {}", s.peer),
             theme.style(StyleRole::TextPrimary),
         ),
         Line::raw(""),
         Line::styled(s.words.clone(), theme.style(StyleRole::TextBright)),
         Line::raw(""),
     ];
-    let hint = if s.peer_has_screen {
-        body.push(Line::styled(
-            "Both screens must show exactly these words. If they differ, someone is in the middle: answer no.",
-            theme.style(StyleRole::TextMuted),
-        ));
-        "y words match  n / Esc they differ"
-    } else {
-        body.push(Line::styled(
-            format!(
-                "The other device has no screen: these words prove nothing. Its identity rests on the SSH host key you verified for {}.",
-                s.peer
-            ),
-            theme.style(StyleRole::PopupWarning),
-        ));
-        body.push(Line::raw(""));
-        body.push(Line::styled(
-            format!("Admit {} to your ring?", s.peer_name),
-            theme.style(StyleRole::TextPrimary),
-        ));
-        "y approve the admission  n / Esc refuse"
-    };
-    modal(frame, app, "Verify device", 70, body, hint);
+    body.push(Line::styled(
+        "Both screens must show exactly these four check words. If they differ, someone is in the middle: answer no.",
+        theme.style(StyleRole::TextMuted),
+    ));
+    modal(
+        frame,
+        app,
+        "Compare the four check words",
+        70,
+        body,
+        "y the words match  n / Esc they differ",
+    );
 }
 
 /// Full-screen alert; takes the whole frame.
@@ -616,7 +658,17 @@ pub fn render_sync_ui(frame: &mut Frame, app: &App) {
             let body: Vec<Line> = items
                 .iter()
                 .enumerate()
-                .map(|(i, (text, _))| row(i == selected, text.clone(), app))
+                .map(|(i, (text, _))| {
+                    let mut line = row(i == selected, text.clone(), app);
+                    // An entry that does not apply now is greyed.
+                    if i != selected && text.contains("(not now: ") {
+                        line = Line::styled(
+                            format!("  {text}"),
+                            app.theme().style(StyleRole::TextMuted),
+                        );
+                    }
+                    line
+                })
                 .collect();
             modal(
                 frame,
@@ -627,12 +679,26 @@ pub fn render_sync_ui(frame: &mut Frame, app: &App) {
                 "\u{2191}\u{2193} select  Enter run  Esc close",
             );
         }
-        SyncUi::Info { title, lines } => {
+        SyncUi::Info {
+            title,
+            lines,
+            frames,
+            then,
+        } => {
             let body: Vec<Line> = lines
                 .iter()
                 .map(|l| Line::styled(l.clone(), theme.style(StyleRole::TextPrimary)))
                 .collect();
-            modal(frame, app, title, 84, body, "Esc close");
+            let hint = if then.is_some() {
+                "Enter go on  Esc stop"
+            } else {
+                "Esc close"
+            };
+            if frames.is_empty() {
+                modal(frame, app, title, 84, body, hint);
+            } else {
+                qr_modal(frame, app, title, body, frames, hint);
+            }
         }
     }
 }
@@ -675,24 +741,37 @@ pub fn render_trust_ttl(frame: &mut Frame, app: &App) {
     let sync = &app.sync;
     let selected = sync.trust_ttl_selected.min(TRUST_TTL_DAYS.len() - 1);
     let scope = crate::app::sync_trust::chosen(sync).map_or("-".to_string(), |(_, l)| l);
+    let days = TRUST_TTL_DAYS[selected];
+    let me = sync
+        .this_device
+        .as_ref()
+        .and_then(|id| sync.devices.iter().find(|d| d.id == *id))
+        .map_or("this computer".to_string(), |d| d.name.clone());
     let mut body = vec![
         Line::styled(
-            format!("Scope: {scope}"),
-            app.theme().style(StyleRole::TextPrimary),
+            format!(
+                "Let {me} open {scope} without asking, for {days} days, up to {} new hosts a day.",
+                sync.trust_budget
+            ),
+            app.theme().style(StyleRole::TextBright),
+        ),
+        Line::styled(
+            "The phone must approve it. A new host is one it has not opened under this trust session yet.",
+            app.theme().style(StyleRole::TextMuted),
         ),
         Line::raw(""),
     ];
-    body.extend(TRUST_TTL_DAYS.iter().enumerate().map(|(i, days)| {
+    body.extend(TRUST_TTL_DAYS.iter().enumerate().map(|(i, d)| {
         let mark = if i == selected { "(\u{2022})" } else { "( )" };
-        row(i == selected, format!("{mark} {days} days"), app)
+        row(i == selected, format!("{mark} {d} days"), app)
     }));
     modal(
         frame,
         app,
-        "Trust session: term",
-        60,
+        "Trust session",
+        76,
         body,
-        "\u{2191}\u{2193} select  Enter open  Esc back",
+        "\u{2191}\u{2193} days  \u{2190}\u{2192} new hosts a day  Enter ask the phone  Esc back",
     );
 }
 
@@ -753,7 +832,7 @@ pub fn render_onboarding(frame: &mut Frame, app: &App) {
                     text,
                 ),
                 Line::styled(
-                    "Vault means a stolen machine reduces the protection to guessing the phrase. Moving to Quorum, where one device is not enough, needs a second holder.",
+                    "Vault means a stolen computer reduces the protection to guessing the phrase. Quorum, where one device is not enough, needs a second full device.",
                     muted,
                 ),
             ]);
@@ -796,8 +875,12 @@ pub fn render_onboarding(frame: &mut Frame, app: &App) {
             };
             body.extend([
                 Line::styled(
-                    "The kit is two printable sheets, written as two files: the master phrase, and the ring secret as a QR code. Keep them apart. Print them, then delete the files.",
+                    "The kit is two printed sheets: the master phrase, and the ring secret as a QR code. A new computer needs both to open saved passwords.",
                     text,
+                ),
+                Line::styled(
+                    "If you lose both sheets and every device that has them set up, saved passwords cannot be recovered. Anyone who finds both sheets can open every saved password: keep them in two places.",
+                    muted,
                 ),
                 Line::raw(""),
                 field(0, "phrase sheet", &o.phrase_path),
@@ -810,7 +893,25 @@ pub fn render_onboarding(frame: &mut Frame, app: &App) {
                     theme.style(StyleRole::PopupError),
                 ));
             }
-            "Tab other field  Enter write both sheets"
+            "Tab other field  Enter write both sheets  Ctrl+S no printer: show the ring secret"
+        }
+        OnboardingStep::ShowRing => {
+            let hex = hex::encode(o.secrets().ring_secret.as_slice());
+            let groups: Vec<&str> = (0..hex.len()).step_by(4).map(|i| &hex[i..i + 4]).collect();
+            body.extend([
+                Line::styled(
+                    "The ring secret. Copy it by hand onto paper, in groups of four:",
+                    text,
+                ),
+                Line::raw(""),
+                Line::styled(format!("  {}", groups.join(" ")), bright),
+                Line::raw(""),
+                Line::styled(
+                    "A new computer asks for it, with the six master words, when you import the Vault kit. Do not photograph this screen.",
+                    muted,
+                ),
+            ]);
+            "Enter: I have copied it, finish  Esc back"
         }
         OnboardingStep::Done => {
             body.extend([
@@ -819,11 +920,15 @@ pub fn render_onboarding(frame: &mut Frame, app: &App) {
                 Line::styled(format!("  {}", o.ring_path), bright),
                 Line::raw(""),
                 Line::styled(
-                    "Print them, keep them in two places, and delete the files. Do not photograph the sheets.",
+                    "Print them and keep them in two places. Do not photograph the sheets. Press d after printing to delete the files from this computer.",
                     text,
                 ),
             ]);
-            "Enter: finish"
+            if let Some(notice) = &o.notice {
+                body.push(Line::raw(""));
+                body.push(Line::styled(notice.clone(), text));
+            }
+            "d delete the files now  Enter finish"
         }
     };
     modal(frame, app, "Set up sync", 76, body, hint);
@@ -852,21 +957,28 @@ mod tests {
     }
 
     #[test]
-    fn sas_modal_without_a_peer_screen_says_the_words_prove_nothing() {
+    fn a_server_nobody_sits_at_is_asked_as_its_ssh_fingerprint_not_as_four_words() {
         let mut app = app_in(AppMode::SyncSas);
         let sas = app.sync.sas.as_mut().unwrap();
         sas.peer_has_screen = false;
         sas.peer = "hub".into();
+        sas.ssh_fingerprint = Some("SHA256:Zm9vYmFyYmF6".into());
+        let words = sas.words.clone();
         let s = screen(&app, 110, 36);
         for want in [
-            "has no screen",
-            "prove nothing",
-            "SSH host key you verified for hub",
-            "approve the admission",
+            "Is hub your server?",
+            "SSH key fingerprint",
+            "SHA256:Zm9vYmFyYmF6",
+            "y yes, it is my server",
         ] {
             assert!(s.contains(want), "{want}: {s}");
         }
+        assert!(!s.contains(&words), "no words that prove nothing: {s}");
         assert!(!s.contains("Both screens must show"), "{s}");
+        // With a person at the other end the four check words are the question.
+        app.sync.sas.as_mut().unwrap().peer_has_screen = true;
+        let s = screen(&app, 110, 36);
+        assert!(s.contains(&words) && s.contains("four check words"), "{s}");
     }
 
     fn app_in(mode: AppMode) -> App {
@@ -897,10 +1009,11 @@ mod tests {
         for want in [
             "laptop",
             "server",
-            "operational",
-            "stale",
-            "credentials: Vault",
-            "pending: 2",
+            "in sync",
+            "away too long",
+            "Passwords: Vault",
+            "Waiting for approval: 2",
+            "Can cut off a stolen device",
             "group staging",
             "\u{21c5}1",
             "2ops",
@@ -927,7 +1040,7 @@ mod tests {
             ),
             (
                 AppMode::SyncSas,
-                &["harbor-globe-lantern-mint", "Verify device"][..],
+                &["harbor-globe-lantern-mint", "Compare the four check words"][..],
             ),
             (
                 AppMode::TrustSessionScope,
@@ -935,7 +1048,7 @@ mod tests {
             ),
             (
                 AppMode::TrustSessionTtl,
-                &["Trust session: term", "30 days", "90 days"][..],
+                &["without asking", "30 days", "90 days", "new hosts a day"][..],
             ),
             (
                 AppMode::SyncReleaseConfirm,
