@@ -634,7 +634,7 @@ What sync does not protect against (the design's honest list, word for word):
 | `R` | Sync tab | Review every change waiting for approval |
 | `t` | Sync tab | Start a trust session: which hosts (a group, or hosts marked with Space, at most 64; never everything), how many days (7, 30 or 90), new hosts per day |
 | `M` | Sync tab | Manage your devices: overview, trust sessions, revoke a device, roles, credential mode (propose, then finish the switch once the ring agreed), add my phone, paste phone ops, recovery, paper and emailed-code factors, exemption, bulk export, move local secrets into the ring, import the Vault kit |
-| `P` | Sync tab | Register the paper phrase: the 24 words are shown, you type three of them back (chosen at random). Required before a switch to Quorum or a third full device; the Sync tab shows a standing line until it is done |
+| `K` | Sync tab | Register the paper phrase: the 24 words are shown, you type three of them back (chosen at random). Required before a switch to Quorum or a third full device; the Sync tab shows a standing line until it is done |
 | `A` | Hosts tab | Make the selected host one of your sync devices |
 | `a` `r` `p` `e` | Review | `a` approve (for a big change: add this device's approval), `r` reject, `p` type the paper phrase (24 words, nothing is shown), `e` type the emailed code, `Esc` close |
 

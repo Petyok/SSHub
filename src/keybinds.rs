@@ -132,7 +132,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 118] = [
+    pub const ALL: [KeyAction; 119] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -562,7 +562,7 @@ impl Default for KeybindsConfig {
             sync_review: vec!["R".into()],
             sync_trust: vec!["t".into()],
             sync_admin: vec!["M".into()],
-            sync_paper: vec!["P".into()],
+            sync_paper: vec!["K".into()],
             sync_enroll: vec!["A".into()],
             sync_ble_drop: vec!["Ctrl+B".into()],
             map_up: vec!["Up".into()],

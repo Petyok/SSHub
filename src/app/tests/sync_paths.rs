@@ -786,10 +786,10 @@ fn revoking_needs_the_devices_name_typed_back() {
 
 /// The three word numbers the type-back prompt asks for.
 fn asked_words(app: &App) -> Vec<usize> {
-    let Some(crate::app::sync_ui::SyncUi::Prompt { lines, .. }) = &app.sync_ui else {
+    let Some(crate::app::sync_ui::SyncUi::Prompt { label, .. }) = &app.sync_ui else {
         panic!("no prompt is open");
     };
-    let text = lines.join(" ");
+    let text = label.clone();
     let rest = text
         .split("Type words ")
         .nth(1)
@@ -797,7 +797,7 @@ fn asked_words(app: &App) -> Vec<usize> {
     rest.split(" from")
         .next()
         .unwrap()
-        .replace(" and", "")
+        .replace(" and", ",")
         .split(',')
         .map(|n| n.trim().parse().unwrap())
         .collect()
@@ -1263,10 +1263,12 @@ fn a_ring_without_paper_shows_the_standing_line_and_one_key_opens_the_wizard() {
     r.app.active_tab = 6;
     let tab = crate::tui::screens::sync::tests_screen(&r.app, 160, 30);
     assert!(
-        tab.contains("No paper phrase: you cannot cut off a lost device or recover a lost phone. Register it (press P)"),
+        tab.contains("No paper phrase: you cannot cut off a lost device or recover a lost phone. Register it (press K)"),
         "{tab}"
     );
-    r.app.handle_key(key_char('P')).unwrap();
+    r.app
+        .handle_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT))
+        .unwrap();
     assert_eq!(r.app.mode, AppMode::SyncInfo);
     assert!(r.app.sync_paper.is_some());
 }
@@ -1277,6 +1279,9 @@ fn switching_to_quorum_without_paper_starts_the_wizard_not_the_ceremony() {
     let mut r = ring(None);
     mark_this_device(&mut r);
     r.app.sync.cred_mode = Some(crate::app::sync::CredModeView::Vault);
+    let before = crate::sync::quorum::ops_of(&r.app.store, "ModeChange", None)
+        .unwrap()
+        .len();
     crate::app::sync_flows::mode(&mut r.app);
     assert_eq!(r.app.mode, AppMode::SyncInfo);
     assert!(r.app.sync_paper.is_some());
@@ -1285,10 +1290,11 @@ fn switching_to_quorum_without_paper_starts_the_wizard_not_the_ceremony() {
         .host_notice
         .as_deref()
         .is_some_and(|n| n.contains("register the paper phrase first")));
-    assert!(
+    assert_eq!(
         crate::sync::quorum::ops_of(&r.app.store, "ModeChange", None)
             .unwrap()
-            .is_empty()
+            .len(),
+        before
     );
 }
 
