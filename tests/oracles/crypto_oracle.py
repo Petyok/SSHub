@@ -304,6 +304,8 @@ def run(path):
 
 if __name__ == "__main__":
     run(sys.argv[1] if len(sys.argv) > 1 else str(ROOT / "tests/vectors/crypto/vectors.json"))
+    if len(sys.argv) == 1:
+        run(str(ROOT / "tests/vectors/crypto/handover.json"))
     print(f"{COUNT} checks, {len(FAILS)} failed")
     print("RESULT FAIL" if FAILS else "RESULT PASS")
     sys.exit(1 if FAILS else 0)
