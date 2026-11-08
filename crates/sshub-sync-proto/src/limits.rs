@@ -22,6 +22,15 @@ pub const LIVE_DEVICE_WINDOW_SECS: i64 = 14 * DAY;
 /// A Red op that has not completed its ceremony by then is dropped; proofs older than this do not count.
 pub const RED_CEREMONY_TTL_SECS: i64 = 3 * DAY;
 pub const RECOVERY_TIMELOCK_SECS: i64 = 7 * DAY;
+/// Phase B (contract 4j): a recovery in a ring where the requester is the only attended holder runs this long.
+pub const RECOVERY_TIMELOCK_SOLO_SECS: i64 = 14 * DAY;
+/// Phase B (contract 4j): renewals of one trust-session certificate that count, and its total life from issue.
+pub const CERT_MAX_RENEWALS: u32 = 2;
+pub const CERT_LIFETIME_MAX_SECS: i64 = 180 * DAY;
+/// Phase B (contract 4j): the phone refuses a renewal whose newest holder-terminal evidence is older than this.
+pub const CERT_RENEW_EVIDENCE_MAX_AGE_SECS: i64 = 6 * 3600;
+/// Phase B (contract 4j): words of the old phone's handover compare string (88 bits; a static artifact can be ground offline).
+pub const HANDOVER_WORDS: usize = 8;
 /// Lifetime of a share-release challenge.
 pub const CHALLENGE_EXPIRY_SECS: i64 = 120;
 /// Challenge nonce length in bytes.

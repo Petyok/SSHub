@@ -1582,3 +1582,95 @@ other than the proposer: not the phone, not an unattended device. The migration 
 * **What the downgrade does to shares: nothing is revoked.** Old `CredUpdate` ciphertexts and every holder's Quorum shares stay in the log and
   still open whatever was copied under them; the new shape protects only what is written after the migration. The UI says so.
 * After the ring is Vault the two-holder paper rule (`quorum::paper_rule`) no longer applies to new credentials.
+
+### 4j. Phase B interface freeze (UX fixes of epic #13; design: `host-sync-plan/review/ux-13-phase-b-design.md`, Revision 2)
+
+This section is the FROZEN interface the Phase B lanes code against. A change to anything here goes through the lane that owns the
+thing (see the lane briefs in `host-sync-plan/phase-b/`) and is announced to every lane first. Nothing here is released yet, so no
+op-format version gate is needed; all new kinds must land before the first release (2a'').
+
+**New ops** (crate `sshub-sync-proto`, `oplog/op.rs`; canonical bytes in `canonical.rs`; tiers in `tier.rs`; vectors, python oracle and JS
+interop test updated by the proto lane):
+
+```rust
+CertRenew     { cert_id: [u8; 32], expiry: i64 }                // Green, inert; author: the certificate's issuer or its successor phone
+PhoneHandover { new_phone: DevicePublic, name: String }         // Red; author: the ring's live phone, judged in the view at lamport - 1
+```
+
+* Canonical `CertRenew`: object key `CertRenew` with `cert_id` (hex, 64 characters) and `expiry` (integer), like `CertExtend`.
+* Canonical `PhoneHandover`: object key `PhoneHandover` with `new_phone` = `{ed25519_pub: hex32, x25519_pub: hex32, mlkem_pub: base64}` (the
+  key names of `DeviceAdd.device`) and `name` (one plain line, the `DeviceAdd` name rule).
+* Tiers: `CertRenew` Green (listed with `CertExtend`), `PhoneHandover` Red (listed with `CertIssue`). `PhoneHandover` is gated: `ceremony::is_gated`.
+* Validity of `CertRenew` (clock-free, log only, evaluated in `(lamport, device_id, seq)` order): author is the issuer or the issuer's
+  successor; the issuing op is in force; the delegate is a holder in force and not revoked in the view at the renewal's lamport; the certificate
+  is not revoked; `expiry > expiry so far` and `expiry <= expiry so far + original term`; `expiry - issued_at <= CERT_LIFETIME_MAX_SECS`;
+  renewals counted so far `< CERT_MAX_RENEWALS`. `cert_allows` uses the local `now` only for the use-time check against the effective expiry.
+* Validity of `PhoneHandover`: author, replay and known-key rules in `effective_devices(store, Some(op.lamport - 1))`; proofs: the author
+  (the op itself), the new phone's own `RedPhoneSign`, a second attended holder terminal, and `ThirdFactor::Paper` only; the effect lamport is
+  the highest lamport among the counted proofs; among handovers by one author the lowest `(completion lamport, device, seq)` wins.
+* `PhoneReenroll` verdict gains `Superseded` (design 5.3): an in-force `PhoneHandover` supersedes every `PhoneReenroll` with a lower lamport.
+
+**Wire** (crate `sshub-sync-proto`, `wire.rs`; the types and constants exist already, encode and decode are the proto lane's first delivery):
+
+* kind 11 `CertRenewRequestWire { cert_id: [u8; 32], expiry: i64, evidence: Vec<HeadEvidence> }`:
+  `cert_id(32) || expiry i64 BE || n u8 || n x (terminal(8) || head_seq u64 BE || head_ts i64 BE)`, `n <= MAX_RENEW_EVIDENCE = 32`;
+  `HeadEvidence { terminal: [u8; 8], head_seq: u64, head_ts: i64 }`: one entry per enforcing holder terminal other than the delegate.
+* kind 12 `PhoneHandoverRequestWire { new_phone: DevicePublic, name: String, terminal: [u8; 8] }`:
+  `ed25519(32) || x25519(32) || mlkem_len u16 BE || mlkem || name_len u8 || name utf8 || terminal(8)`; the old phone shows the name and
+  `HANDOVER_WORDS = 8` words: the first 88 bits of BLAKE3 over `"sshub/handover/v1" || ed25519 || x25519 || mlkem || name_len u8 || name || old_phone_id(8)`,
+  encoded with the project's word list (`sas_words` with 8 words).
+* kind 5 trailing `terminals` block after the optional sender block (`0x01 || id(8)`): `0x02 || count u8 || newest_op_ts i64 BE`
+  (`PHONE_OPS_TERMINALS_TAG = 2`, type `TerminalsBlock`). `count` = non-revoked, non-compromised devices of kind Terminal in the sender's view, itself included,
+  attended or not, holders or mirrors, saturating at 255. `newest_op_ts` = the author stamp of the newest op in the list. UNSIGNED, informational.
+  Blocks must come in tag order; an unknown or truncated block stays an error; frames without it decode as before. `PhoneOpsWire` gains
+  `terminals: Option<TerminalsBlock>`.
+
+**Limits** (`limits.rs`, contract section 9): `RECOVERY_TIMELOCK_SOLO_SECS = 14 days`, `CERT_MAX_RENEWALS = 2`, `CERT_LIFETIME_MAX_SECS = 180 days`,
+`CERT_RENEW_EVIDENCE_MAX_AGE_SECS = 6 hours`, `HANDOVER_WORDS = 8` (all present). `RED_CEREMONY_TTL_SECS` becomes 7 days with the compile-time assert
+`RED_CEREMONY_TTL_SECS < CHECKPOINT_PRUNE_DELAY_SECS + CHECKPOINT_MIN_INTERVAL_SECS`; that change belongs to the ceremony lane with the tests that pin 3 days (W-TTL).
+
+**Host core API** (lane C; `pub`, in `src/sync`):
+
+```rust
+// ceremony.rs
+pub struct Blocker { pub proof: RedProof, pub who: Vec<String>, pub since: Option<i64> }
+pub fn blocking_view(store: &LauncherStore, op: &Op, now: i64) -> Result<Vec<Blocker>>;
+pub(crate) fn log_live(store: &LauncherStore, devices: Vec<DeviceRow>, t: i64) -> Result<Vec<DeviceRow>>;   // ADVICE only, never a verdict (exists)
+// quorum.rs
+pub struct Exposure { pub host_uid: HostUid, pub devices: Vec<DeviceId>, pub kind: ExposureKind }       // Removed (revoked device holds a share) | NotHeldBy (current holder lacks one)
+pub fn exposed_credentials(store: &LauncherStore) -> Result<Vec<Exposure>>;
+// revocation.rs
+pub enum RevokeMode { Full, Degraded, Refused(String) }
+pub fn revoke_mode(store: &LauncherStore, target: &DeviceId) -> Result<RevokeMode>;
+// recovery.rs
+pub fn open_for_alert(store: &LauncherStore, me: &DeviceIdentity, now: i64) -> Result<Vec<Op>>;        // deduped by requester by the caller
+// cert.rs
+impl DelegationCert { pub fn effective_expiry(&self, store: &LauncherStore) -> Result<i64>; pub fn renewals(&self, store: &LauncherStore) -> Result<u32>; }
+pub fn cert_renew_request(store: &LauncherStore, cert_id: [u8; 32], term_secs: i64, now: i64) -> Result<CertRenewRequestWire>;
+// handover.rs (new, lane C)
+pub fn handover_words(new_phone: &DevicePublic, name: &str, old_phone: &DeviceId) -> Vec<String>;      // HANDOVER_WORDS words
+// cred_ops.rs / unlock_paths.rs (heal)
+pub fn heal_plan(store: &LauncherStore) -> Result<Vec<HostUid>>;                                         // credentials whose newest sharing lacks a current holder and are not exposed
+pub fn heal_credential(store: &LauncherStore, id: &DeviceIdentity, host: &HostUid, payload: &CredPayload) -> Result<Op>;   // re-seal under a fresh DEK to the current recipients
+```
+
+**Phone core API** (`crates/sshub-phone-core`; the page `assets/companion/src` mirrors every entry point under the same name in camelCase; UniFFI exposes them to Kotlin):
+
+```rust
+pub struct RenewView { pub delegate: String, pub scope: String, pub term_secs: i64, pub budget: u32, pub renewals_left: u32, pub new_end: i64,
+                       pub opened: Vec<String>, pub evidence_age_secs: Option<i64>, pub refusal: Option<String> }
+pub fn describe_cert_renew(state: &PhoneState, req: &CertRenewRequestWire, now: i64) -> Result<RenewView>;
+pub fn build_cert_renew(state: &mut PhoneState, id: &PhoneIdentity, req: &CertRenewRequestWire, now: i64) -> Result<Vec<u8>>;   // refuses stale evidence, the caps, a non-live phone
+
+pub struct HandoverView { pub name: String, pub words: Vec<String> /* HANDOVER_WORDS */, pub certs_carried: Vec<String> }
+pub fn describe_phone_handover(state: &PhoneState, req: &PhoneHandoverRequestWire) -> Result<HandoverView>;
+pub fn build_phone_handover(state: &mut PhoneState, id: &PhoneIdentity, req: &PhoneHandoverRequestWire, now: i64) -> Result<Vec<u8>>;
+pub fn sign_handover_admission(state: &mut PhoneState, id: &PhoneIdentity, handover_op_hash: [u8; 32], now: i64) -> Result<Vec<u8>>; // the NEW phone's own RedPhoneSign
+
+pub fn adopt_own_chain(state: &mut PhoneState, id: &PhoneIdentity, ops: &[SignedOpBytes], sender: Option<[u8; 8]>, terminals: Option<TerminalsBlock>) -> Result<AdoptInfo>;
+pub fn accept_head(state: &mut PhoneState, shown: (u64, &[u8]), acknowledged_single_source: bool) -> Result<(u64, u32)>;
+// AdoptInfo gains: single_source: bool, terminals: Option<TerminalsBlock>
+```
+
+**Rules every lane keeps:** a Red or Green verdict reads only the log (D0, D0b): no `last_seen`, no `received_at`, no `now` except the inherent use-time checks;
+`log_live` is advice for screens. The alert has no acknowledge key. Group approval touches only hold reason `stale`. The emailed code never counts for a holder revoke or a handover.
