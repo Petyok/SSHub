@@ -426,3 +426,19 @@ fn the_alert_is_one_per_requester_with_a_count() {
     );
     assert!(alert_view(&r[0].store, &[], 1_000).unwrap().is_none());
 }
+
+#[test]
+fn the_enrollment_mail_hint_says_when_nothing_is_configured_and_names_a_shared_mailbox() {
+    let (configured, lines) = notify_hint(None);
+    assert!(!configured && lines.join(" ").contains("only show on terminal screens"));
+    let mut cfg = crate::config::NotifyConfig {
+        command: Some("sendmail -t -i".into()),
+        to: vec!["me@example.com".into()],
+        from: Some("sshub@example.com".into()),
+    };
+    let (configured, lines) = notify_hint(Some(&cfg));
+    assert!(configured && lines.len() == 1, "{lines:?}");
+    cfg.from = Some("me@example.com".into());
+    let (_, lines) = notify_hint(Some(&cfg));
+    assert!(lines.join(" ").contains("Shared mailbox"), "{lines:?}");
+}

@@ -768,7 +768,9 @@ impl App {
             lines: crate::cli::sync_admin::alert_lines(&view, now),
             hashes: view.hashes,
         });
-        if fresh && self.mode != AppMode::SyncRecoveryAlert {
+        // A live session is not preempted (the lock lasts days): the badge shows it until the session ends.
+        let busy = matches!(self.mode, AppMode::Session | AppMode::Connecting);
+        if fresh && !busy && self.mode != AppMode::SyncRecoveryAlert {
             self.sync.alert_return_set(self.mode);
             self.mode = AppMode::SyncRecoveryAlert;
         }

@@ -191,6 +191,12 @@ impl<'a> EnrollSession<'a> {
                         for l in &r.lines {
                             emit(out, j, "admitted", l.clone(), json!({"line": l}));
                         }
+                        let cfg = crate::config::load_config().ok();
+                        let (configured, hint) =
+                            super::sync_admin::notify_hint(cfg.as_ref().map(|c| &c.sync.notify));
+                        for l in hint {
+                            emit(out, j, "notify_hint", l, json!({"configured": configured}));
+                        }
                         self.done = Some(true);
                     }
                     Err(e) => {

@@ -961,6 +961,30 @@ fn verdict_hint(v: &crate::sync::recovery::ReenrollVerdict) -> &'static str {
     }
 }
 
+/// After a phone is admitted (design 7b): is a recovery of it mailed? `(configured, lines)`. Names a shared mailbox when
+/// the address that receives the alert is also the sender of the emailed code.
+pub(crate) fn notify_hint(cfg: Option<&crate::config::NotifyConfig>) -> (bool, Vec<String>) {
+    match cfg.filter(|c| c.command.is_some() && !c.to.is_empty()) {
+        None => (
+            false,
+            vec![
+                "Be told when someone tries to replace this phone: no mail is configured, so a hostile recovery would only show on terminal screens.".to_string(),
+                "To get mail, add to the sshub config file: [sync.notify] command = \"/usr/sbin/sendmail -t -i\", to = [\"you@example.com\"], from = \"sshub@example.com\".".to_string(),
+            ],
+        ),
+        Some(c) => {
+            let mut lines = vec![format!(
+                "A recovery of this phone is mailed to {}.",
+                c.to.join(", ")
+            )];
+            if c.from.as_ref().is_some_and(|f| c.to.iter().any(|t| t == f)) {
+                lines.push("Shared mailbox: the alert goes to the same address the emailed code is sent from, so whoever reads that mailbox sees both. Do not count the mail as a separate check.".to_string());
+            }
+            (true, lines)
+        }
+    }
+}
+
 /// The recoveries a person at this terminal is told about, as ONE alert (design 7b): deduped by requester with a
 /// count and the earliest end of the time lock. Built from `recovery::open_for_alert`; it never writes an op and has
 /// no acknowledge.
@@ -973,6 +997,8 @@ pub(crate) struct AlertView {
     pub earliest_lock: Option<i64>,
     /// Hashes of the recoveries, so a screen can remember which ones were dismissed.
     pub hashes: Vec<[u8; 32]>,
+    /// One JSON object per recovery: `{op, requester, verdict, lock_ends}`.
+    pub items: Vec<serde_json::Value>,
 }
 
 pub(crate) fn alert_view(store: &LauncherStore, ops: &[Op], now: i64) -> Result<Option<AlertView>> {
@@ -986,6 +1012,7 @@ pub(crate) fn alert_view(store: &LauncherStore, ops: &[Op], now: i64) -> Result<
             .collect();
     let mut requesters: Vec<(DeviceId, String, usize)> = Vec::new();
     let mut earliest = None;
+    let mut items = Vec::new();
     for op in ops {
         match requesters.iter_mut().find(|r| r.0 == op.device_id) {
             Some(r) => r.2 += 1,
@@ -998,17 +1025,27 @@ pub(crate) fn alert_view(store: &LauncherStore, ops: &[Op], now: i64) -> Result<
                 1,
             )),
         }
-        if let Ok(crate::sync::recovery::ReenrollVerdict::NeedsMoreTime { ready_at }) =
-            crate::sync::recovery::validate_phone_reenroll(store, op, now)
-        {
-            earliest = Some(earliest.map_or(ready_at, |e: i64| e.min(ready_at)));
+        let verdict = crate::sync::recovery::validate_phone_reenroll(store, op, now);
+        let lock_ends = match &verdict {
+            Ok(crate::sync::recovery::ReenrollVerdict::NeedsMoreTime { ready_at }) => Some(*ready_at),
+            _ => None,
+        };
+        if let Some(t) = lock_ends {
+            earliest = Some(earliest.map_or(t, |e: i64| e.min(t)));
         }
+        items.push(json!({
+            "op": short(&op.hash()),
+            "requester": op.device_id,
+            "verdict": verdict.map_or_else(|e| format!("invalid: {e:#}"), |v| format!("{v:?}")),
+            "lock_ends": lock_ends,
+        }));
     }
     Ok(Some(AlertView {
         requesters: requesters.into_iter().map(|(_, n, c)| (n, c)).collect(),
         total: ops.len(),
         earliest_lock: earliest,
         hashes: ops.iter().map(|o| o.hash()).collect(),
+        items,
     }))
 }
 
@@ -1027,7 +1064,7 @@ pub(crate) fn alert_lines(a: &AlertView, now: i64) -> Vec<String> {
         .collect::<Vec<_>>()
         .join(", ");
     let mut out = vec![format!(
-        "A recovery of the phone is under way: {} open, started from {who}.",
+        "RECOVERY STARTED: a recovery of the phone is under way: {} open, started from {who}.",
         a.total
     )];
     if let Some(t) = a.earliest_lock {

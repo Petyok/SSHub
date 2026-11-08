@@ -686,6 +686,7 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
             .collect();
         let alert = recovery_alert(paths, &store, &rows)?;
         let doc = json!({
+            "recovery_alerts": alert.as_ref().map_or_else(Vec::new, |a| a.items.clone()),
             "alert": alert.as_ref().map(|a| json!({
                 "open": a.total,
                 "requesters": a.requesters.iter().map(|(n, c)| json!({ "name": n, "open": c })).collect::<Vec<_>>(),
@@ -702,6 +703,12 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     if rows.is_empty() && pending == 0 {
         println!("{EMPTY_RING}");
         return Ok(0);
+    }
+    let alert = recovery_alert(paths, &store, &rows)?;
+    if let Some(a) = &alert {
+        for l in super::sync_admin::alert_lines(a, crate::store::now_ts()) {
+            println!("{}", plain(&l));
+        }
     }
     for r in &rows {
         println!(
@@ -734,12 +741,6 @@ fn status(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
     println!("Passwords: {mode}");
     for l in super::sync_admin::exposure_lines(&store)? {
         println!("{}", plain(&l));
-    }
-    let alert = recovery_alert(paths, &store, &rows)?;
-    if let Some(a) = &alert {
-        for l in super::sync_admin::alert_lines(a, crate::store::now_ts()) {
-            println!("{}", plain(&l));
-        }
     }
     for op in super::sync_admin::all_recoveries(&store)? {
         for l in super::sync_admin::recovery_lines(&store, &op, crate::store::now_ts()) {

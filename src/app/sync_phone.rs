@@ -136,9 +136,12 @@ fn step_job(
                     format!("{} is enrolled; its admission is proposed", v.name),
                     crate::store::now_ts(),
                 )?;
+                let mut lines = report.lines;
+                let cfg = crate::config::load_config_at(&env.paths.config_file).ok();
+                lines.extend(crate::cli::sync_admin::notify_hint(cfg.as_ref().map(|c| &c.sync.notify)).1);
                 Ok(FlowOut::Admitted {
                     frame: v.frame,
-                    lines: report.lines,
+                    lines,
                 })
             }),
             Ok(step) => Ok(present_step(step).expect("verified handled above")),
