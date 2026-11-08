@@ -106,19 +106,43 @@ fn promoted_after(store: &LauncherStore, device: &DeviceId, l: u64) -> Result<bo
 
 /// Did a Quorum credential exist BEFORE lamport `before` (so a new holder then meant a reshare)? Judged at the
 /// op's own position in the log, never against the ring as it is now: an op that was valid under ring setup
-/// must stay valid when a Quorum credential is created later. A Quorum credential has at least two wrapped
-/// shares (Vault mode wraps to the vault key alone); a reshare batch implies one too.
+/// must stay valid when a Quorum credential is created later. A credential is a Quorum one when its NEWEST
+/// `CredUpdate` before `before` has at least two wrapped shares (Vault mode wraps to the vault key alone), so a ring
+/// whose Quorum credentials were all replaced or moved back to Vault no longer counts. A host whose ops were pruned
+/// below a checkpoint cut is read from the folded `sync_cred_state` row, which keeps its newest `CredUpdate`.
 fn quorum_credentials_before(store: &LauncherStore, before: u64) -> Result<bool> {
+    let mut newest: std::collections::BTreeMap<[u8; 16], (u64, bool)> = Default::default();
     for op in ops_of(store, "CredUpdate", None)? {
-        if op.lamport < before
-            && matches!(&op.body, OpBody::CredUpdate { wrapped_shares, .. } if wrapped_shares.len() >= 2)
+        if let OpBody::CredUpdate {
+            host_uid,
+            wrapped_shares,
+            ..
+        } = &op.body
         {
-            return Ok(true);
+            if op.lamport < before && newest.get(host_uid).is_none_or(|(l, _)| *l < op.lamport) {
+                newest.insert(*host_uid, (op.lamport, wrapped_shares.len() >= 2));
+            }
         }
     }
-    Ok(ops_of(store, "ShareReshareBatch", None)?
-        .iter()
-        .any(|op| op.lamport < before))
+    if newest.values().any(|(_, quorum)| *quorum) {
+        return Ok(true);
+    }
+    store.with_conn(|c| {
+        let mut st =
+            c.prepare("SELECT host_uid, wrapped_shares FROM sync_cred_state WHERE lamport < ?1")?;
+        let rows = st.query_map([i64::try_from(before).unwrap_or(i64::MAX)], |r| {
+            Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (uid, wraps) = row?;
+            let known = <[u8; 16]>::try_from(uid.as_slice()).is_ok_and(|u| newest.contains_key(&u));
+            let n = serde_json::from_str::<Vec<serde_json::Value>>(&wraps).map_or(0, |v| v.len());
+            if !known && n >= 2 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    })
 }
 
 /// Ring setup is over for good once the ring has had a phone and two terminal holders (revoked rows still
@@ -352,6 +376,37 @@ fn terminal_holder(d: &DeviceRow) -> bool {
         && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
 }
 
+/// The devices of `devices` known to be alive AT `t`, decided from the LOG only, so every device that holds the same ops
+/// judges the same set: a device that wrote an op stamped BEFORE `t` (strictly: the author of an op at `t` cannot know an
+/// op written in its own second) and within `LIVE_DEVICE_WINDOW_SECS` before it. Contact (`last_seen`) is local knowledge:
+/// a device learned from an op has `last_seen` 0 until its first round, and two devices disagree about who they talked to,
+/// so a verdict that read it was rejected on the devices whose contacts differed from the proposer's. A device that never
+/// writes anything is not live here; revoked and compromised devices never are.
+pub(crate) fn log_live(
+    store: &LauncherStore,
+    devices: Vec<DeviceRow>,
+    t: i64,
+) -> Result<Vec<DeviceRow>> {
+    let wrote: std::collections::BTreeMap<String, i64> = store.with_conn(|c| {
+        let mut st = c.prepare(
+            "SELECT device_id, MAX(timestamp) FROM sync_ops
+             WHERE timestamp < ?1 AND COALESCE(reason, '') <> 'unknown-author'
+               AND state NOT IN ('rejected', 'void') GROUP BY device_id",
+        )?;
+        let rows = st.query_map([t], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    })?;
+    Ok(devices
+        .into_iter()
+        .filter(|d| {
+            !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+                && wrote
+                    .get(&d.id)
+                    .is_some_and(|w| t - *w <= LIVE_DEVICE_WINDOW_SECS)
+        })
+        .collect())
+}
+
 /// When `op` counts as having happened: its own stamp, but never later than the moment this device first
 /// saw it. The stamp is chosen by the author, so a future date cannot stretch the ceremony window, and a
 /// proof's age is measured the same way.
@@ -459,11 +514,11 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     let setup_promotion = setup && promoted.is_some();
     let mut setup_waived: Vec<&str> = Vec::new();
 
-    // Counting rules that make an op impossible.
-    let live_terminals = devices
-        .iter()
-        .filter(|d| terminal_holder(d) && now - d.last_seen <= LIVE_DEVICE_WINDOW_SECS)
-        .count();
+    // Counting rules that make an op impossible. They count who is IN the ring (the view at the op's own position),
+    // never who was heard from lately: contact is local to a device, and "wrote an op recently" is weak evidence
+    // (a terminal writes only when it edits), so a verdict built on either differs between devices or blocks a quiet
+    // ring. Whether a contributor is reachable is advice for the screens (`log_live`), not a rule.
+    let attended_terminals = devices.iter().filter(|d| terminal_holder(d)).count();
     match &op.body {
         OpBody::DeviceAdd {
             kind: DeviceKind::Phone,
@@ -487,9 +542,9 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
             ..
         } => {
             // The rule follows from the reshare: with no Quorum credential there is nothing to reshare.
-            if live_terminals < 2 && quorum_credentials {
+            if attended_terminals < 2 && quorum_credentials {
                 blocked = Some(
-                    "adding or promoting a holder needs two other live holders for the reshare"
+                    "adding or promoting a holder needs two attended holder terminals for the reshare"
                         .to_string(),
                 );
             }

@@ -1692,3 +1692,127 @@ fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_en
         }
     }
 }
+
+// ------------------------------------------------------------- verdicts are a pure function of the log (D0)
+
+/// Three terminals and the phone in Quorum mode with the paper registered, both by finished ceremonies.
+fn quorum_ring() -> Vec<Dev> {
+    use crate::sync::quorum::paper_registration;
+    use crate::sync::quorum::tests::{complete, ring_phone};
+    let d = ring_phone(3);
+    let phrase = bip39_encode(&[0x77; 32]);
+    let reg = append(&d[0], paper_registration(&phrase).unwrap());
+    complete(&d, &reg, 1, None);
+    let mc = append(
+        &d[0],
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            migrated_on: d[0].did.clone(),
+            cosigner: None,
+        },
+    );
+    complete(&d, &mc, 1, Some(&phrase));
+    d
+}
+
+fn put_credential(x: &Dev, host: u8) -> Op {
+    use crate::sync::quorum::tests::payload;
+    crate::sync::cred_ops::cred_put(&x.store, &x.id, &[host; 16], &payload("pw")).unwrap()
+}
+
+fn forget_contacts(d: &[Dev]) {
+    for x in d {
+        x.store
+            .with_conn(|c| {
+                c.execute("UPDATE sync_devices SET last_seen = 0", [])?;
+                Ok(())
+            })
+            .unwrap();
+    }
+}
+
+#[test]
+fn log_live_counts_only_devices_with_an_op_before_the_instant_and_inside_the_window() {
+    let d = quorum_ring();
+    sync(&d);
+    let rows = effective_devices(&d[1].store, None).unwrap();
+    let ids = |t: i64| -> Vec<String> {
+        let mut v: Vec<String> = log_live(&d[1].store, rows.clone(), t)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect();
+        v.sort();
+        v
+    };
+    let now = crate::store::now_ts();
+    // Terminal 1 approved and terminal 0 proposed (both wrote ops); terminal 2 never wrote anything.
+    let live = ids(now + 60);
+    assert!(
+        live.contains(&d[0].did) && live.contains(&d[1].did),
+        "{live:?}"
+    );
+    assert!(
+        !live.contains(&d[2].did),
+        "a device with no op is not live: {live:?}"
+    );
+    // Before any op was written nobody is live; a window later nobody is.
+    assert!(ids(0).is_empty());
+    assert!(ids(now + LIVE_DEVICE_WINDOW_SECS + 3600).is_empty());
+}
+
+#[test]
+fn a_promotion_verdict_follows_the_log_not_the_contact_clock() {
+    let d = quorum_ring();
+    put_credential(&d[0], 7);
+    // Terminals 1 and 2 each wrote something: the log shows them alive. The contact clock (what this
+    // device happened to hear when) says nobody was ever seen; it must change nothing.
+    d[1].append_host();
+    d[2].append_host();
+    sync(&d);
+    forget_contacts(&d);
+    let promo = propose(
+        &d,
+        R,
+        OpBody::DeviceRoleChange {
+            device_id: d[2].did.clone(),
+            to: DeviceRole::Holder,
+        },
+    );
+    forget_contacts(&d);
+    // Judged where the Quorum credential is applied (a Yellow credential waits for approval on a peer that merely pulled).
+    let st = red_status(&d[0].store, &promo, promo.timestamp + 60).unwrap();
+    assert_eq!(st.blocked, None, "the verdict read last_seen: {st:?}");
+}
+
+// ------------------------------------------------------------- the promotion block clears (F2)
+
+#[test]
+fn the_promotion_block_clears_when_no_quorum_credential_is_left() {
+    use crate::sync::oplog::WrappedShare;
+    let d = quorum_ring();
+    let host = [9u8; 16];
+    let first = put_credential(&d[0], 9);
+    assert!(quorum_credentials_before(&d[0].store, u64::MAX).unwrap());
+    // The same host is saved again with ONE wrapped share (a Vault shaped credential): the Quorum one is gone.
+    let (ct, wraps) = d[0].store.sync_cred_ciphertext(&host).unwrap().unwrap();
+    let later = append(
+        &d[0],
+        OpBody::CredUpdate {
+            host_uid: host,
+            ciphertext: ct,
+            wrapped_shares: vec![WrappedShare {
+                recipient: wraps[0].recipient.clone(),
+                alg: wraps[0].alg,
+                sealed: wraps[0].sealed.clone(),
+            }],
+        },
+    );
+    assert!(
+        !quorum_credentials_before(&d[0].store, u64::MAX).unwrap(),
+        "a ring that has no Quorum credential any more is still treated as having one"
+    );
+    // Judged at the op's own position: before the replacement the credential was a Quorum one.
+    assert!(quorum_credentials_before(&d[0].store, later.lamport).unwrap());
+    assert!(!quorum_credentials_before(&d[0].store, first.lamport).unwrap());
+}

@@ -1011,9 +1011,10 @@ Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, n
   `FactorRegister` needs phone + second-device proofs only; a replacement also needs a `RedFactor` of the factor
   being replaced.
 * A ring with one attended `Holder` terminal waives the second-device proof; it needs the phone and the paper.
-* `DeviceRoleChange` and `DeviceAdd` as holder additionally require at least two other live holders (seen within
-  `LIVE_DEVICE_WINDOW_SECS`) so a reshare has k contributors; `DeviceRevoke` of a holder requires at least two
-  remaining holders after it (three before).
+* `DeviceRoleChange` and `DeviceAdd` as holder additionally require at least two attended holder terminals in the ring (counted
+  from the device view at the op's own position, never from contact: a verdict is the same on every device) so a reshare has k
+  contributors; `DeviceRevoke` of a holder requires at least two remaining holders after it (three before). Whether a
+  contributor is reachable now is advice for the screens (`ceremony::log_live`), not a rule.
 * `RedStatus { missing: Vec<RedProof>, have: Vec<RedProof>, complete: bool, expired: bool }` is what the review
   screen shows ("phone: signed, second device: waiting, paper: missing"). `settle_red_ops(store, now)` runs after
   every ingest: it resolves a pending Red op as approved when complete and as rejected when expired.
@@ -1566,3 +1567,18 @@ raw table or from "an op of that kind exists":
 * Test per kind: "proposed, not complete" changes nothing a peer would act on; "complete" does
   (`ceremony::tests::*_in_force`). Known limit: the helpers read ops from the log, so ops pruned below a
   checkpoint cannot be re-evaluated; the checkpoint state must carry the effective result (op-log worker).
+
+### 4i. Quorum to Vault: the migration step (from the TUI worker, poc/tui)
+
+The `ModeChange` to Vault is Red and gated (4c); its second-device proof must be the named `cosigner`, an attended Holder terminal
+other than the proposer (`validate_mode_change` checks `migrated_on` and `cosigner`). In the UI the cosigner is an attended full terminal
+other than the proposer: not the phone, not an unattended device. The migration is a separate step that refuses until the change is in force.
+
+* **Step two (migration).** Once the ceremony completed, the proposer opens every credential through the ordinary unlock paths (its own
+  share plus a second share from an attended holder's approval, the phone, a trust session or the paper; the user sees the unlock dialog)
+  and appends one `CredUpdate` per credential under a fresh DEK wrapped to the Vault recipient. A credential that could not be opened stays
+  Quorum-shaped. `QuorumUnlocker` decides a credential's shape from its wrapped recipients (Vault recipient present means Vault), not from the
+  effective ring mode, until every credential is migrated (`quorum.rs` `open_one`). The step is repeatable.
+* **What the downgrade does to shares: nothing is revoked.** Old `CredUpdate` ciphertexts and every holder's Quorum shares stay in the log and
+  still open whatever was copied under them; the new shape protects only what is written after the migration. The UI says so.
+* After the ring is Vault the two-holder paper rule (`quorum::paper_rule`) no longer applies to new credentials.

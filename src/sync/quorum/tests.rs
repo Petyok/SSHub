@@ -1265,6 +1265,9 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
     for h in &hosts {
         cred_put(&d[0].store, &d[0].id, h, &payload(&format!("p{}", h[0]))).unwrap();
     }
+    // The remaining holders have written to the ring (the log is what shows a contributor alive).
+    d[1].append_host();
+    d[2].append_host();
     all_to_all(&d);
     let removed_old = own_shares(&d[3].store, &d[3].id, &hosts[0])
         .unwrap()
@@ -1272,7 +1275,7 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
         .1;
 
     let now = crate::store::now_ts();
-    check_revocable(&d[0].store, &d[3].did, now).unwrap();
+    check_revocable(&d[0].store, &d[3].did, now + 5).unwrap();
     append(
         &d[0],
         OpBody::DeviceRevoke {
@@ -1475,4 +1478,31 @@ pub(crate) fn complete(d: &[Dev], op: &Op, second: usize, paper: Option<&str>) {
         append(&d[second], red_factor_paper(&recover, op));
     }
     all_to_all(d);
+}
+
+#[test]
+fn check_revocable_reads_the_log_not_the_contact_clock() {
+    use crate::sync::revocation::check_revocable;
+    // Four holders; the fourth is to go, three remain. Two of them wrote to the ring, the contact clock knows nobody.
+    let d = ring(4);
+    d[0].append_host();
+    d[1].append_host();
+    all_to_all(&d);
+    for x in &d {
+        x.store
+            .with_conn(|c| {
+                c.execute("UPDATE sync_devices SET last_seen = 0", [])?;
+                Ok(())
+            })
+            .unwrap();
+    }
+    let now = crate::store::now_ts() + 5;
+    check_revocable(&d[0].store, &d[3].did, now).unwrap();
+
+    // And the other way round: one writer only, even though every contact is fresh.
+    let e = ring(4);
+    e[0].append_host();
+    all_to_all(&e);
+    let err = check_revocable(&e[0].store, &e[3].did, now).unwrap_err();
+    assert!(err.to_string().contains("written to the ring"), "{err}");
 }
