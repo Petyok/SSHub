@@ -693,8 +693,9 @@ impl App {
         if let Some(line) = &line {
             text.push_str(&format!("  {line}"));
         }
-        let urgent =
-            sync.health.red_expires_in.is_some_and(|l| l <= 86_400) || sync.health.phone_expired || sync.alert.is_some();
+        let urgent = sync.health.red_expires_in.is_some_and(|l| l <= 86_400)
+            || sync.health.phone_expired
+            || sync.alert.is_some();
         let role = if sync.compromised() || urgent {
             ColorRole::StatusError
         } else if sync.pending > 0 || line.is_some() {

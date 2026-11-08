@@ -414,9 +414,15 @@ fn the_alert_is_one_per_requester_with_a_count() {
         );
     }
     let view = alert_view(&r[0].store, &ops, 1_000).unwrap().unwrap();
-    assert_eq!(view.requesters, vec![("dev1".to_string(), 2), ("dev2".to_string(), 1)]);
+    assert_eq!(
+        view.requesters,
+        vec![("dev1".to_string(), 2), ("dev2".to_string(), 1)]
+    );
     assert_eq!(view.total, 3);
     let lines = alert_lines(&view, 1_000).join(" ");
-    assert!(lines.contains("3 open") && lines.contains("dev1 (2)"), "{lines}");
+    assert!(
+        lines.contains("3 open") && lines.contains("dev1 (2)"),
+        "{lines}"
+    );
     assert!(alert_view(&r[0].store, &[], 1_000).unwrap().is_none());
 }

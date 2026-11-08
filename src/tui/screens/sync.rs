@@ -112,7 +112,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
     for l in &sync.exposure {
-        lines.push(Line::styled(l.clone(), color(app, ColorRole::StatusWarning)));
+        lines.push(Line::styled(
+            l.clone(),
+            color(app, ColorRole::StatusWarning),
+        ));
     }
     if let Some(error) = &sync.last_error {
         lines.push(Line::styled(
@@ -656,7 +659,11 @@ pub fn render_recovery_alert(frame: &mut Frame, app: &App) {
         area,
     );
     let text = theme.style(StyleRole::TextPrimary);
-    let mut body: Vec<Line> = a.lines.iter().map(|l| Line::styled(l.clone(), text)).collect();
+    let mut body: Vec<Line> = a
+        .lines
+        .iter()
+        .map(|l| Line::styled(l.clone(), text))
+        .collect();
     body.push(Line::raw(""));
     body.push(Line::styled(
         "Esc closes this notice. It comes back for a new recovery, and the Sync tab and `sshub sync-status` keep showing it.",

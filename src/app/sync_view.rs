@@ -750,7 +750,9 @@ impl App {
     fn update_recovery_alert(&mut self) {
         let ops = self.recovery_alert_ops();
         let now = crate::store::now_ts();
-        let view = crate::cli::sync_admin::alert_view(&self.store, &ops, now).ok().flatten();
+        let view = crate::cli::sync_admin::alert_view(&self.store, &ops, now)
+            .ok()
+            .flatten();
         let Some(view) = view else {
             self.sync.alert = None;
             if self.mode == AppMode::SyncRecoveryAlert {
@@ -758,7 +760,10 @@ impl App {
             }
             return;
         };
-        let fresh = view.hashes.iter().any(|h| !self.sync.alert_dismissed.contains(h));
+        let fresh = view
+            .hashes
+            .iter()
+            .any(|h| !self.sync.alert_dismissed.contains(h));
         self.sync.alert = Some(super::sync::RecoveryAlert {
             lines: crate::cli::sync_admin::alert_lines(&view, now),
             hashes: view.hashes,
@@ -785,7 +790,8 @@ impl App {
             }
         }
         let me = self.sync_identity.as_ref().expect("loaded above");
-        crate::sync::recovery::open_for_alert(&self.store, me, crate::store::now_ts()).unwrap_or_default()
+        crate::sync::recovery::open_for_alert(&self.store, me, crate::store::now_ts())
+            .unwrap_or_default()
     }
 
     fn try_refresh_sync_view(&mut self) -> Result<()> {

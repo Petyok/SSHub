@@ -630,17 +630,22 @@ pub(crate) fn exposure_lines(store: &LauncherStore) -> Result<Vec<String>> {
     let mut removed = Vec::new();
     let mut not_held: Vec<String> = Vec::new();
     let mut who = std::collections::BTreeSet::new();
-    let names: std::collections::HashMap<_, _> = crate::sync::ceremony::effective_devices(store, None)?
-        .into_iter()
-        .map(|d| (d.id, d.name))
-        .collect();
+    let names: std::collections::HashMap<_, _> =
+        crate::sync::ceremony::effective_devices(store, None)?
+            .into_iter()
+            .map(|d| (d.id, d.name))
+            .collect();
     for e in exposed_credentials(store)? {
         let host = host_label(store, &e.host_uid);
         match e.kind {
             ExposureKind::Removed => removed.push(host),
             ExposureKind::NotHeldBy => {
                 not_held.push(host);
-                who.extend(e.devices.iter().map(|d| names.get(d).cloned().unwrap_or_else(|| short_id(d))));
+                who.extend(
+                    e.devices
+                        .iter()
+                        .map(|d| names.get(d).cloned().unwrap_or_else(|| short_id(d))),
+                );
             }
         }
     }
@@ -974,10 +979,11 @@ pub(crate) fn alert_view(store: &LauncherStore, ops: &[Op], now: i64) -> Result<
     if ops.is_empty() {
         return Ok(None);
     }
-    let names: std::collections::HashMap<_, _> = crate::sync::ceremony::effective_devices(store, None)?
-        .into_iter()
-        .map(|d| (d.id, d.name))
-        .collect();
+    let names: std::collections::HashMap<_, _> =
+        crate::sync::ceremony::effective_devices(store, None)?
+            .into_iter()
+            .map(|d| (d.id, d.name))
+            .collect();
     let mut requesters: Vec<(DeviceId, String, usize)> = Vec::new();
     let mut earliest = None;
     for op in ops {
@@ -985,7 +991,10 @@ pub(crate) fn alert_view(store: &LauncherStore, ops: &[Op], now: i64) -> Result<
             Some(r) => r.2 += 1,
             None => requesters.push((
                 op.device_id.clone(),
-                names.get(&op.device_id).cloned().unwrap_or_else(|| short_id(&op.device_id)),
+                names
+                    .get(&op.device_id)
+                    .cloned()
+                    .unwrap_or_else(|| short_id(&op.device_id)),
                 1,
             )),
         }
@@ -1008,7 +1017,13 @@ pub(crate) fn alert_lines(a: &AlertView, now: i64) -> Vec<String> {
     let who = a
         .requesters
         .iter()
-        .map(|(n, c)| if *c > 1 { format!("{n} ({c})") } else { n.clone() })
+        .map(|(n, c)| {
+            if *c > 1 {
+                format!("{n} ({c})")
+            } else {
+                n.clone()
+            }
+        })
         .collect::<Vec<_>>()
         .join(", ");
     let mut out = vec![format!(
@@ -1021,7 +1036,9 @@ pub(crate) fn alert_lines(a: &AlertView, now: i64) -> Vec<String> {
             crate::sync::health::human_left((t - now).max(0))
         ));
     }
-    out.push("If your phone is not lost, cancel it from the phone now: nothing else is needed.".into());
+    out.push(
+        "If your phone is not lost, cancel it from the phone now: nothing else is needed.".into(),
+    );
     out
 }
 

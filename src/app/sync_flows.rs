@@ -91,7 +91,9 @@ fn confirm_revoke(app: &mut App, id: String, name: String) {
             }
             Ok(crate::sync::revocation::RevokeMode::Degraded) => mode_line = Some(DEGRADED_REVOKE),
             Ok(crate::sync::revocation::RevokeMode::Full) => mode_line = Some(FULL_REVOKE),
-            Err(e) => return app.sync_info("This device cannot be removed yet", vec![format!("{e:#}")]),
+            Err(e) => {
+                return app.sync_info("This device cannot be removed yet", vec![format!("{e:#}")])
+            }
         }
     }
     app.sync_menu(

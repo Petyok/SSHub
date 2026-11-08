@@ -285,7 +285,12 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
                 };
                 buf.set_string(col, y, dot_char, dot_style);
                 // A saved password that is exposed or not yet shared with a current full device: `!` after the dot.
-                if app.sync.exposed_hosts.iter().any(|n| n == host_name_for_dot) {
+                if app
+                    .sync
+                    .exposed_hosts
+                    .iter()
+                    .any(|n| n == host_name_for_dot)
+                {
                     let mark = theme.color(ColorRole::StatusWarning);
                     let style = if is_selected {
                         Style::default().fg(mark).bg(selection_bg)

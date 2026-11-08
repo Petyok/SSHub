@@ -1232,7 +1232,15 @@ fn revoking_a_full_device_says_at_once_when_the_ring_has_too_few_computers() {
         _ => panic!("the info panel is not open"),
     };
     // The sentence is the core's own (no paper phrase is registered yet), not a copy of it here.
-    let target = r.app.sync.devices.iter().find(|d| !d.this && !d.phone).unwrap().id.clone();
+    let target = r
+        .app
+        .sync
+        .devices
+        .iter()
+        .find(|d| !d.this && !d.phone)
+        .unwrap()
+        .id
+        .clone();
     let crate::sync::revocation::RevokeMode::Refused(why) =
         crate::sync::revocation::revoke_mode(&r.app.store, &target).unwrap()
     else {
@@ -1264,9 +1272,17 @@ fn the_sync_view_says_how_many_more_computers_are_needed_to_cut_one_off() {
 fn removing_a_computer_asks_stolen_or_wiped_and_prints_the_mode_before_the_name() {
     let mut r = ring(None);
     mark_this_device(&mut r);
-    crate::sync::quorum::paper_setup(&r.app.store, &crate::sync::crypto::bip39_encode(&[9u8; 32])).unwrap();
+    crate::sync::quorum::paper_setup(&r.app.store, &crate::sync::crypto::bip39_encode(&[9u8; 32]))
+        .unwrap();
     crate::app::sync_flows::revoke(&mut r.app);
-    let at = r.app.sync.devices.iter().filter(|d| !d.this).position(|d| !d.phone).unwrap();
+    let at = r
+        .app
+        .sync
+        .devices
+        .iter()
+        .filter(|d| !d.this)
+        .position(|d| !d.phone)
+        .unwrap();
     for _ in 0..at {
         r.app.handle_key(key(KeyCode::Down)).unwrap();
     }
@@ -1278,7 +1294,11 @@ fn removing_a_computer_asks_stolen_or_wiped_and_prints_the_mode_before_the_name(
         panic!("no prompt");
     };
     assert!(label.contains("Only one other computer remains"), "{label}");
-    assert!(crate::sync::quorum::ops_of(&r.app.store, "DeviceRevoke", None).unwrap().is_empty());
+    assert!(
+        crate::sync::quorum::ops_of(&r.app.store, "DeviceRevoke", None)
+            .unwrap()
+            .is_empty()
+    );
 }
 
 /// Design 3.1: a ring without a registered paper phrase shows a standing line, and one key opens the wizard.
@@ -1490,11 +1510,21 @@ fn a_recovery_started_elsewhere_raises_one_alert_that_esc_only_dismisses() {
     assert!(r.app.sync.alert.is_none());
     let now = crate::store::now_ts();
     for _ in 0..2 {
-        let body = crate::sync::recovery::start_body(&r.d[2].store, &r.d[2].id, now, None, ThirdFactor::Paper).unwrap();
+        let body = crate::sync::recovery::start_body(
+            &r.d[2].store,
+            &r.d[2].id,
+            now,
+            None,
+            ThirdFactor::Paper,
+        )
+        .unwrap();
         append(&r.d[2], body);
     }
     ingest_from(&r.d[2], &r.d[1]);
-    let before = r.app.store.sync_pending().unwrap().len() + crate::sync::quorum::ops_of(&r.app.store, "PhoneReenroll", None).unwrap().len();
+    let before = r.app.store.sync_pending().unwrap().len()
+        + crate::sync::quorum::ops_of(&r.app.store, "PhoneReenroll", None)
+            .unwrap()
+            .len();
     r.app.refresh_sync_view();
     assert_eq!(r.app.mode, AppMode::SyncRecoveryAlert);
     let alert = r.app.sync.alert.clone().expect("one alert");
@@ -1506,11 +1536,21 @@ fn a_recovery_started_elsewhere_raises_one_alert_that_esc_only_dismisses() {
     assert_eq!(r.app.mode, AppMode::SyncRecoveryAlert);
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
     assert_eq!(r.app.mode, AppMode::Normal);
-    let after = r.app.store.sync_pending().unwrap().len() + crate::sync::quorum::ops_of(&r.app.store, "PhoneReenroll", None).unwrap().len();
+    let after = r.app.store.sync_pending().unwrap().len()
+        + crate::sync::quorum::ops_of(&r.app.store, "PhoneReenroll", None)
+            .unwrap()
+            .len();
     assert_eq!(before, after);
     r.app.refresh_sync_view();
-    assert_eq!(r.app.mode, AppMode::Normal, "dismissed ones do not raise it again");
-    assert!(r.app.sync.alert.is_some(), "the badge and the Sync tab still show it");
+    assert_eq!(
+        r.app.mode,
+        AppMode::Normal,
+        "dismissed ones do not raise it again"
+    );
+    assert!(
+        r.app.sync.alert.is_some(),
+        "the badge and the Sync tab still show it"
+    );
     let (badge, _) = r.app.sync_badge().unwrap();
     assert!(badge.contains("recovery open"), "{badge}");
 }

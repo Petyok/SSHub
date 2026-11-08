@@ -5,7 +5,10 @@ impl App {
         // The fork alert owns the whole frame and every key, a live session's
         // PTY included: a keystroke typed while it appears must not reach the
         // remote shell, and the alert must be seen before anything else.
-        if matches!(self.mode, AppMode::SyncForkAlert | AppMode::SyncRecoveryAlert) {
+        if matches!(
+            self.mode,
+            AppMode::SyncForkAlert | AppMode::SyncRecoveryAlert
+        ) {
             return self.handle_key_sync_modal(key);
         }
         if self.mode == AppMode::AuthPrompt {
