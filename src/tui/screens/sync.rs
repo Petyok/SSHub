@@ -791,26 +791,26 @@ pub fn render_release_confirm(frame: &mut Frame, app: &App) {
     let theme = app.theme();
     let body = vec![
         Line::styled(
-            format!("{} ({}) asks for a share", r.requester, r.requester_id),
+            format!("{} ({}) asks to open a saved password", r.requester, r.requester_id),
             theme.style(StyleRole::TextBright),
         ),
         Line::styled(
-            format!("to open {} (asked {} s ago)", r.host, r.age_secs),
+            format!("of {} (asked {} s ago)", r.host, r.age_secs),
             theme.style(StyleRole::TextPrimary),
         ),
         Line::raw(""),
         Line::styled(
-            "Release only if you recognise that device and expected this request.",
+            "Approve only if you recognise that device and expected this request.",
             theme.style(StyleRole::TextMuted),
         ),
     ];
     modal(
         frame,
         app,
-        "Release share",
+        "Approve opening a password",
         72,
         body,
-        "y release  n / Esc refuse",
+        "y approve  n / Esc refuse",
     );
 }
 
