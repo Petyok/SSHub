@@ -388,7 +388,8 @@ consent: the line names the requester, its full device id and the request age, a
 are written as the TUI confirmation would; a request older than 120 s is refused.
 --approve-all approves, in one pass, every waiting change that has no ceremony (a new host's address, a rename onto a
 taken name ...): for a ring that delivered thousands of changes, where one --approve call per change is not workable.
-Red changes (they need their own proofs), share releases and changes of unknown authors are left for --approve <id>;
+Red changes (they need their own proofs), share releases, changes of unknown authors and every change held as
+revoked-author, not-holder, revoke-conflict or resurrection are left for --approve <id>;
 it prints how many were approved and how many are left.
 Read-only otherwise; never creates a device key (approving a share release loads the existing one).
 

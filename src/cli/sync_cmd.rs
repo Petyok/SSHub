@@ -810,8 +810,11 @@ fn approve_all(paths: &ProfilePaths, json_out: bool) -> Result<i32> {
 fn approve_all_on(store: &LauncherStore, now: i64) -> Result<(usize, usize)> {
     let (mut approved, mut left) = (0usize, 0usize);
     for (op, reason) in store.sync_pending_with_reasons()? {
-        let skip = reason == "unknown-author"
-            || crate::sync::ceremony::is_gated(store, &op)?
+        // These reasons say the author or the change itself is in doubt: each needs its own look.
+        let skip = matches!(
+            reason.as_str(),
+            "unknown-author" | "revoked-author" | "not-holder" | "revoke-conflict" | "resurrection"
+        ) || crate::sync::ceremony::is_gated(store, &op)?
             || matches!(op.body, crate::sync::oplog::OpBody::ShareRelease { .. });
         if skip || crate::sync::ceremony::resolve(store, &op.hash(), true, now).is_err() {
             left += 1;
@@ -1256,5 +1259,46 @@ mod tests {
         assert_eq!((approved, left), (3, 0));
         assert!(a.0.sync_pending().unwrap().is_empty());
         assert_eq!(a.0.list_hosts().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn approve_all_leaves_a_change_of_a_device_that_may_not_make_it() {
+        use crate::sync::crypto::DeviceIdentity;
+        use crate::sync::oplog::{Attendance, DeviceKind, DeviceRole, OpBody, VerifiedBy};
+        let (a, b, c) = (
+            LauncherStore::open_in_memory().unwrap(),
+            DeviceIdentity::generate(),
+            DeviceIdentity::generate(),
+        );
+        let m = LauncherStore::open_in_memory().unwrap();
+        for (id, role) in [(&b, DeviceRole::Holder), (&c, DeviceRole::Mirror)] {
+            for s in [&a, &m] {
+                s.sync_register_device(
+                    &id.public(),
+                    "peer",
+                    role,
+                    Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+            }
+        }
+        let op = m
+            .sync_append_local(
+                &c,
+                OpBody::ShareStorageKey {
+                    epoch: 1,
+                    sealed: vec![1; 40],
+                },
+            )
+            .unwrap();
+        a.sync_ingest(op.clone()).unwrap();
+        assert_eq!(
+            a.sync_pending_reason(&op.hash()).unwrap().as_deref(),
+            Some("not-holder")
+        );
+        assert_eq!(approve_all_on(&a, 1_000).unwrap(), (0, 1));
+        assert_eq!(a.sync_pending().unwrap().len(), 1);
     }
 }
