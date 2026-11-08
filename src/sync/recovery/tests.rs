@@ -18,7 +18,52 @@ fn proposal(auth: Authorization) -> Proposal {
         authorization: auth,
         third_factor_distinct: true,
         liveness_ok: true,
+        solo: false,
     }
+}
+
+/// Design 5.2: with no other attended computer the requester's own acknowledgement starts a lock of 14 days; the paper
+/// is the authorization.
+#[test]
+fn a_solo_recovery_is_acknowledged_by_its_requester_and_locks_for_fourteen_days() {
+    let paper = Authorization::Paper {
+        signature_valid: true,
+    };
+    let solo = Proposal {
+        solo: true,
+        ..proposal(paper)
+    };
+    let mut r = Recovery::new();
+    r.apply(Event::Propose(solo)).unwrap();
+    r.apply(Event::Ack {
+        by: id("req"),
+        seen_at: T0 + 60,
+        attended: true,
+    })
+    .unwrap();
+    let ready_at = T0 + 60 + 14 * 86_400;
+    assert_eq!(
+        r.verdict(T0 + 60 + 8 * 86_400),
+        ReenrollVerdict::NeedsMoreTime { ready_at }
+    );
+    assert_eq!(r.verdict(ready_at), ReenrollVerdict::Ready);
+    // With another attended computer the requester never acknowledges its own recovery.
+    let mut n = Recovery::new();
+    n.apply(Event::Propose(proposal(paper))).unwrap();
+    assert!(n
+        .apply(Event::Ack {
+            by: id("req"),
+            seen_at: T0 + 60,
+            attended: true
+        })
+        .is_err());
+    // A solo recovery is authorized by the paper: approvals cannot exist.
+    assert!(Recovery::new()
+        .apply(Event::Propose(Proposal {
+            solo: true,
+            ..proposal(Authorization::Approvals)
+        }))
+        .is_err());
 }
 
 fn approve(who: &str) -> Event {
@@ -1404,6 +1449,131 @@ mod over_the_log {
         assert!(
             !ready_recovery_for(&w.d[OBS].store, &revoke_new, now + 2).unwrap(),
             "a recovery started against the old phone stood in for the ceremony that removes the new one"
+        );
+    }
+
+    /// Only `R` stays an attended terminal: the others run on their own.
+    fn solo_world() -> World {
+        let w = world();
+        for x in &w.d {
+            paper_setup(&x.store, &w.phrase).unwrap();
+        }
+        for x in &w.d {
+            x.store
+                .with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_devices SET attendance = 'unattended' WHERE device_id IN (?1, ?2, ?3)",
+                        rusqlite::params![w.d[A].did, w.d[B].did, w.d[OBS].did],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        w
+    }
+
+    fn settle_received_at(w: &World) {
+        for x in &w.d {
+            x.store
+                .with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_ops SET received_at = timestamp WHERE timestamp < received_at",
+                        [],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+    }
+
+    // Design 5.2: a ring of one terminal and the phone: the paper authorizes and stands for the third factor too, the
+    // requester's own acknowledgement starts a 14 day lock.
+    #[test]
+    fn recovery_in_a_one_terminal_ring_completes_after_the_lock() {
+        use crate::sync::recovery::{ack_body, is_solo, start_body};
+        let w = solo_world();
+        assert!(is_solo(&w.d[OBS].store, &w.d[R].did).unwrap());
+        let now = crate::store::now_ts();
+        let started = now - 15 * 86_400;
+        let at =
+            |d: &Dev, body: OpBody, t: i64| d.store.sync_append_local_at(&d.id, body, t).unwrap();
+        let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
+        let start = start_body(
+            &w.d[R].store,
+            &w.d[R].id,
+            started,
+            Some(&recover),
+            ThirdFactor::Paper,
+        )
+        .unwrap();
+        let op = at(&w.d[R], start, started);
+        at(
+            &w.d[R],
+            crate::sync::ceremony::red_factor_paper(&recover, &op),
+            started + 30,
+        );
+        at(
+            &w.d[R],
+            ack_body(&op, started + 60).unwrap(),
+            started + 60,
+        );
+        w.sync();
+        settle_received_at(&w);
+        // The ordinary 7 day lock would be over eight days in; the solo lock is not.
+        assert_eq!(
+            validate_phone_reenroll(&w.d[OBS].store, &op, started + 60 + 8 * 86_400).unwrap(),
+            ReenrollVerdict::NeedsMoreTime {
+                ready_at: started + 60 + 14 * 86_400
+            }
+        );
+        assert_eq!(
+            validate_phone_reenroll(&w.d[OBS].store, &op, now).unwrap(),
+            ReenrollVerdict::Ready
+        );
+    }
+
+    #[test]
+    fn solo_recovery_is_cancelled_by_the_live_phone() {
+        use crate::sync::recovery::{ack_body, start_body};
+        let w = solo_world();
+        let now = crate::store::now_ts();
+        let started = now - 15 * 86_400;
+        let at =
+            |d: &Dev, body: OpBody, t: i64| d.store.sync_append_local_at(&d.id, body, t).unwrap();
+        let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
+        let start = start_body(
+            &w.d[R].store,
+            &w.d[R].id,
+            started,
+            Some(&recover),
+            ThirdFactor::Paper,
+        )
+        .unwrap();
+        let op = at(&w.d[R], start, started);
+        at(
+            &w.d[R],
+            crate::sync::ceremony::red_factor_paper(&recover, &op),
+            started + 30,
+        );
+        at(
+            &w.d[R],
+            ack_body(&op, started + 60).unwrap(),
+            started + 60,
+        );
+        at(
+            &w.d[P],
+            OpBody::PhoneReenrollCancel {
+                reenroll_hash: op.hash(),
+                by_phone: true,
+                third_factor: None,
+            },
+            started + 120,
+        );
+        w.sync();
+        settle_received_at(&w);
+        assert_eq!(
+            validate_phone_reenroll(&w.d[OBS].store, &op, now).unwrap(),
+            ReenrollVerdict::CancelledByPhone
         );
     }
 }
