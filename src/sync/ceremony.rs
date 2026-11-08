@@ -518,6 +518,12 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     // (a terminal writes only when it edits), so a verdict built on either differs between devices or blocks a quiet
     // ring. Whether a contributor is reachable is advice for the screens (`log_live`), not a rule.
     let attended_terminals = devices.iter().filter(|d| terminal_holder(d)).count();
+    // Paper is a precondition of Quorum and of a third holder (design 3.1): read at the op's own position, so every device
+    // judges alike. Without it a stolen device could not be cut off and a lost phone could not be recovered.
+    let paper_registered = registered_before(store, ThirdFactor::Paper, Some(op.lamport))?.is_some();
+    // Removing a terminal holder (a computer or server that holds shares): the paper is the proof that always exists.
+    let revoked_terminal_holder = matches!(&op.body, OpBody::DeviceRevoke { device_id }
+        if devices.iter().any(|d| d.id == *device_id && d.role == DeviceRole::Holder && d.kind == DeviceKind::Terminal));
     match &op.body {
         OpBody::DeviceAdd {
             kind: DeviceKind::Phone,
@@ -547,6 +553,28 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
                         .to_string(),
                 );
             }
+            let holders_after = devices
+                .iter()
+                .filter(|d| {
+                    d.role == DeviceRole::Holder
+                        && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+                })
+                .count();
+            if blocked.is_none() && holders_after >= 3 && !paper_registered {
+                blocked = Some(
+                    "a third full device needs the paper phrase registered first: without it a stolen device could not be cut off and a lost phone could not be recovered"
+                        .to_string(),
+                );
+            }
+        }
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            ..
+        } if !paper_registered => {
+            blocked = Some(
+                "switching to Quorum needs the paper phrase registered first: without it a stolen device could not be cut off and a lost phone could not be recovered"
+                    .to_string(),
+            );
         }
         OpBody::DeviceRevoke { device_id } => {
             let remaining = devices
@@ -573,10 +601,20 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
                 && devices
                     .iter()
                     .any(|d| d.id == *device_id && d.role == DeviceRole::Holder)
-                && remaining < 2
+                && remaining < 1
+            {
+                // Unconditional: it reads the view only, never whether a credential exists (crypto M11).
+                blocked = Some(
+                    "revoking the last terminal holder would leave the ring with nothing to keep working: add a replacement first"
+                        .to_string(),
+                );
+            }
+            if blocked.is_none()
+                && revoked_terminal_holder
+                && registered_before(store, ThirdFactor::Paper, Some(op.lamport))?.is_none()
             {
                 blocked = Some(
-                    "revoking a holder needs at least two remaining terminal holders to contribute"
+                    "removing a computer needs the paper phrase registered: without it nothing independent of the other devices can approve"
                         .to_string(),
                 );
             }
@@ -677,7 +715,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     };
     let others = devices
         .iter()
-        .filter(|d| terminal_holder(d) && d.id != *proposer)
+        .filter(|d| terminal_holder(d) && d.id != *proposer && Some(&d.id) != promoted.as_ref())
         .count();
     let single_machine_ring = others == 0 && !authored_by_phone;
     let mut approved = false;
@@ -776,6 +814,10 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         let Some(key) = key else { continue };
         // The mailbox duty is a participant of its own: the registered sender neither proposed the op nor
         // gave its second-device vote.
+        if *factor == ThirdFactor::EmailCode && revoked_terminal_holder {
+            // The emailed code never counts for removing a holder: the paper is its only third factor.
+            continue;
+        }
         if *factor == ThirdFactor::EmailCode {
             if let Some(sender) = email.as_ref().and_then(|e| e.2.as_ref()) {
                 if sender == proposer || approvers.contains(sender) {
@@ -810,12 +852,21 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         complete_at = complete_at.max(factor_at.unwrap_or(0));
         have.push(RedProof::Factor(factor_named.clone()));
     } else if !bootstrap {
-        missing.push(RedProof::Factor(replacing.clone().filter(|r| {
-            registered_before(store, r.clone(), Some(op.lamport))
-                .ok()
-                .flatten()
-                .is_some()
-        })));
+        missing.push(RedProof::Factor(if revoked_terminal_holder {
+            Some(ThirdFactor::Paper)
+        } else {
+            replacing.clone().filter(|r| {
+                registered_before(store, r.clone(), Some(op.lamport))
+                    .ok()
+                    .flatten()
+                    .is_some()
+            })
+        }));
+    }
+    // Removing a terminal holder needs the phone and the paper: with the paper among the proofs the second device is
+    // waived (it may be away; a revoke removes authority and adds none).
+    if revoked_terminal_holder && factor_ok && factor_named == Some(ThirdFactor::Paper) {
+        missing.retain(|m| *m != RedProof::SecondDevice);
     }
     // The two completion ops of a Ready phone-loss recovery need no proof of the lost phone: the recovery
     // was the ceremony (contract 4h).

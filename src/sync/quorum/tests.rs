@@ -1260,6 +1260,11 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
 
     let mut d = ring(4); // 0, 1, 2 stay; 3 is revoked
     quorum_mode(&d[0]);
+    // A ring of four holders has its paper (design 3.1); removing a computer needs it.
+    append(
+        &d[0],
+        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32])).unwrap(),
+    );
     all_to_all(&d);
     let hosts: Vec<HostUid> = (1..=3u8).map(|n| [100 + n; 16]).collect();
     for h in &hosts {
@@ -1363,12 +1368,12 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
     let mine = wraps.iter().find(|w| w.recipient == did0).unwrap();
     assert!(crate::sync::crypto::hybrid_unwrap(id0, &mine.sealed).is_err());
 
-    // With only two holders left, a revocation is refused up front.
+    // A ring of two computers without a registered paper cannot remove one: nothing independent could approve.
     let _ = did1;
     let two = ring(2);
     assert!(
         check_revocable(&two[0].store, &two[1].did, now).is_err(),
-        "one remaining holder cannot contribute"
+        "removing a computer needs the paper registered"
     );
 }
 
@@ -1481,12 +1486,15 @@ pub(crate) fn complete(d: &[Dev], op: &Op, second: usize, paper: Option<&str>) {
 }
 
 #[test]
-fn check_revocable_reads_the_log_not_the_contact_clock() {
-    use crate::sync::revocation::check_revocable;
-    // Four holders; the fourth is to go, three remain. Two of them wrote to the ring, the contact clock knows nobody.
+fn check_revocable_reads_the_ring_not_the_contact_clock_nor_who_wrote_lately() {
+    use crate::sync::revocation::{check_revocable, revoke_mode, RevokeMode};
+    // Four holders; the fourth is to go, three remain; nobody was heard from. Whether a remaining device is reachable is
+    // advice for the screens, not a rule (design 3.2: a terminal that is away never holds the revoke).
     let d = ring(4);
-    d[0].append_host();
-    d[1].append_host();
+    append(
+        &d[0],
+        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32])).unwrap(),
+    );
     all_to_all(&d);
     for x in &d {
         x.store
@@ -1498,11 +1506,28 @@ fn check_revocable_reads_the_log_not_the_contact_clock() {
     }
     let now = crate::store::now_ts() + 5;
     check_revocable(&d[0].store, &d[3].did, now).unwrap();
+    assert_eq!(revoke_mode(&d[0].store, &d[3].did).unwrap(), RevokeMode::Full);
 
-    // And the other way round: one writer only, even though every contact is fresh.
+    // Three terminals and no paper: refused, with the paper named.
     let e = ring(4);
-    e[0].append_host();
-    all_to_all(&e);
     let err = check_revocable(&e[0].store, &e[3].did, now).unwrap_err();
-    assert!(err.to_string().contains("written to the ring"), "{err}");
+    assert!(err.to_string().contains("paper"), "{err}");
+
+    // Two terminals and the paper: one remains, the phone and the paper authorize it.
+    let two = ring(2);
+    append(
+        &two[0],
+        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32])).unwrap(),
+    );
+    all_to_all(&two);
+    assert_eq!(
+        revoke_mode(&two[0].store, &two[1].did).unwrap(),
+        RevokeMode::Degraded
+    );
+    // The last terminal is refused whatever else holds.
+    let one = ring(1);
+    assert!(matches!(
+        revoke_mode(&one[0].store, &one[0].did).unwrap(),
+        RevokeMode::Refused(_)
+    ));
 }

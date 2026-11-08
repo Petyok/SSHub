@@ -16,7 +16,7 @@
 
 use std::collections::BTreeSet;
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, Result};
 
 use super::crypto::DeviceIdentity;
 use super::oplog::{DeviceId, DeviceKind, DeviceRole, DeviceStatus, OpBody};
@@ -77,35 +77,60 @@ pub fn terminals_missing_to_cut_off(store: &LauncherStore) -> Result<Option<usiz
     Ok((n < TERMINALS_TO_CUT_OFF).then(|| TERMINALS_TO_CUT_OFF - n))
 }
 
-/// The rule that makes a revocation possible at all: two contributors must remain, so at least three
-/// holders exist before it. `target` is the holder to revoke. The error is the sentence a person reads.
-pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Result<()> {
+/// How a holder can be removed (design 3.2), from the log only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RevokeMode {
+    /// Two or more other attended terminals remain: the remaining terminals reshare the credentials.
+    Full,
+    /// Exactly one other attended terminal remains: the phone and the paper authorize it, the credentials the removed
+    /// device held a share of stay on the exposure list (`quorum::exposed_credentials`) until their secret changes.
+    Degraded,
+    /// It cannot be done; the sentence is what a person reads.
+    Refused(String),
+}
+
+/// What removing `target` would be, judged from the ring as it is now. Never reads contact or the clock: whether the other
+/// terminals are reachable is advice for screens (`ceremony::log_live`), not a rule.
+pub fn revoke_mode(store: &LauncherStore, target: &DeviceId) -> Result<RevokeMode> {
     let holders = live_holders(store)?;
-    ensure!(
-        holders.iter().any(|d| d.id == *target),
-        "{target} is not a live holder"
-    );
-    let remaining: Vec<_> = holders
+    let Some(row) = holders.iter().find(|d| d.id == *target) else {
+        return Ok(RevokeMode::Refused(format!("{target} is not a live holder")));
+    };
+    let remaining = holders
         .iter()
-        .filter(|d| d.id != *target && d.kind == DeviceKind::Terminal)
-        .collect();
-    let terminals = remaining.len()
-        + usize::from(
-            holders
-                .iter()
-                .any(|d| d.id == *target && d.kind == DeviceKind::Terminal),
-        );
-    ensure!(remaining.len() >= 2, "{}", cut_off_sentence(terminals));
-    super::quorum::paper_rule(store, holders.len() - 1)?;
-    // Alive means: wrote an op to the ring recently (the log, the same on every device), not "was last heard from here".
-    let fresh =
-        super::ceremony::log_live(store, remaining.iter().map(|d| (*d).clone()).collect(), now)?
-            .len();
-    ensure!(
-        fresh >= 2,
-        "fewer than two remaining holders have written to the ring recently enough to contribute"
-    );
-    Ok(())
+        .filter(|d| {
+            d.id != *target
+                && d.kind == DeviceKind::Terminal
+                && d.attendance == super::oplog::Attendance::Attended
+        })
+        .count();
+    if remaining == 0 {
+        return Ok(RevokeMode::Refused(
+            "this is the last computer of the ring: add a replacement first (Replace this terminal), then remove the old one".into(),
+        ));
+    }
+    if row.kind == DeviceKind::Terminal && paper_pub(store)?.is_none() {
+        return Ok(RevokeMode::Refused(
+            "removing a computer needs the paper phrase registered: without it nothing independent of the other devices can approve".into(),
+        ));
+    }
+    if let Err(e) = super::quorum::paper_rule(store, holders.len() - 1) {
+        return Ok(RevokeMode::Refused(e.to_string()));
+    }
+    Ok(if remaining >= 2 {
+        RevokeMode::Full
+    } else {
+        RevokeMode::Degraded
+    })
+}
+
+/// The precheck a screen runs before it writes a `DeviceRevoke`: an error is the sentence a person reads. The ceremony
+/// judges the op itself again (`ceremony::red_status`).
+pub fn check_revocable(store: &LauncherStore, target: &DeviceId, _now: i64) -> Result<()> {
+    match revoke_mode(store, target)? {
+        RevokeMode::Refused(why) => bail!("{why}"),
+        RevokeMode::Full | RevokeMode::Degraded => Ok(()),
+    }
 }
 
 /// The newest revoked holder whose reshare is not finished: `(op lamport, timestamp, revoked id)`.
