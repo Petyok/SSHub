@@ -13,6 +13,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -56,7 +57,7 @@ class EnrollScreensTest {
 
     private val calls = mutableListOf<String>()
     private fun hit(s: String): () -> Unit = { calls += s }
-    private fun click(text: String) = rule.onNodeWithText(text).performClick()
+    private fun click(text: String) = rule.onNodeWithText(text).performScrollTo().performClick()
     private fun exists(text: String) = rule.onNodeWithText(text).assertExists()
     private fun absent(text: String) = rule.onNodeWithText(text).assertDoesNotExist()
     private val notSelectable = SemanticsMatcher.keyNotDefined(SemanticsProperties.Selected)

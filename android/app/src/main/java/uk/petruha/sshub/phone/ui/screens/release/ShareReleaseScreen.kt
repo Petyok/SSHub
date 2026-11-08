@@ -82,6 +82,7 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
             Text("requester", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(displayName(v.requesterName), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
             Text(v.requesterId, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            KeyValue("share", "${v.shareKind}, sharing round ${v.shareEpoch}, share ${v.shareIndex}", Modifier.padding(top = 8.dp))
             v.requesterKey?.let { HexGroups(it, Modifier.padding(top = 8.dp), groups = null, label = "Requester key") }
         }
 
@@ -110,7 +111,6 @@ fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
         }
         if (v.opRows.isNotEmpty()) {
             TechnicalDetails("${v.opRows.size} fields, ${v.opRows.count { it.danger }} flagged", startOpen = v.plain.isEmpty()) {
-                KeyValue("share", "${v.shareKind}, sharing round ${v.shareEpoch}, share ${v.shareIndex}")
                 SectionHeading("What you release", trailing = "${v.opRows.size} fields")
                 DiffBox(v.opRows.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
             }

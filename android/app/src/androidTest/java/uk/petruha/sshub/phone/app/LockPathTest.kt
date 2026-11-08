@@ -71,6 +71,10 @@ class LockPathTest {
         lateinit var vm: HomeViewModel
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync {
             vm = HomeViewModel(core as HomeApi, platform)
+        }
+        val end = System.currentTimeMillis() + 10_000
+        while (vm.state.value == null && System.currentTimeMillis() < end) Thread.sleep(25)
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val before = vm.state.value
             assertNotNull(before)
             core.lock()
