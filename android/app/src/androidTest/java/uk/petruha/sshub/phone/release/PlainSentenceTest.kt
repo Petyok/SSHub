@@ -22,7 +22,7 @@ class PlainSentenceTest {
 
     @Test fun red_shows_the_sentence_first_hides_the_raw_fields_and_never_lamport_or_seq() {
         val v = ReleaseSamples.redRevoke.copy(plain = sentence)
-        setScreen(true, 1f) { RedScreen(RedState(v, v.proposedAt + 5), RedActions()) }
+        rule.setScreen(true, 1f) { RedScreen(RedState(v, v.proposedAt + 5), RedActions()) }
         rule.onNodeWithText(sentence).assertExists()
         rule.onNodeWithText("lamport", substring = true).assertDoesNotExist()
         rule.onNodeWithText("seq", substring = true).assertDoesNotExist()
@@ -33,13 +33,13 @@ class PlainSentenceTest {
 
     @Test fun red_without_a_sentence_keeps_the_fields_open() {
         val v = ReleaseSamples.redRevoke
-        setScreen(true, 1f) { RedScreen(RedState(v, v.proposedAt + 5), RedActions()) }
+        rule.setScreen(true, 1f) { RedScreen(RedState(v, v.proposedAt + 5), RedActions()) }
         rule.onNodeWithText("Changes").assertExists()
     }
 
     @Test fun release_shows_the_sentence_and_folds_the_op_rows() {
         val v = ReleaseSamples.releaseDbs.copy(plain = "Give laptop-2 your piece of the saved password 0A0A 0A0A.")
-        setScreen(true, 1f) { ShareReleaseScreen(ReleaseSamples.releaseState(v), ReleaseActions()) }
+        rule.setScreen(true, 1f) { ShareReleaseScreen(ReleaseSamples.releaseState(v), ReleaseActions()) }
         rule.onNodeWithText("Give laptop-2 your piece of the saved password 0A0A 0A0A.").assertExists()
         rule.onNodeWithText("What you release").assertDoesNotExist()
     }
