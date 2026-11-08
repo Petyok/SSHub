@@ -588,21 +588,41 @@ impl App {
     }
 
     pub(crate) fn save_tunnel_form(&mut self) -> Result<()> {
-        let Some(form) = self.tunnel_form.take() else {
+        let Some(mut form) = self.tunnel_form.take() else {
             return Ok(());
         };
 
-        let local_port: u16 = form.local_port.parse().unwrap_or(0);
-        if local_port == 0 {
-            self.tunnel_notice = Some("Invalid local port".into());
+        let local_port: u16 = form.local_port.trim().parse().unwrap_or(0);
+        let remote_text = form.remote_port.trim();
+        let remote_port: Option<u16> = if form.tunnel_type == crate::store::TunnelType::Dynamic {
+            Some(0)
+        } else if remote_text.is_empty() {
+            // Forwarding to the same port number is the common case.
+            Some(local_port)
+        } else {
+            remote_text.parse().ok().filter(|&p| p != 0)
+        };
+        let error = if form.host_id.is_none() {
+            Some((TunnelFormField::Host, "Pick an SSH server"))
+        } else if local_port == 0 {
+            Some((TunnelFormField::LocalPort, "Invalid local port"))
+        } else if remote_port.is_none() {
+            Some((TunnelFormField::RemotePort, "Invalid destination port"))
+        } else {
+            None
+        };
+        if let Some((field, msg)) = error {
+            // Drawn on the form's own error row; focus jumps to the bad field.
+            self.tunnel_notice = Some(msg.into());
+            form.active_field = field;
+            form.cursor = form
+                .active_text_field()
+                .map(text_input::char_len)
+                .unwrap_or(0);
             self.tunnel_form = Some(form);
             return Ok(());
         }
-        let remote_port: u16 = if form.tunnel_type == crate::store::TunnelType::Dynamic {
-            0
-        } else {
-            form.remote_port.parse().unwrap_or(0)
-        };
+        let remote_port = remote_port.unwrap_or(0);
 
         let new = crate::store::NewTunnel {
             host_id: form.host_id,
@@ -619,6 +639,7 @@ impl App {
             auto_connect: form.auto_connect,
         };
 
+        let mut restart = None;
         match form.editing_id {
             None => {
                 self.store.create_tunnel(&new)?;
@@ -627,21 +648,32 @@ impl App {
             Some(id) => {
                 // Editing recreates the row under a fresh id, so a still-running
                 // child would be orphaned (holding its local port, invisible to
-                // the UI). Stop it first, mirroring the delete path.
-                if self.tunnel_manager.is_running(id)
+                // the UI). Stop it first, mirroring the delete path, and bring
+                // the new row back up below if it was live.
+                let live = self.tunnel_manager.is_running(id)
                     || self.tunnel_manager.has_child(id)
-                    || self.tunnel_manager.is_reconnecting(id)
-                    || self.tunnel_manager.is_gave_up(id)
-                {
+                    || self.tunnel_manager.is_reconnecting(id);
+                if live || self.tunnel_manager.is_gave_up(id) {
                     self.tunnel_manager.stop_user(id)?;
                 }
                 self.store.delete_tunnel(id)?;
-                self.store.create_tunnel(&new)?;
+                let new_id = self.store.create_tunnel(&new)?;
                 self.tunnel_notice = Some(format!("Updated tunnel :{local_port}"));
+                restart = live.then_some(new_id);
             }
         }
 
         self.reload_tunnels()?;
+        if let Some(new_id) = restart {
+            self.toggle_tunnel_by_id(new_id)?;
+            self.tunnel_notice = Some(if self.tunnel_manager.has_child(new_id) {
+                format!("Updated and restarted tunnel :{local_port}")
+            } else {
+                // toggle_tunnel_by_id left the start failure in the notice.
+                let why = self.tunnel_notice.take().unwrap_or_default();
+                format!("Updated tunnel :{local_port}; it stopped and did not restart ({why})")
+            });
+        }
         let hidden = !self.tunnel_filter.is_empty()
             && !self
                 .tunnel_view()

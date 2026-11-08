@@ -13,6 +13,7 @@ pub enum KeyAction {
     Quit,
     Help,
     Search,
+    QuickConnect,
     KeybindEditor,
     ForceQuit,
     Connect,
@@ -124,11 +125,12 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 111] = [
+    pub const ALL: [KeyAction; 112] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
         KeyAction::Search,
+        KeyAction::QuickConnect,
         KeyAction::KeybindEditor,
         KeyAction::ForceQuit,
         KeyAction::Connect,
@@ -243,7 +245,8 @@ impl KeyAction {
             KeyAction::Save => "Save form",
             KeyAction::Quit => "Quit",
             KeyAction::Help => "Help",
-            KeyAction::Search => "Search / palette",
+            KeyAction::Search => "Search / filter list",
+            KeyAction::QuickConnect => "Quick-connect palette",
             KeyAction::KeybindEditor => "Edit keybindings",
             KeyAction::ForceQuit => "Force quit",
             KeyAction::Connect => "Connect / confirm",
@@ -363,6 +366,7 @@ pub struct KeybindsConfig {
     pub quit: Vec<String>,
     pub help: Vec<String>,
     pub search: Vec<String>,
+    pub quick_connect: Vec<String>,
     pub keybind_editor: Vec<String>,
     pub force_quit: Vec<String>,
     pub connect: Vec<String>,
@@ -479,6 +483,7 @@ impl Default for KeybindsConfig {
             quit: vec!["q".into()],
             help: vec!["?".into()],
             search: vec!["/".into()],
+            quick_connect: vec!["Ctrl+P".into()],
             keybind_editor: vec!["Ctrl+K".into()],
             force_quit: vec!["Ctrl+C".into()],
             connect: vec!["Enter".into()],
@@ -514,7 +519,9 @@ impl Default for KeybindsConfig {
             import_termius: vec!["Shift+T".into()],
             groups_manage: vec!["Shift+G".into()],
             rename_group: vec!["Ctrl+G".into()],
-            delete_group: vec!["Ctrl+Shift+G".into()],
+            // Alt+Shift, not Ctrl+Shift: legacy terminals send Ctrl+Shift+G as
+            // plain Ctrl+G (rename), but Alt+Shift+G arrives as ESC G intact.
+            delete_group: vec!["Alt+Shift+G".into()],
             tab_hosts: vec!["h".into(), "1".into()],
             tab_sftp: vec!["2".into()],
             tab_tunnels: vec!["3".into()],
@@ -550,13 +557,14 @@ impl Default for KeybindsConfig {
             session_tab_prev: vec!["Ctrl+[".into(), "Ctrl+PageUp".into()],
             session_tab_next: vec!["Ctrl+]".into(), "Ctrl+PageDown".into()],
             session_detach: vec!["Ctrl+D".into()],
-            session_open_sftp: vec!["Ctrl+Shift+F".into()],
             // Alt+Shift+letter: every Alt+letter that no shell binds is taken by
             // the split view, and remote apps (readline, tmux, vim) leave the
-            // shifted Alt chords alone.
+            // shifted Alt chords alone. Unlike Ctrl+Shift, a legacy terminal
+            // still reports the Shift (ESC + uppercase letter).
+            session_open_sftp: vec!["Alt+Shift+F".into()],
             session_share_net: vec!["Alt+Shift+N".into()],
-            local_shell: vec!["Ctrl+Shift+T".into()],
-            session_focus: vec!["Ctrl+Shift+S".into()],
+            local_shell: vec!["Alt+Shift+T".into()],
+            session_focus: vec!["Alt+Shift+S".into()],
             session_switcher: vec!["Alt+S".into()],
             session_scroll_up: vec!["PageUp".into()],
             session_scroll_down: vec!["PageDown".into()],
@@ -703,6 +711,7 @@ impl KeybindsConfig {
             KeyAction::Quit => &self.quit,
             KeyAction::Help => &self.help,
             KeyAction::Search => &self.search,
+            KeyAction::QuickConnect => &self.quick_connect,
             KeyAction::KeybindEditor => &self.keybind_editor,
             KeyAction::ForceQuit => &self.force_quit,
             KeyAction::Connect => &self.connect,
@@ -819,6 +828,7 @@ impl KeybindsConfig {
             KeyAction::Quit => self.quit = binds,
             KeyAction::Help => self.help = binds,
             KeyAction::Search => self.search = binds,
+            KeyAction::QuickConnect => self.quick_connect = binds,
             KeyAction::KeybindEditor => self.keybind_editor = binds,
             KeyAction::ForceQuit => self.force_quit = binds,
             KeyAction::Connect => self.connect = binds,
@@ -1103,7 +1113,7 @@ mod tests {
         custom.set(KeyAction::SessionFocus, vec!["F8".into()]);
         let hints = custom.session_footer_hints();
         assert_eq!(hints[0], ("F8".to_string(), "resume"));
-        assert!(!hints.iter().any(|(keys, _)| keys == "Ctrl+Shift+S"));
+        assert!(!hints.iter().any(|(keys, _)| keys == "Alt+Shift+S"));
         assert!(
             !hints.iter().any(|(_, label)| *label == "detach"),
             "detach belongs on the in-session header, not the dashboard footer"

@@ -161,8 +161,9 @@ pub(crate) fn wizard_pick_esc_closes() {
     assert_eq!(app.mode, AppMode::Normal);
 }
 
+/// #10: Esc on the preview steps back to the command (kept), like `c`.
 #[test]
-pub(crate) fn wizard_preview_esc_closes() {
+pub(crate) fn wizard_preview_esc_goes_back_to_the_command() {
     let mut app = app_with_targets();
     app.open_broadcast();
     app.handle_key_broadcast_pick(key(KeyCode::Enter)).unwrap();
@@ -174,8 +175,73 @@ pub(crate) fn wizard_preview_esc_closes() {
     assert_eq!(app.mode, AppMode::BroadcastPreview);
 
     app.handle_key_broadcast_preview(key(KeyCode::Esc)).unwrap();
-    assert!(app.broadcast_setup.is_none());
-    assert_eq!(app.mode, AppMode::Normal);
+    assert_eq!(app.mode, AppMode::BroadcastCommand);
+    assert_eq!(app.broadcast_setup.as_ref().unwrap().command, "ls");
+}
+
+/// #10: a target with no managed hosts keeps the menu up with a notice
+/// instead of opening a command prompt that can never run.
+#[test]
+pub(crate) fn wizard_target_without_hosts_stays_on_the_menu() {
+    let mut app = app_with_targets();
+    app.store
+        .create_group(&crate::store::NewHostGroup {
+            name: "empty".into(),
+            sort_order: 1,
+            ..Default::default()
+        })
+        .unwrap();
+    app.reload_hosts().unwrap();
+    app.open_broadcast();
+    for c in "empty".chars() {
+        app.handle_key_broadcast_pick(key_char(c)).unwrap();
+    }
+    app.handle_key_broadcast_pick(key(KeyCode::Enter)).unwrap();
+
+    assert_eq!(app.mode, AppMode::BroadcastPickTarget);
+    assert!(app.broadcast_setup.is_some());
+    let notice = app.host_notice.clone().unwrap_or_default();
+    assert!(notice.contains("group: empty"), "{notice}");
+}
+
+/// #10: typing on the target menu filters it; Esc clears the filter first.
+#[test]
+pub(crate) fn wizard_target_menu_filters_as_you_type() {
+    let mut app = app_with_targets();
+    app.open_broadcast();
+    app.handle_key_broadcast_pick(key_char('#')).unwrap();
+    app.handle_key_broadcast_pick(key_char('d')).unwrap();
+    let setup = app.broadcast_setup.as_ref().unwrap();
+    assert_eq!(setup.visible_options().len(), 1);
+    assert_eq!(setup.selected_option().unwrap().menu_label(), "#db");
+
+    app.handle_key_broadcast_pick(key(KeyCode::Esc)).unwrap();
+    assert_eq!(
+        app.mode,
+        AppMode::BroadcastPickTarget,
+        "Esc cleared the filter"
+    );
+    assert!(app.broadcast_setup.as_ref().unwrap().query.is_empty());
+}
+
+/// #10: `y` with every host deselected keeps the wizard and the command.
+#[test]
+pub(crate) fn wizard_run_with_nothing_selected_keeps_the_preview() {
+    let mut app = app_with_targets();
+    app.open_broadcast();
+    app.handle_key_broadcast_pick(key(KeyCode::Enter)).unwrap();
+    for c in "ls".chars() {
+        app.handle_key_broadcast_command(key_char(c)).unwrap();
+    }
+    app.handle_key_broadcast_command(key(KeyCode::Enter))
+        .unwrap();
+    for c in &mut app.broadcast_setup.as_mut().unwrap().candidates {
+        c.selected = false;
+    }
+    app.handle_key_broadcast_preview(key_char('y')).unwrap();
+    assert_eq!(app.mode, AppMode::BroadcastPreview);
+    assert_eq!(app.broadcast_setup.as_ref().unwrap().command, "ls");
+    assert!(app.broadcast.is_none());
 }
 
 #[test]

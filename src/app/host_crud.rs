@@ -44,6 +44,11 @@ impl App {
 
     pub(crate) fn delete_selected_host(&mut self) -> Result<()> {
         let Some(host_idx) = self.selected_host_index() else {
+            // On a group header `d` means "delete this group".
+            if self.selected_nav_header().is_some() {
+                return self.delete_selected_host_group();
+            }
+            self.host_notice = Some("No host selected".into());
             return Ok(());
         };
         let Some(id) = self.hosts[host_idx].managed_id() else {

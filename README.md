@@ -13,7 +13,7 @@ A terminal UI for managing and connecting to SSH hosts. Combines your `~/.ssh/co
 
 ![SSHub demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/hero.gif)
 
-Navigating the dashboard: nested host groups, the fuzzy palette (`/`), the group manager (`Shift+G`), and the multi-tag filter (`#`):
+Navigating the dashboard: nested host groups, the fuzzy palette (`Ctrl+P`), the group manager (`Shift+G`), and the multi-tag filter (`#`):
 
 ![Navigation demo](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/gifs/navigate.gif)
 
@@ -47,7 +47,7 @@ The hosts dashboard: nested groups on the left; the selected host's card shows i
 
 ![Hosts dashboard](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/hosts.png)
 
-Fuzzy quick-connect palette (`/`) and the multi-tag filter (`#`):
+Fuzzy quick-connect palette (`Ctrl+P`) and the multi-tag filter (`#`):
 
 ![Quick-connect palette](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/palette.png)
 ![Tag filter](https://raw.githubusercontent.com/Petyok/SSHub/main/demo/screenshots/tags.png)
@@ -72,19 +72,19 @@ The theme picker, with its detail preview next to the list, and the known hosts 
 - **Embedded SSH sessions**: connect opens an in-TUI PTY; detach with `Ctrl+D` and return to the dashboard while SSH keeps running; multiple session tabs, and `Alt+S` switches between open sessions with a searchable picker
 - **Interactive SSH authentication**: masked password, passphrase and one-time-code modals. Eligible managed credentials get a remember option that starts clear and is saved only after SSH confirms authentication; generic challenges are never saved. `Enter` submits, `Tab` selects remember, `Space` toggles it, and `Esc` (or `Ctrl+C`) cancels. New host keys require explicit `y` acceptance; changed keys require uppercase `A` to remove the identified stale entry and reconnect for confirmation. Fingerprints are shown unchanged; `PgUp/PgDn` scroll long prompts. A ProxyJump hop that asks for a password is answered with that hop host's own stored secret, never the destination's, and the modal names the hop. OpenSSH may record accepted keys in its configured known_hosts file. Tunnels, headless commands and Mosh keep their existing authentication paths.
 - **Share this machine's network**: `Alt+Shift+N` inside an ssh session (or `sshub connect <host> --share-net`) gives the host a SOCKS5 proxy on its own `127.0.0.1` through ssh reverse dynamic forwarding (`-R 127.0.0.1:0`), so a host with no DNS or way out can reach the world through this machine: `apt -o Acquire::http::Proxy=socks5h://127.0.0.1:PORT -o Acquire::https::Proxy=socks5h://127.0.0.1:PORT install ...` or `curl -x socks5h://127.0.0.1:PORT ...`. In the TUI the proxy rides a second ssh connection to the same host that carries nothing else, so the session itself is never touched; the same key stops it, and closing the session or quitting SSHub ends it (on Linux also when SSHub is killed; elsewhere only a SIGKILL can leave it running). It starts once the session is connected. That connection must log in without prompts (a key or a stored password), and a mosh or local shell tab cannot share. It is opt in, never saved on the host, never rides a ControlMaster of yours, and limited to destination ports 80 and 443. The bottom bar shows `⇄ net :PORT` and the host's SSH log gets the ready-to-paste lines; a host that forbids forwarding shows `⇄ net failed` and the session goes on. Security: while it is on, any user on the host can use the proxy to reach whatever this machine reaches on ports 80 and 443, internal web services behind its VPNs included. The local ssh client must know `PermitRemoteOpen` (OpenSSH 8.5); an older one refuses to start with "Bad configuration option".
-- **Hosts** — browse, search, and connect. Fuzzy search with `/`, multi-tag AND filter with `#`, favorites, nested groups, manual sort order
+- **Hosts** — browse, search, and connect. Fuzzy filter with `/` (`Enter` applies it so connect, edit, delete and every other host key work on the matches; `Esc` clears), quick-connect palette with `Ctrl+P`, multi-tag AND filter with `#`, favorites, nested groups, manual sort order
 - **SFTP file transfer** — a dual-pane browser with a staged transfer queue: navigate both sides, queue uploads and downloads (files or whole folders, transferred recursively), and run them with a progress bar. Files can be staged while the queue runs. Jump straight to a directory by typing its path with `g` (`/home/me`, `../other`, `~/.ssh`; `Tab` completes the last segment). The left pane is your local filesystem by default, or point it at a **second server** with `o` (`O` sends it back to local) to move files between two hosts — relayed through a local temp file, since SSH has no server-to-server copy. Manage files in place too: delete (`d`), new folder (`n`), rename/move (`R`), and change permissions (`M`, octal chmod)
 - **OS auto-detection** — on first connect a background probe detects the remote distro and the host card renders its logo (Braille art in brand colors), just like Termius
 - **Multiple groups & Favorites** — a host can belong to several groups at once; a reserved Favorites group and a ★ marker in the list, toggled with `f`
 - **Tunnels** — define and manage SSH tunnels (local/remote/dynamic SOCKS). Start, stop, and monitor from the TUI. Per-tunnel **keep alive** auto-starts on launch and reconnects dropped forwards with exponential backoff (configurable in `config.toml`).
-- **Identities**: key or user+password identities with ssh-agent integration: add (`p`) or remove (`r`) a key from the agent and see its loaded status, generate an ed25519 or rsa-4096 key pair (`g`), push a public key to a host (`Shift+P`), and manage `~/.ssh/known_hosts` (`H`: type to filter, `Ctrl+D` deletes a host's keys, `Ctrl+R` reloads)
-- **Group connection defaults**: a group can set a default identity, username, port, ProxyJump, transport and agent forwarding; a host inherits every field it leaves empty. Edit them with `Ctrl+G` (or `e` on a group header) in the TUI, or `sshub group edit --set-default-*` headless
+- **Identities**: key or user+password identities with ssh-agent integration: add (`p`) or remove (`r`) a key from the agent and see its loaded status, generate an ed25519 or rsa-4096 key pair (`g`), push a public key to a host (`Shift+P`: a popup shows progress, then "installed", "already present" or why it failed; `Esc` cancels; only when ssh asks for a password or a host-key answer SSHub has no reply for, `Enter` opens it in a terminal tab), and manage `~/.ssh/known_hosts` (`H`: type to filter, `Ctrl+D` deletes a host's keys, `Ctrl+R` reloads)
+- **Group connection defaults**: a group can set a default identity, username, port, ProxyJump, transport and agent forwarding; a host inherits every field it leaves empty. Edit them with `Ctrl+G` (or `e` on a group header) in the TUI, or `sshub group edit --set-default-*` headless. The form dropdowns (a group's Parent and Default identity, a host's Groups and Identity) filter as you type, fuzzy, with `(none)` / `+ New group…` always kept in the list
 - **Network map** (tab `6`): the jump hosts as a tree, left to right, with every host as a status glyph behind its last hop and a Σ column counting what depends on each hop. Only real jumps are drawn (a host's own ProxyJump, a group default, an ssh_config `ProxyJump`); groups and tags never add an edge. `B` shows a hop's blast radius (and broadcasts to it), `o` the tunnels riding on it, `t` tests the path hop by hop with `ssh -J`, `u` makes a hop the jump of another host, `/` filters (`group:` `tag:` `via:` `!name`). A jump loop is flagged and not connectable; a ProxyCommand shows as an opaque `proxy cmd` hop. `sshub map --dot` prints the same graph for Graphviz. In the host form the ProxyJump field is a hop list with a fuzzy picker (reuse a route, add a host, add a raw hop), a cycle guard, and a per-hop test connect; the stored value is still the plain comma separated ProxyJump string
-- **Broadcast** (`b` on the hosts tab): run one command on every managed host in a group or with a tag. Pick the target, type the command, then review the host list in a preview (`e` then `Space` includes or excludes a host, `c` goes back to the command) and press `y` to run. Results land in a docked panel and each host gets an audit row; `x` cancels a running broadcast or clears its error toasts. Your command replaces the host's stored remote command, mosh hosts broadcast over ssh, and output is capped at 1 MiB per host
+- **Broadcast** (`b` on the hosts tab): run one command on every managed host in a group or with a tag. Pick the target (type to filter the list; a target with no managed hosts says so and keeps the menu open), type the command, then review the host list in a preview (`e` then `Space` includes or excludes a host, `c` or `Esc` goes back to the command) and press `y` to run. Results land in a docked panel and each host gets an audit row; `x` cancels a running broadcast or clears its error toasts. Your command replaces the host's stored remote command, mosh hosts broadcast over ssh, and output is capped at 1 MiB per host
 - **Passwords from KeePassXC** (Linux) - a host's `Secret lookup` field (`sshub host add --secret-lookup`, `host edit --set-secret-lookup`) names one Secret Service entry by an exact attribute match, such as `URL=ssh://root@10.0.0.5:22`, `Title=db-01` or KeePassXC's `Uuid=…`, and its password is used instead of one stored in SSHub. In KeePassXC, enable Secret Service integration and expose the entry's group. The lookup must match exactly one entry, and a jump host never receives it
-- **Ad-hoc connect** - in the fuzzy palette (`/`), typing an unknown `[user@]host[:port]` (IPv6 in brackets supported) that matches no saved host offers a "connect without saving" row; Enter opens an embedded ssh session to it. Input is validated and injection-safe (no leading-dash hosts; destination passed after `--`)
-- **Local shell tab** - `Ctrl+Shift+T` opens a session tab running your login shell (`$SHELL`, else `/bin/sh`) with the same detach/close semantics as ssh tabs
-- **Command snippets** — a library of reusable commands (name, command, optional description and tags). Manage them from the dashboard with `Shift+S` (add/edit/delete); inside a live session `Ctrl+N` opens a fuzzy picker where `Enter` runs the selected command in the PTY and `Tab` inserts it without a trailing newline so you can edit before running
+- **Ad-hoc connect** - in the fuzzy palette (`Ctrl+P`), typing an unknown `[user@]host[:port]` (IPv6 in brackets supported) that matches no saved host offers a "connect without saving" row; Enter opens an embedded ssh session to it. Input is validated and injection-safe (no leading-dash hosts; destination passed after `--`)
+- **Local shell tab** - `Alt+Shift+T` opens a session tab running your login shell (`$SHELL`, else `/bin/sh`) with the same detach/close semantics as ssh tabs
+- **Command snippets** — a library of reusable commands (name, command, optional description and tags). Manage them from the dashboard with `Shift+S` (add/edit/delete, `/` filters the list); a snippet saved without a name is named after the start of its command. Inside a live session `Ctrl+N` opens a fuzzy picker where `Enter` runs the selected command in the PTY and `Tab` inserts it without a trailing newline so you can edit before running
 - **Session command suggestions** — as you type in a live session, the rest of a matching
   previously recorded command appears inline as a dim suffix after the cursor. `Tab` (or
   `Ctrl+F`) accepts it, `Esc` dismisses it for that line. Suggestions come from this
@@ -98,9 +98,9 @@ The theme picker, with its detail preview next to the list, and the known hosts 
   from Settings. Disabling persistence stops reads and writes but does not delete existing rows.
   Browse and run snippets separately with `Ctrl+N` (`Enter` runs, `Tab` inserts for editing).
   There is no suggestion picker and no `Ctrl+Space` chord.
-- **Audit**: log of all connection events with filtering by status (all / ok / fail) and time range (all / 24h / week / month); session connect events record the path to the session log when logging is enabled
+- **Audit**: log of all connection events with filtering by status (all / ok / fail), time range (all / 24h / week / month) and a fuzzy `/` filter over host, user, status and note; session connect events record the path to the session log when logging is enabled
 - **Session logging** — opt-in capture of PTY session output to `~/.local/share/sshub/profiles/<name>/logs/<host-dir>/` (managed hosts use `{name}-{id}`; pure `~/.ssh/config` aliases without a launcher row may share a directory when sanitized names collide). Enable globally in Settings (`Ctrl+H`) or override per host (`inherit` / `on` / `off`). **Logs capture everything echoed to the terminal, including passwords if they appear on screen.**
-- **Session log browser** (`Shift+L`): read those session logs inside the TUI. Pick a host, pick a rotated segment, and view it with terminal escape codes stripped so the transcript reads as plain text. In the viewer, `/` searches (case-insensitive), `n` / `N` step through matches, and `b` bookmarks the current line by name. `m` lists a host's bookmarks to jump straight back to a saved line. Reads are capped so a large transcript is never loaded whole.
+- **Session log browser** (`Shift+L`): read those session logs inside the TUI. Pick a host, pick a rotated segment (`/` filters either list), and view it with terminal escape codes stripped so the transcript reads as plain text. In the viewer, `/` searches (case-insensitive), `n` / `N` step through matches, and `b` bookmarks the current line by name. `m` lists a host's bookmarks to jump straight back to a saved line. Reads are capped so a large transcript is never loaded whole.
 - **Mosh transport** — per-host `Transport` field in the host form (`ssh` or `mosh`). Embedded sessions use `mosh` when selected; tunnels and SFTP stay ssh-only.
 - **Startup command**: a host's `Startup command` (`--remote-command` headless) runs when you log in, in a remote terminal, and the session goes on in your login shell: `cd /srv/app` starts you in that directory, `cd / && sudo su root` in a root shell in `/` (exit it and you are back in your own shell). Start the command with `exec` to make it the whole session, as in `exec tmux new -A -s main`: the session then ends when it does. This is the ssh transport; an ssh_config host's `RemoteCommand` and a mosh host's command keep their own behaviour
 - **Settings overlay** (`Ctrl+H`): pick the theme, let your terminal show through SSHub's own surfaces or through the remote grid (two separate switches, both off by default), toggle OS logos, quit confirmation, the startup animation, session logging, ping probes and the start-up update check, open the profile manager, and control session command history (persist it, the per-host limit of 1 to 2000 commands, and clearing it per session, per host or globally)
@@ -108,7 +108,7 @@ The theme picker, with its detail preview next to the list, and the known hosts 
 - **Hybrid sources** — hosts from `~/.ssh/config` (read-only) and launcher-managed (full CRUD) merge without duplicates
 - **Import/Export**: import from `~/.ssh/config`, Termius backups, PuTTY (a Windows regedit `.reg` export or a Unix `~/.putty/sessions` directory), or mRemoteNG (`confCons.xml`); export managed hosts back to ssh config format (the export stops with an error naming the host if a name, address, user or ProxyJump could not be written safely). Only SSH sessions are imported (RDP/VNC/telnet entries are skipped), and encrypted mRemoteNG passwords are not decrypted (imported hosts carry no stored secret)
 - **Hot reload** — edits to `~/.ssh/config` update the host list live via file watcher
-- **Configurable keybindings**: rebind any action via `Ctrl+K`; stored in `config.toml` under `[keybinds]`
+- **Configurable keybindings**: rebind any action via `Ctrl+K` (a key another action already uses is kept, and the editor names that action); stored in `config.toml` under `[keybinds]`
 - **Profiles**: isolated workspaces, each with its own databases, config, themes, logs and keyring namespace (see [Usage](#usage)). In the profile manager (`Alt+P`), `t` transfers a host, group, identity or tunnel to another profile, or `m` after the destination opens an SFTP-style dual-pane screen to stage hosts for pushing (`→`) and pulling (`←`) between the two profiles, followed by their groups, tunnels, identities and audit logs step by step; headless, `sshub host|group|identity|tunnel transfer --to PROFILE` does the same for one entity
 - **Update notice** (`Shift+U`): on start SSHub asks GitHub for the latest release, and a newer one shows next to the version in the tab bar. `Shift+U` on the hosts tab installs it the way SSHub was installed (`npm install -g sshub-tui@<version>`, `cargo install sshub --version <version>`, or, for a release tarball, an in-place swap of the binary after checking it runs), then asks you to restart. While it installs, quitting always asks first. With no update known, `Shift+U` checks on demand. Needs `curl` (and `tar` for the tarball swap); `Check for updates` in Settings (`Ctrl+H`), or `[updates] check = false`, turns the start-up check off.
 - **What's new** (`Shift+W`): when `Shift+U` finishes an install, a popup shows the changelog of every version it brings (fetched from that release's `CHANGELOG.md`). `Shift+W` on the hosts tab reopens it until the restart, and otherwise shows the running version's notes.
@@ -395,9 +395,9 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | `Ctrl+H`         | Settings (theme, transparency, logging, ping, updates, profiles, command history); fixed, not rebindable |
 | `Ctrl+K`         | Keybind editor                  |
 | `Alt+P`          | Add / manage profiles (not in compatibility mode) |
-| `Shift+L`        | Browse session logs             |
-| `Shift+S`        | Manage command snippets         |
-| `Ctrl+Shift+T`   | Open a local shell tab          |
+| `Shift+L`        | Browse session logs (`/` filters the host and segment lists) |
+| `Shift+S`        | Manage command snippets (`/` filters) |
+| `Alt+Shift+T`    | Open a local shell tab          |
 | `?`              | Help screen (type to filter)    |
 | `q` / `Ctrl+C`   | Quit (asks first unless `confirm_quit` is off; a second `Ctrl+C` forces it) |
 
@@ -406,17 +406,17 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | Key                    | Action                              |
 |------------------------|-------------------------------------|
 | `Ctrl+T`               | New session tab (host picker)         |
-| `Ctrl+Shift+T`         | Local shell tab                     |
+| `Alt+Shift+T`          | Local shell tab                     |
 | `Ctrl+W`               | Close session tab                   |
 | `Ctrl+D`               | Detach to dashboard (SSH keeps running) |
 | `Ctrl+[` / `Ctrl+]`, `Ctrl+PgUp` / `Ctrl+PgDn` | Previous / next session tab |
-| `Ctrl+Shift+F`         | Open SFTP for this host (the session keeps running) |
+| `Alt+Shift+F`          | Open SFTP for this host (the session keeps running) |
 | `Alt+Shift+N`          | Share this machine's network with the host, or stop sharing (ssh sessions only) |
 | `Ctrl+N`               | Run a command snippet (`Enter` runs, `Tab` inserts without a newline) |
 | `Tab` / `Ctrl+F`       | Accept the inline command suggestion; `Esc` dismisses it |
 | `Esc` / `Ctrl+O`       | While connecting: cancel / show or hide the `ssh -v` debug log |
-| `Ctrl+Shift+S`         | Focus session from dashboard        |
-| `Alt+S`                | Switch to an open session (searchable) |
+| `Alt+Shift+S`          | Focus session from dashboard        |
+| `Alt+S`                | Switch to an open session (searchable; `Ctrl+X` closes the selected tab, e.g. a dead one) |
 | `Alt+V` / `Alt+J`      | Split view: add a pane side by side / below (up to 4 panes) |
 | `Alt+O`                | Split view: focus the next pane (or click a pane) |
 | `Alt+M`                | Split view: zoom the focused pane   |
@@ -426,7 +426,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 | drag                   | Select terminal text, copied on release; `Shift` inverts it when the remote app owns the mouse |
 
 With sessions running in the background, `Ctrl+T`, `Ctrl+W`, the tab-cycling
-keys and `Ctrl+Shift+F` also work from every dashboard tab.
+keys and `Alt+Shift+F` also work from every dashboard tab.
 
 `Ctrl+W` closes a session tab, but inside a form it kills the word before the
 cursor (`Ctrl+U` kills everything before it): the host, identity and tunnel
@@ -453,7 +453,7 @@ arrives as arrow keys, exactly as in a real terminal.
 | `Tab`              | Toggle detail panel       |
 | `a`                | Add host                  |
 | `e`                | Edit host; on a group header, edit the group |
-| `d`                | Delete host               |
+| `d`                | Delete host; on a group header, delete the group |
 | `Shift+D`          | Duplicate host            |
 | `f`                | Toggle favorite           |
 | `s`                | Cycle sort mode           |
@@ -465,15 +465,16 @@ arrives as arrow keys, exactly as in a real terminal.
 | `Alt`+arrows       | Move dashboard panel focus |
 | `z` / `Alt+Enter`  | Zoom focused panel (Esc to exit) |
 | `c` / `y`          | Clear / copy the SSH log   |
-| `/`                | Fuzzy search              |
-| `/` + `[user@]host` | Ad-hoc connect (unknown host, no save) |
+| `/`                | Fuzzy filter (`Enter` keeps it for every host key, `/` refines, `Esc` clears) |
+| `Ctrl+P`           | Quick-connect palette (`Enter` connects; `Ctrl+E` edit, `Ctrl+F` SFTP, `Ctrl+K` push key, `Ctrl+N` duplicate, `Ctrl+D` delete the highlighted host) |
+| `Ctrl+P` + `[user@]host` | Ad-hoc connect (unknown host, no save) |
 | `#`                | Filter by tags (AND)      |
-| `Shift+G`          | Manage groups (nested)    |
-| `Ctrl+G` / `Ctrl+Shift+G` | Edit / delete the selected group |
+| `Shift+G`          | Manage groups (nested; `/` filters the list) |
+| `Ctrl+G` / `Alt+Shift+G` | Edit / delete the selected group |
 | `Shift+I`          | Import from ssh config    |
 | `Shift+E`          | Export to ssh config      |
 | `Shift+T`          | Import from Termius       |
-| `Shift+P`          | Push public key to host   |
+| `Shift+P`          | Push public key to host (type to filter the identity list) |
 | `b`                | Broadcast a command to a group or tag |
 | `x`                | Cancel a running broadcast / clear its error toasts |
 | `Shift+U`          | Install the sshub update, or check for one |
@@ -495,16 +496,16 @@ arrives as arrow keys, exactly as in a real terminal.
 | `n` / `R` / `M`    | New folder / rename / chmod                          |
 | `r`                | Refresh both panes                                   |
 | `s`                | Open an SSH session to this host                     |
-| `/`                | Filter the focused pane                              |
-| `Esc`              | Disconnect, back to the picker                       |
+| `/`                | Filter the focused pane (on the picker: filter hosts, separate from the Hosts tab filter) |
+| `Esc`              | Disconnect, back to the picker (asks first while a transfer runs or the queue holds items) |
 
 ### Tunnels (tab 3)
 
 | Key       | Action                           |
 |-----------|----------------------------------|
 | `/`       | Fuzzy filter (label, host, ports, type; words may match different fields; `Enter` keeps, `Esc` clears) |
-| `a`       | Add tunnel                       |
-| `e`       | Edit tunnel                      |
+| `a`       | Add tunnel (an SSH server is required; a blank destination port uses the local port) |
+| `e`       | Edit tunnel (a running tunnel restarts with the new settings) |
 | `d`       | Delete tunnel                    |
 | `Enter`   | Start / stop / cancel reconnect  |
 | `R`       | Reconnect settings (`+`/`-` adjust, `*` resets the row) |
@@ -518,10 +519,10 @@ arrives as arrow keys, exactly as in a real terminal.
 | `[` / `]`  | Fewer / more columns (saved) |
 | `/`        | Fuzzy filter (name, user, key path; words may match different fields; `Enter` keeps, `Esc` clears) |
 | `a`        | Add identity             |
-| `e`        | Edit identity            |
+| `e` / `Enter` | Edit identity (an empty name defaults to the key file name, else the user) |
 | `d`        | Delete identity          |
-| `g`        | Generate SSH key pair    |
-| `p`        | Add key to agent         |
+| `g`        | Generate SSH key pair (`Space` switches the type; the default path is the first free `~/.ssh/id_<type>_sshub[_N]`) |
+| `p`        | Add key to agent (a stored passphrase is used) |
 | `r`        | Remove key from agent    |
 | `Shift+P`  | Push public key to host  |
 | `H`        | Known hosts manager (type to filter, `Ctrl+D` delete, `Ctrl+R` refresh) |
@@ -530,7 +531,9 @@ arrives as arrow keys, exactly as in a real terminal.
 
 | Key | Action                              |
 |-----|--------------------------------------|
-| `f` | Cycle filter (all / ok / fail)       |
+| `/` | Filter events by host, user, status or note (fuzzy); `Enter` keeps it, `Esc` clears |
+| `PgUp` / `PgDn`, `Home` / `End` | Page through events; jump to the newest / oldest |
+| `f` | Cycle status filter (all / ok / fail) |
 | `r` | Cycle range (all / 24h / week / month) |
 
 ### Map (tab 6)
@@ -540,7 +543,7 @@ arrives as arrow keys, exactly as in a real terminal.
 | `↑` / `↓`, `←` / `→` | Previous / next row; walk along the row (hop by hop, then its host glyphs) |
 | `Enter` | Connect to the hop or host through the normal connect path (a raw hop: ad-hoc; a cluster: open / fold) |
 | `e` | Edit the host under the cursor |
-| `/`, `#` | Filter (`group:` `tag:` `via:` `!name`, or fuzzy name); tag picker. `Enter` keeps the filter and opens the clusters holding a match, `Esc` clears |
+| `/`, `#` | Filter (`group:` `tag:` `via:` `!name`, or fuzzy name); tag picker (type to narrow it). `Enter` keeps the filter and opens the clusters holding a match, `Esc` clears |
 | `B` | Blast radius of the hop; `n` / `N` step through the dependents, `b` broadcasts to them |
 | `o`, `x` | Tunnel lens; start / stop the tunnel of the host under the cursor |
 | `u` | Use the hop as the jump of another host (`Tab`: replace or append) |

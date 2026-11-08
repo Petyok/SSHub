@@ -52,9 +52,33 @@ impl App {
                 | AppMode::SnippetForm
                 | AppMode::SnippetPicker
                 | AppMode::SftpPrompt
+                | AppMode::BroadcastCommand
+                | AppMode::KeygenForm
+                | AppMode::TunnelHostPicker
+                | AppMode::PushKeyHostPicker
+                | AppMode::PushKeyIdentityPicker
+                | AppMode::FieldPicker
+                | AppMode::GroupFieldPicker
+                | AppMode::Help
         ) || (self.mode == AppMode::Normal
-            && matches!(self.active_tab, 2 | 3)
-            && self.list_filter_editing);
+            && matches!(self.active_tab, 2..=4)
+            && self.list_filter_editing)
+            // Query only: a paste must not answer the delete confirmation.
+            || (self.mode == AppMode::KnownHosts
+                && self.known_hosts.as_ref().is_some_and(|s| !s.confirming_delete))
+            // Query only: while capturing, a paste would rebind the action.
+            || (self.mode == AppMode::KeybindEditor
+                && self.keybind_editor.as_ref().is_some_and(|e| !e.capturing))
+            || (self.mode == AppMode::SnippetManage && self.snippet_manage_filtering)
+            || (self.mode == AppMode::GroupManage && self.group_manage_filtering)
+            // The list filters, and the viewer's search and bookmark-name
+            // prompts; otherwise the panes read letters as commands.
+            || (self.mode == AppMode::LogBrowser
+                && self.log_browser.as_ref().is_some_and(|s| {
+                    s.list_filtering
+                        || (s.view == LogBrowserView::Viewer
+                            && (s.searching || s.naming.is_some()))
+                }));
         if !text_entry {
             return Ok(());
         }

@@ -210,6 +210,7 @@ fn a_click_on_a_word_wrapped_prompt_row_lands_on_the_char_drawn_there() {
     app.broadcast_setup = Some(BroadcastSetup {
         options: vec![],
         menu_selected: 0,
+        query: String::new(),
         target_label: "all".into(),
         cursor: command.chars().count(),
         command,

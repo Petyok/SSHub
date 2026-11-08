@@ -4,6 +4,70 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-09
+
+### Changed
+
+- **`/` filters the hosts list instead of opening quick connect** - type to
+  filter, Enter keeps the filter and returns to the list, where connect, edit,
+  delete and the other host keys act on the matches; Esc clears it. Quick
+  connect (the palette, including ad-hoc `user@host`) moved to `Ctrl+P`.
+- **Pushing a key (`Shift+P`) shows a popup, not a terminal tab** - progress,
+  then "installed", "already present" or the failure reason. If ssh needs a
+  password or a host-key answer, Enter moves it into a terminal tab.
+- **Form dropdowns filter as you type** - Parent group and Default identity in
+  the group form, Group and Identity in the host form. Arrows move; `j`/`k`
+  are now query text there.
+- **A new host's name defaults to its address** - Name (alias) is optional.
+  Same for identities (key file stem, then username) and snippets (the start
+  of the command).
+- **The palette acts on hosts, not just connects** - `Ctrl+E` edit, `Ctrl+F`
+  SFTP, `Ctrl+K` push key, `Ctrl+N` duplicate, `Ctrl+D` delete.
+- **`/` filters more lists** - the Audit tab, the log browser, the Group and
+  Snippet managers, the broadcast target menu, the map tag picker and the
+  push-key identity picker. Audit and the log browser also page with
+  PageUp/PageDown/Home/End.
+- **Group form works like the host form** - Enter moves to the next field and
+  saves on the last; Esc asks before discarding edits; errors show in the popup.
+- **Group headers** - `d` deletes the group; Favorites refuses edit/delete with
+  a notice; after a delete you return to where you started.
+- **Host form** - Enter on a group adds it; Space opens the Group and Identity
+  pickers.
+- **New defaults for four `Ctrl+Shift` binds** most terminals cannot send:
+  Delete group `Alt+Shift+G`, Local shell `Alt+Shift+T`, Session focus
+  `Alt+Shift+S`, Session open SFTP `Alt+Shift+F`. Binds saved in your config
+  are kept.
+- **Keys tab** - Enter edits the selected identity; Space toggles the key type
+  in Generate key, whose default path now skips existing keys.
+- **Session switcher** - `Ctrl+X` closes the selected tab.
+- **SFTP browser** - Esc asks before dropping a running transfer or a queue.
+- **Tunnel form** - requires an SSH server, a blank destination port defaults
+  to the local port, and editing a running tunnel restarts it.
+- **Broadcast** - a target without managed hosts stays on the menu with a
+  notice; Esc on the preview returns to the command instead of losing it.
+- **Keybind editor** warns when the new key is already bound elsewhere.
+
+### Fixed
+
+- **Group form no longer crashes on Backspace** - moving between fields kept
+  the cursor of the previous field, so deleting in a shorter field (e.g. the
+  default username after a longer group name) panicked sshub.
+- **Palette no longer crashes** when `~/.ssh/config` loses a host while it is
+  open, and no longer connects to a shifted host.
+- **Text inputs clamp an out-of-range cursor** instead of panicking.
+- **Paste works** in the broadcast prompt, Generate key, Help and every
+  filtering picker.
+- **The `#` tag popup and the SFTP host search keep their own text** - they no
+  longer wipe or hijack the hosts `/` filter; the tag popup accepts capitals.
+- **Host detail editor** - letters always type; favorite moved to `Ctrl+F`.
+- **A failed SFTP connect no longer replaces an open form or session** - it
+  becomes a notice there.
+- **Add to agent uses the stored passphrase** for encrypted keys.
+- **Generate key no longer reports success** when storing the passphrase
+  failed.
+- **Silent no-ops now say why** - SFTP refusals during a run, a failed group
+  delete, long tunnel errors (shortened, not dropped).
+
 ## [0.21.1] - 2026-11-07
 
 ### Fixed

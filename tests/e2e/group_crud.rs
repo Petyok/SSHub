@@ -36,11 +36,8 @@ fn key_ctrl_char(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
 }
 
-fn key_ctrl_shift_char(c: char) -> KeyEvent {
-    KeyEvent::new(
-        KeyCode::Char(c),
-        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
-    )
+fn key_alt_shift_char(c: char) -> KeyEvent {
+    KeyEvent::new(KeyCode::Char(c), KeyModifiers::ALT | KeyModifiers::SHIFT)
 }
 
 /// Open field edit, type text, confirm with Enter.
@@ -81,7 +78,7 @@ fn create_group_assign_host_visible_in_tree() {
     app.handle_key(key_char('a')).unwrap();
     assert_eq!(app.mode, AppMode::GroupForm);
     type_text(&mut app, "dev-vcenter");
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
     // After save, returns to GroupManage
     assert_eq!(app.mode, AppMode::GroupManage);
     assert!(app.groups.iter().any(|g| g.name == "dev-vcenter"));
@@ -103,8 +100,8 @@ fn create_group_assign_host_visible_in_tree() {
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
                                                  // Adding a host while the dev-vcenter header is selected pre-checks that
                                                  // group. Group is multi-select: Enter opens the checkbox dropdown, Space
-                                                 // toggles the highlighted group, Enter closes back. dev-vcenter is already
-                                                 // checked from the prefill, so just open and close.
+                                                 // toggles the highlighted group, Enter adds the highlighted group and
+                                                 // closes. dev-vcenter is already checked, so this keeps it.
     app.handle_key(key(KeyCode::Enter)).unwrap();
     assert_eq!(app.mode, AppMode::FieldPicker);
     app.handle_key(key(KeyCode::Enter)).unwrap(); // close dropdown (dev-vcenter stays checked)
@@ -331,7 +328,7 @@ fn rename_and_delete_group_via_shortcuts() {
     app.handle_key(key_shift_char('G')).unwrap();
     app.handle_key(key_char('a')).unwrap();
     type_text(&mut app, "old-name");
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
     app.handle_key(key(KeyCode::Esc)).unwrap(); // back to Normal
 
     // Create a host in that group
@@ -356,22 +353,20 @@ fn rename_and_delete_group_via_shortcuts() {
         app.handle_key(key(KeyCode::Backspace)).unwrap();
     }
     type_text(&mut app, "new-name");
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
 
     assert!(app.groups.iter().any(|g| g.name == "new-name"));
 
-    // Ctrl+Shift+G deletes group of selected host (with confirm)
-    app.handle_key(key_ctrl_shift_char('G')).unwrap();
+    // Alt+Shift+G deletes group of selected host (with confirm)
+    app.handle_key(key_alt_shift_char('G')).unwrap();
     assert_eq!(app.mode, AppMode::ConfirmDelete);
     assert!(app.pending_delete.is_some());
 
     app.handle_key(key_char('y')).unwrap();
-    // After confirm, returns to GroupManage
-    assert_eq!(app.mode, AppMode::GroupManage);
+    // Opened from the host list, so confirm lands back on the host list.
+    assert_eq!(app.mode, AppMode::Normal);
     assert!(!app.groups.iter().any(|g| g.name == "new-name"));
-
-    // Back to normal to check host
-    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.host_notice.as_deref(), Some("Group 'new-name' deleted"));
     let host = app.hosts[0].managed().expect("managed");
     assert!(host.group_id.is_none());
 }
@@ -385,7 +380,7 @@ fn delete_group_cancel_confirm_and_notice() {
     app.handle_key(key_shift_char('G')).unwrap();
     app.handle_key(key_char('a')).unwrap();
     type_text(&mut app, "keep-me");
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
     assert!(app.groups.iter().any(|g| g.name == "keep-me"));
     app.handle_key(key(KeyCode::Esc)).unwrap(); // back to Normal
 
@@ -441,7 +436,7 @@ fn group_manage_edit_renames_group() {
     app.handle_key(key_shift_char('G')).unwrap();
     app.handle_key(key_char('a')).unwrap();
     type_text(&mut app, "alpha");
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
     assert_eq!(app.mode, AppMode::GroupManage);
 
     // Edit it
@@ -452,7 +447,7 @@ fn group_manage_edit_renames_group() {
         app.handle_key(key(KeyCode::Backspace)).unwrap();
     }
     type_text(&mut app, "beta");
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
     assert_eq!(app.mode, AppMode::GroupManage);
     assert!(app.groups.iter().any(|g| g.name == "beta"));
     assert!(!app.groups.iter().any(|g| g.name == "alpha"));
@@ -467,10 +462,10 @@ fn group_manage_navigation() {
     app.handle_key(key_shift_char('G')).unwrap();
     app.handle_key(key_char('a')).unwrap();
     type_text(&mut app, "first");
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
     app.handle_key(key_char('a')).unwrap();
     type_text(&mut app, "second");
-    app.handle_key(key(KeyCode::Enter)).unwrap();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
 
     assert_eq!(app.group_manage_selected, 0);
     app.handle_key(key_char('j')).unwrap();
@@ -587,7 +582,7 @@ fn e_on_group_header_edits_group_and_picks_identity_via_dropdown() {
     assert_eq!(app.mode, AppMode::GroupFieldPicker);
 
     // Row 0 is "(none)"; pick the first real identity and confirm.
-    app.handle_key(key_char('j')).unwrap();
+    app.handle_key(key(KeyCode::Down)).unwrap();
     app.handle_key(key(KeyCode::Enter)).unwrap();
     assert_eq!(app.mode, AppMode::GroupForm);
 
