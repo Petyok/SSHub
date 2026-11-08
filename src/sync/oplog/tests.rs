@@ -2296,6 +2296,87 @@ fn prune_bootstrap_case(base: u64) {
     assert!(fresh.store.sync_chain_tail(&dev, 0).is_err());
 }
 
+/// Design 6.3: the folded certificate record survives a prune that deletes the issue op and the renewals, and a
+/// device that bootstraps from the checkpoint still refuses the third renewal.
+#[test]
+fn renew_survives_a_checkpoint_prune() {
+    let dir = tempfile::tempdir().unwrap();
+    let ring = live_ring(vec![file_peer(dir.path()), Peer::new(), Peer::new()]);
+    let t0 = crate::store::now_ts();
+    touch(&ring);
+    let issuer = &ring[1];
+    let issue = issuer.append(OpBody::CertIssue {
+        device_id: ring[2].dev(),
+        scope: CertScope::Hosts(vec![uid(1)]),
+        expiry: t0 + 100_000,
+        max_new_hosts_per_day: 5,
+        epoch_lo: 0,
+        epoch_hi: 0,
+    });
+    let cert_id = issue.hash();
+    let renew = |p: &Peer, expiry: i64| {
+        p.append(OpBody::CertRenew { cert_id, expiry });
+    };
+    renew(issuer, t0 + 190_000);
+    renew(&ring[2], t0 + 250_000); // not the issuer: never counts
+    renew(issuer, t0 + 150_000); // earlier than the end date so far: never counts
+    renew(issuer, t0 + 280_000);
+    for n in 0..2 {
+        issuer.append(upsert(70 + n, hf(&format!("later{n}"), "10.2.2.2")));
+    }
+    settle(&ring);
+    let record = |p: &Peer| p.store.sync_cert_record(&cert_id).unwrap();
+    let want = |r: Option<CertRecord>| {
+        let r = r.expect("the certificate is known");
+        assert_eq!((r.renewals, r.effective_expiry), (2, t0 + 280_000));
+        assert_eq!(r.original_expiry, t0 + 100_000);
+        assert_eq!(
+            (r.issuer.as_str(), r.issued_at),
+            (issuer.dev().as_str(), issue.timestamp)
+        );
+    };
+    want(record(&ring[0]));
+
+    let (_c1, _) = checkpoint_round(&ring, 0, t0);
+    touch(&ring);
+    settle(&ring);
+    let (_c2, h2) = checkpoint_round(&ring, 1, t0 + 100);
+    let report = ring[0].store.sync_prune(t0 + 8 * 86_400 + 1_000).unwrap();
+    assert!(report.ops_deleted > 0, "{report:?}");
+    let issue_ops: i64 = ring[0]
+        .store
+        .with_conn(|c| {
+            Ok(c.query_row(
+                "SELECT COUNT(*) FROM sync_ops WHERE op_hash = ?1",
+                [&cert_id[..]],
+                |r| r.get(0),
+            )?)
+        })
+        .unwrap();
+    assert_eq!(issue_ops, 0, "the issue op is pruned");
+    want(record(&ring[0]));
+
+    // A device that joins from the checkpoint knows the same record, and refuses a third renewal.
+    let bundle = ring[1].store.sync_checkpoint_bundle(&h2).unwrap().unwrap();
+    let fresh = Peer::new();
+    let words = ring_fingerprint(&bundle.state).unwrap();
+    fresh
+        .store
+        .sync_bootstrap(&bundle, &BootstrapTrust::RingFingerprint(words))
+        .unwrap();
+    want(record(&fresh));
+    renew(issuer, t0 + 380_000);
+    for p in &ring {
+        pull(&fresh, p);
+    }
+    fresh.approve_all();
+    want(record(&fresh));
+    want(record(&ring[0]));
+    settle(&ring);
+    want(record(&ring[0]));
+    want(record(issuer));
+}
+
 #[test]
 fn a_fork_at_the_prune_floor_is_still_proven_and_older_ops_are_covered() {
     let ring = live_ring(vec![Peer::new(), Peer::new(), Peer::new()]);
