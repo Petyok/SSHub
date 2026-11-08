@@ -39,7 +39,7 @@ const COMMANDS: [&str; 6] = [
 
 /// Appended to every device sync-now cannot reach for want of a host.
 const HOW_TO_RECORD_A_HOST: &str =
-    "press A on its host in the hosts tab, or run `sshub sync-join <host>` (a repeat ceremony records it)";
+    "press A on its host in the hosts tab, or run `sshub sync-join <host>` (it is approved again and recorded)";
 
 const EMPTY_RING: &str = "No sync ring on this profile yet.";
 
@@ -134,7 +134,7 @@ fn parse_args(cmd: &str, args: &[String]) -> Result<Parsed, String> {
             let id = args
                 .get(i + 1)
                 .filter(|v| !v.starts_with('-'))
-                .ok_or_else(|| format!("{a} requires an op id"))?;
+                .ok_or_else(|| format!("{a} requires a change id"))?;
             if out.resolve.is_some() {
                 return Err("give exactly one of --approve and --reject".into());
             }
@@ -260,7 +260,7 @@ fn sas_question(p: &SasPrompt<'_>, host: Option<&str>) -> String {
         )
     } else {
         format!(
-            "Enrolling {}. SAS words: {}\n{NO_SCREEN_NOTE} {}.\nAdmit this device? [y/N] ",
+            "Enrolling {}. The four check words: {}\n{NO_SCREEN_NOTE} {}.\nAdmit this device? [y/N] ",
             p.peer_name,
             p.sas,
             host.unwrap_or("this connection")
@@ -309,7 +309,7 @@ fn enroll(paths: &ProfilePaths) -> Result<i32> {
     // to stderr for the log only.
     let mut logged = |p: &SasPrompt<'_>| {
         eprintln!(
-            "SAS words: {} (peer has screen: {}) (peer {})",
+            "The four check words: {} (peer has screen: {}) (peer {})",
             p.sas,
             if p.peer_has_screen { "yes" } else { "no" },
             p.peer_name
@@ -331,7 +331,7 @@ fn enroll(paths: &ProfilePaths) -> Result<i32> {
         // No human here, so nothing says whether the peer had a screen: this
         // line is for the log only.
         eprintln!(
-            "SAS words: {} (peer has screen: unknown, no tty here; admitted on the SSH session)",
+            "The four check words: {} (peer has screen: unknown, no tty here; admitted on the SSH session)",
             outcome.sas
         );
     }
@@ -365,7 +365,7 @@ impl<I: BufRead, O: Write, E: Write> SasConfirm for JoinPrompt<'_, I, O, E> {
             let _ = writeln!(out, "Peer: {}", p.peer_name);
             let _ = write!(out, "Do they match? [y/N] ");
         } else {
-            let _ = writeln!(out, "SAS words: {}", p.sas);
+            let _ = writeln!(out, "The four check words: {}", p.sas);
             let _ = writeln!(out, "Peer: {}", p.peer_name);
             let _ = writeln!(out, "{NO_SCREEN_NOTE} {}.", self.host);
             let _ = write!(out, "Admit this device? [y/N] ");
@@ -568,7 +568,7 @@ fn now(paths: &ProfilePaths, device: Option<&str>, json_out: bool) -> Result<i32
                 if !s.forks.is_empty() {
                     fork = true;
                     if !json_out {
-                        println!("FORK DETECTED: {shown}");
+                        println!("TWO HISTORIES (fork) DETECTED: {shown}");
                     }
                 }
                 if !json_out {
@@ -780,10 +780,10 @@ fn resolve_prefix(hashes: &[[u8; 32]], prefix: &str) -> Result<[u8; 32], String>
     }
     let hits: Vec<&[u8; 32]> = hashes.iter().filter(|h| hex(*h).starts_with(&p)).collect();
     match hits.as_slice() {
-        [] => Err(format!("no pending op matches '{prefix}'")),
+        [] => Err(format!("no waiting change matches '{prefix}'")),
         [one] => Ok(**one),
         _ => Err(format!(
-            "'{prefix}' matches several pending ops; use more characters"
+            "'{prefix}' matches several waiting changes; use more characters"
         )),
     }
 }
@@ -879,6 +879,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
                 json!({
                     "id": &hex(&v.hash)[..8], "author": v.device, "summary": v.summary,
                     "reason": v.reason,
+                    "reason_words": v.reason.as_deref().map(crate::app::sync_view::reason_words),
                     "ceremony": v.red.as_ref().map(|r| json!({
                         "have": r.have, "missing": r.missing, "expired": r.expired,
                         "blocked": r.blocked, "rule_violation": r.rule_violation, "note": r.note,
@@ -1027,7 +1028,7 @@ mod tests {
         assert_eq!(resolve_prefix(&all, "123400"), Ok(c));
         assert_eq!(
             resolve_prefix(&all, "1234AB"),
-            Err("no pending op matches '1234AB'".into())
+            Err("no waiting change matches '1234AB'".into())
         );
         let mut d = a;
         d[5] = 0x01; // shares its first six digits with `a`

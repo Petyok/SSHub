@@ -195,16 +195,20 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
             let role = match pos[1] {
                 "holder" => DeviceRole::Holder,
                 "mirror" => DeviceRole::Mirror,
-                other => return Err(format!("unknown role '{other}' (holder or mirror)")),
+                other => {
+                    return Err(format!(
+                        "unknown role '{other}' (holder = full device, mirror = view-only copy)"
+                    ))
+                }
             };
             Cmd::Role(pos[0].into(), role)
         }
         "sync-approve" => {
-            exact(1, "one op id")?;
+            exact(1, "one change id")?;
             Cmd::Approve(pos[0].into())
         }
         "sync-factor" => {
-            exact(1, "one op id")?;
+            exact(1, "one change id")?;
             let kind = match (paper, email_code) {
                 (true, false) => FactorKind::Paper,
                 (false, true) => FactorKind::Email,
@@ -231,15 +235,15 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
                     RecoveryCmd::Start { paper }
                 }
                 "approve" => {
-                    exact(2, "an op id after approve")?;
+                    exact(2, "a change id after approve")?;
                     RecoveryCmd::Approve(pos[1].into())
                 }
                 "ack" => {
-                    exact(2, "an op id after ack")?;
+                    exact(2, "a change id after ack")?;
                     RecoveryCmd::Ack(pos[1].into())
                 }
                 "cancel" => {
-                    exact(2, "an op id after cancel")?;
+                    exact(2, "a change id after cancel")?;
                     RecoveryCmd::Cancel {
                         op: pos[1].into(),
                         factor: factor.ok_or("cancel needs --factor paper|email")?,
@@ -423,7 +427,7 @@ fn execute(paths: &ProfilePaths, cmd: Cmd, opts: Opts) -> Result<i32> {
         }
         Cmd::Exemption { on, device } => {
             if on {
-                bail!("Switching the exemption on is done in the terminal screen: tab 7, M, Master-phrase exemption.");
+                bail!("Turning the master phrase exemption on is done in the terminal screen: tab 7, M, Advanced, Master phrase exemption.");
             }
             report(opts, &exemption_off(&store, &id, &device, now)?)
         }
@@ -479,7 +483,7 @@ fn proof_name(p: &RedProof) -> String {
     match p {
         RedProof::Phone => "phone".into(),
         RedProof::SecondDevice => "second device".into(),
-        RedProof::Factor(None) => "third factor".into(),
+        RedProof::Factor(None) => "paper phrase or emailed code".into(),
         RedProof::Factor(Some(ThirdFactor::Paper)) => "paper".into(),
         RedProof::Factor(Some(ThirdFactor::EmailCode)) => "emailed code".into(),
     }
@@ -489,13 +493,13 @@ fn proof_name(p: &RedProof) -> String {
 fn ceremony_lines(st: &RedStatus) -> Vec<String> {
     let names = |v: &[RedProof]| v.iter().map(proof_name).collect::<Vec<_>>().join(", ");
     let mut out = vec![format!(
-        "ceremony: have [{}], missing [{}]{}",
+        "approvals: have [{}], missing [{}]{}",
         names(&st.have),
         names(&st.missing),
         if st.complete { " (complete)" } else { "" }
     )];
     if st.expired {
-        out.push("the ceremony expired: propose the change again".into());
+        out.push("the approval round ran out of time: propose the change again".into());
     }
     if let Some(why) = &st.blocked {
         out.push(format!("blocked: {why}"));
@@ -587,11 +591,11 @@ pub(crate) fn find_op(store: &LauncherStore, prefix: &str) -> Result<Op> {
                     .try_into()
                     .map_err(|_| anyhow!("stored hash"))?;
                 Ok(crate::sync::oplog::merge::load_op(conn, &h)?
-                    .context("op vanished")?
+                    .context("change vanished")?
                     .op)
             }
-            [] => bail!("no op matches '{prefix}'"),
-            _ => bail!("'{prefix}' matches several ops; give more digits"),
+            [] => bail!("no change matches '{prefix}'"),
+            _ => bail!("'{prefix}' matches several changes; give more digits"),
         }
     })
 }
@@ -622,8 +626,13 @@ pub(crate) fn role(
         store,
         &op,
         format!(
-            "proposed: {} becomes {to:?} (op {})",
+            "proposed: {} becomes a {} (change {})",
             short_id(&row.id),
+            if to == DeviceRole::Holder {
+                "full device"
+            } else {
+                "view-only copy"
+            },
             short(&op.hash())
         ),
         now,
@@ -663,7 +672,7 @@ pub(crate) fn revoke(
         store,
         &op,
         format!(
-            "proposed: revoke {} (op {})",
+            "proposed: remove {} (change {})",
             short_id(&row.id),
             short(&op.hash())
         ),
@@ -720,7 +729,7 @@ pub(crate) fn approve(
         store,
         &op,
         format!(
-            "approved op {} as {} (vote {})",
+            "approved change {} as {} (vote {})",
             short(&op.hash()),
             short_id(&id.public().device_id()),
             short(&vote.hash())
@@ -757,7 +766,7 @@ pub(crate) fn factor(
     let sig = store.sync_append_local(id, body)?;
     if recovery_op {
         let mut lines = vec![format!(
-            "third factor added to op {} (record {})",
+            "paper phrase or emailed code added to change {} (record {})",
             short(&op.hash()),
             short(&sig.hash())
         )];
@@ -772,7 +781,7 @@ pub(crate) fn factor(
         store,
         &op,
         format!(
-            "third factor added to op {} (record {})",
+            "paper phrase or emailed code added to change {} (record {})",
             short(&op.hash()),
             short(&sig.hash())
         ),
@@ -815,7 +824,15 @@ pub(crate) fn factor_register(
     let mut r = op_report(
         store,
         &op,
-        format!("registered the {kind:?} factor (op {})", short(&op.hash())),
+        format!(
+            "registered the {} (change {})",
+            if kind == FactorKind::Paper {
+                "paper phrase"
+            } else {
+                "emailed code"
+            },
+            short(&op.hash())
+        ),
         now,
     )?;
     if let Some(code) = note {
@@ -843,11 +860,11 @@ fn recovery_target(store: &LauncherStore, op: &Op) -> Result<Op> {
 fn verdict_hint(v: &crate::sync::recovery::ReenrollVerdict) -> &'static str {
     use crate::sync::recovery::ReenrollVerdict as V;
     match v {
-        V::AwaitingFactor => "the third factor was not proven yet: run `sshub sync-factor <op-id>` with the paper words or the emailed code",
+        V::AwaitingFactor => "the paper phrase or emailed code was not proven yet: run `sshub sync-factor <change-id>` with the paper words or the emailed code",
         V::Lapsed => "it was ready but nobody completed it within 3 days: it authorizes nothing any more, start a new one",
         V::Ready => "ready: the lost phone can now be replaced",
-        V::AwaitingApproval { .. } => "waiting for approvals of other attended devices",
-        V::AwaitingAck => "waiting for another attended device to acknowledge it",
+        V::AwaitingApproval { .. } => "waiting for approvals of other devices with a person at the keyboard",
+        V::AwaitingAck => "waiting for another device with a person at the keyboard to acknowledge it",
         V::NeedsMoreTime { .. } => "the time lock is still running",
         V::CancelledByPhone | V::CancelledByFactor => "cancelled",
         V::Completed => "completed: the old phone is revoked and the new one enrolled",
@@ -914,7 +931,7 @@ pub(crate) fn recovery_start(
     let body = rec::start_body(store, id, now, recover.as_ref(), third)?;
     let op = store.sync_append_local(id, body)?;
     let mut lines = vec![format!(
-        "recovery started (op {}); the timelock runs once a third party has seen it",
+        "recovery started (change {}); the 7 day waiting period runs once another device has seen it",
         short(&op.hash())
     )];
     if let Some(secret) = third_secret.filter(|s| !s.trim().is_empty()) {
@@ -922,7 +939,12 @@ pub(crate) fn recovery_start(
         store.sync_append_local(id, proof)?;
     } else {
         lines.push(format!(
-            "the third factor ({kind:?}) is not proven yet: run `sshub sync-factor {} --{}`",
+            "the {} is not proven yet: run `sshub sync-factor {} --{}`",
+            if kind == FactorKind::Paper {
+                "paper phrase"
+            } else {
+                "emailed code"
+            },
             short(&op.hash()),
             if kind == FactorKind::Paper {
                 "paper"
@@ -952,7 +974,7 @@ pub(crate) fn recovery_cancel(
     use crate::sync::recovery as rec;
     ensure!(
         !secret.trim().is_empty(),
-        "a cancellation from a device needs the third factor: the paper words or the emailed code"
+        "a cancellation from a device needs the paper phrase or the emailed code"
     );
     let target = find_op(store, op_prefix)?;
     let f = match kind {
@@ -970,13 +992,13 @@ pub(crate) fn recovery_cancel(
     let cancelled = verdict == rec::ReenrollVerdict::CancelledByFactor;
     let mut lines = vec![if cancelled {
         format!(
-            "cancelled recovery {} (op {})",
+            "cancelled recovery {} (change {})",
             short(&target.hash()),
             short(&cancel.hash())
         )
     } else {
         format!(
-            "the cancellation (op {}) did not take effect: the recovery is {verdict:?} (a wrong paper phrase, or this device is not an attended live holder)",
+            "the cancellation (change {}) did not take effect: the recovery is {verdict:?} (a wrong paper phrase, or this device is not a full device with a person at the keyboard that is in sync)",
             short(&cancel.hash())
         )
     }];
@@ -1010,7 +1032,7 @@ fn recovery(
             let third = super::unlock::prompt_secret(if paper {
                 "Emailed code (empty: prove it later with sync-factor): "
             } else {
-                "Paper phrase as the third factor (empty: prove it later with sync-factor): "
+                "Paper phrase to prove it now (empty: prove it later with sync-factor): "
             });
             let r = recovery_start(
                 store,
@@ -1113,7 +1135,7 @@ pub(crate) fn mode(
                     store,
                     &mc,
                     format!(
-                        "the mode change to {to:?} is still waiting for its ceremony (op {}); run this again once it completed",
+                        "the switch to {to:?} is still waiting for its approvals (change {}); run this again once they are in",
                         short(&mc.hash())
                     ),
                     now,
@@ -1121,7 +1143,7 @@ pub(crate) fn mode(
             }
             ensure!(
                 to == CredMode::Quorum,
-                "the other holders agreed. Finish the switch back to Vault in the terminal screen: sshub, tab 7, M, Switch the credential mode. It asks a second full device (or the phone) to approve each credential, which this command cannot ask."
+                "the other full devices agreed. Finish the switch back to Vault in the terminal screen: sshub, tab 7, M, Switch the credential mode. It asks a second full device (or the phone) to approve each credential, which this command cannot ask."
             );
             let bodies = crate::sync::modes::mode_migration(store, &me, &open)?;
             let n = bodies.len();
@@ -1142,7 +1164,7 @@ pub(crate) fn mode(
         store,
         &op,
         format!(
-            "mode change to {to:?} proposed (op {}); {}",
+            "switch to {to:?} proposed (change {}); {}",
             short(&op.hash()),
             if to == CredMode::Quorum {
                 "once the approvals are in, run this again to re-encrypt the credentials"
@@ -1161,7 +1183,11 @@ pub(crate) fn exemption_off(
     now: i64,
 ) -> Result<Report> {
     let row = find_device(store, device)?;
-    ensure!(row.exempt, "{} has no exemption", short_id(&row.id));
+    ensure!(
+        row.exempt,
+        "{} has no master phrase exemption",
+        short_id(&row.id)
+    );
     let op = store.sync_append_local(
         id,
         OpBody::ExemptionSet {
@@ -1173,7 +1199,7 @@ pub(crate) fn exemption_off(
         store,
         &op,
         format!(
-            "exemption of {} switched off (op {})",
+            "master phrase exemption of {} switched off (change {})",
             short_id(&row.id),
             short(&op.hash())
         ),
@@ -1244,7 +1270,7 @@ pub(crate) fn export_flow(
             bail!("the export is blocked: {why}");
         }
         if st.expired {
-            bail!("the ceremony expired");
+            bail!("the approval round ran out of time");
         }
         if st.complete {
             break;
@@ -1252,7 +1278,7 @@ pub(crate) fn export_flow(
         if (clock() - started) as u64 >= wait {
             let lines = ceremony_lines(&st);
             bail!(
-                "the export ceremony is not complete (op {}): {}; approve it from the other devices, then run the command again with --wait",
+                "the export is not approved yet (change {}): {}; approve it from the other devices, then run the command again with --wait",
                 short(&op.hash()),
                 lines.join("; ")
             );

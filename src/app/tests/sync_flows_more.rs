@@ -54,7 +54,7 @@ fn enabling_the_exemption_warns_validates_the_phrase_and_proposes_a_red_op() {
         a.mode == AppMode::SyncInfo
     });
     let lines = info_lines(&r.app).join("\n");
-    assert!(lines.contains("ceremony: have"), "{lines}");
+    assert!(lines.contains("approvals: have"), "{lines}");
     assert!(lines.contains("second device"), "{lines}");
     let ops = ops_of(&r.app.store, "ExemptionSet", None).unwrap();
     assert_eq!(ops.len(), 1);
@@ -79,7 +79,7 @@ fn the_exemption_is_refused_outside_a_quorum_ring_and_off_an_unattended_machine(
     }
     r.app.host_notice = None;
     crate::app::sync_flows_more::exemption_on(&mut r.app);
-    assert!(notice(&r.app).contains("attended holder terminal"));
+    assert!(notice(&r.app).contains("person at the keyboard"));
     assert_ne!(r.app.mode, AppMode::SyncPrompt);
 }
 
@@ -138,8 +138,8 @@ fn an_export_proposal_reports_the_missing_proofs_and_writes_nothing() {
         a.mode == AppMode::SyncInfo
     });
     let lines = info_lines(&r.app).join("\n");
-    assert!(lines.contains("bulk export proposed"), "{lines}");
-    assert!(lines.contains("ceremony: have"), "{lines}");
+    assert!(lines.contains("proposed (change"), "{lines}");
+    assert!(lines.contains("approvals: have"), "{lines}");
     assert!(
         lines.contains("choose \"Export every credential\" again"),
         "{lines}"
@@ -162,7 +162,7 @@ fn an_export_proposal_reports_the_missing_proofs_and_writes_nothing() {
     pump(&mut r.app, "the status panel", |a| {
         a.mode == AppMode::SyncInfo
     });
-    assert!(info_lines(&r.app).join("\n").contains("not complete yet"));
+    assert!(info_lines(&r.app).join("\n").contains("not approved yet"));
     assert!(!out.exists());
 }
 

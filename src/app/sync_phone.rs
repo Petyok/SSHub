@@ -353,14 +353,14 @@ pub(crate) fn drop_central(app: &mut App) {
 /// Menu entry: the ops list the phone copied (kind 5), through the courier ingest.
 pub(crate) fn paste_ops(app: &mut App) {
     app.sync_prompt(
-        "Paste phone ops",
-        "The phone's ops (base64, as the phone app copies them)",
+        "What the phone signed",
+        "What the phone signed (base64, as the phone app copies it)",
         false,
         |app, text| {
             app.run_sync_job(move |env| {
                 let s = crate::sync::unlock_paths::phone_ops_from_text(&env.store, &text)?;
                 Ok(format!(
-                    "phone ops taken in: {} received, {} applied, {} waiting for approval",
+                    "the phone's changes taken in: {} received, {} applied, {} waiting for approval",
                     s.received, s.applied, s.pending_arrived
                 ))
             });

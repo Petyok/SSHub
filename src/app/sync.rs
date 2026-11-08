@@ -657,7 +657,7 @@ impl App {
         }
         let mut text = format!("\u{21c5}{}", sync.reachable());
         if sync.pending > 0 {
-            text.push_str(&format!(" \u{23f3}{}ops", sync.pending));
+            text.push_str(&format!(" \u{23f3}{}", sync.pending));
         }
         let line = crate::sync::health::status_line(&sync.health);
         if let Some(line) = &line {
@@ -1094,10 +1094,10 @@ impl App {
                     .and_then(|p| p.host_of(&id).map(str::to_string));
                 self.host_notice = Some(match &host {
                     Some(h) => format!(
-                        "{name} is behind: it could not prove it is current, so nothing moved. Select it and press Enter to re-enroll it through {h} (a repeat ceremony; nothing about its role changes)"
+                        "{name} missed some changes and could not prove it is current, so nothing moved. Select it and press Enter to add it again through {h} (it is approved again; what it may do does not change)"
                     ),
                     None => format!(
-                        "{name} is behind and no host is known for it: select its host in the hosts tab and press A to enroll it again"
+                        "{name} missed some changes and no host is known for it: select its host in the hosts tab and press A to add it again"
                     ),
                 });
                 self.sync.reenroll = host.map(|h| (id, h));
@@ -1812,7 +1812,7 @@ mod tests {
     fn badge_counts_devices_and_pending_and_turns_red_on_compromise() {
         let mut app = configured_app();
         let (text, _) = app.sync_badge().unwrap();
-        assert_eq!(text, "\u{21c5}1 \u{23f3}2ops");
+        assert_eq!(text, "\u{21c5}1 \u{23f3}2");
         let red = Style::default().fg(app
             .theme()
             .color(crate::theme::catalog::ColorRole::StatusError));
@@ -2100,7 +2100,7 @@ mod tests {
                 (|a: &App| {
                     a.host_notice
                         .as_deref()
-                        .is_some_and(|n| n.starts_with("laptop is behind"))
+                        .is_some_and(|n| n.starts_with("laptop missed some changes"))
                 }) as fn(&App) -> bool,
             ),
             ("fork", |a: &App| a.mode == AppMode::SyncForkAlert),

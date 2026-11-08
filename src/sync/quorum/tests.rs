@@ -463,7 +463,7 @@ fn certificates_are_enforced_by_the_holders() {
     assert!(ok(&host_c, &d[1].did, at, at)
         .unwrap_err()
         .to_string()
-        .contains("scope"));
+        .contains("not covered"));
     assert!(ok(&host_a, &d[2].did, at, at)
         .unwrap_err()
         .to_string()
@@ -573,7 +573,7 @@ fn certificates_are_enforced_by_the_holders() {
     assert!(ok(&host_a, &d[1].did, t, t)
         .unwrap_err()
         .to_string()
-        .contains("revoked"));
+        .contains("ended"));
 
     // Fewer than three holders: nobody enforces it.
     let small = ring(2);
@@ -1250,7 +1250,7 @@ fn the_attended_peer_path_goes_through_the_log_and_the_grant_is_sealed_to_the_ep
     assert!(grant_bodies(&d[2].store, &d[2].id, &release)
         .unwrap_err()
         .to_string()
-        .contains("unattended"));
+        .contains("runs on its own"));
 }
 
 #[test]

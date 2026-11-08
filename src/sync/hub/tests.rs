@@ -54,7 +54,7 @@ fn an_unattended_holder_releases_only_under_a_valid_certificate() {
         &d[1].did,
         Grant::Approved,
     );
-    assert!(denied.unwrap_err().to_string().contains("unattended"));
+    assert!(denied.unwrap_err().to_string().contains("runs on its own"));
     // An attended holder releases on approval.
     assert!(release_share_for(
         &d[3].store,

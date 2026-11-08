@@ -45,7 +45,10 @@ pub(crate) fn entries() -> Vec<(String, MenuFn)> {
         group("Phone: add the phone, hand over its changes", phone),
         group("Passwords: Vault or Quorum, kit, paper phrase", credentials),
         group("Recovery: a lost phone", recovery),
-        group("Advanced: trust sessions, exemption, export", advanced),
+        group(
+            "Advanced: trust sessions, master phrase exemption, export",
+            advanced,
+        ),
     ]
 }
 

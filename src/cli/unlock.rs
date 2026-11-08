@@ -133,7 +133,7 @@ impl ShareSource for PromptShares {
         });
         found.ok_or_else(|| {
             UnlockError::NeedsShares(format!(
-                "no holder approved within {} s",
+                "no full device approved within {} s",
                 self.wait.as_secs()
             ))
         })

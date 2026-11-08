@@ -94,7 +94,7 @@ fn confirm_revoke(app: &mut App, id: String, name: String) {
     app.sync_prompt(
         "Revoke a device",
         format!(
-            "{name} will be cut off and the keys rotated. A holder needs the Red ceremony. Type its name to confirm"
+            "{name} will be cut off and the keys rotated. A full device needs the three approvals. Type its name to confirm"
         ),
         false,
         move |app, typed| {
@@ -247,10 +247,11 @@ pub(crate) fn mode(app: &mut App) {
         }
         Some(super::sync::CredModeView::Quorum) => pick_device(
             app,
-            "Switch back to Vault: which full device co-signs?",
+            "Switch back to Vault: which full device is the second signer?",
             |d| {
                 d.role == super::sync::DeviceRoleView::Holder
                     && !d.phone
+                    && !d.unattended
                     && d.status != DeviceStatusView::Revoked
             },
             propose_vault,
@@ -272,7 +273,18 @@ fn propose_vault(app: &mut App, id: String, _name: String) {
             &[0u8; 16],
             now(),
         )?;
-        Ok(r.lines.join("\n"))
+        let mut lines = r.lines;
+        // What the design asks the screen to say plainly about a downgrade (design: Mode transitions).
+        lines.push(
+            "Going back to Vault lowers the protection: afterwards the master phrase and the kit open every saved password, so a stolen computer is no longer stopped by needing a second device."
+                .into(),
+        );
+        lines.push(
+            "The computer that finishes the switch sees every password once. Passwords already copied while they were Quorum stay openable by whoever held a share then."
+                .into(),
+        );
+        lines.push("The second signer you picked must approve it, with the phone and the paper phrase or emailed code.".into());
+        Ok(lines.join("\n"))
     });
 }
 
@@ -472,11 +484,11 @@ fn recovery_start(app: &mut App) {
             // The third factor is proven over the new op: the emailed code when the paper
             // authorized it, the paper words otherwise. Empty leaves it awaiting the factor.
             app.sync_prompt(
-                "Start a recovery: third factor",
+                "Start a recovery: paper phrase or emailed code",
                 if paper {
                     "Type the emailed code (empty: prove it later; nothing is shown)"
                 } else {
-                    "Type the 24 words of the paper phrase as the third factor (empty: prove it later; nothing is shown)"
+                    "Type the 24 words of the paper phrase to prove it now (empty: prove it later; nothing is shown)"
                 },
                 true,
                 move |app, third| {

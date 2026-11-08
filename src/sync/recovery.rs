@@ -152,7 +152,7 @@ impl Recovery {
                 }
                 ensure!(
                     p.third_factor_distinct,
-                    "the third factor must be a different artifact than the authorization"
+                    "the paper phrase or emailed code must be a different one than the authorization"
                 );
                 ensure!(
                     p.liveness_ok,
@@ -170,7 +170,10 @@ impl Recovery {
                     by != p.requester,
                     "the requester cannot approve its own recovery"
                 );
-                ensure!(attended, "only attended devices approve a recovery");
+                ensure!(
+                    attended,
+                    "only devices with a person at the keyboard approve a recovery"
+                );
                 self.approvals.insert(by);
             }
             Event::Ack {
@@ -179,7 +182,7 @@ impl Recovery {
                 attended,
             } => {
                 let p = self.open()?;
-                ensure!(attended, "only an attended device acknowledges a recovery: an unattended device has seen nothing");
+                ensure!(attended, "only a device with a person at the keyboard acknowledges a recovery: a device that runs on its own has seen nothing");
                 ensure!(
                     by != p.requester,
                     "the requester cannot acknowledge its own recovery"
@@ -205,7 +208,7 @@ impl Recovery {
                 self.open()?;
                 ensure!(
                     with_factor,
-                    "a cancellation from a device needs the third factor"
+                    "a cancellation from a device needs the paper phrase or emailed code"
                 );
                 self.cancelled = Some(ReenrollVerdict::CancelledByFactor);
             }
@@ -484,7 +487,7 @@ fn validate_phone_reenroll_upto(
         .ok_or_else(|| anyhow::anyhow!("the requester is not a device of this ring"))?;
     ensure!(
         attended_live(requester),
-        "an unattended or revoked device cannot request a recovery"
+        "a device that runs on its own or was removed cannot request a recovery"
     );
     ensure!(
         requester.kind == DeviceKind::Terminal,
@@ -675,7 +678,7 @@ pub fn start_body(
     let via_paper = paper_recover.is_some();
     ensure!(
         !(via_paper && third_factor == ThirdFactor::Paper),
-        "paper authorizes this recovery, so the third factor must be the emailed code"
+        "the paper phrase authorizes this recovery, so the emailed code must be the proof"
     );
     let mut body = OpBody::PhoneReenroll {
         initiated_at: now,
@@ -725,7 +728,7 @@ pub fn cancel_body(reenroll: &Op, by_phone: bool, factor: Option<ThirdFactor>) -
     );
     ensure!(
         by_phone || factor.is_some(),
-        "a cancellation from a device needs the third factor"
+        "a cancellation from a device needs the paper phrase or emailed code"
     );
     Ok(OpBody::PhoneReenrollCancel {
         reenroll_hash: reenroll.hash(),

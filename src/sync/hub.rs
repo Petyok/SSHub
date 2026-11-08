@@ -138,7 +138,7 @@ pub fn pending_announcements(store: &LauncherStore) -> Result<Vec<Announcement>>
                 let by = if *by_phone {
                     "the phone itself"
                 } else {
-                    "a device with the third factor"
+                    "a device with your paper phrase or emailed code"
                 };
                 let _ = write!(body, "{who} cancelled a phone replacement (recovery {short}); it was signed by {by}.");
                 "[sshub] a phone replacement was cancelled".to_string()
@@ -148,8 +148,11 @@ pub fn pending_announcements(store: &LauncherStore) -> Result<Vec<Announcement>>
                 "[sshub] a phone replacement was approved".to_string()
             }
             _ => {
-                let _ = write!(body, "{who} sent a recovery operation ({kind}, {short}).");
-                "[sshub] a recovery operation arrived".to_string()
+                let _ = write!(
+                    body,
+                    "{who} sent a request to replace your phone ({kind}, {short})."
+                );
+                "[sshub] a request to replace your phone arrived".to_string()
             }
         };
         let _ = write!(
@@ -220,7 +223,7 @@ pub fn run_sync_serve_notify<L: SyncLink>(
 /// next round. Malformed input is an error and changes nothing.
 pub fn courier_ingest(store: &LauncherStore, ops: &[SignedOpBytes]) -> Result<RoundSummary> {
     if ops.len() > MAX_COURIER_OPS {
-        bail!("a phone carries at most {MAX_COURIER_OPS} ops");
+        bail!("a phone carries at most {MAX_COURIER_OPS} changes");
     }
     let decoded = ops
         .iter()
@@ -248,7 +251,7 @@ pub fn phone_chain_wire(store: &LauncherStore, phone: &str, me: &str) -> Result<
         .into_iter()
         .find(|(d, _, _)| *d == phone)
     else {
-        bail!("this terminal holds no op of that phone yet: run a sync round, or ask another terminal");
+        bail!("this computer holds no change of that phone yet: sync, or ask another computer");
     };
     let ops = store.sync_chain_tail(&phone, head.saturating_sub(MAX_COURIER_OPS as u64))?;
     Ok(PhoneOpsWire {
@@ -294,14 +297,14 @@ pub fn op_by_hash_prefix(store: &LauncherStore, prefix: &str) -> Result<Op> {
         Ok(it.collect::<rusqlite::Result<Vec<_>>>()?)
     })?;
     match rows.as_slice() {
-        [] => bail!("no op matches '{prefix}'"),
+        [] => bail!("no change matches '{prefix}'"),
         [(canonical, sig)] => Op::from_canonical(
             canonical,
             sig.as_slice()
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("stored signature"))?,
         ),
-        _ => bail!("'{prefix}' matches several ops; use more characters"),
+        _ => bail!("'{prefix}' matches several changes; use more characters"),
     }
 }
 

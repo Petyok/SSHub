@@ -158,7 +158,7 @@ fn f2_red_changes_name_their_parameters() {
         slot: None,
     });
     assert!(
-        v.summary.contains("switch off") && v.summary.contains("aabbccdd"),
+        v.summary.contains("turn off") && v.summary.contains("aabbccdd"),
         "{}",
         v.summary
     );

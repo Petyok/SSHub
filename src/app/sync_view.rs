@@ -520,12 +520,12 @@ pub(crate) fn pending_view(
         }
         OpBody::ExemptionSet { device_id, slot } => match slot {
             Some(key) => format!(
-                "enable the master-phrase exemption for {} (slot key {}, computed by that machine itself: only as trustworthy as it is)",
+                "turn on the master phrase exemption for {} (it made its own key: only as trustworthy as that computer, slot key {})",
                 device_name(devices, device_id),
                 short(&key.device_id())
             ),
             None => format!(
-                "switch off the master-phrase exemption for {}",
+                "turn off the master phrase exemption for {}",
                 device_name(devices, device_id)
             ),
         },
@@ -557,7 +557,7 @@ pub(crate) fn pending_view(
     };
     let reason_text = reason.clone();
     if let Some(reason) = reason {
-        summary.push_str(&format!(" [{reason}]"));
+        summary.push_str(&format!(" [{}]", reason_words(&reason)));
     }
     PendingOpView {
         device,
@@ -567,6 +567,22 @@ pub(crate) fn pending_view(
         reason: reason_text,
         red: red_view(store, op),
     }
+}
+
+/// What a reason a change waits for means, in the glossary's words (the stored codes stay in JSON).
+pub(crate) fn reason_words(reason: &str) -> String {
+    match reason {
+        "tier" => "needs your approval",
+        "stale" => "made by a device that was away too long",
+        "resurrection" => "brings back something that was deleted",
+        "revoke-conflict" => "conflicts with a removal",
+        "unknown-author" => "from a device this computer does not know yet",
+        "future-dated" => "its time is in the future",
+        "not-holder" => "made by a device that may not make this change",
+        "revoked-author" => "made by a device that was removed",
+        other => other,
+    }
+    .to_string()
 }
 
 pub(crate) fn proof_label(p: &crate::sync::ceremony::RedProof) -> &'static str {
@@ -614,7 +630,7 @@ pub(crate) fn evidence_lines(e: &crate::sync::oplog::ForkEvidence) -> Vec<String
     };
     let op = |o: &Op| {
         format!(
-            "operation seq {} lamport {} hash {}",
+            "change number {} (lamport {}) hash {}",
             o.seq,
             o.lamport,
             h(&o.hash())
@@ -622,19 +638,23 @@ pub(crate) fn evidence_lines(e: &crate::sync::oplog::ForkEvidence) -> Vec<String
     };
     match e {
         ForkEvidence::Ops(a, b) => vec![
-            "Proof: two different operations signed by the same device at the same position".into(),
+            "Evidence: two different changes signed by the same device at the same position".into(),
             format!("  {}", op(a)),
             format!("  {}", op(b)),
         ],
         ForkEvidence::OpAndHead(o, head) => vec![
-            "Proof: an operation and a signed head that contradict each other".into(),
+            "Evidence: a change and a last signed change that contradict each other".into(),
             format!("  {}", op(o)),
-            format!("  signed head seq {} hash {}", head.seq, h(&head.hash)),
+            format!(
+                "  last signed change number {} hash {}",
+                head.seq,
+                h(&head.hash)
+            ),
         ],
         ForkEvidence::Heads(a, b) => vec![
-            "Proof: two signed heads that cannot both be true".into(),
-            format!("  signed head seq {} hash {}", a.seq, h(&a.hash)),
-            format!("  signed head seq {} hash {}", b.seq, h(&b.hash)),
+            "Evidence: two last signed changes that cannot both be true".into(),
+            format!("  last signed change number {} hash {}", a.seq, h(&a.hash)),
+            format!("  last signed change number {} hash {}", b.seq, h(&b.hash)),
         ],
     }
 }

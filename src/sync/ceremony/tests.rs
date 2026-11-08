@@ -556,7 +556,7 @@ mod in_force {
         let at = op.timestamp + 5;
         for x in &d[..3] {
             let err = cert_allows(&cert, &pk, &x.store, &d[1].did, &host, at, at).unwrap_err();
-            assert!(err.to_string().contains("ceremony"), "{err}");
+            assert!(err.to_string().contains("not approved yet"), "{err}");
         }
         complete(&d, &op, 2, Some(&phrase));
         for x in &d[..3] {

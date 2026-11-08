@@ -182,7 +182,7 @@ pub fn ops_text(json: bool, wait: u64, out: &mut impl Write) -> Result<String> {
         }
         std::thread::sleep(POLL);
     }
-    bail!("no ops from the phone within {wait} s")
+    bail!("no changes from the phone within {wait} s")
 }
 
 /// `sync-notice --ble` and `sync-cert-request --ble`: hand the frame to the phone page and wait

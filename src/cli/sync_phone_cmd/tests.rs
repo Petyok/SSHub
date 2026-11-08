@@ -178,7 +178,7 @@ fn sync_phone_ops_says_why_ops_were_skipped() {
     assert_eq!(k[0]["reason"], "chain-gap");
     assert_eq!(k[0]["first_seq"], b.seq);
     assert_eq!(k[0]["count"], 2);
-    assert!(k[0]["note"].as_str().unwrap().contains("full chain"));
+    assert!(k[0]["note"].as_str().unwrap().contains("full history"));
     assert!(skipped_line(&k[0]).starts_with("skipped 2 chain-gap (first seq"));
     // The whole chain applies, and a second paste is already known.
     let (s, _) = phone_ops(&d[1].store, &ops_text(&[&a, &b, &c])).unwrap();
@@ -422,7 +422,7 @@ fn sync_share_request_challenge_decodes_and_the_phones_reply_opens_the_credentia
         .open(&d[0].store, &B64.encode(with_ext.encode()))
         .unwrap();
     assert_eq!(kept, share, "the valid share survives a failing extension");
-    assert!(warning.unwrap().contains("courier ops not kept"));
+    assert!(warning.unwrap().contains("changes were not kept"));
     // A reply for another request is refused.
     let other = ShareResponseWire {
         request_id: wire.request_id + 1,

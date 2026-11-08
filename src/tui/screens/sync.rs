@@ -286,7 +286,10 @@ pub fn render_review(frame: &mut Frame, app: &App) {
     let op = &sync.review[selected];
     if let Some(reason) = &op.reason {
         body.push(Line::styled(
-            format!("  waiting because: {reason}"),
+            format!(
+                "  waiting because: {}",
+                crate::app::sync_view::reason_words(reason)
+            ),
             app.theme().style(StyleRole::TextMuted),
         ));
     }
@@ -562,7 +565,10 @@ pub fn render_fork_alert(frame: &mut Frame, app: &App) {
     );
     let text = theme.style(StyleRole::TextPrimary);
     let body = vec![
-        Line::styled(format!("{} forked its history", f.device), red),
+        Line::styled(
+            format!("{} has two different histories (a fork)", f.device),
+            red,
+        ),
         Line::styled(f.detail.clone(), theme.style(StyleRole::TextMuted)),
     ];
     let mut body = body;
@@ -580,7 +586,7 @@ pub fn render_fork_alert(frame: &mut Frame, app: &App) {
         Line::raw(""),
         Line::styled("What to do now:", text),
         Line::styled(
-            "  1. Do not approve changes from this device or release shares to it (review rejects its operations: R, then r).",
+            "  1. Do not approve changes from this device or let it open passwords (review rejects its changes: R, then r).",
             text,
         ),
         Line::styled(
@@ -1034,7 +1040,6 @@ mod tests {
             "Can cut off a stolen device",
             "group staging",
             "\u{21c5}1",
-            "2ops",
         ] {
             assert!(s.contains(want), "{want}: {s}");
         }
@@ -1214,7 +1219,7 @@ mod tests {
         let app = app_in(AppMode::SyncForkAlert);
         let s = screen(&app, 100, 30);
         assert!(s.contains("COMPROMISED DEVICE"), "{s}");
-        assert!(s.contains("server forked its history"), "{s}");
+        assert!(s.contains("server has two different histories"), "{s}");
         assert!(s.contains("Revoke it"), "{s}");
         // No dashboard chrome: the tab bar is gone.
         assert!(!s.contains("hosts"), "{s}");

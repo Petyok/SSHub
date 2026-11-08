@@ -109,7 +109,7 @@ pub fn human_left(secs: i64) -> String {
 pub fn status_line(h: &Health) -> Option<String> {
     if let Some(left) = h.red_expires_in {
         if left <= 86_400 {
-            return Some(format!("Red change expires in {}", human_left(left)));
+            return Some(format!("Big change expires in {}", human_left(left)));
         }
     }
     if h.phone_expired {
@@ -160,7 +160,7 @@ mod tests {
         h.red_expires_in = Some(20 * 3_600);
         assert_eq!(
             status_line(&h).as_deref(),
-            Some("Red change expires in 20 h")
+            Some("Big change expires in 20 h")
         );
         h.red_expires_in = Some(40 * 3_600);
         assert!(status_line(&h).unwrap().starts_with("phone not seen"));

@@ -1233,11 +1233,11 @@ fn the_status_bar_segment_follows_what_waits_and_what_is_about_to_expire() {
     assert!(text.contains("sync: 2 waiting"), "{text}");
     r.app.sync.health.red_expires_in = Some(20 * 3_600);
     let (text, _) = r.app.sync_badge().unwrap();
-    assert!(text.contains("Red change expires in 20 h"), "{text}");
+    assert!(text.contains("Big change expires in 20 h"), "{text}");
     // The badge is drawn by the tab bar, so it shows on every tab.
     r.app.active_tab = 0;
     let bar = crate::tui::screens::sync::tests_screen(&r.app, 160, 30);
-    assert!(bar.contains("Red change expires in 20 h"), "{bar}");
+    assert!(bar.contains("Big change expires in 20 h"), "{bar}");
 }
 
 /// U13-20: the Manage menu is grouped, and an entry that does not apply says why instead of vanishing.

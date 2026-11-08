@@ -241,7 +241,7 @@ pub fn notice_text(store: &LauncherStore, prefix: &str) -> Result<(String, Strin
     let op = crate::sync::hub::op_by_hash_prefix(store, prefix)?;
     ensure!(
         crate::sync::ceremony::is_gated(store, &op)?,
-        "that op is not a Red change: the phone has nothing to approve"
+        "that change is not a big change: the phone has nothing to approve"
     );
     let hash: String = op.hash().iter().map(|b| format!("{b:02x}")).collect();
     Ok((hash, b64(&crate::sync::hub::op_notice(&op).encode())))
@@ -281,7 +281,7 @@ pub fn skipped_ops(
     for (dev, first, count) in &s.gaps {
         let have = heads.iter().find(|h| &h.0 == dev).map_or(0, |h| h.1);
         let note = if have == 0 {
-            "this ring has none of that device's earlier ops; export the device's full chain"
+            "this ring has none of that device's earlier changes; export the device's full history"
                 .to_string()
         } else {
             format!(
@@ -291,11 +291,11 @@ pub fn skipped_ops(
         out.push(json!({"reason": "chain-gap", "device": dev, "first_seq": first, "count": count, "have_seq": have, "note": note}));
     }
     if s.duplicates > 0 {
-        out.push(json!({"reason": "already-known", "count": s.duplicates, "note": "this ring already has these ops"}));
+        out.push(json!({"reason": "already-known", "count": s.duplicates, "note": "this ring already has these changes"}));
     }
     let gap_ops: usize = s.gaps.iter().map(|g| g.2).sum();
     if s.rejected > gap_ops {
-        out.push(json!({"reason": "invalid", "count": s.rejected - gap_ops, "details": s.reject_reasons.iter().filter(|r| !r.starts_with("gap:")).collect::<Vec<_>>(), "note": "the ingest refused these ops"}));
+        out.push(json!({"reason": "invalid", "count": s.rejected - gap_ops, "details": s.reject_reasons.iter().filter(|r| !r.starts_with("gap:")).collect::<Vec<_>>(), "note": "these changes were refused"}));
     }
     Ok(out)
 }
@@ -372,7 +372,7 @@ impl ShareChallenge {
         let warning = r.ext.as_ref().and_then(|ext| {
             crate::sync::unlock_paths::apply_reply_ext(store, ext)
                 .err()
-                .map(|e| format!("reply accepted; courier ops not kept: {e:#}"))
+                .map(|e| format!("reply accepted; the phone's own changes were not kept: {e:#}"))
         });
         Ok((r.share, warning))
     }
@@ -518,7 +518,7 @@ pub fn run(
     };
     let bad = match cmd {
         "sync-phone-enroll" | "sync-phone-ops" => want(0, "no argument"),
-        "sync-notice" => want(1, "one op id"),
+        "sync-notice" => want(1, "one change id"),
         "sync-phone-chain" => want(1, "one phone device id"),
         "sync-share-request" => want(1, "one host name"),
         "sync-cert-request" => want(0, "no argument (use --group or --host)"),

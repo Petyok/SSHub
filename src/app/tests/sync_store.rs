@@ -458,7 +458,7 @@ fn enter_on_a_compromised_device_shows_the_proof_and_the_next_steps() {
     let fork = app.sync.fork.clone().unwrap();
     assert_eq!(fork.device, "laptop");
     assert!(
-        fork.evidence.iter().any(|l| l.starts_with("Proof:")),
+        fork.evidence.iter().any(|l| l.starts_with("Evidence:")),
         "{:?}",
         fork.evidence
     );
