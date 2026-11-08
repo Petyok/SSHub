@@ -192,7 +192,7 @@ test('every final op vector (all body variants incl. the Red ceremony ops) parse
     assert.ok(d.rows.length >= 3, v.id);
     const leafRows = d.rows.filter((r) => !['Op signed by', 'Op time', 'Op seq / epoch'].includes(r.label));
     if (['FactorRegister', 'DeviceRoleChange', 'BulkExport'].includes(op.kind)) assert.ok(leafRows.every((r) => r.danger), `${v.id}: Red body fully highlighted`);
-    assert.equal(isRedOp(op), ['DeviceRevoke', 'CertIssue', 'ModeChange', 'FactorRegister', 'DeviceRoleChange', 'BulkExport', 'ExemptionSet'].includes(op.kind) || (op.kind === 'DeviceAdd' && op.fields.role === 'Holder'), v.id);
+    assert.equal(isRedOp(op), ['DeviceRevoke', 'CertIssue', 'ModeChange', 'FactorRegister', 'DeviceRoleChange', 'BulkExport', 'ExemptionSet', 'PhoneHandover'].includes(op.kind) || (op.kind === 'DeviceAdd' && op.fields.role === 'Holder'), v.id);
   }
   assert.ok(finalVectors.vectors.length >= 48);
   for (const k of ['RedApprove', 'RedPhoneSign', 'RedFactor', 'FactorRegister', 'DeviceRoleChange', 'BulkExport']) assert.ok(kinds.has(k), k);

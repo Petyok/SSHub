@@ -42,6 +42,7 @@ pub fn ops_out(ops: &[SignedOpBytes], note: &str) -> Result<Outgoing> {
     render(
         PhoneOpsWire {
             sender: None,
+            terminals: None,
             ops: ops.to_vec(),
         }
         .encode(),

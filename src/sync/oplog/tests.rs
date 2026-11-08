@@ -384,6 +384,14 @@ fn sample_bodies() -> Vec<OpBody> {
             cert_id: [8; 32],
             extra_hosts: 50,
         },
+        OpBody::CertRenew {
+            cert_id: [8; 32],
+            expiry: i64::MAX,
+        },
+        OpBody::PhoneHandover {
+            new_phone: DeviceIdentity::generate().public(),
+            name: "new phone \u{1F4F1}".into(),
+        },
         OpBody::CheckpointPropose {
             cut: vec![
                 CutEntry {
@@ -2979,6 +2987,36 @@ fn every_body_that_carries_a_device_id_refuses_a_malformed_one() {
     for b in bodies {
         assert!(validates(&b).is_err(), "{b:?}");
     }
+}
+
+#[test]
+fn the_phase_b_ops_have_their_tiers_and_shape_rules() {
+    let renew = |expiry| OpBody::CertRenew {
+        cert_id: [1; 32],
+        expiry,
+    };
+    let handover = |name: &str| OpBody::PhoneHandover {
+        new_phone: DeviceIdentity::generate().public(),
+        name: name.into(),
+    };
+    assert_eq!(wrap(renew(5)).tier(), OpTier::Green);
+    assert_eq!(wrap(handover("p")).tier(), OpTier::Red);
+    assert!(validates(&renew(1)).is_ok());
+    for bad in [0, -1, i64::MIN] {
+        assert!(validates(&renew(bad)).is_err(), "{bad}");
+    }
+    assert!(validates(&handover("new phone")).is_ok());
+    assert!(validates(&handover("a\nBcc: x")).is_err());
+    // a malformed new phone key is refused at the door
+    let short_key = OpBody::PhoneHandover {
+        new_phone: DevicePublic {
+            ed25519_pub: [1; 32],
+            x25519_pub: [2; 32],
+            mlkem_pub: vec![3; 5],
+        },
+        name: "p".into(),
+    };
+    assert!(validates(&short_key).is_err());
 }
 
 fn add_device_body_named(name: &str) -> OpBody {

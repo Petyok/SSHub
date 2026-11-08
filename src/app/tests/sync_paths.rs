@@ -1024,6 +1024,7 @@ fn the_trust_flow_shows_the_phone_a_request_and_takes_its_answer_into_the_ceremo
     let answer = B64.encode(
         PhoneOpsWire {
             sender: None,
+            terminals: None,
             ops: vec![(issue.canonical_bytes(), issue.signature)],
         }
         .encode(),
@@ -1352,6 +1353,7 @@ fn the_phones_answer_to_a_trust_request_is_taken_from_the_camera() {
     );
     let answer = PhoneOpsWire {
         sender: None,
+        terminals: None,
         ops: vec![(issue.canonical_bytes(), issue.signature)],
     }
     .encode();
