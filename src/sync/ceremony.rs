@@ -106,19 +106,40 @@ fn promoted_after(store: &LauncherStore, device: &DeviceId, l: u64) -> Result<bo
 
 /// Did a Quorum credential exist BEFORE lamport `before` (so a new holder then meant a reshare)? Judged at the
 /// op's own position in the log, never against the ring as it is now: an op that was valid under ring setup
-/// must stay valid when a Quorum credential is created later. A Quorum credential has at least two wrapped
-/// shares (Vault mode wraps to the vault key alone); a reshare batch implies one too.
+/// must stay valid when a Quorum credential is created later. A credential is a Quorum one when its NEWEST
+/// `CredUpdate` before `before` has at least two wrapped shares (Vault mode wraps to the vault key alone), so a ring
+/// whose Quorum credentials were all replaced or moved back to Vault no longer counts. A host whose ops were pruned
+/// below a checkpoint cut is read from the folded `sync_cred_state` row, which keeps its newest `CredUpdate`.
 fn quorum_credentials_before(store: &LauncherStore, before: u64) -> Result<bool> {
+    let mut newest: std::collections::BTreeMap<[u8; 16], (u64, bool)> = Default::default();
     for op in ops_of(store, "CredUpdate", None)? {
-        if op.lamport < before
-            && matches!(&op.body, OpBody::CredUpdate { wrapped_shares, .. } if wrapped_shares.len() >= 2)
+        if let OpBody::CredUpdate {
+            host_uid,
+            wrapped_shares,
+            ..
+        } = &op.body
         {
-            return Ok(true);
+            if op.lamport < before && newest.get(host_uid).is_none_or(|(l, _)| *l < op.lamport) {
+                newest.insert(*host_uid, (op.lamport, wrapped_shares.len() >= 2));
+            }
         }
     }
-    Ok(ops_of(store, "ShareReshareBatch", None)?
-        .iter()
-        .any(|op| op.lamport < before))
+    if newest.values().any(|(_, quorum)| *quorum) {
+        return Ok(true);
+    }
+    store.with_conn(|c| {
+        let mut st = c.prepare("SELECT host_uid, wrapped_shares FROM sync_cred_state WHERE lamport < ?1")?;
+        let rows = st.query_map([i64::try_from(before).unwrap_or(i64::MAX)], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?)))?;
+        for row in rows {
+            let (uid, wraps) = row?;
+            let known = <[u8; 16]>::try_from(uid.as_slice()).is_ok_and(|u| newest.contains_key(&u));
+            let n = serde_json::from_str::<Vec<serde_json::Value>>(&wraps).map_or(0, |v| v.len());
+            if !known && n >= 2 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    })
 }
 
 /// Ring setup is over for good once the ring has had a phone and two terminal holders (revoked rows still

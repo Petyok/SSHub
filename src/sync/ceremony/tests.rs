@@ -1779,3 +1779,35 @@ fn a_promotion_verdict_follows_the_log_not_the_contact_clock() {
     assert_eq!(st.blocked, None, "the verdict read last_seen: {st:?}");
 }
 
+// ------------------------------------------------------------- the promotion block clears (F2)
+
+#[test]
+fn the_promotion_block_clears_when_no_quorum_credential_is_left() {
+    use crate::sync::oplog::WrappedShare;
+    let d = quorum_ring();
+    let host = [9u8; 16];
+    let first = put_credential(&d[0], 9);
+    assert!(quorum_credentials_before(&d[0].store, u64::MAX).unwrap());
+    // The same host is saved again with ONE wrapped share (a Vault shaped credential): the Quorum one is gone.
+    let (ct, wraps) = d[0].store.sync_cred_ciphertext(&host).unwrap().unwrap();
+    let later = append(
+        &d[0],
+        OpBody::CredUpdate {
+            host_uid: host,
+            ciphertext: ct,
+            wrapped_shares: vec![WrappedShare {
+                recipient: wraps[0].recipient.clone(),
+                alg: wraps[0].alg,
+                sealed: wraps[0].sealed.clone(),
+            }],
+        },
+    );
+    assert!(
+        !quorum_credentials_before(&d[0].store, u64::MAX).unwrap(),
+        "a ring that has no Quorum credential any more is still treated as having one"
+    );
+    // Judged at the op's own position: before the replacement the credential was a Quorum one.
+    assert!(quorum_credentials_before(&d[0].store, later.lamport).unwrap());
+    assert!(!quorum_credentials_before(&d[0].store, first.lamport).unwrap());
+}
+

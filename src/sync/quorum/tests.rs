@@ -1265,6 +1265,9 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
     for h in &hosts {
         cred_put(&d[0].store, &d[0].id, h, &payload(&format!("p{}", h[0]))).unwrap();
     }
+    // The remaining holders have written to the ring (the log is what shows a contributor alive).
+    d[1].append_host();
+    d[2].append_host();
     all_to_all(&d);
     let removed_old = own_shares(&d[3].store, &d[3].id, &hosts[0])
         .unwrap()
@@ -1272,7 +1275,7 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
         .1;
 
     let now = crate::store::now_ts();
-    check_revocable(&d[0].store, &d[3].did, now).unwrap();
+    check_revocable(&d[0].store, &d[3].did, now + 5).unwrap();
     append(
         &d[0],
         OpBody::DeviceRevoke {
