@@ -694,12 +694,17 @@ mod tests {
         assert!(reason(&o).contains("do not match the code it showed first"));
         assert_eq!(kind(&o), RefusalKind::Mismatch);
         // the two values that differ are carried: the code shown first and the code the keys open to
-        let Opened::Refused { view } = &o else { unreachable!() };
+        let Opened::Refused { view } = &o else {
+            unreachable!()
+        };
         assert_eq!(view.compared.len(), 2);
         assert_ne!(view.compared[0].value, view.compared[1].value);
         for r in &view.compared {
             assert_eq!(r.value.split(' ').count(), 8, "{}", r.value);
-            assert!(r.value.chars().all(|c| c == ' ' || c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
+            assert!(r
+                .value
+                .chars()
+                .all(|c| c == ' ' || c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
         }
         // the honest reveal now finds no flow
         assert_eq!(

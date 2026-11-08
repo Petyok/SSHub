@@ -90,7 +90,7 @@ fn refuse(checks: &[Check], reason: impl Into<String>) -> RefusalView {
     });
     RefusalView {
         kind: crate::views::RefusalKind::Other,
- compared: Vec::new(),
+        compared: Vec::new(),
         reason,
         checks,
     }

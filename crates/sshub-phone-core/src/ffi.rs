@@ -104,7 +104,7 @@ fn refused(reason: impl Into<String>) -> Opened {
     Opened::Refused {
         view: RefusalView {
             kind: crate::views::RefusalKind::Other,
- compared: Vec::new(),
+            compared: Vec::new(),
             reason: reason.into(),
             checks: Vec::new(),
         },
@@ -674,7 +674,11 @@ impl PhoneCore {
                     g.scanner.forget_document();
                     out.push(ScanEvent::Foreign {
                         len: bytes.len() as u32,
-                        bytes: if bytes.len() <= 256 { bytes } else { Vec::new() },
+                        bytes: if bytes.len() <= 256 {
+                            bytes
+                        } else {
+                            Vec::new()
+                        },
                     });
                 }
                 other => out.push(other),
@@ -1380,12 +1384,16 @@ mod tests {
         let (w, h, px) = gray(&qr, 6);
         let ev = c.scan_gray(w, h, px.clone());
         assert!(
-            ev.iter().any(|e| matches!(e, ScanEvent::Foreign { len: 28, bytes } if *bytes == text)),
+            ev.iter()
+                .any(|e| matches!(e, ScanEvent::Foreign { len: 28, bytes } if *bytes == text)),
             "{ev:?}"
         );
         // held in front of the camera: reported once, not at every frame
         let again = c.scan_gray(w, h, px.clone());
-        assert!(!again.iter().any(|e| matches!(e, ScanEvent::Foreign { .. })), "{again:?}");
+        assert!(
+            !again.iter().any(|e| matches!(e, ScanEvent::Foreign { .. })),
+            "{again:?}"
+        );
         // after a reset it can be scanned again
         c.scan_reset();
         let third = c.scan_gray(w, h, px);
