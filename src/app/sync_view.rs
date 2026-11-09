@@ -618,7 +618,12 @@ pub(crate) fn blocker_line(b: &crate::sync::ceremony::Blocker, now: i64) -> Stri
     };
     let since = b
         .since
-        .map(|t| format!(" (wanted for {})", crate::sync::health::human_left((now - t).max(0))))
+        .map(|t| {
+            format!(
+                " (wanted for {})",
+                crate::sync::health::human_left((now - t).max(0))
+            )
+        })
         .unwrap_or_default();
     format!("{}: {who}{since}", proof_label(&b.proof))
 }
@@ -845,8 +850,15 @@ impl App {
         sync.cut_off_missing = crate::sync::revocation::terminals_missing_to_cut_off(&store)?;
         sync.exposure = crate::cli::sync_admin::exposure_lines(&store)?;
         sync.exposed_hosts = crate::cli::sync_admin::exposed_host_names(&store)?;
-        let names: Vec<(String, String)> = sync.devices.iter().map(|d| (d.id.clone(), d.name.clone())).collect();
-        sync.renewals = super::sync_trust::renewal_notices(&super::sync_trust::trust_rows(&store, &names, now), now);
+        let names: Vec<(String, String)> = sync
+            .devices
+            .iter()
+            .map(|d| (d.id.clone(), d.name.clone()))
+            .collect();
+        sync.renewals = super::sync_trust::renewal_notices(
+            &super::sync_trust::trust_rows(&store, &names, now),
+            now,
+        );
         sync.no_mail = sync.configured
             && self.profile.as_ref().is_some_and(|p| {
                 crate::config::load_config_at(&p.config_file)

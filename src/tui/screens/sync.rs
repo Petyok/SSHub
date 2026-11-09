@@ -103,7 +103,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         ),
     });
     for l in &sync.renewals {
-        lines.push(Line::styled(l.clone(), color(app, ColorRole::StatusWarning)));
+        lines.push(Line::styled(
+            l.clone(),
+            color(app, ColorRole::StatusWarning),
+        ));
     }
     if sync.no_mail {
         lines.push(Line::styled(

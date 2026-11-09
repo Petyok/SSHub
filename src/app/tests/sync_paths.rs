@@ -651,7 +651,11 @@ fn a_red_change_shows_its_ceremony_and_takes_effect_only_when_all_proofs_are_in(
     assert!(red.missing.iter().any(|m| m.contains("phone")), "{red:?}");
     assert!(red.missing.iter().any(|m| m.contains("second")), "{red:?}");
     // The review also says who can give each missing proof (design 6.4).
-    assert!(red.blockers.iter().any(|b| b.contains("waiting for")), "{:?}", red.blockers);
+    assert!(
+        red.blockers.iter().any(|b| b.contains("waiting for")),
+        "{:?}",
+        red.blockers
+    );
 
     // Approving through the store directly is refused: only the ceremony applies it.
     open_review(&mut r.app);
@@ -1590,9 +1594,15 @@ fn renewing_a_trust_session_shows_the_phone_a_kind_11_request() {
     enter(&mut r.app); // the session
     assert_eq!(r.app.mode, AppMode::SyncMenu, "the term menu");
     enter(&mut r.app); // 7 more days
-    let wire = crate::sync::wire::CertRenewRequestWire::decode(&decode_frames(&frames_of_prompt(&r.app))).unwrap();
+    let wire =
+        crate::sync::wire::CertRenewRequestWire::decode(&decode_frames(&frames_of_prompt(&r.app)))
+            .unwrap();
     assert_eq!(wire.cert_id, issue.hash());
-    assert!((wire.expiry - (now + 37 * 86_400)).abs() <= 5, "{}", wire.expiry - now);
+    assert!(
+        (wire.expiry - (now + 37 * 86_400)).abs() <= 5,
+        "{}",
+        wire.expiry - now
+    );
 
     // The delegate's own computer cannot renew it: its view is no evidence.
     let mut mine = ring(None);
@@ -1613,5 +1623,9 @@ fn renewing_a_trust_session_shows_the_phone_a_kind_11_request() {
     let _ = mine.app.store.sync_resolve_pending(&own.hash(), true);
     mine.app.refresh_sync_view();
     crate::app::sync_trust::renew(&mut mine.app);
-    assert!(mine.app.host_notice.as_deref().is_some_and(|n| n.contains("another full computer")));
+    assert!(mine
+        .app
+        .host_notice
+        .as_deref()
+        .is_some_and(|n| n.contains("another full computer")));
 }

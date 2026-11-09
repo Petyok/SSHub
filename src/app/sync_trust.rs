@@ -480,8 +480,15 @@ mod renewal_tests {
         let now = 1_000_000;
         let soon = renewal_notices(&[row(now + 2 * 86_400, 0)], now);
         assert_eq!(soon.len(), 1);
-        assert!(soon[0].contains("laptop") && soon[0].contains("renew"), "{soon:?}");
+        assert!(
+            soon[0].contains("laptop") && soon[0].contains("renew"),
+            "{soon:?}"
+        );
         assert!(renewal_notices(&[row(now + 20 * 86_400, 0)], now).is_empty());
-        assert!(renewal_notices(&[row(now + 86_400, crate::sync::limits::CERT_MAX_RENEWALS)], now).is_empty());
+        assert!(renewal_notices(
+            &[row(now + 86_400, crate::sync::limits::CERT_MAX_RENEWALS)],
+            now
+        )
+        .is_empty());
     }
 }

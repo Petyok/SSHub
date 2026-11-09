@@ -51,7 +51,9 @@ pub(crate) fn heal(store: &LauncherStore, id: &DeviceIdentity, phrase: &str) -> 
     let (mut lines, mut healed, mut skipped) = (Vec::new(), 0usize, Vec::new());
     for host in &plan {
         let name = host_name(store, host);
-        match open_with_paper(store, id, host, phrase).and_then(|p| heal_credential(store, id, host, &p)) {
+        match open_with_paper(store, id, host, phrase)
+            .and_then(|p| heal_credential(store, id, host, &p))
+        {
             Ok(_) => {
                 healed += 1;
                 lines.push(format!("healed: {name}"));
@@ -73,10 +75,11 @@ pub(crate) fn heal(store: &LauncherStore, id: &DeviceIdentity, phrase: &str) -> 
 
 /// The credentials that share a key with a removed device: `(host uid, host name, device names)`.
 pub(crate) fn rekey_list(store: &LauncherStore) -> Result<Vec<(HostUid, String, Vec<String>)>> {
-    let names: std::collections::HashMap<_, _> = crate::sync::ceremony::effective_devices(store, None)?
-        .into_iter()
-        .map(|d| (d.id, d.name))
-        .collect();
+    let names: std::collections::HashMap<_, _> =
+        crate::sync::ceremony::effective_devices(store, None)?
+            .into_iter()
+            .map(|d| (d.id, d.name))
+            .collect();
     Ok(exposed_credentials(store)?
         .into_iter()
         .filter(|e| e.kind == ExposureKind::Removed)
@@ -84,7 +87,12 @@ pub(crate) fn rekey_list(store: &LauncherStore) -> Result<Vec<(HostUid, String, 
             let devs = e
                 .devices
                 .iter()
-                .map(|d| names.get(d).cloned().unwrap_or_else(|| d.chars().take(8).collect()))
+                .map(|d| {
+                    names
+                        .get(d)
+                        .cloned()
+                        .unwrap_or_else(|| d.chars().take(8).collect())
+                })
                 .collect();
             (e.host_uid, host_name(store, &e.host_uid), devs)
         })
@@ -95,7 +103,10 @@ pub(crate) fn rekey_list(store: &LauncherStore) -> Result<Vec<(HostUid, String, 
 fn find_exposed(list: &[(HostUid, String, Vec<String>)], spec: &str) -> Result<HostUid> {
     let hits: Vec<_> = list
         .iter()
-        .filter(|(uid, name, _)| name == spec || (spec.len() >= 4 && crate::store::uid_hex(uid).starts_with(&spec.to_lowercase())))
+        .filter(|(uid, name, _)| {
+            name == spec
+                || (spec.len() >= 4 && crate::store::uid_hex(uid).starts_with(&spec.to_lowercase()))
+        })
         .collect();
     match hits.as_slice() {
         [one] => Ok(one.0),
@@ -186,7 +197,10 @@ pub(crate) fn rekey_new_key(
             Ok(public) => {
                 saved += 1;
                 lines.push(format!("new key saved: {host}"));
-                lines.push(format!("  install on the server, and remove the old line: {}", public.trim()));
+                lines.push(format!(
+                    "  install on the server, and remove the old line: {}",
+                    public.trim()
+                ));
             }
             Err(e) => lines.push(format!("no new key: {host}: {e:#}")),
         }
@@ -211,7 +225,8 @@ pub(crate) fn replace_terminal(
 ) -> Result<Report> {
     let old_row = admin::find_device(store, old)?;
     ensure!(
-        old_row.kind == crate::sync::oplog::DeviceKind::Terminal && old_row.role == DeviceRole::Holder,
+        old_row.kind == crate::sync::oplog::DeviceKind::Terminal
+            && old_row.role == DeviceRole::Holder,
         "{} is not a full computer: remove it with `sshub sync-revoke`",
         old_row.name
     );
@@ -219,7 +234,13 @@ pub(crate) fn replace_terminal(
         let candidates: Vec<String> = crate::sync::ceremony::effective_devices(store, None)?
             .into_iter()
             .filter(|d| d.id != old_row.id && d.kind == crate::sync::oplog::DeviceKind::Terminal)
-            .filter(|d| !matches!(d.status, crate::sync::oplog::DeviceStatus::Revoked | crate::sync::oplog::DeviceStatus::Compromised))
+            .filter(|d| {
+                !matches!(
+                    d.status,
+                    crate::sync::oplog::DeviceStatus::Revoked
+                        | crate::sync::oplog::DeviceStatus::Compromised
+                )
+            })
             .map(|d| d.name)
             .collect();
         return Ok(Report {
@@ -232,13 +253,19 @@ pub(crate) fn replace_terminal(
         });
     };
     let new_row = admin::find_device(store, new)?;
-    ensure!(new_row.id != old_row.id, "the new computer is the one being replaced");
+    ensure!(
+        new_row.id != old_row.id,
+        "the new computer is the one being replaced"
+    );
     let mut lines = Vec::new();
     let (step, op);
     if new_row.role != DeviceRole::Holder {
         let r = admin::role(store, &*id, &new_row.id, DeviceRole::Holder, now)?;
         let hash = r.json["op"].as_str().context("no change id")?.to_string();
-        lines.push(format!("Step 2: {} is proposed as a full computer.", new_row.name));
+        lines.push(format!(
+            "Step 2: {} is proposed as a full computer.",
+            new_row.name
+        ));
         lines.extend(r.lines);
         let f = admin::factor(store, &*id, &hash[..16], FactorKind::Paper, phrase, now)?;
         lines.push("The paper phrase is added. The phone's confirmation is still needed; when it is in, run this again.".into());
@@ -292,7 +319,10 @@ mod tests {
         assert_eq!(heal_plan(&d[0].store).unwrap(), vec![h]);
         // Wrong words heal nothing and say why.
         let wrong = heal(&d[0].store, &d[0].id, &bip39_encode(&[0x72; 32])).unwrap();
-        assert!(wrong.lines.iter().any(|l| l.starts_with("skipped")), "{wrong:?}");
+        assert!(
+            wrong.lines.iter().any(|l| l.starts_with("skipped")),
+            "{wrong:?}"
+        );
         assert_eq!(heal_plan(&d[0].store).unwrap(), vec![h]);
         let r = heal(&d[0].store, &d[0].id, &phrase).unwrap();
         assert!(r.lines.iter().any(|l| l.starts_with("healed")), "{r:?}");
@@ -305,26 +335,52 @@ mod tests {
     fn rekey_saves_a_new_secret_for_a_credential_a_removed_device_held_and_keeps_the_rest_listed() {
         let phrase = bip39_encode(&[0x73; 32]);
         let (d, h) = world(4, &phrase);
-        append(&d[0], OpBody::DeviceRevoke { device_id: d[3].did.clone() });
+        append(
+            &d[0],
+            OpBody::DeviceRevoke {
+                device_id: d[3].did.clone(),
+            },
+        );
         let list = rekey_list(&d[0].store).unwrap();
         assert_eq!(list.len(), 1, "{list:?}");
         // Heal refuses it: the secret itself must change.
         let healed = heal(&d[0].store, &d[0].id, &phrase).unwrap();
-        assert!(healed.lines.iter().any(|l| l.contains("nothing to heal")), "{healed:?}");
+        assert!(
+            healed.lines.iter().any(|l| l.contains("nothing to heal")),
+            "{healed:?}"
+        );
         let name = list[0].1.clone();
-        let entries = vec![(name.clone(), "new,secret".to_string()), ("nope".to_string(), "x".to_string())];
+        let entries = vec![
+            (name.clone(), "new,secret".to_string()),
+            ("nope".to_string(), "x".to_string()),
+        ];
         let r = rekey_apply(&d[0].store, &d[0].id, &entries).unwrap();
-        assert!(r.lines.iter().any(|l| l == &format!("saved: {name}")), "{r:?}");
-        assert!(r.lines.iter().any(|l| l.starts_with("not saved: nope")), "{r:?}");
-        assert!(r.lines.iter().all(|l| !l.contains("new,secret")), "the secret is never printed");
-        assert!(rekey_list(&d[0].store).unwrap().is_empty(), "no longer shares a key with the removed device");
+        assert!(
+            r.lines.iter().any(|l| l == &format!("saved: {name}")),
+            "{r:?}"
+        );
+        assert!(
+            r.lines.iter().any(|l| l.starts_with("not saved: nope")),
+            "{r:?}"
+        );
+        assert!(
+            r.lines.iter().all(|l| !l.contains("new,secret")),
+            "the secret is never printed"
+        );
+        assert!(
+            rekey_list(&d[0].store).unwrap().is_empty(),
+            "no longer shares a key with the removed device"
+        );
         let _ = h;
     }
 
     #[test]
     fn the_csv_keeps_commas_in_the_password_and_skips_comments() {
         let rows = parse_csv("# my hosts\nweb,pa,ss\r\n\ndb , x\n").unwrap();
-        assert_eq!(rows, vec![("web".into(), "pa,ss".into()), ("db".into(), " x".into())]);
+        assert_eq!(
+            rows,
+            vec![("web".into(), "pa,ss".into()), ("db".into(), " x".into())]
+        );
         assert!(parse_csv("nocomma").is_err());
     }
 
@@ -353,7 +409,12 @@ mod tests {
         let id = std::sync::Arc::get_mut(&mut d[0].id).unwrap();
         let revoke = |id: &mut DeviceIdentity, dev: &str| -> Result<Report> {
             let row = admin::find_device(&store, dev)?;
-            let op = store.sync_append_local(id, OpBody::DeviceRevoke { device_id: row.id.clone() })?;
+            let op = store.sync_append_local(
+                id,
+                OpBody::DeviceRevoke {
+                    device_id: row.id.clone(),
+                },
+            )?;
             admin::op_report(&store, &op, "removal proposed".into(), now)
         };
         // Step 1: without --new it says how to enroll, and names the enrolled computers.
@@ -361,14 +422,29 @@ mod tests {
         assert_eq!(r.json["step"], "enroll");
         assert!(r.lines.iter().any(|l| l.contains("new-laptop")), "{r:?}");
         // Step 2: the new computer is promoted; the paper goes into that change.
-        let r = replace_terminal(&store, id, &old, Some("new-laptop"), &phrase, now, revoke).unwrap();
+        let r =
+            replace_terminal(&store, id, &old, Some("new-laptop"), &phrase, now, revoke).unwrap();
         assert_eq!(r.json["step"], "promote", "{r:?}");
-        assert!(r.lines.iter().any(|l| l.contains("paper phrase is added")), "{r:?}");
-        assert_eq!(crate::sync::quorum::ops_of(&store, "RedFactor", None).unwrap().len(), 1);
+        assert!(
+            r.lines.iter().any(|l| l.contains("paper phrase is added")),
+            "{r:?}"
+        );
+        assert_eq!(
+            crate::sync::quorum::ops_of(&store, "RedFactor", None)
+                .unwrap()
+                .len(),
+            1
+        );
         // Step 3, once the promotion is in force: the old computer's removal gets the paper too.
-        let r = replace_terminal(&store, id, &old, Some("new-laptop"), &phrase, now, revoke).unwrap();
+        let r =
+            replace_terminal(&store, id, &old, Some("new-laptop"), &phrase, now, revoke).unwrap();
         assert_eq!(r.json["step"], "revoke", "{r:?}");
         assert!(r.lines.iter().any(|l| l.contains("sync-heal")), "{r:?}");
-        assert_eq!(crate::sync::quorum::ops_of(&store, "RedFactor", None).unwrap().len(), 2);
+        assert_eq!(
+            crate::sync::quorum::ops_of(&store, "RedFactor", None)
+                .unwrap()
+                .len(),
+            2
+        );
     }
 }

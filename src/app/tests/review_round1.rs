@@ -487,12 +487,23 @@ fn a_blocker_line_names_who_can_give_the_proof_and_since_when() {
     use crate::sync::ceremony::{Blocker, RedProof};
     let now = 1_000_000;
     let l = crate::app::sync_view::blocker_line(
-        &Blocker { proof: RedProof::SecondDevice, who: vec!["laptop".into(), "server".into()], since: Some(now - 7_200) },
+        &Blocker {
+            proof: RedProof::SecondDevice,
+            who: vec!["laptop".into(), "server".into()],
+            since: Some(now - 7_200),
+        },
         now,
     );
-    assert!(l.contains("waiting for laptop, server") && l.contains("wanted for 2 h"), "{l}");
+    assert!(
+        l.contains("waiting for laptop, server") && l.contains("wanted for 2 h"),
+        "{l}"
+    );
     let none = crate::app::sync_view::blocker_line(
-        &Blocker { proof: RedProof::Phone, who: Vec::new(), since: None },
+        &Blocker {
+            proof: RedProof::Phone,
+            who: Vec::new(),
+            since: None,
+        },
         now,
     );
     assert!(none.contains("nobody can give it right now"), "{none}");

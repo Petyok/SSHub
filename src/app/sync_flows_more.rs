@@ -533,9 +533,12 @@ fn rekey_host(app: &mut App, name: String) {
                 }) as MenuFn,
             ),
             (
-                "Generate a new key and save it (its public key is shown to install on the server)".to_string(),
+                "Generate a new key and save it (its public key is shown to install on the server)"
+                    .to_string(),
                 Box::new(move |app: &mut App| {
-                    report_job(app, move |env| repair::rekey_new_key(&env.store, &env.identity, &[name]));
+                    report_job(app, move |env| {
+                        repair::rekey_new_key(&env.store, &env.identity, &[name])
+                    });
                 }),
             ),
         ],
@@ -547,7 +550,11 @@ pub(crate) fn replace_terminal(app: &mut App) {
     super::sync_flows::pick_device(
         app,
         "Replace which full computer?",
-        |d| d.role == DeviceRoleView::Holder && !d.phone && d.status != super::sync::DeviceStatusView::Revoked,
+        |d| {
+            d.role == DeviceRoleView::Holder
+                && !d.phone
+                && d.status != super::sync::DeviceStatusView::Revoked
+        },
         replace_pick_new,
     );
 }
@@ -560,7 +567,12 @@ fn replace_pick_new(app: &mut App, old: String, old_name: String) {
             Box::new(move |app: &mut App| replace_job(app, old, None, String::new())) as MenuFn
         },
     )];
-    for d in app.sync.devices.iter().filter(|d| !d.this && !d.phone && d.id != old) {
+    for d in app
+        .sync
+        .devices
+        .iter()
+        .filter(|d| !d.this && !d.phone && d.id != old)
+    {
         let (new, label) = (d.id.clone(), format!("{} (enrolled)", d.name));
         let old = old.clone();
         items.push((

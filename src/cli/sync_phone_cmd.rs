@@ -741,22 +741,30 @@ fn trust_renew(
         .iter()
         .filter(|r| hex_of(&r.cert_id).starts_with(&prefix.to_lowercase()))
         .collect();
-    ensure!(prefix.len() >= 6, "give at least 6 hex digits of the trust session id");
+    ensure!(
+        prefix.len() >= 6,
+        "give at least 6 hex digits of the trust session id"
+    );
     let [row] = hits.as_slice() else {
-        bail!("{prefix} matches {} trust sessions in force (list them with no argument)", hits.len());
+        bail!(
+            "{prefix} matches {} trust sessions in force (list them with no argument)",
+            hits.len()
+        );
     };
     ensure!(
         row.delegate_id != id.public().device_id(),
         "this computer is the delegate: renew it from another full computer, whose view is the evidence"
     );
-    let wire = crate::sync::cert::cert_renew_request(
-        store,
-        row.cert_id,
-        i64::from(a.days) * 86_400,
-        now,
-    )?;
+    let wire =
+        crate::sync::cert::cert_renew_request(store, row.cert_id, i64::from(a.days) * 86_400, now)?;
     let text = b64(&wire.encode());
-    emit(out, a.json, "request", text.clone(), json!({"request": text}));
+    emit(
+        out,
+        a.json,
+        "request",
+        text.clone(),
+        json!({"request": text}),
+    );
     if a.ble {
         return super::sync_phone_ble::push(&wire.encode(), a.json, a.wait, out);
     }

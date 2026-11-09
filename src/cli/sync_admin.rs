@@ -112,8 +112,12 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
     let (mut paper, mut email_code, mut remove_local) = (false, false, false);
     let (mut window, mut out, mut wait, mut sender, mut factor, mut cosigner) =
         (None, None, 0u64, None, None, None);
-    let (mut csv, mut stdin, mut new_keys, mut new_dev): (Option<String>, bool, Vec<String>, Option<String>) =
-        (None, false, Vec::new(), None);
+    let (mut csv, mut stdin, mut new_keys, mut new_dev): (
+        Option<String>,
+        bool,
+        Vec<String>,
+        Option<String>,
+    ) = (None, false, Vec::new(), None);
     let mut i = 0;
     let value = |i: usize, flag: &str| -> std::result::Result<String, String> {
         args.get(i + 1)
@@ -334,12 +338,22 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
             Cmd::Heal
         }
         "sync-rekey" => {
-            exact(0, "no positional argument (use --csv FILE, --stdin or --new-key HOST)")?;
-            Cmd::Rekey { csv: csv.clone(), stdin, new_keys: new_keys.clone() }
+            exact(
+                0,
+                "no positional argument (use --csv FILE, --stdin or --new-key HOST)",
+            )?;
+            Cmd::Rekey {
+                csv: csv.clone(),
+                stdin,
+                new_keys: new_keys.clone(),
+            }
         }
         "sync-replace-terminal" => {
             exact(1, "the computer being replaced")?;
-            Cmd::ReplaceTerminal { old: pos[0].into(), new: new_dev.clone() }
+            Cmd::ReplaceTerminal {
+                old: pos[0].into(),
+                new: new_dev.clone(),
+            }
         }
         other => return Err(format!("unknown sync admin command {other}")),
     };
@@ -362,10 +376,7 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
             "--csv",
             csv.is_some() && !matches!(cmd_val, Cmd::Rekey { .. }),
         ),
-        (
-            "--stdin",
-            stdin && !matches!(cmd_val, Cmd::Rekey { .. }),
-        ),
+        ("--stdin", stdin && !matches!(cmd_val, Cmd::Rekey { .. })),
         (
             "--new-key",
             !new_keys.is_empty() && !matches!(cmd_val, Cmd::Rekey { .. }),
@@ -501,7 +512,11 @@ fn execute(paths: &ProfilePaths, cmd: Cmd, opts: Opts) -> Result<i32> {
                 .context("no phrase entered")?;
             report(opts, &super::sync_repair::heal(&store, &id, &phrase)?)
         }
-        Cmd::Rekey { csv, stdin, new_keys } => {
+        Cmd::Rekey {
+            csv,
+            stdin,
+            new_keys,
+        } => {
             use super::sync_repair as rk;
             let mut text = String::new();
             if let Some(path) = &csv {
@@ -514,14 +529,19 @@ fn execute(paths: &ProfilePaths, cmd: Cmd, opts: Opts) -> Result<i32> {
                 let list = rk::rekey_list(&store)?;
                 let mut lines: Vec<String> = list
                     .iter()
-                    .map(|(_, n, d)| format!("{n}: shares a key with the removed device {}", d.join(", ")))
+                    .map(|(_, n, d)| {
+                        format!("{n}: shares a key with the removed device {}", d.join(", "))
+                    })
                     .collect();
                 if lines.is_empty() {
                     lines.push("no saved password shares a key with a removed device".into());
                 } else {
                     lines.push("Change each one on its server, then save the new secret: --csv FILE or --stdin with lines host,newpassword, or --new-key HOST for a new key.".into());
                 }
-                Report { json: json!({"exposed": list.iter().map(|(_, n, _)| n).collect::<Vec<_>>()}), lines }
+                Report {
+                    json: json!({"exposed": list.iter().map(|(_, n, _)| n).collect::<Vec<_>>()}),
+                    lines,
+                }
             } else {
                 rk::rekey_apply(&store, &id, &entries)?
             };
@@ -538,9 +558,15 @@ fn execute(paths: &ProfilePaths, cmd: Cmd, opts: Opts) -> Result<i32> {
             } else {
                 Zeroizing::new(String::new())
             };
-            let r = super::sync_repair::replace_terminal(&store, &mut id, &old, new.as_deref(), &phrase, now, |id, dev| {
-                revoke(paths, &store, id, secrets.as_ref(), dev, now)
-            })?;
+            let r = super::sync_repair::replace_terminal(
+                &store,
+                &mut id,
+                &old,
+                new.as_deref(),
+                &phrase,
+                now,
+                |id, dev| revoke(paths, &store, id, secrets.as_ref(), dev, now),
+            )?;
             report(opts, &r)
         }
         Cmd::ImportKit => {
