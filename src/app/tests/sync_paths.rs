@@ -1638,10 +1638,21 @@ fn replacing_a_phone_starts_the_handover_flow_and_the_old_phone_screen_names_the
     mark_this_device(&mut r);
     crate::app::sync_phone::start(&mut r.app);
     assert!(r.app.phone_flow.is_none());
-    assert!(r.app.host_notice.as_deref().is_some_and(|n| n.contains("Replace the phone")));
+    assert!(r
+        .app
+        .host_notice
+        .as_deref()
+        .is_some_and(|n| n.contains("Replace the phone")));
     crate::app::sync_phone::start_replace(&mut r.app);
     assert!(r.app.phone_flow.is_some(), "{:?}", r.app.host_notice);
-    let words: Vec<String> = ["a", "b", "c", "d", "e", "f", "g", "h"].map(String::from).to_vec();
+    let words: Vec<String> = ["a", "b", "c", "d", "e", "f", "g", "h"]
+        .map(String::from)
+        .to_vec();
     let lines = crate::app::sync_phone::handover_screen_lines("new phone", &words).join("\n");
-    assert!(lines.contains("a b c d e f g h") && lines.contains("OLD phone") && lines.contains("sync-heal"), "{lines}");
+    assert!(
+        lines.contains("a b c d e f g h")
+            && lines.contains("OLD phone")
+            && lines.contains("sync-heal"),
+        "{lines}"
+    );
 }
