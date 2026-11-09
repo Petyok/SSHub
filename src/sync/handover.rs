@@ -4,7 +4,7 @@
 use anyhow::{ensure, Context, Result};
 
 use super::crypto::DevicePublic;
-use super::oplog::DeviceId;
+use super::oplog::{DeviceId, Op, OpBody};
 use super::wire::PhoneHandoverRequestWire;
 
 /// The `HANDOVER_WORDS` words the old phone and the terminal show for a handover to `new_phone` named `name`, from the
