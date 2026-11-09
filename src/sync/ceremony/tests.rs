@@ -764,6 +764,45 @@ mod in_force {
     }
 
     #[test]
+    fn every_renewal_is_mailed_once_and_a_failing_mail_is_tried_again() {
+        use crate::sync::cert::{owed_renew_mails, send_renew_mails, DelegationCert};
+        use crate::sync::oplog::CertScope;
+        let (d, phrase) = ring_with_paper();
+        let now = crate::store::now_ts();
+        let op = append(
+            &d[3],
+            OpBody::CertIssue {
+                device_id: d[1].did.clone(),
+                scope: CertScope::Hosts(vec![[43u8; 16]]),
+                expiry: now + 10 * 86_400,
+                max_new_hosts_per_day: 2,
+                epoch_lo: 0,
+                epoch_hi: 10,
+            },
+        );
+        complete(&d, &op, 2, Some(&phrase));
+        let cert = DelegationCert::from_op(&op).unwrap();
+        assert!(owed_renew_mails(&d[0].store).unwrap().is_empty());
+        append(
+            &d[3],
+            OpBody::CertRenew {
+                cert_id: cert.id,
+                expiry: now + 20 * 86_400,
+            },
+        );
+        all_to_all_pull(&d);
+        let owed = owed_renew_mails(&d[0].store).unwrap();
+        assert_eq!(owed.len(), 1);
+        assert!(owed[0].1.contains("renewed") && owed[0].2.contains("1 of 2"), "{owed:?}");
+        let mut failing = |_: &str, _: &str| -> Result<()> { anyhow::bail!("no mta") };
+        assert_eq!(send_renew_mails(&d[0].store, &mut failing).unwrap(), 0);
+        assert_eq!(owed_renew_mails(&d[0].store).unwrap().len(), 1, "tried again");
+        let mut ok = |_: &str, _: &str| -> Result<()> { Ok(()) };
+        assert_eq!(send_renew_mails(&d[0].store, &mut ok).unwrap(), 1);
+        assert!(owed_renew_mails(&d[0].store).unwrap().is_empty(), "mailed once");
+    }
+
+    #[test]
     fn an_export_window_opens_only_when_complete() {
         let (d, phrase) = ring_with_paper();
         let op = append(
