@@ -75,12 +75,20 @@ function decodeOpList(body, at) {
 // has no ring to check a signature against, so the id only tells two lists apart (an honest terminal that is behind, or one
 // animation scanned twice); it is not proof of who made the list. Phone-to-terminal exports carry none.
 export const PHONE_OPS_SENDER_TAG = 1;
+// Second optional trailing block, after the sender block: 0x02 || count u8 || newest_op_ts i64 BE. The terminal's own count
+// of the non-revoked devices of kind Terminal in its view (itself included) and the author stamp of the newest op in the
+// list. UNSIGNED and informational: it only decides whether one list may be accepted with the user's tick.
+export const PHONE_OPS_TERMINALS_TAG = 2;
 
-export function encodePhoneOps(ops, sender = null) {
+export function encodePhoneOps(ops, sender = null, terminals = null) {
   const list = encodeOpList(ops);
-  if (sender == null) return encodeFrame(KIND.PHONE_OPS, list);
-  if (sender.length !== 8) throw new Error('the sender id is 8 bytes');
-  return encodeFrame(KIND.PHONE_OPS, concat(list, Uint8Array.of(PHONE_OPS_SENDER_TAG), sender));
+  const parts = [list];
+  if (sender != null) {
+    if (sender.length !== 8) throw new Error('the sender id is 8 bytes');
+    parts.push(Uint8Array.of(PHONE_OPS_SENDER_TAG), sender);
+  }
+  if (terminals != null) parts.push(Uint8Array.of(PHONE_OPS_TERMINALS_TAG, terminals.count), i64(terminals.newestOpTs));
+  return encodeFrame(KIND.PHONE_OPS, concat(...parts));
 }
 
 // Kind 5 carries ops in both directions: the phone's own ops to a terminal, and the reshare ops
@@ -89,14 +97,23 @@ export function decodePhoneOps(frame) {
   const { kind, body } = decodeFrame(frame);
   if (kind !== KIND.PHONE_OPS) throw new Error('not an ops frame');
   const { ops, end } = decodeOpList(body, 0);
+  let at = end;
   let sender = null;
-  if (end !== body.length) {
-    if (body[end] !== PHONE_OPS_SENDER_TAG) throw new Error('ops frame has trailing bytes');
-    if (body.length - end !== 9) throw new Error('ops frame: the sender block is truncated or has trailing bytes');
-    sender = body.slice(end + 1);
+  let terminals = null;
+  if (at < body.length && body[at] === PHONE_OPS_SENDER_TAG) {
+    if (body.length - at < 9) throw new Error('ops frame: the sender block is truncated or has trailing bytes');
+    sender = body.slice(at + 1, at + 9);
+    at += 9;
   }
-  // the ops array itself stays what every caller expects; the sender (or null) rides along, not enumerable
+  if (at < body.length && body[at] === PHONE_OPS_TERMINALS_TAG) {
+    if (body.length - at !== 10) throw new Error('ops frame: the terminals block is truncated or has trailing bytes');
+    terminals = { count: body[at + 1], newestOpTs: rd64(body, at + 2).getBigInt64(0) };
+    at += 10;
+  }
+  if (at !== body.length) throw new Error(end === at ? 'ops frame has trailing bytes' : 'ops frame: the sender block is truncated or has trailing bytes');
+  // the ops array itself stays what every caller expects; the sender and terminals (or null) ride along, not enumerable
   Object.defineProperty(ops, 'sender', { value: sender, enumerable: false });
+  Object.defineProperty(ops, 'terminals', { value: terminals, enumerable: false });
   return ops;
 }
 

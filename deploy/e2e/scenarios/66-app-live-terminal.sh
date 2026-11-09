@@ -14,8 +14,7 @@
 NAME=66-app-live-terminal
 
 if [ "$(cat "$E2E_DIR/phone-target" 2>/dev/null)" != native ]; then
-  echo "skipped: scenario 66 needs the phone target native (the emulator and the app APKs)"
-  finish "$NAME"
+  skeleton "$NAME" "the native app against real terminals" "the phone target native (the emulator and the app APKs)"
   exit 0
 fi
 

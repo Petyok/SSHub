@@ -696,7 +696,7 @@ const scanNotice = async (id, { time = fx.now } = {}) => {
   await context.close();
 }
 for (const [id, time, fragment, why] of [
-  ['device-add-holder', 1 + 4 * 86400, 'days old', 'a Red notice older than the ceremony TTL'],
+  ['device-add-holder', 1 + 8 * 86400, 'days old', 'a Red notice older than the ceremony TTL'],
   ['host-upsert-full', 1893452500, 'needs nothing from this phone', 'a notice that is not a Red operation'],
 ]) {
   const { context, page } = await scanNotice(id, { time });

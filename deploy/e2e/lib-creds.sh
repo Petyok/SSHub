@@ -76,7 +76,9 @@ snowt() {
 
 # ---- the e2e phone (phone-driver.mjs, compose service `phone`): additive helpers --------------------------------
 # phone CMD [JSON]: one command against the phone daemon; prints the JSON answer, exit 1 when the page refused.
-phone() { c=$1; shift; $C exec -T phone node /driver/phone-driver.mjs "$c" "$@"; }
+# PHONE_SVC names the compose service the phone helpers talk to (`phone`, or `phone2` inside as_phone2).
+PHONE_SVC=phone
+phone() { c=$1; shift; $C exec -T "$PHONE_SVC" node /driver/phone-driver.mjs "$c" "$@"; }
 # Wait (bounded) until the phone daemon answers.
 phone_ready() {
   i=0
@@ -84,6 +86,11 @@ phone_ready() {
     i=$((i + 1)); [ "$i" -le 90 ] || return 1; sleep 1
   done
 }
+# The second phone (compose service phone2, its own key: device id differs from the first phone's).
+# phone2 CMD [JSON] is one command against it; as_phone2 CMD ARGS... runs any helper below (enroll_phone, phone_signs,
+# phone_prep_page, ...) with every `phone` call going to phone2, and returns the helper's status.
+phone2() { PHONE_SVC=phone2 phone "$@"; }
+as_phone2() { PHONE_SVC=phone2; "$@"; r=$?; PHONE_SVC=phone; return $r; }
 # Canonical bytes and signature (hex) of the op whose hash starts with $2, as peer $1 stores it. Read only.
 oprow() { sq "$1" "SELECT hex(canonical) || ' ' || hex(signature) FROM sync_ops WHERE lower(hex(op_hash)) LIKE lower('$2%') LIMIT 1"; }
 
@@ -141,11 +148,11 @@ phone_signs() {
   [ "$rc" -eq 0 ]
 }
 
-# The whole phone enrollment to PEER as text, with its checks. Sets ADD (the phone's admission op).
+# The whole phone enrollment to PEER ($1) as text, with its checks; $2 = the phone's name (default "my phone"). Sets ADD (the phone's admission op).
 enroll_phone() {
   enr_open "$1" sync-phone-enroll --format json
   E1=$(enr_get 1)
-  show "the phone opens the enrollment" phone enroll-start
+  show "the phone opens the enrollment" phone enroll-start ${2:+"{\"name\":\"$2\"}"}
   show "the phone reads the terminal commitment" phone enroll-commit "{\"frame\":\"$(pf "$E1" frame)\"}"
   expect "the page gives a commitment" "$LAST_OUT" '.ok == true'
   enr_send "$(pf "$LAST_OUT" frame)"

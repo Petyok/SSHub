@@ -38,7 +38,7 @@ i=0
 while [ -z "$REL" ] && [ "$i" -lt 40 ]; do
   i=$((i + 1)); sleep 3
   snow peer-a >/dev/null
-  REL=$(peer peer-a $SSHUB sync-review --format json 2>/dev/null | pjq -r '[.[] | select(.summary | test("share|release"; "i")) | .id][0] // empty')
+  REL=$(peer peer-a $SSHUB sync-review --format json 2>/dev/null | pjq -r '[.[] | select(.summary | test("saved password|share|release"; "i")) | .id][0] // empty')
 done
 echo "ShareRelease seen by peer-a: ${REL:-none}"
 check "peer-a received peer-b's share request" "test -n '$REL'"

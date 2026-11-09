@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use rand_core::{OsRng, RngCore};
 use sshub_sync_proto::wire::{
-    PhoneOpsWire, SignedOpBytes, KIND_CERT_EXTEND_REQUEST, KIND_CERT_REQUEST, KIND_CHALLENGE,
-    KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_OPS,
+    PhoneOpsWire, SignedOpBytes, TerminalsBlock, KIND_CERT_EXTEND_REQUEST, KIND_CERT_REQUEST,
+    KIND_CHALLENGE, KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_OPS,
     KIND_RECOVERY_NOTICE, WIRE_MAGIC,
 };
 use zeroize::Zeroizing;
@@ -195,13 +195,18 @@ impl Inner {
         })
     }
 
-    fn open_chain(&mut self, ops: &[SignedOpBytes], sender: Option<[u8; 8]>) -> Result<Opened> {
+    fn open_chain(
+        &mut self,
+        ops: &[SignedOpBytes],
+        sender: Option<[u8; 8]>,
+        terminals: Option<TerminalsBlock>,
+    ) -> Result<Opened> {
         let t = self.token();
         let u = self.unlocked.as_mut().ok_or(CoreError::Locked)?;
         if !u.state.head_pending {
             return Ok(refused("This phone already knows its own chain; a list of its own ops needs nothing from it."));
         }
-        let r = match chain::adopt_own_chain(&mut u.state, &u.id, ops, sender) {
+        let r = match chain::adopt_own_chain(&mut u.state, &u.id, ops, sender, terminals) {
             Ok(r) => r,
             Err(e) => return Ok(refused(e.reason().to_string())),
         };
@@ -222,6 +227,9 @@ impl Inner {
                 newest_at: r.newest_at,
                 ops: r.ops,
                 previous_seq: r.previous_seq,
+                single_source: r.single_source,
+                terminals_count: r.terminals.map(|t| u32::from(t.count)),
+                terminals_newest_at: r.terminals.map(|t| t.newest_op_ts),
                 sender: r.sender.clone(),
                 summary: format!(
                     "Newest op in this list: seq {}, signed {}Z ({} op(s) read).",
@@ -230,6 +238,7 @@ impl Inner {
                     r.ops
                 ),
                 note: match (r.agreed, r.previous_seq) {
+                    (true, _) if r.single_source => chain::single_source_note(r.head_seq, r.terminals),
                     (true, _) => format!("This phone will continue after seq {}. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.", r.head_seq),
                     (false, Some(p)) => format!("The earlier list ended at seq {p}, so one of the two is behind. Take a list from another terminal that is up to date."),
                     (false, None) if r.sender.is_none() => "This list does not say which terminal made it, so it cannot be one of the two. Take the chain from two different terminals that name themselves.".to_string(),
@@ -289,8 +298,8 @@ impl Inner {
                 Ok(o)
             }
             KIND_PHONE_OPS => {
-                let (ops, sender) = match PhoneOpsWire::decode(frame) {
-                    Ok(w) => (w.ops, w.sender),
+                let (ops, sender, terminals) = match PhoneOpsWire::decode(frame) {
+                    Ok(w) => (w.ops, w.sender, w.terminals),
                     Err(e) => return Ok(refused(format!("Not a list of ops: {e:#}"))),
                 };
                 let own = self
@@ -303,7 +312,7 @@ impl Inner {
                     .all(|(c, _)| op_author(c).as_deref() == Some(own.as_str()))
                     && !ops.is_empty()
                 {
-                    return self.open_chain(&ops, sender);
+                    return self.open_chain(&ops, sender, terminals);
                 }
                 let mut ctx = self.ctx(now)?;
                 let (o, p) = reshare::open_reshare(ops, &mut ctx, t);
@@ -497,6 +506,10 @@ impl PhoneCore {
             Pending::Release(r) => Some(Pending::Release(r.clone())),
             Pending::Notice(n) => Some(Pending::Notice(n.clone())),
             Pending::Cert(c) => Some(Pending::Cert(c.clone())),
+            Pending::Chain { seq, hash } => Some(Pending::Chain {
+                seq: *seq,
+                hash: hash.clone(),
+            }),
             _ => None,
         };
         // A restored phone cannot sign: refuse before any work and keep the request, so it can be approved once the head
@@ -519,8 +532,12 @@ impl PhoneCore {
                 cert::approve_cert(p, typed_id.as_deref(), ctx)
             }
             (Pending::Reshare(p), Decision::Approve { .. }) => reshare::publish_reshare(p, ctx),
-            (Pending::Chain { seq: shown, hash }, Decision::Approve { .. }) => {
-                let (seq, n) = chain::accept_head(ctx.state, (shown, &hash))?;
+            (
+                Pending::Chain { seq: shown, hash },
+                d @ (Decision::Approve { .. } | Decision::AcceptSingleSource),
+            ) => {
+                let ack = matches!(d, Decision::AcceptSingleSource);
+                let (seq, n) = chain::accept_head(ctx.state, (shown, &hash), ack)?;
                 Ok(none_outgoing(&format!(
                     "Chain taken: continuing after seq {seq} ({n} op(s) read)."
                 )))
@@ -540,7 +557,7 @@ impl PhoneCore {
         let mut g = self.lock_inner();
         let wire = PhoneOpsWire::decode(&ops_frame)
             .map_err(|e| CoreError::bad(format!("Not a list of ops: {e:#}")))?;
-        match g.open_chain(&wire.ops, wire.sender)? {
+        match g.open_chain(&wire.ops, wire.sender, wire.terminals)? {
             Opened::Chain { view } => Ok(view),
             Opened::Refused { view } => Err(CoreError::bad(view.reason)),
             _ => Err(CoreError::internal("unexpected view")),
@@ -1464,6 +1481,48 @@ mod tests {
             "Newest op in this list: seq 3, signed 2029-12-31T23:00Z (3 op(s) read)."
         );
         assert_eq!(agreed.note, "This phone will continue after seq 3. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.");
+    }
+
+    #[test]
+    fn one_list_head_needs_the_tick_through_decide() {
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        c.lock_inner().unlocked.as_mut().unwrap().state = PhoneState::restored();
+        let id = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
+        let mut live = PhoneState::default();
+        for t in 0..3 {
+            chain::head_attest(&mut live, &id, 1_893_452_400 + t, None).unwrap();
+        }
+        let list = PhoneOpsWire {
+            sender: Some([1; 8]),
+            terminals: Some(TerminalsBlock {
+                count: 2,
+                newest_op_ts: 1_893_452_402,
+            }),
+            ops: chain::courier_ops(&live, 8),
+        }
+        .encode();
+        let v = c.take_chain(list).unwrap();
+        assert!(v.agreed && v.single_source);
+        assert_eq!(
+            (v.terminals_count, v.terminals_newest_at),
+            (Some(2), Some(1_893_452_402))
+        );
+        assert!(
+            v.note
+                .starts_with("Your ring has 2 terminals and I can reach only this one."),
+            "{}",
+            v.note
+        );
+        let now = 1_893_452_500;
+        let e = c
+            .decide(v.token, Decision::Approve { typed_id: None }, now)
+            .unwrap_err();
+        assert_eq!(e.reason(), chain::SINGLE_SOURCE_TICK_MESSAGE);
+        // the refusal keeps the card open: the tick is a second tap, not a new scan
+        c.decide(v.token, Decision::AcceptSingleSource, now)
+            .unwrap();
+        assert!(!c.lock_inner().unlocked.as_ref().unwrap().state.head_pending);
     }
 
     #[test]

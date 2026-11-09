@@ -265,7 +265,7 @@ pub struct RedNoticeView {
     /// Set for a proposer this phone never met: Approve needs this id typed.
     pub type_to_approve: Option<String>,
     /// Everything below comes from the SIGNED op, never from when the phone read the notice. `proposed_at` is the op's
-    /// own timestamp, `lamport` and `seq` its own counters, `lapses_at` = `proposed_at` + 3 days: a Red ceremony
+    /// own timestamp, `lamport` and `seq` its own counters, `lapses_at` = `proposed_at` + 7 days: a Red ceremony
     /// lapses then (the page refuses the op after that), whatever the phone clock says when it was scanned.
     pub proposed_at: i64,
     pub lamport: u64,
@@ -364,6 +364,12 @@ pub struct ChainAdopted {
     pub ops: u32,
     /// The seq the earlier, disagreeing list ended at.
     pub previous_seq: Option<u64>,
+    /// `agreed` came from ONE list: `decide(token, Decision::AcceptSingleSource)` is needed (the user's tick); a plain
+    /// `Approve` is refused. The card must show `terminals_count` and the age of `terminals_newest_at`.
+    pub single_source: bool,
+    /// The sender's own (unsigned, informational) count of the ring's terminals and the author stamp of its newest op.
+    pub terminals_count: Option<u32>,
+    pub terminals_newest_at: Option<i64>,
     /// The terminal id (hex) the list named as its sender (unsigned: it tells two lists apart, it proves nothing), if it
     /// named one. Two lists from two different ids naming the same head are what `agreed` needs.
     pub sender: Option<String>,
@@ -441,6 +447,8 @@ pub enum Decision {
     /// Approve a Red notice, a recovery cancellation, a trust-session request or extension, a reshare, or accept an
     /// agreed chain head. `typed_id` is the device id typed in when the view asked for it.
     Approve { typed_id: Option<String> },
+    /// Accept a chain head that came from ONE list, with the user's tick on the risk (`ChainAdopted.single_source`).
+    AcceptSingleSource,
     /// Name this phone for the ring (enrollment step 1).
     EnrollName { name: String },
     /// The four words are (not) identical (enrollment step 3).

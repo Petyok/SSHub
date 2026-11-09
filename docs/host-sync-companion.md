@@ -215,7 +215,7 @@ second attended terminal and a third factor (paper or email code). The terminal 
 On the phone tap **Scan a share request** and scan it: the page describes the operation from its signed bytes
 (every row of a Red operation is highlighted), names the proposer, and shows the hash of the operation. **Approve:
 sign this operation with the phone** adds a signed proof that names that exact hash and shows it as a QR code and as
-text for the terminal. The page refuses a notice older than 3 days, a notice that is not a Red operation, and a
+text for the terminal. The page refuses a notice older than 7 days, a notice that is not a Red operation, and a
 trust certificate written by another device (the phone writes its own, below). Your signature is only the phone's
 part: the other two proofs come from terminals.
 
