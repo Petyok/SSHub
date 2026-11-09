@@ -102,7 +102,7 @@ fun TrustRenewScreen(state: TrustRenewState, on: TrustRenewActions) {
                     KeyValue("New end", "${isoDate(v.newEnd)} (adds ${spanWords(v.termSecs)})", danger = true)
                     KeyValue("New hosts per day", v.budget.toString())
                     KeyValue("Renewals left", v.renewalsLeft.toString())
-                    if (v.opened.isNotEmpty()) KeyValue("Hosts it opened", v.opened.joinToString("\n"))
+                    KeyValue("Hosts it opened", v.openedText)
                     KeyValue(
                         "Freshest news from another terminal",
                         v.evidenceAgeSecs?.let { "${spanWords(it)} old" } ?: "none: only the trusted device itself vouches for the list",

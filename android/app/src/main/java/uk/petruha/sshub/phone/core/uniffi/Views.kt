@@ -280,7 +280,7 @@ internal fun mapTrustRenew(v: RsCertRenewView): OpenedTrustRenew {
         TrustRenewView(
             token = v.token.toLong(), headline = v.headline, plain = v.plain,
             delegate = r.delegate, scope = r.scope, termSecs = r.termSecs, budget = r.budget.toInt(), renewalsLeft = r.renewalsLeft.toInt(),
-            newEnd = r.newEnd, opened = r.opened, evidenceAgeSecs = r.evidenceAgeSecs,
+            newEnd = r.newEnd, opened = r.opened, openedTotal = r.openedTotal.toInt(), evidenceAgeSecs = r.evidenceAgeSecs,
             refusal = r.refusal?.let { TrustRefusal(-1, REFUSED_TITLE, it) },
             note = v.note, signedSummary = v.headline,
         ),

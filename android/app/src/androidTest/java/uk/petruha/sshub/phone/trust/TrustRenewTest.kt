@@ -49,6 +49,17 @@ class TrustRenewTest {
         rule.assertTargets48()
     }
 
+    @Test fun the_opened_hosts_are_listed_with_the_rest_counted() {
+        rule.setScreen { TrustRenewScreen(fresh, extendActions()) }
+        rule.onNodeWithText("web-01\ndb-staging\nand 9 more (11 in all)").assertExists()
+    }
+
+    @Test fun no_list_sent_is_not_shown_as_nothing_opened() {
+        rule.setScreen { TrustRenewScreen(TrustRenewState(TrustSamples.renewNoList), extendActions()) }
+        rule.onNodeWithText("no list sent", substring = true).assertExists()
+        rule.onAllNodesWithText("and 0 more", substring = true).assertCountEquals(0)
+    }
+
     @Test fun d18_window_is_secure() {
         rule.setScreen { TrustRenewScreen(fresh, extendActions()) }
         assertFlagSecure(rule)

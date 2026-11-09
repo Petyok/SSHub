@@ -25,7 +25,7 @@ import uk.petruha.sshub.phone.ui.components.QrMatrix
 
 /**
  * Sample data of the prototype (data.js, A-trust.js) for previews and tests.
- * Renewal tokens: 30 fresh, 31 stale, 32 delegate only, 33 over the cap. Request tokens: 1 ok, 2 never met, 10 + n refusal n (0..8). Extension tokens: 20 ok, 21 notmine, 22 revoked, 23 again.
+ * Renewal tokens: 30 fresh, 31 stale, 32 delegate only, 33 over the cap, 34 no list sent. Request tokens: 1 ok, 2 never met, 10 + n refusal n (0..8). Extension tokens: 20 ok, 21 notmine, 22 revoked, 23 again.
  */
 object TrustSamples {
     /** 2026-10-26 09:41 UTC. */
@@ -120,11 +120,11 @@ object TrustSamples {
         TrustRefusal(2, "Refused. Extended less than 24 hours ago.", "A second extension of the same certificate within 24 hours is refused. Possible again in 17 h 22 min."),
         TrustAgain(17 * 3600L + 22 * 60L, 86_400L))
 
-    private fun renew(token: Long, evidenceAge: Long?, refusal: TrustRefusal? = null, left: Int = 2) = TrustRenewView(
+    private fun renew(token: Long, evidenceAge: Long?, refusal: TrustRefusal? = null, left: Int = 2, opened: List<String> = listOf("web-01", "db-staging"), openedTotal: Int = 11) = TrustRenewView(
         token = token, headline = "Renew the trust session of workstation [9C61-E2A8] until 2026-11-17",
         plain = "workstation may keep opening 3 hosts for 14 more days.",
         delegate = "workstation [9C61-E2A8]", scope = "3 listed hosts", termSecs = 14 * 86_400L, budget = 10, renewalsLeft = left,
-        newEnd = day(2026, 11, 17), opened = emptyList(), evidenceAgeSecs = evidenceAge, refusal = refusal,
+        newEnd = day(2026, 11, 17), opened = opened, openedTotal = openedTotal, evidenceAgeSecs = evidenceAge, refusal = refusal,
         note = if (refusal == null) "A renewal needs no second terminal: this phone alone extends the trust session within the limits shown." else "",
         signedSummary = "workstation [9C61-E2A8], until 2026-11-17",
     )
@@ -133,6 +133,7 @@ object TrustSamples {
     val renewFresh = renew(30, 60)
     val renewStale = renew(31, 86_400)
     val renewDelegateOnly = renew(32, null)
+    val renewNoList = renew(34, 60, opened = emptyList(), openedTotal = 0)
     val renewOverCap = renew(33, 60, TrustRefusal(-1, "Request refused", "This trust session was renewed 2 times already: a new one needs the full approval."), left = 0)
 
     fun certs(): List<IssuedCert> = listOf(
@@ -171,7 +172,7 @@ class FakeTrust(var now: Long = TrustSamples.NOW) : TrustApi {
         for (n in 0..8) put((10 + n).toLong(), TrustSamples.requestRefused(n))
     }
     val extensions = mapOf(20L to TrustSamples.extendOk, 21L to TrustSamples.extendNotMine, 22L to TrustSamples.extendRevoked, 23L to TrustSamples.extendAgain)
-    val renewals = mapOf(30L to TrustSamples.renewFresh, 31L to TrustSamples.renewStale, 32L to TrustSamples.renewDelegateOnly, 33L to TrustSamples.renewOverCap)
+    val renewals = mapOf(30L to TrustSamples.renewFresh, 31L to TrustSamples.renewStale, 32L to TrustSamples.renewDelegateOnly, 33L to TrustSamples.renewOverCap, 34L to TrustSamples.renewNoList)
     val certs = TrustSamples.certs().toMutableList()
     val codes = TrustSamples.codes().toMutableList()
     var pendingCode: CodeIssuedView? = TrustSamples.codeIssued()

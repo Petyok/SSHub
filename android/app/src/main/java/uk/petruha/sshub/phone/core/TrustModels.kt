@@ -26,14 +26,22 @@ data class TrustRenewView(
     val renewalsLeft: Int,
     /** The new end date, unix seconds. */
     val newEnd: Long,
-    /** Hosts the delegate opened; empty when the core has no list. */
+    /** Names of the hosts the delegate opened that the terminal listed (at most 8, newest first). */
     val opened: List<String>,
+    /** How many hosts it opened in all; `opened` empty and 0 here means the terminal sent no list (never "nothing opened"). */
+    val openedTotal: Int,
     /** Age of the freshest news from a terminal other than the delegate; null: none, or only the delegate vouches for the list. */
     val evidenceAgeSecs: Long?,
     val refusal: TrustRefusal?,
     val note: String,
     val signedSummary: String,
 ) {
+    /** The row under "Hosts it opened": the names and "and N more (T in all)", or that no list came. */
+    val openedText: String get() {
+        if (opened.isEmpty() && openedTotal == 0) return "no list sent: the terminal did not say which hosts it opened"
+        val more = openedTotal - opened.size
+        return opened.joinToString("\n") + if (more > 0) "\nand $more more ($openedTotal in all)" else ""
+    }
     val evidenceStale: Boolean get() = evidenceAgeSecs == null || evidenceAgeSecs > RENEW_EVIDENCE_MAX_AGE_SECS
     /** Red: the core refuses, or the evidence is missing, stale or only the delegate's own. */
     val red: Boolean get() = refusal != null || evidenceStale
