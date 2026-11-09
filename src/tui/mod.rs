@@ -5870,6 +5870,7 @@ mod tests {
             ),
             note: Some("the emailed code cannot count here".into()),
             single_machine: false,
+            blockers: Vec::new(),
         });
         let buffer = render_to_buffer(&app, 120, 38);
         assert!(buffer_contains(&buffer, "emailed code cannot count"));

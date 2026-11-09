@@ -480,3 +480,20 @@ fn group_approval_is_only_for_stale_changes_with_safe_fields() {
     assert_eq!(stale_group(&review, 0), vec![[1; 32], [2; 32]]);
     assert!(stale_group(&review, 3).is_empty());
 }
+
+/// Design 6.4: the review names who can give each missing proof and since when it is wanted.
+#[test]
+fn a_blocker_line_names_who_can_give_the_proof_and_since_when() {
+    use crate::sync::ceremony::{Blocker, RedProof};
+    let now = 1_000_000;
+    let l = crate::app::sync_view::blocker_line(
+        &Blocker { proof: RedProof::SecondDevice, who: vec!["laptop".into(), "server".into()], since: Some(now - 7_200) },
+        now,
+    );
+    assert!(l.contains("waiting for laptop, server") && l.contains("wanted for 2 h"), "{l}");
+    let none = crate::app::sync_view::blocker_line(
+        &Blocker { proof: RedProof::Phone, who: Vec::new(), since: None },
+        now,
+    );
+    assert!(none.contains("nobody can give it right now"), "{none}");
+}

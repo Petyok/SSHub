@@ -609,6 +609,20 @@ pub(crate) fn reason_words(reason: &str) -> String {
     .to_string()
 }
 
+/// One line of "who is holding this change up": the proof, who can give it, since when.
+pub(crate) fn blocker_line(b: &crate::sync::ceremony::Blocker, now: i64) -> String {
+    let who = if b.who.is_empty() {
+        "nobody can give it right now".to_string()
+    } else {
+        format!("waiting for {}", b.who.join(", "))
+    };
+    let since = b
+        .since
+        .map(|t| format!(" (wanted for {})", crate::sync::health::human_left((now - t).max(0))))
+        .unwrap_or_default();
+    format!("{}: {who}{since}", proof_label(&b.proof))
+}
+
 pub(crate) fn proof_label(p: &crate::sync::ceremony::RedProof) -> &'static str {
     use crate::sync::ceremony::RedProof;
     use crate::sync::oplog::ThirdFactor;
@@ -628,7 +642,12 @@ fn red_view(store: &LauncherStore, op: &Op) -> Option<super::sync::RedView> {
         return None;
     }
     let st = red_status(store, op, crate::store::now_ts()).ok()?;
+    let now = crate::store::now_ts();
+    let blockers = crate::sync::ceremony::blocking_view(store, op, now)
+        .map(|b| b.iter().map(|b| blocker_line(b, now)).collect())
+        .unwrap_or_default();
     Some(super::sync::RedView {
+        blockers,
         have: st.have.iter().map(|p| proof_label(p).to_string()).collect(),
         missing: st
             .missing
@@ -826,6 +845,8 @@ impl App {
         sync.cut_off_missing = crate::sync::revocation::terminals_missing_to_cut_off(&store)?;
         sync.exposure = crate::cli::sync_admin::exposure_lines(&store)?;
         sync.exposed_hosts = crate::cli::sync_admin::exposed_host_names(&store)?;
+        let names: Vec<(String, String)> = sync.devices.iter().map(|d| (d.id.clone(), d.name.clone())).collect();
+        sync.renewals = super::sync_trust::renewal_notices(&super::sync_trust::trust_rows(&store, &names, now), now);
         sync.no_mail = sync.configured
             && self.profile.as_ref().is_some_and(|p| {
                 crate::config::load_config_at(&p.config_file)

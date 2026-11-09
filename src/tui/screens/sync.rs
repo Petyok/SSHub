@@ -102,6 +102,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             color(app, ColorRole::StatusWarning),
         ),
     });
+    for l in &sync.renewals {
+        lines.push(Line::styled(l.clone(), color(app, ColorRole::StatusWarning)));
+    }
     if sync.no_mail {
         lines.push(Line::styled(
             "No mail configured: a hostile recovery would only show on terminal screens (M, Phone, Mail)",
@@ -340,6 +343,12 @@ pub fn render_review(frame: &mut Frame, app: &App) {
             body.push(Line::styled(
                 format!("  \u{25cb} {missing}: missing"),
                 color(app, ColorRole::StatusWarning),
+            ));
+        }
+        for b in &red.blockers {
+            body.push(Line::styled(
+                format!("  {b}"),
+                app.theme().style(StyleRole::TextMuted),
             ));
         }
         if red.single_machine {

@@ -970,7 +970,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
                     "ceremony": v.red.as_ref().map(|r| json!({
                         "have": r.have, "missing": r.missing, "expired": r.expired,
                         "blocked": r.blocked, "rule_violation": r.rule_violation, "note": r.note,
-                        "single_machine": r.single_machine,
+                        "single_machine": r.single_machine, "blockers": r.blockers,
                     })),
                     "changes": v.changes.iter().map(|c| json!({
                         "field": c.field, "from": c.from, "to": c.to, "dangerous": c.dangerous,
@@ -1008,6 +1008,9 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             }
             for m in &red.missing {
                 println!("    missing: {m}");
+            }
+            for b in &red.blockers {
+                println!("    {}", plain(b));
             }
             if let Some(why) = &red.blocked {
                 println!("    cannot go through as it stands: {}", plain(why));

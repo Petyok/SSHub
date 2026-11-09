@@ -68,6 +68,11 @@ fn devices(app: &mut App) {
         vec![
             unless("Remove a device (revoke)", f::revoke, none),
             unless(
+                "Replace a full computer (enroll the new one, promote it, remove the old one)",
+                super::sync_flows_more::replace_terminal,
+                none,
+            ),
+            unless(
                 "Change what a device may do (full device or view-only copy)",
                 f::role,
                 none,
@@ -130,6 +135,14 @@ pub(crate) fn credentials(app: &mut App) {
                 quorum.then_some("only a Vault ring uses the kit"),
             ),
             go(
+                "Heal credentials (after a device was replaced or retired)",
+                super::sync_flows_more::heal,
+            ),
+            go(
+                "Change exposed credentials (after a stolen device)",
+                super::sync_flows_more::rekey,
+            ),
+            go(
                 "Paper phrase: create, write down, type back",
                 f::paper_wizard,
             ),
@@ -184,6 +197,11 @@ fn advanced(app: &mut App) {
             unless(
                 "Trust session: allow more new hosts today",
                 super::sync_trust::extend,
+                no_phone,
+            ),
+            unless(
+                "Trust session: renew one (from another full computer)",
+                super::sync_trust::renew,
                 no_phone,
             ),
             unless(

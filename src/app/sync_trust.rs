@@ -325,3 +325,163 @@ pub(crate) fn revoke(app: &mut App) {
         });
     });
 }
+
+// ------------------------------------------------------------------- renewal
+
+/// One trust session of the ring as the renewal flow and the notice see it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrustRow {
+    pub cert_id: [u8; 32],
+    pub delegate_id: String,
+    pub delegate: String,
+    /// The end that counts (the issue's, or the newest counted renewal's).
+    pub expiry: i64,
+    pub renewals: u32,
+    pub original_term_secs: i64,
+}
+
+/// Trust sessions in force (issued, not revoked, not past their end) with their effective end and renewals used.
+pub(crate) fn trust_rows(
+    store: &crate::store::LauncherStore,
+    devices: &[(String, String)],
+    now: i64,
+) -> Vec<TrustRow> {
+    let ops = crate::sync::quorum::ops_of(store, "CertIssue", None).unwrap_or_default();
+    ops.iter()
+        .filter(|o| crate::sync::ceremony::in_force(store, o).unwrap_or(false))
+        .filter_map(|o| DelegationCert::from_op(o).ok())
+        .filter(|c| !store.sync_cert_revoked(&c.id).unwrap_or(true))
+        .filter_map(|c| {
+            let expiry = c.effective_expiry(store).ok()?;
+            (expiry > now).then(|| TrustRow {
+                cert_id: c.id,
+                delegate: devices
+                    .iter()
+                    .find(|(id, _)| *id == c.device_id)
+                    .map_or_else(|| c.device_id.chars().take(8).collect(), |(_, n)| n.clone()),
+                delegate_id: c.device_id.clone(),
+                expiry,
+                renewals: c.renewals(store).unwrap_or(u32::MAX),
+                original_term_secs: c.expiry - c.issued_at(),
+            })
+        })
+        .collect()
+}
+
+/// How close to its end a trust session is offered for renewal by a sticky line.
+const RENEW_NOTICE_SECS: i64 = 3 * 86_400;
+
+/// Sticky lines for trust sessions that end soon and can still be renewed (design 6.4): the renewal is lighter than
+/// a new session, so say so where the user will see it.
+pub(crate) fn renewal_notices(rows: &[TrustRow], now: i64) -> Vec<String> {
+    rows.iter()
+        .filter(|r| r.expiry - now <= RENEW_NOTICE_SECS && r.renewals < crate::sync::limits::CERT_MAX_RENEWALS)
+        .map(|r| {
+            format!(
+                "The trust session of {} ends in {}: renew it from another full computer (M, Advanced, Renew a trust session).",
+                r.delegate,
+                crate::sync::health::human_left(r.expiry - now)
+            )
+        })
+        .collect()
+}
+
+/// Renew a trust session: the terminal shows the phone a request that carries what the other terminals saw of the
+/// delegate; the phone's answer is pasted back like any other.
+pub(crate) fn renew(app: &mut App) {
+    let devices: Vec<(String, String)> = app
+        .sync
+        .devices
+        .iter()
+        .map(|d| (d.id.clone(), d.name.clone()))
+        .collect();
+    let me = app.sync.this_device.clone();
+    let rows: Vec<TrustRow> = trust_rows(&app.store, &devices, now())
+        .into_iter()
+        .filter(|r| Some(&r.delegate_id) != me.as_ref())
+        .filter(|r| r.renewals < crate::sync::limits::CERT_MAX_RENEWALS)
+        .collect();
+    if rows.is_empty() {
+        app.host_notice = Some(
+            "no trust session can be renewed from here: it must be in force, renewed fewer than 2 times, and not be this computer's own (renew it from another full computer)".into(),
+        );
+        return;
+    }
+    let items: Vec<(String, MenuFn)> = rows
+        .into_iter()
+        .map(|r| {
+            let label = format!(
+                "{}: ends in {}, renewed {} of {} times",
+                r.delegate,
+                crate::sync::health::human_left(r.expiry - now()),
+                r.renewals,
+                crate::sync::limits::CERT_MAX_RENEWALS
+            );
+            let (id, max) = (r.cert_id, r.original_term_secs);
+            (
+                label,
+                Box::new(move |app: &mut App| renew_term(app, id, max)) as MenuFn,
+            )
+        })
+        .collect();
+    app.sync_menu("Renew which trust session?", items);
+}
+
+fn renew_term(app: &mut App, cert_id: [u8; 32], max_secs: i64) {
+    let items: Vec<(String, MenuFn)> = [7i64, 30, 90]
+        .into_iter()
+        .filter(|d| d * 86_400 <= max_secs)
+        .map(|d| {
+            (
+                format!("{d} more days"),
+                Box::new(move |app: &mut App| renew_request(app, cert_id, d * 86_400)) as MenuFn,
+            )
+        })
+        .collect();
+    if items.is_empty() {
+        app.host_notice = Some("a renewal is at most as long as the first term".into());
+        return;
+    }
+    app.sync_menu("Renew for how long?", items);
+}
+
+fn renew_request(app: &mut App, cert_id: [u8; 32], term_secs: i64) {
+    match crate::sync::cert::cert_renew_request(&app.store, cert_id, term_secs, now()) {
+        Ok(wire) => show_qr(
+            app,
+            "Renew a trust session",
+            wire.encode(),
+            vec![
+                "Show this code to the phone: it shows which hosts were opened and asks you to confirm the renewal.".into(),
+                "A renewal needs no second device and no paper phrase. Paste the answer the phone shows below.".into(),
+            ],
+        ),
+        Err(e) => app.host_notice = Some(format!("{e:#}")),
+    }
+}
+
+#[cfg(test)]
+mod renewal_tests {
+    use super::*;
+
+    fn row(expiry: i64, renewals: u32) -> TrustRow {
+        TrustRow {
+            cert_id: [1; 32],
+            delegate_id: "d".into(),
+            delegate: "laptop".into(),
+            expiry,
+            renewals,
+            original_term_secs: 30 * 86_400,
+        }
+    }
+
+    #[test]
+    fn the_notice_names_a_session_that_ends_soon_and_can_still_be_renewed() {
+        let now = 1_000_000;
+        let soon = renewal_notices(&[row(now + 2 * 86_400, 0)], now);
+        assert_eq!(soon.len(), 1);
+        assert!(soon[0].contains("laptop") && soon[0].contains("renew"), "{soon:?}");
+        assert!(renewal_notices(&[row(now + 20 * 86_400, 0)], now).is_empty());
+        assert!(renewal_notices(&[row(now + 86_400, crate::sync::limits::CERT_MAX_RENEWALS)], now).is_empty());
+    }
+}

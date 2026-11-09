@@ -650,6 +650,8 @@ fn a_red_change_shows_its_ceremony_and_takes_effect_only_when_all_proofs_are_in(
         .expect("a Red change shows its ceremony");
     assert!(red.missing.iter().any(|m| m.contains("phone")), "{red:?}");
     assert!(red.missing.iter().any(|m| m.contains("second")), "{red:?}");
+    // The review also says who can give each missing proof (design 6.4).
+    assert!(red.blockers.iter().any(|b| b.contains("waiting for")), "{:?}", red.blockers);
 
     // Approving through the store directly is refused: only the ceremony applies it.
     open_review(&mut r.app);
@@ -1556,4 +1558,60 @@ fn a_recovery_started_elsewhere_raises_one_alert_that_esc_only_dismisses() {
     );
     let (badge, _) = r.app.sync_badge().unwrap();
     assert!(badge.contains("recovery open"), "{badge}");
+}
+
+/// Design 6 (CertRenew): the renewal flow lists the sessions of other computers, asks how long, and shows the phone a
+/// kind 11 request for the end that counts plus that term; a session of this computer itself is not offered.
+#[test]
+fn renewing_a_trust_session_shows_the_phone_a_kind_11_request() {
+    use crate::sync::oplog::{CertScope, OpBody};
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    let (_, huid) = group_with_host(&r);
+    let now = crate::store::now_ts();
+    ingest_from(&r.d[2], &r.d[0]);
+    let issue = append(
+        &r.d[0],
+        OpBody::CertIssue {
+            device_id: r.d[2].did.clone(),
+            scope: CertScope::Hosts(vec![huid]),
+            expiry: now + 30 * 86_400,
+            max_new_hosts_per_day: 5,
+            epoch_lo: 0,
+            epoch_hi: 9,
+        },
+    );
+    ingest_from(&r.d[0], &r.d[1]);
+    let _ = r.app.store.sync_resolve_pending(&issue.hash(), true);
+    r.app.refresh_sync_view();
+
+    crate::app::sync_trust::renew(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncMenu, "{:?}", r.app.host_notice);
+    enter(&mut r.app); // the session
+    assert_eq!(r.app.mode, AppMode::SyncMenu, "the term menu");
+    enter(&mut r.app); // 7 more days
+    let wire = crate::sync::wire::CertRenewRequestWire::decode(&decode_frames(&frames_of_prompt(&r.app))).unwrap();
+    assert_eq!(wire.cert_id, issue.hash());
+    assert!((wire.expiry - (now + 37 * 86_400)).abs() <= 5, "{}", wire.expiry - now);
+
+    // The delegate's own computer cannot renew it: its view is no evidence.
+    let mut mine = ring(None);
+    mark_this_device(&mut mine);
+    let (_, huid) = group_with_host(&mine);
+    let own = append(
+        &mine.d[0],
+        OpBody::CertIssue {
+            device_id: mine.d[1].did.clone(),
+            scope: CertScope::Hosts(vec![huid]),
+            expiry: now + 30 * 86_400,
+            max_new_hosts_per_day: 5,
+            epoch_lo: 0,
+            epoch_hi: 9,
+        },
+    );
+    ingest_from(&mine.d[0], &mine.d[1]);
+    let _ = mine.app.store.sync_resolve_pending(&own.hash(), true);
+    mine.app.refresh_sync_view();
+    crate::app::sync_trust::renew(&mut mine.app);
+    assert!(mine.app.host_notice.as_deref().is_some_and(|n| n.contains("another full computer")));
 }

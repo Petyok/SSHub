@@ -26,7 +26,7 @@ use crate::sync::oplog::{
 
 use super::help;
 
-pub const COMMANDS: [&str; 11] = [
+pub const COMMANDS: [&str; 14] = [
     "sync-revoke",
     "sync-role",
     "sync-approve",
@@ -38,6 +38,9 @@ pub const COMMANDS: [&str; 11] = [
     "sync-export",
     "sync-migrate",
     "sync-import-kit",
+    "sync-heal",
+    "sync-rekey",
+    "sync-replace-terminal",
 ];
 
 const EMPTY_RING: &str = "No sync ring on this profile yet.";
@@ -85,6 +88,16 @@ pub enum Cmd {
         remove_local: bool,
     },
     ImportKit,
+    Heal,
+    Rekey {
+        csv: Option<String>,
+        stdin: bool,
+        new_keys: Vec<String>,
+    },
+    ReplaceTerminal {
+        old: String,
+        new: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -99,6 +112,8 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
     let (mut paper, mut email_code, mut remove_local) = (false, false, false);
     let (mut window, mut out, mut wait, mut sender, mut factor, mut cosigner) =
         (None, None, 0u64, None, None, None);
+    let (mut csv, mut stdin, mut new_keys, mut new_dev): (Option<String>, bool, Vec<String>, Option<String>) =
+        (None, false, Vec::new(), None);
     let mut i = 0;
     let value = |i: usize, flag: &str| -> std::result::Result<String, String> {
         args.get(i + 1)
@@ -149,6 +164,22 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
             }
             "--sender" => {
                 sender = Some(value(i, a)?);
+                i += 2;
+            }
+            "--csv" => {
+                csv = Some(value(i, a)?);
+                i += 2;
+            }
+            "--stdin" => {
+                stdin = true;
+                i += 1;
+            }
+            "--new-key" => {
+                new_keys.push(value(i, a)?);
+                i += 2;
+            }
+            "--new" => {
+                new_dev = Some(value(i, a)?);
                 i += 2;
             }
             "--cosigner" => {
@@ -298,6 +329,18 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
             exact(0, "no positional argument")?;
             Cmd::ImportKit
         }
+        "sync-heal" => {
+            exact(0, "no positional argument")?;
+            Cmd::Heal
+        }
+        "sync-rekey" => {
+            exact(0, "no positional argument (use --csv FILE, --stdin or --new-key HOST)")?;
+            Cmd::Rekey { csv: csv.clone(), stdin, new_keys: new_keys.clone() }
+        }
+        "sync-replace-terminal" => {
+            exact(1, "the computer being replaced")?;
+            Cmd::ReplaceTerminal { old: pos[0].into(), new: new_dev.clone() }
+        }
         other => return Err(format!("unknown sync admin command {other}")),
     };
     // Flags that belong to other verbs are mistakes, not no-ops.
@@ -314,6 +357,22 @@ pub fn parse(cmd: &str, args: &[String]) -> std::result::Result<(Cmd, Opts), Str
         (
             "--remove-local",
             remove_local && !matches!(cmd_val, Cmd::Migrate { .. }),
+        ),
+        (
+            "--csv",
+            csv.is_some() && !matches!(cmd_val, Cmd::Rekey { .. }),
+        ),
+        (
+            "--stdin",
+            stdin && !matches!(cmd_val, Cmd::Rekey { .. }),
+        ),
+        (
+            "--new-key",
+            !new_keys.is_empty() && !matches!(cmd_val, Cmd::Rekey { .. }),
+        ),
+        (
+            "--new",
+            new_dev.is_some() && !matches!(cmd_val, Cmd::ReplaceTerminal { .. }),
         ),
         (
             "--window",
@@ -435,6 +494,53 @@ fn execute(paths: &ProfilePaths, cmd: Cmd, opts: Opts) -> Result<i32> {
         Cmd::Migrate { remove_local } => {
             let local = crate::credentials::open_ungated_for_profile(paths);
             let r = migrate(&store, &id, local.as_ref(), remove_local)?;
+            report(opts, &r)
+        }
+        Cmd::Heal => {
+            let phrase = super::unlock::prompt_secret("Paper phrase (24 words): ")
+                .context("no phrase entered")?;
+            report(opts, &super::sync_repair::heal(&store, &id, &phrase)?)
+        }
+        Cmd::Rekey { csv, stdin, new_keys } => {
+            use super::sync_repair as rk;
+            let mut text = String::new();
+            if let Some(path) = &csv {
+                text = std::fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+            } else if stdin {
+                std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
+            }
+            let entries = rk::parse_csv(&text)?;
+            let mut r = if entries.is_empty() && new_keys.is_empty() {
+                let list = rk::rekey_list(&store)?;
+                let mut lines: Vec<String> = list
+                    .iter()
+                    .map(|(_, n, d)| format!("{n}: shares a key with the removed device {}", d.join(", ")))
+                    .collect();
+                if lines.is_empty() {
+                    lines.push("no saved password shares a key with a removed device".into());
+                } else {
+                    lines.push("Change each one on its server, then save the new secret: --csv FILE or --stdin with lines host,newpassword, or --new-key HOST for a new key.".into());
+                }
+                Report { json: json!({"exposed": list.iter().map(|(_, n, _)| n).collect::<Vec<_>>()}), lines }
+            } else {
+                rk::rekey_apply(&store, &id, &entries)?
+            };
+            if !new_keys.is_empty() {
+                let k = rk::rekey_new_key(&store, &id, &new_keys)?;
+                r.lines.extend(k.lines);
+            }
+            report(opts, &r)
+        }
+        Cmd::ReplaceTerminal { old, new } => {
+            let phrase = if new.is_some() {
+                super::unlock::prompt_secret("Paper phrase (24 words): ")
+                    .context("no phrase entered")?
+            } else {
+                Zeroizing::new(String::new())
+            };
+            let r = super::sync_repair::replace_terminal(&store, &mut id, &old, new.as_deref(), &phrase, now, |id, dev| {
+                revoke(paths, &store, id, secrets.as_ref(), dev, now)
+            })?;
             report(opts, &r)
         }
         Cmd::ImportKit => {
@@ -603,7 +709,7 @@ pub(crate) fn find_op(store: &LauncherStore, prefix: &str) -> Result<Op> {
 // -------------------------------------------------------------------- verbs
 
 /// A host's name for a credential list, from the host's uid.
-fn host_label(store: &LauncherStore, uid: &crate::sync::oplog::HostUid) -> String {
+pub(crate) fn host_label(store: &LauncherStore, uid: &crate::sync::oplog::HostUid) -> String {
     store
         .host_id_by_uid(uid)
         .ok()
@@ -669,7 +775,10 @@ pub(crate) fn exposure_lines(store: &LauncherStore) -> Result<Vec<String>> {
 }
 
 /// What to do about a removed device's passwords when it was stolen or lost (the answer the TUI asks first).
-pub(crate) const STOLEN_NOTE: &str = "It was stolen or lost: change the passwords of the hosts listed above on the servers, and remove its key from their authorized_keys.";
+pub(crate) const STOLEN_NOTE: &str = "It was stolen or lost: change the passwords of the hosts listed above on the servers, remove its key from their authorized_keys, then save the new secrets: M, Passwords, Change exposed credentials (or `sshub sync-rekey`).";
+
+/// What to do about a removed device's passwords when it was destroyed or wiped.
+pub(crate) const WIPED_NOTE: &str = "It was destroyed or wiped: nothing of it is left to misuse. Run M, Passwords, Heal credentials (or `sshub sync-heal`) so the other computers hold every saved password.";
 
 /// A registered paper phrase comes first (design 3.1): before a switch to Quorum, and before a change that leaves
 /// three or more full devices. Without it a stolen device cannot be cut off and a lost phone cannot be recovered.
@@ -1610,6 +1719,9 @@ pub fn print_help(cmd: &str) {
         "sync-exemption" => ("sync-exemption (on | off) <device> [--format plain|json]", "Switch the master-phrase exemption of a device off (Red). Switching it on needs the TUI."),
         "sync-export" => ("sync-export --window <seconds> --out <path> [--wait <seconds>] [--format plain|json]", "Bulk export (Red, window up to 3600 s): propose it, wait for the ceremony, then write every credential to a new 0600 file in the Termius CSV format (import it from a directory as L00t.csv)."),
         "sync-migrate" => ("sync-migrate [--remove-local] [--format plain|json]", "Write this profile's existing host and identity secrets as replicated credentials; --remove-local deletes the local copies afterwards."),
+        "sync-heal" => ("sync-heal [--format plain|json]", "After a device was replaced or retired: re-seal the saved passwords that a current full device does not hold a piece of yet, under a fresh key to every current device. The 24 paper words are read once, without echo; this terminal's own piece plus the paper's piece open each one, no phone needed. Passwords a removed device held a piece of are skipped: change those (sync-rekey)."),
+        "sync-rekey" => ("sync-rekey [--csv FILE | --stdin] [--new-key HOST]... [--format plain|json]", "For a stolen device: list the saved passwords that share a key with a removed device (no option), or save new secrets: lines `host,newpassword` from --csv FILE or --stdin, and --new-key HOST to generate a new key and save it (its public key is printed to install on the server). SSHub cannot change a password on a server: change it there first. Each host gets its own result line; a host not saved stays on the list."),
+        "sync-replace-terminal" => ("sync-replace-terminal <old computer> [--new <computer>] [--format plain|json]", "Replace a full computer in steps: without --new it says how to enroll the new one (sshub sync-join on it); with --new it proposes the new computer as a full device (needs the phone and the paper phrase) and, run again once that is approved, proposes removing the old one. The paper phrase is read once, without echo, and goes to both. The last line points at sync-heal and sync-rekey."),
         "sync-import-kit" => ("sync-import-kit", "On a new machine: read the ring kit (sshub:ring:1:...) and the six master words without echo and set up the Vault here."),
         _ => return,
     };

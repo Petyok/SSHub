@@ -20,13 +20,14 @@ use crate::sync::crypto::DeviceIdentity;
 use crate::sync::identity_store::load_or_init_identity;
 use crate::sync::phone_enroll::{admit_phone, PhoneEnroll, Step};
 
-pub const COMMANDS: [&str; 6] = [
+pub const COMMANDS: [&str; 7] = [
     "sync-phone-enroll",
     "sync-notice",
     "sync-phone-ops",
     "sync-phone-chain",
     "sync-share-request",
     "sync-cert-request",
+    "sync-trust-renew",
 ];
 
 pub fn is_phone_command(cmd: &str) -> bool {
@@ -552,6 +553,7 @@ pub fn run(
         "sync-phone-chain" => want(1, "one phone device id"),
         "sync-share-request" => want(1, "one host name"),
         "sync-cert-request" => want(0, "no argument (use --group or --host)"),
+        "sync-trust-renew" if a.pos.len() > 1 => want(1, "at most one trust session id"),
         _ => None,
     };
     if let Some(code) = bad {
@@ -581,7 +583,8 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
     if matches!(
         cmd,
         "sync-notice" | "sync-phone-chain" | "sync-share-request" | "sync-cert-request"
-    ) {
+    ) || (cmd == "sync-trust-renew" && !a.pos.is_empty())
+    {
         companion_line(&mut out, a.json);
     }
     match cmd {
@@ -695,8 +698,73 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
             }
             Ok(0)
         }
+        "sync-trust-renew" => trust_renew(&store, &id, a, &mut out),
         _ => unreachable!("dispatched by is_phone_command"),
     }
+}
+
+/// `sync-trust-renew [<id>] [--days N]`: without an id, the trust sessions that can be renewed; with one, the kind 11
+/// request the phone confirms. Built on a terminal that is not the delegate (the evidence comes from the others).
+fn trust_renew(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    a: &Args,
+    out: &mut impl Write,
+) -> Result<i32> {
+    let now = crate::store::now_ts();
+    let devices: Vec<(String, String)> = crate::sync::ceremony::effective_devices(store, None)?
+        .into_iter()
+        .map(|d| (d.id, d.name))
+        .collect();
+    let rows = crate::app::sync_trust::trust_rows(store, &devices, now);
+    let Some(prefix) = a.pos.first() else {
+        for r in &rows {
+            let line = format!(
+                "{} {}: ends in {}, renewed {} of {} times",
+                hex_of(&r.cert_id)[..8].to_string(),
+                plain(&r.delegate),
+                crate::sync::health::human_left(r.expiry - now),
+                r.renewals,
+                crate::sync::limits::CERT_MAX_RENEWALS
+            );
+            emit(
+                out,
+                a.json,
+                "session",
+                line,
+                json!({"id": hex_of(&r.cert_id), "delegate": r.delegate, "expiry": r.expiry, "renewals": r.renewals}),
+            );
+        }
+        return Ok(0);
+    };
+    let hits: Vec<_> = rows
+        .iter()
+        .filter(|r| hex_of(&r.cert_id).starts_with(&prefix.to_lowercase()))
+        .collect();
+    ensure!(prefix.len() >= 6, "give at least 6 hex digits of the trust session id");
+    let [row] = hits.as_slice() else {
+        bail!("{prefix} matches {} trust sessions in force (list them with no argument)", hits.len());
+    };
+    ensure!(
+        row.delegate_id != id.public().device_id(),
+        "this computer is the delegate: renew it from another full computer, whose view is the evidence"
+    );
+    let wire = crate::sync::cert::cert_renew_request(
+        store,
+        row.cert_id,
+        i64::from(a.days) * 86_400,
+        now,
+    )?;
+    let text = b64(&wire.encode());
+    emit(out, a.json, "request", text.clone(), json!({"request": text}));
+    if a.ble {
+        return super::sync_phone_ble::push(&wire.encode(), a.json, a.wait, out);
+    }
+    Ok(0)
+}
+
+fn hex_of(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 /// The trust-session scope from `--group NAME` or one or more `--host NAME`, by the labels the
@@ -820,6 +888,7 @@ pub fn print_help(cmd: &str) {
         "sync-phone-chain" => ("sync-phone-chain <phone-device-id> [--wait <seconds>] [--ble] [--format plain|json]", "Print the kind 5 list (base64) of the phone's own newest ops (at most 8) that this terminal holds, for a RESTORED phone to take its chain back. The list names this terminal's device id as its sender (unsigned: it only lets the phone tell two lists apart). The phone adopts its chain only from two lists naming the same newest op that come from two DIFFERENT terminals, so run this on two terminals. Scanning one list twice is refused. <phone-device-id> is the 16 hex characters on the phone's home screen. With --ble (a build with the `bluetooth` feature) the list is also handed to the phone app over Bluetooth (`sent:`)."),
         "sync-phone-ops" => ("sync-phone-ops [--wait <seconds>] [--ble] [--format plain|json]", "Take in the ops the phone copied (kind 5, base64) from stdin, chain them into the log and print what applied, why the others were skipped (`skipped` in JSON: `chain-gap` with the first refused seq when the list starts past what the ring knows, `already-known`, `invalid`) and the ceremony of every pending Red op. A malformed text changes nothing. With --ble (a build with the `bluetooth` feature) the ops frame is received from the phone app over Bluetooth instead of stdin (`bluetooth: pick SSHub-XXXX in the phone app's device list`, up to --wait seconds)."),
         "sync-share-request" => ("sync-share-request <host> [--wait <seconds>] [--ble] [--format plain|json]", "Ask the phone for its share of <host>'s credential: prints the host name with its host id (32 hex digits in groups of four, as the phone draws it) and the challenge's four binding words (`host:` and `words:` lines; in JSON the `host_id`, `host_uid` and `words` fields, also on the challenge line), which you compare with the phone before approving; then prints the kind 1 challenge (base64), then reads the phone's kind 2 reply from stdin (up to --wait seconds; default and maximum 120, the challenge's life), opens it, takes in its courier ops and opens the credential with this device's share. The credential is open in this process only: run it to prove the path and to take in the phone's ops; `host connect` does its own unlock. With --ble (a build with the `bluetooth` feature) the challenge is also sent to the phone app over Bluetooth (`bluetooth: pick SSHub-XXXX in the phone app's device list`) and the reply is taken from Bluetooth or stdin, whichever comes first."),
+        "sync-trust-renew" => ("sync-trust-renew [<id>] [--days N] [--ble] [--format plain|json]", "Renew a trust session without a new full approval: no id lists the sessions in force (id, delegate, end, renewals used of 2); with the first 6 or more hex digits of an id it prints the kind 11 request (base64) for the phone, which shows what the other terminals saw of the delegate and asks you to confirm. At most the first term (--days, default 30), at most 2 renewals, at most 180 days in all. Run it on a computer that is not the delegate. The phone's answer goes in with sync-phone-ops."),
         "sync-cert-request" => ("sync-cert-request (--group NAME | --host NAME...) [--days N] [--budget N] [--ble] [--format plain|json]", "Print the kind 9 trust-session request (base64) for the phone to approve: a group or listed hosts (at most 64, never everything), a term in days (default 30) and a budget of new hosts a day (default 10). The phone's answer goes in with sync-phone-ops. The kind 10 extension is TUI-only. With --ble (a build with the `bluetooth` feature) the request is also handed to the phone app over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone app's device list` and waits up to --wait seconds until the phone has the frame (`sent:`)."),
         _ => return,
     };

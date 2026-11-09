@@ -263,6 +263,8 @@ pub struct RedView {
     pub note: Option<String>,
     /// Only one attended holder terminal: the second device is waived, the paper needed.
     pub single_machine: bool,
+    /// Who can give each missing proof and since when it is wanted (`ceremony::blocking_view`), one line each.
+    pub blockers: Vec<String>,
 }
 
 /// One pending operation awaiting review.
@@ -611,6 +613,8 @@ pub struct SyncView {
     pub no_paper: bool,
     /// A ring is set up but no mail command and recipient are configured: a standing line says what that means.
     pub no_mail: bool,
+    /// Sticky lines for trust sessions that end soon and can be renewed.
+    pub renewals: Vec<String>,
     /// Plain lines about saved passwords that are exposed or not yet shared with a current full device (design 4.3).
     pub exposure: Vec<String>,
     /// Names of the hosts whose saved password is on either list: the host row carries a marker.
