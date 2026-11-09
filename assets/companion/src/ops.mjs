@@ -31,7 +31,7 @@ const DANGER = {
   IdentityUpsert: '*', IdentityDelete: '*', CredUpdate: '*', DeviceAdd: '*', DeviceRevoke: '*',
   ShareRelease: new Set(['host_uid', 'requester']), ShareReshareSession: '*', ShareStorageKey: '*',
   ShareReshareBatch: '*', ShareReshareConfirmBatch: '*', WrapKeyRotate: '*', CertIssue: '*',
-  CertRevoke: '*', CertHostOpened: '*', CertExtend: '*', PhoneReenroll: '*', PhoneReenrollCancel: '*',
+  CertRevoke: '*', CertHostOpened: '*', CertExtend: '*', CertRenew: '*', PhoneHandover: '*', PhoneReenroll: '*', PhoneReenrollCancel: '*',
   RecoveryAck: '*', ModeChange: '*', HeadAttest: null,
   // Red ceremony (C17): the three proof ops are inert, the other three are Red themselves.
   RedApprove: null, RedPhoneSign: null, RedFactor: null, FactorRegister: '*', DeviceRoleChange: '*', BulkExport: '*', ExemptionSet: '*',
@@ -220,7 +220,7 @@ export const encodeCertExtend = (h, certIdHex, extraHosts) => utf8(`${header(h)}
 // holder from a mirror in a revoke, so it signs any DeviceRevoke the user approves (the proof is inert).
 export function isRedOp(op) {
   if (op.kind === 'DeviceAdd') return op.fields.role === 'Holder';
-  return ['DeviceRevoke', 'CertIssue', 'ModeChange', 'FactorRegister', 'DeviceRoleChange', 'BulkExport', 'ExemptionSet'].includes(op.kind);
+  return ['DeviceRevoke', 'CertIssue', 'ModeChange', 'FactorRegister', 'DeviceRoleChange', 'BulkExport', 'ExemptionSet', 'PhoneHandover'].includes(op.kind);
 }
 
 export const b64enc = (bytes) => {

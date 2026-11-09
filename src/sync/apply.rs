@@ -145,6 +145,18 @@ pub fn validate_body(body: &OpBody) -> std::result::Result<(), String> {
             }
             Ok(())
         }
+        OpBody::CertRenew { expiry, .. } => {
+            if *expiry <= 0 {
+                return Err("a certificate end date is after 1970".into());
+            }
+            Ok(())
+        }
+        OpBody::PhoneHandover { new_phone, name } => {
+            line("device name", name)?;
+            new_phone
+                .validate()
+                .map_err(|e| format!("invalid handover phone: {e}"))
+        }
         OpBody::BulkExport { window_secs, .. } => {
             if *window_secs == 0 || *window_secs > 3600 {
                 return Err("an export window is 1 to 3600 seconds".into());
@@ -262,6 +274,8 @@ fn validate_ids(body: &OpBody) -> std::result::Result<(), String> {
         | OpBody::RedPhoneSign { .. }
         | OpBody::RedFactor { .. }
         | OpBody::CertExtend { .. }
+        | OpBody::CertRenew { .. }
+        | OpBody::PhoneHandover { .. }
         | OpBody::CheckpointSign { .. } => Ok(()),
     }
 }

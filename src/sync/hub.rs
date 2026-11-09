@@ -260,6 +260,7 @@ pub fn phone_chain_wire(store: &LauncherStore, phone: &str, me: &str) -> Result<
             .map(|o| (o.canonical_bytes(), o.signature))
             .collect(),
         sender: Some(sender),
+        terminals: None,
     })
 }
 

@@ -163,6 +163,8 @@ pub fn body_name(body: &OpBody) -> &'static str {
         OpBody::BulkExport { .. } => "BulkExport",
         OpBody::ExemptionSet { .. } => "ExemptionSet",
         OpBody::CertExtend { .. } => "CertExtend",
+        OpBody::CertRenew { .. } => "CertRenew",
+        OpBody::PhoneHandover { .. } => "PhoneHandover",
         OpBody::CheckpointPropose { .. } => "CheckpointPropose",
         OpBody::CheckpointSign { .. } => "CheckpointSign",
     }
@@ -446,6 +448,18 @@ fn body(b: &mut Vec<u8>, body: &OpBody) {
         } => {
             hex32(o.key("cert_id"), cert_id);
             write!(o.key("extra_hosts"), "{extra_hosts}").expect("vec write");
+        }
+        OpBody::CertRenew { cert_id, expiry } => {
+            hex32(o.key("cert_id"), cert_id);
+            write!(o.key("expiry"), "{expiry}").expect("vec write");
+        }
+        OpBody::PhoneHandover { new_phone, name } => {
+            let mut d = Obj::new(o.key("new_phone"));
+            hex32(d.key("ed25519_pub"), &new_phone.ed25519_pub);
+            hex32(d.key("x25519_pub"), &new_phone.x25519_pub);
+            b64(d.key("mlkem_pub"), &new_phone.mlkem_pub);
+            d.end();
+            string(o.key("name"), name);
         }
         OpBody::DeviceRoleChange { device_id, to } => {
             string(o.key("device_id"), device_id);
@@ -1105,6 +1119,21 @@ fn decode_body(v: &Value) -> Result<OpBody> {
             cert_id: get_32(m, "cert_id")?,
             extra_hosts: u32::try_from(get_u64(m, "extra_hosts")?)?,
         },
+        "CertRenew" => OpBody::CertRenew {
+            cert_id: get_32(m, "cert_id")?,
+            expiry: get_i64(m, "expiry")?,
+        },
+        "PhoneHandover" => {
+            let d = as_obj(get(m, "new_phone")?)?;
+            OpBody::PhoneHandover {
+                new_phone: DevicePublic {
+                    ed25519_pub: get_32(d, "ed25519_pub")?,
+                    x25519_pub: get_32(d, "x25519_pub")?,
+                    mlkem_pub: get_bytes(d, "mlkem_pub")?,
+                },
+                name: get_string(m, "name")?,
+            }
+        }
         "DeviceRoleChange" => OpBody::DeviceRoleChange {
             device_id: get_string(m, "device_id")?,
             to: match get_string(m, "to")?.as_str() {

@@ -958,6 +958,7 @@ fn verdict_hint(v: &crate::sync::recovery::ReenrollVerdict) -> &'static str {
         V::NeedsMoreTime { .. } => "the time lock is still running",
         V::CancelledByPhone | V::CancelledByFactor => "cancelled",
         V::Completed => "completed: the old phone is revoked and the new one enrolled",
+        V::Superseded => "a new phone was set up after it started: it authorizes nothing any more, start a new one if the phone is still lost",
     }
 }
 

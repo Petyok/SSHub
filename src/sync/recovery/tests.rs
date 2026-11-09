@@ -5,6 +5,42 @@ use super::*;
 const T0: i64 = 1_000_000;
 const NOW: i64 = T0 + 100;
 
+/// The tests that read or set `SSHUB_E2E_SOLO_LOCK_SECS` never run side by side.
+static SOLO_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The lock-shortening variable exists only in a build with `--features e2e-hooks`.
+#[test]
+fn the_solo_lock_env_hook_exists_only_in_the_e2e_build() {
+    let _env = SOLO_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let paper = Authorization::Paper {
+        signature_valid: true,
+    };
+    let mut r = Recovery::new();
+    r.apply(Event::Propose(Proposal {
+        solo: true,
+        ..proposal(paper)
+    }))
+    .unwrap();
+    r.apply(Event::Ack {
+        by: id("req"),
+        seen_at: T0 + 60,
+        attended: true,
+    })
+    .unwrap();
+    std::env::set_var("SSHUB_E2E_SOLO_LOCK_SECS", "3600");
+    let v = r.verdict(T0 + 60 + 3600);
+    std::env::remove_var("SSHUB_E2E_SOLO_LOCK_SECS");
+    #[cfg(feature = "e2e-hooks")]
+    assert_eq!(v, ReenrollVerdict::Ready);
+    #[cfg(not(feature = "e2e-hooks"))]
+    assert_eq!(
+        v,
+        ReenrollVerdict::NeedsMoreTime {
+            ready_at: T0 + 60 + 14 * 86_400
+        }
+    );
+}
+
 fn id(s: &str) -> DeviceId {
     s.into()
 }
@@ -26,6 +62,7 @@ fn proposal(auth: Authorization) -> Proposal {
 /// is the authorization.
 #[test]
 fn a_solo_recovery_is_acknowledged_by_its_requester_and_locks_for_fourteen_days() {
+    let _env = SOLO_ENV.lock().unwrap_or_else(|e| e.into_inner());
     let paper = Authorization::Paper {
         signature_valid: true,
     };
@@ -1490,6 +1527,7 @@ mod over_the_log {
     // requester's own acknowledgement starts a 14 day lock.
     #[test]
     fn recovery_in_a_one_terminal_ring_completes_after_the_lock() {
+        let _env = super::SOLO_ENV.lock().unwrap_or_else(|e| e.into_inner());
         use crate::sync::recovery::{ack_body, is_solo, start_body};
         let w = solo_world();
         assert!(is_solo(&w.d[OBS].store, &w.d[R].did).unwrap());
@@ -1612,6 +1650,44 @@ mod over_the_log {
             },
         );
         w.sync();
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
+            .unwrap()
+            .is_empty());
+    }
+
+    // H1 rule 4: a handover in force after a recovery started leaves that recovery superseded, and nobody is alerted to it.
+    #[test]
+    fn superseded_recovery_is_not_alerted() {
+        use crate::sync::recovery::open_for_alert_for;
+        let w = world();
+        w.d[A]
+            .store
+            .sync_register_device(
+                &w.d[A].id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        let op = w.reenroll(false, None, None);
+        let now = op.timestamp + 60;
+        assert_eq!(
+            open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
+                .unwrap()
+                .len(),
+            1
+        );
+        append(
+            &w.d[P],
+            OpBody::PhoneHandover {
+                new_phone: Dev::new().id.public(),
+                name: "next phone".into(),
+            },
+        );
+        w.sync();
+        assert_eq!(w.verdict(&op, now).unwrap(), ReenrollVerdict::Superseded);
         assert!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
             .unwrap()
             .is_empty());

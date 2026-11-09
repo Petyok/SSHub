@@ -11,10 +11,10 @@ use serde_json::{json, Value};
 use super::argon::{argon2_derive, Argon2Profile, ARGON2_EMAIL, ARGON2_MASTER, ARGON2_SNAPSHOT};
 use super::dek::dek_seal_with;
 use super::hash::{chain_hash, derive_key, derive_xof};
-use super::identity::{verify, DeviceIdentity};
+use super::identity::{verify, DeviceIdentity, DevicePublic};
 use super::mlkem;
 use super::paper::{paper_derive, PaperDomain};
-use super::sas::sas_words;
+use super::sas::{handover_words, sas_words};
 use super::shamir::{
     reshare_combine, reshare_contribute_with, shamir_combine, split_at_indices, Share,
 };
@@ -421,6 +421,42 @@ pub(super) fn build(include_slow: bool) -> Vec<Value> {
     v
 }
 
+/// Handover words (eight BIP39 words from the first 88 bits of a BLAKE3 over the new phone, its name and the old phone).
+/// Kept in `tests/vectors/crypto/handover.json`, apart from `vectors.json`: the phone page replays that file by primitive.
+pub(super) fn handover_vectors() -> Vec<Value> {
+    let mut v = Vec::new();
+    for (id, name, mlkem_len, old) in [
+        ("handover-short-name", "new phone", 5usize, [0x09u8; 8]),
+        ("handover-long-name", &"n".repeat(255), 1184, [0xA5; 8]),
+    ] {
+        let phone = DevicePublic {
+            ed25519_pub: [0x01; 32],
+            x25519_pub: [0x02; 32],
+            mlkem_pub: counting(mlkem_len, 0x30),
+        };
+        v.push(vector(
+            id,
+            "handover_words",
+            json!({}),
+            json!({
+                "ed25519_pub": hx(&phone.ed25519_pub),
+                "x25519_pub": hx(&phone.x25519_pub),
+                "mlkem_pub": hx(&phone.mlkem_pub),
+                "name": name,
+                "old_phone_id": hx(&old),
+            }),
+            json!({ "words": handover_words(&phone, name, &old) }),
+        ));
+    }
+
+    v
+}
+
+fn handover_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/vectors/crypto/handover.json")
+}
+
 fn path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/vectors/crypto/vectors.json")
 }
@@ -439,6 +475,21 @@ mod tests {
             "vectors": vectors,
         });
         serde_json::to_string_pretty(&doc).unwrap() + "\n"
+    }
+
+    #[test]
+    fn committed_handover_vectors_match_the_implementation() {
+        let want = document(handover_vectors());
+        if std::env::var_os("SSHUB_EMIT_VECTORS").is_some() {
+            std::fs::write(handover_path(), &want).unwrap();
+            return;
+        }
+        let have = std::fs::read_to_string(handover_path())
+            .expect("tests/vectors/crypto/handover.json is committed");
+        assert_eq!(
+            have, want,
+            "handover vectors are stale: regenerate and review"
+        );
     }
 
     #[test]
