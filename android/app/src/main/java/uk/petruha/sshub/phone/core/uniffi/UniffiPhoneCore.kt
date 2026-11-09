@@ -23,6 +23,7 @@ import uk.petruha.sshub.phone.core.Opened
 import uk.petruha.sshub.phone.core.OpenedRed
 import uk.petruha.sshub.phone.core.OpenedRelease
 import uk.petruha.sshub.phone.core.OpenedTrustExtend
+import uk.petruha.sshub.phone.core.OpenedTrustRenew
 import uk.petruha.sshub.phone.core.OpenedTrustRequest
 import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.core.PendingItem
@@ -52,6 +53,7 @@ import uk.petruha.sshub.phone.ui.screens.release.vaultFailure
 import uk.petruha.sshub.phone.core.ShortCodeRow
 import uk.petruha.sshub.phone.core.TrustDecision
 import uk.petruha.sshub.phone.core.TrustExtendView
+import uk.petruha.sshub.phone.core.TrustRenewView
 import uk.petruha.sshub.phone.core.TrustRequestView
 import uk.petruha.sshub.phone.core.WordState
 import uk.petruha.sshub.phone.core.WrapKeyState
@@ -128,6 +130,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         is OpenedRelease -> nameAndId(o.view.requesterName, o.view.requesterId)
         is OpenedTrustRequest -> o.view.device.id
         is OpenedTrustExtend -> o.view.headline.take(40)
+        is OpenedTrustRenew -> o.view.delegate.take(40)
         is ReshareOpened -> "epoch ${o.view.epoch}"
         is RecoveryNoticeOpened -> o.view.phoneName
         else -> ""
@@ -274,6 +277,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
             is RsOpened.ReenrollNotice -> mapNotice(rs.view, selfName(me).ifBlank { "this phone" })
             is RsOpened.CertRequest -> mapTrustRequest(rs.view)
             is RsOpened.CertExtend -> mapTrustExtend(rs.view)
+            is RsOpened.CertRenew -> mapTrustRenew(rs.view)
             is RsOpened.Reshare -> ReshareOpened(rs.view.token.toLong(), mapReshare(rs.view))
             is RsOpened.Chain -> mapChain(rs.view)
             is RsOpened.Enroll -> mapEnroll(rs.view)
@@ -350,12 +354,12 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         }
     }
 
-    override suspend fun adoptChain(token: Long, now: Long): ChainTaken {
+    override suspend fun adoptChain(token: Long, now: Long, acknowledgedSingleSource: Boolean): ChainTaken {
         requireOpen()
         val head = (entry(token)?.raw as? RsOpened.Chain)?.view?.headSeq?.toLong()
         confirm("Take this chain", "seq ${head ?: 0}")
         return withContext(NonCancellable + coreDispatcher) {
-            rsDecide(token, RsDecision.Approve(null), now)
+            rsDecide(token, if (acknowledgedSingleSource) RsDecision.AcceptSingleSource else RsDecision.Approve(null), now)
             persist()
             ChainTaken(head, toStatus(guard { core.status(now) }))
         }
@@ -387,6 +391,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
                 is OpenedRelease -> PendingItem(PendingKind.Release, nameAndId(o.view.requesterName, o.view.requesterId), null, Routes.Release + "/" + token)
                 is OpenedTrustRequest -> PendingItem(PendingKind.Trust, o.view.headline, null, Routes.TrustRequest + "/" + token)
                 is OpenedTrustExtend -> PendingItem(PendingKind.Extend, o.view.headline, null, Routes.TrustExtend + "/" + token)
+                is OpenedTrustRenew -> PendingItem(PendingKind.Renew, o.view.headline, null, Routes.TrustRenew + "/" + token)
                 is RecoveryNoticeOpened -> PendingItem(PendingKind.Recovery, o.view.startedBy, null, Routes.RecoveryNotice + "/" + token)
                 is ReshareOpened -> PendingItem(PendingKind.Reshare, "epoch ${o.view.epoch}", null, Routes.Reshare + "/" + token)
                 else -> null
@@ -477,11 +482,16 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     override suspend fun trustExtend(token: Long): TrustExtendView? = (entry(token)?.opened as? OpenedTrustExtend)?.view
 
+    override suspend fun trustRenew(token: Long): TrustRenewView? = (entry(token)?.opened as? OpenedTrustRenew)?.view
+
     override suspend fun decideTrust(token: Long, decision: TrustDecision, now: Long): Outgoing? {
         requireOpen()
         val e = entry(token) ?: throw badInput("This request is no longer pending.")
-        if (e.raw !is RsOpened.CertRequest && e.raw !is RsOpened.CertExtend) throw badInput("This is not a trust request.")
-        if (decision is TrustDecision.Approve) confirm(if (e.raw is RsOpened.CertRequest) "Approve trust request" else "Approve certificate extension", subtitleOf(e.opened))
+        if (e.raw !is RsOpened.CertRequest && e.raw !is RsOpened.CertExtend && e.raw !is RsOpened.CertRenew) throw badInput("This is not a trust request.")
+        if (decision is TrustDecision.Approve) confirm(
+            when (e.raw) { is RsOpened.CertRequest -> "Approve trust request"; is RsOpened.CertRenew -> "Approve trust session renewal"; else -> "Approve certificate extension" },
+            subtitleOf(e.opened),
+        )
         return withContext(NonCancellable + coreDispatcher) {
             when (decision) {
                 TrustDecision.Decline -> {

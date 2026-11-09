@@ -29,6 +29,11 @@ data class ChainAdopted(
     val note: String = "",
     /** Id of the terminal that made the list (unsigned, so a claim and not proof); null when the list did not say. */
     val sender: String? = null,
+    /** The head came from ONE list: accepting it needs the user's tick (`adoptChain(.., acknowledgedSingleSource = true)`). */
+    val singleSource: Boolean = false,
+    /** The sending terminal's own statement of how many terminals the ring has, and the signing time of the newest op it holds; unsigned, informational. */
+    val terminalsCount: Int? = null,
+    val terminalsNewestAt: Long? = null,
 )
 
 /** `openFrame` of a kind 5 own-ops list that verified. Top level because `Opened` is sealed in Core.kt. */

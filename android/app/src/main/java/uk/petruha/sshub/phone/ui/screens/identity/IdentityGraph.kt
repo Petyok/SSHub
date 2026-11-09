@@ -107,7 +107,7 @@ fun NavGraphBuilder.identityGraph(env: AppEnv, settings: SettingsStore = AppSett
             ChainHeadActions(
                 onScan = { nav.navigate(scanRoute(ScanPurpose.Chain)) },
                 onOpenPaste = vm::onOpenPaste, onClosePaste = vm::onClosePaste, onPasteText = vm::onPasteText, onCheckPaste = vm::checkPaste,
-                onAdopt = vm::adopt, onTypedId = vm::onTypedId, onNeverSigned = vm::neverSigned, onTryAnother = vm::tryAnother,
+                onAdopt = vm::adopt, onTickSingle = vm::onTickSingle, onTypedId = vm::onTypedId, onNeverSigned = vm::neverSigned, onTryAnother = vm::tryAnother,
                 onHome = { clearTo(Routes.Home) }, onBack = { clearTo(Routes.Home) },
             ),
         )

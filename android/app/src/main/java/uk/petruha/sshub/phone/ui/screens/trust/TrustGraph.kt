@@ -26,6 +26,7 @@ import uk.petruha.sshub.phone.ui.screens.release.ConsumeScannedDeviceId
 /** Argument routes of this group: `Routes.TrustRequest + "/{token}"` and `Routes.TrustExtend + "/{token}"`; the token is the one in `Opened.TrustRequest`/`TrustExtend`. */
 fun trustRequestRoute(token: Long) = "${Routes.TrustRequest}/$token"
 fun trustExtendRoute(token: Long) = "${Routes.TrustExtend}/$token"
+fun trustRenewRoute(token: Long) = "${Routes.TrustRenew}/$token"
 
 fun NavGraphBuilder.trustGraph(env: AppEnv) {
     val handoffs = trustHandoffs(env)
@@ -60,6 +61,20 @@ fun NavGraphBuilder.trustGraph(env: AppEnv) {
         else TrustExtendScreen(
             st,
             TrustExtendActions(
+                onApprove = vm::approve, onDecline = vm::decline, onCopy = vm::copy,
+                onDone = { backTo(Routes.Approvals) }, onBack = { backTo(Routes.Approvals) },
+            ),
+        )
+    }
+    composable(Routes.TrustRenew + "/{token}", arguments = longArg) { entry ->
+        val token = entry.arguments?.getLong("token") ?: 0L
+        val vm: TrustRenewViewModel = viewModel(factory = viewModelFactory { initializer { TrustRenewViewModel(env.core, env.platform, token) } })
+        val s by vm.state.collectAsStateWithLifecycle()
+        val st = s
+        if (st == null) TrustMissing("Renew a trust session", ::back)
+        else TrustRenewScreen(
+            st,
+            TrustRenewActions(
                 onApprove = vm::approve, onDecline = vm::decline, onCopy = vm::copy,
                 onDone = { backTo(Routes.Approvals) }, onBack = { backTo(Routes.Approvals) },
             ),

@@ -41,7 +41,8 @@ interface IdentityApi {
 
     /**
      * The user accepts the chain head of an `OpenedChain` (the core's `decide(token, Decision.Approve)`). Returns only after the core
-     * adopted it; `headPending` is false afterwards.
+     * adopted it; `headPending` is false afterwards. A head with `ChainAdopted.singleSource` is accepted only with
+     * `acknowledgedSingleSource = true` (the user's tick): the core refuses a plain approve.
      */
-    suspend fun adoptChain(token: Long, now: Long): ChainTaken
+    suspend fun adoptChain(token: Long, now: Long, acknowledgedSingleSource: Boolean = false): ChainTaken
 }

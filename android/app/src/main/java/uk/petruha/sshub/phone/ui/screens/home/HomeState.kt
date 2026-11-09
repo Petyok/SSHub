@@ -33,7 +33,7 @@ enum class ApprovalTab(val label: String) { Red("Red"), Releases("Releases"), Tr
 fun PendingKind.tab(): ApprovalTab = when (this) {
     PendingKind.Red -> ApprovalTab.Red
     PendingKind.Release -> ApprovalTab.Releases
-    PendingKind.Trust, PendingKind.Extend, PendingKind.Recovery, PendingKind.Reshare -> ApprovalTab.Trust
+    PendingKind.Trust, PendingKind.Extend, PendingKind.Renew, PendingKind.Recovery, PendingKind.Reshare -> ApprovalTab.Trust
 }
 
 fun PendingKind.word(): String = when (this) {
@@ -41,6 +41,7 @@ fun PendingKind.word(): String = when (this) {
     PendingKind.Release -> "Release"
     PendingKind.Trust -> "Trust"
     PendingKind.Extend -> "Extend"
+    PendingKind.Renew -> "Renew"
     PendingKind.Recovery -> "Recovery"
     PendingKind.Reshare -> "Reshare"
 }

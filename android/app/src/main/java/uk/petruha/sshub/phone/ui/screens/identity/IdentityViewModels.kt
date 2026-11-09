@@ -223,6 +223,7 @@ class ChainHeadViewModel(private val core: IdentityApi, private val scan: ScanAp
                 phase = ChainHeadPhase.Read, lists = if (opened.chain.agreed) 2 else 1, chain = opened.chain, checks = opened.checks,
                 senders = if (opened.chain.agreed) st.senders.takeLast(1) + opened.chain.sender else listOf(opened.chain.sender),
                 notice = null, refusal = null, pasteText = "", busy = false,
+                singleTicked = false, nowSeconds = platform.clock.nowSeconds(),
             )
             is OpenedRefused -> st.copy(
                 phase = ChainHeadPhase.Refused, refusal = opened.reason.title, checks = opened.checks.map { ChainCheck(it.text, it.ok) },
@@ -237,6 +238,7 @@ class ChainHeadViewModel(private val core: IdentityApi, private val scan: ScanAp
     fun onClosePaste() { flow.value = flow.value.copy(phase = ChainHeadPhase.Read, pasteText = "") }
     fun onPasteText(text: String) { flow.value = flow.value.copy(pasteText = text) }
     fun onTypedId(text: String) { flow.value = flow.value.copy(typedId = text) }
+    fun onTickSingle(on: Boolean) { flow.value = flow.value.copy(singleTicked = on) }
 
     fun checkPaste() {
         val st = flow.value
@@ -259,11 +261,11 @@ class ChainHeadViewModel(private val core: IdentityApi, private val scan: ScanAp
     /** The user accepts the agreed head: the core's `decide(token, Approve)`. */
     fun adopt() {
         val chain = flow.value.chain ?: return
-        if (!chain.agreed || flow.value.busy) return
+        if (!chain.agreed || !flow.value.canAdopt) return
         flow.value = flow.value.copy(busy = true)
         viewModelScope.launch {
             try {
-                val taken = core.adoptChain(chain.token, platform.clock.nowSeconds())
+                val taken = core.adoptChain(chain.token, platform.clock.nowSeconds(), chain.singleSource)
                 flow.value = flow.value.copy(phase = ChainHeadPhase.Taken, takenSeq = taken.headSeq, neverSigned = false, busy = false)
             } catch (e: CoreException) {
                 flow.value = flow.value.copy(busy = false, notice = "The core did not adopt it: ${e.message}")

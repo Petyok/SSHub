@@ -14,8 +14,11 @@ interface TrustApi {
     /** Same for `Opened.TrustExtend`. */
     suspend fun trustExtend(token: Long): TrustExtendView?
 
+    /** Same for `Opened.CertRenew` (a renewal request); signed or declined with `decideTrust`. */
+    suspend fun trustRenew(token: Long): TrustRenewView?
+
     /**
-     * Sign or refuse a trust request or an extension. `Approve` returns the signed hand-off; `Decline` signs nothing and returns null.
+     * Sign or refuse a trust request, an extension or a renewal. `Approve` returns the signed hand-off; `Decline` signs nothing and returns null.
      * For a requester never met the core checks `Approve.typedId` itself; the UI only gates the button.
      */
     suspend fun decideTrust(token: Long, decision: TrustDecision, now: Long): Outgoing?

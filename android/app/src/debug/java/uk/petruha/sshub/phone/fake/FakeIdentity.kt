@@ -55,6 +55,7 @@ class FakeIdentityApi : IdentityApi {
     var rejectRestore = false
     var restoredWith: List<String>? = null
     var adoptedToken: Long? = null
+    var adoptedAcknowledged = false
     var neverSignedWith: String? = null
     val secret = ByteArray(32) { 0x42 }
 
@@ -80,8 +81,9 @@ class FakeIdentityApi : IdentityApi {
         return status(now)
     }
 
-    override suspend fun adoptChain(token: Long, now: Long): ChainTaken {
+    override suspend fun adoptChain(token: Long, now: Long, acknowledgedSingleSource: Boolean): ChainTaken {
         adoptedToken = token
+        adoptedAcknowledged = acknowledgedSingleSource
         headPending = false
         return ChainTaken(IdentitySamples.SEQ, status(now))
     }
@@ -131,11 +133,16 @@ object IdentitySamples {
     /** The core's own wording, as the page shows it (assets/companion/src/app.mjs scanHead). */
     const val SUMMARY = "Newest op in this list: seq 41, signed 2026-10-23 14:02Z (8 op(s) read)."
     const val NOTE_NEXT = "Take a second list, from another terminal or from the same one later, before this chain head is trusted."
+    const val NOTE_SINGLE = "Risk: if that terminal is behind, the next approval forks your chain and every device raises an alarm."
     const val NOTE_AGREED = "This phone will continue after seq 41. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead."
 
     fun chain(agreed: Boolean, summary: String = SUMMARY, note: String = if (agreed) NOTE_AGREED else NOTE_NEXT) =
         ChainAdopted(token = 7, agreed = agreed, headSeq = SEQ, newestAt = SIGNED, ops = 8, previousSeq = null, summary = summary, note = note)
     fun chainList(agreed: Boolean): Opened = OpenedChain(chain(agreed), goodChecks)
+
+    /** One list that the core accepts only with the tick; the terminal said the ring has [count] terminals (null: it did not say). */
+    fun singleSourceChain(count: Int? = 3) = chain(true, note = NOTE_SINGLE).copy(singleSource = true, terminalsCount = count, terminalsNewestAt = SIGNED)
+    fun singleSourceList(count: Int? = 3): Opened = OpenedChain(singleSourceChain(count), goodChecks)
 
     /** A refused list in the release group's value type, like the real core returns it. */
     fun refusedList(): Opened = uk.petruha.sshub.phone.core.OpenedRefused(
@@ -185,6 +192,8 @@ object IdentitySamples {
     val chainHeadStart = ChainHeadState(deviceId = DEVICE_ID)
     val chainHeadOneList = ChainHeadState(lists = 1, chain = chain(false), checks = goodChecks, deviceId = DEVICE_ID)
     val chainHeadAgree = ChainHeadState(lists = 2, chain = chain(true), checks = goodChecks, deviceId = DEVICE_ID)
+    val chainHeadSingle = ChainHeadState(lists = 2, chain = singleSourceChain(3), checks = goodChecks, deviceId = DEVICE_ID, nowSeconds = SIGNED + 2 * 3600)
+    val chainHeadSingleOneTerminal = chainHeadSingle.copy(chain = singleSourceChain(1))
     val chainHeadPaste = ChainHeadState(phase = ChainHeadPhase.Paste, deviceId = DEVICE_ID)
     val chainHeadTaken = ChainHeadState(phase = ChainHeadPhase.Taken, lists = 2, chain = chain(true), takenSeq = SEQ, deviceId = DEVICE_ID)
     val chainHeadNeverSigned = ChainHeadState(phase = ChainHeadPhase.Taken, neverSigned = true, deviceId = DEVICE_ID)

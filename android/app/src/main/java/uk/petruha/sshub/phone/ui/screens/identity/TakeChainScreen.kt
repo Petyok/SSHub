@@ -22,6 +22,7 @@ import uk.petruha.sshub.phone.ui.components.BannerKind
 import uk.petruha.sshub.phone.ui.components.BarButtons
 import uk.petruha.sshub.phone.ui.components.ButtonKind
 import uk.petruha.sshub.phone.ui.components.ChainSquare
+import uk.petruha.sshub.phone.ui.components.CheckboxRow
 import uk.petruha.sshub.phone.ui.components.CheckLine
 import uk.petruha.sshub.phone.ui.components.DiffBox
 import uk.petruha.sshub.phone.ui.components.DiffEntry
@@ -39,6 +40,7 @@ import uk.petruha.sshub.phone.ui.components.SshubCard
 import uk.petruha.sshub.phone.ui.components.StopBox
 import uk.petruha.sshub.phone.ui.components.TextArea
 import uk.petruha.sshub.phone.ui.components.WarnBox
+import uk.petruha.sshub.phone.ui.screens.trust.spanWords
 import uk.petruha.sshub.phone.ui.theme.SshubText
 import uk.petruha.sshub.phone.ui.theme.sshub
 
@@ -64,7 +66,12 @@ data class ChainHeadState(
     val neverSigned: Boolean = false,
     val takenSeq: Long? = null,
     val busy: Boolean = false,
+    /** The user ticked the risk of a head that came from one list. */
+    val singleTicked: Boolean = false,
+    /** Unix seconds when the list was read: the age of the newest op is counted against it. */
+    val nowSeconds: Long = 0,
 ) {
+    val canAdopt: Boolean get() = lists >= 2 && !busy && (chain?.singleSource != true || singleTicked)
     val canNeverSigned: Boolean get() = deviceId.isNotEmpty() && typedId.trim().uppercase() == deviceId.uppercase() && !busy
     val canCheckPaste: Boolean get() = pasteText.trim().length >= 16 && !busy
 }
@@ -76,6 +83,7 @@ class ChainHeadActions(
     val onPasteText: (String) -> Unit = {},
     val onCheckPaste: () -> Unit = {},
     val onAdopt: () -> Unit = {},
+    val onTickSingle: (Boolean) -> Unit = {},
     val onTypedId: (String) -> Unit = {},
     val onNeverSigned: () -> Unit = {},
     val onTryAnother: () -> Unit = {},
@@ -200,7 +208,21 @@ private fun ReadBody(state: ChainHeadState, on: ChainHeadActions) {
         }
         Checks(state.checks)
     }
-    if (chain != null && state.lists >= 2) {
+    if (chain != null && state.lists >= 2 && chain.singleSource) {
+        SectionHeading("One list only", trailing = "ends at seq ${chain.headSeq}")
+        if (chain.summary.isNotEmpty()) Note(chain.summary)
+        chain.terminalsCount?.let { Note("The terminal says your ring has $it ${if (it == 1) "terminal" else "terminals"}. That is its own statement.") }
+        chain.terminalsNewestAt?.let { Note("The newest op this list names was signed ${spanWords(state.nowSeconds - it)} ago.") }
+        if (chain.note.isNotEmpty()) {
+            Gap(12.dp)
+            WarnBox("Read this first.") {
+                Text(chain.note, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+            }
+        }
+        Gap(8.dp)
+        CheckboxRow(singleSourceTick(chain.terminalsCount), state.singleTicked, on.onTickSingle)
+        Checks(state.checks)
+    } else if (chain != null && state.lists >= 2) {
         SectionHeading("Two lists agree", trailing = "both end at seq ${chain.headSeq}")
         if (chain.summary.isNotEmpty()) Note(chain.summary)
         if (chain.note.isNotEmpty()) {
@@ -228,6 +250,10 @@ private fun ReadBody(state: ChainHeadState, on: ChainHeadActions) {
         }
     }
 }
+
+/** The text of the tick for a head from one list (design 7): depends on the count the terminal reported; never says "trusted". */
+internal fun singleSourceTick(count: Int?): String =
+    if (count == 1) "Your ring has one terminal" else if (count != null) "Your ring has $count terminals and I can reach only this one" else "I can reach only this one terminal"
 
 private fun senderLine(id: String?): String =
     if (id == null) "This list does not say which terminal made it."
@@ -263,7 +289,7 @@ private fun ChainBar(state: ChainHeadState, on: ChainHeadActions) {
         }
         state.lists >= 2 -> BarButtons {
             SshubButton("Not yet", on.onHome)
-            SshubButton("Adopt: continue after seq ${state.chain?.headSeq ?: 0}", on.onAdopt, kind = ButtonKind.Primary, enabled = !state.busy, disabledReason = "adopting")
+            SshubButton("Adopt: continue after seq ${state.chain?.headSeq ?: 0}", on.onAdopt, kind = ButtonKind.Primary, enabled = state.canAdopt, disabledReason = if (state.busy) "adopting" else "tick the risk first")
         }
         else -> BarButtons {
             SshubButton(if (state.lists == 0) "Scan the list" else "Take the next list", on.onScan, kind = ButtonKind.Primary)

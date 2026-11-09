@@ -19,7 +19,7 @@ data class RingView(
 /** This phone. `headSeq` null means "no ops yet". */
 data class HomePhoneView(val id: String, val name: String, val headSeq: Long?, val liveShortCodes: Int)
 
-enum class PendingKind { Red, Release, Trust, Extend, Recovery, Reshare }
+enum class PendingKind { Red, Release, Trust, Extend, Renew, Recovery, Reshare }
 
 /** One waiting request. `route` is a ready navigation route (owned by the screen group that handles `kind`). */
 data class PendingItem(val kind: PendingKind, val title: String, val age: String?, val route: String)
