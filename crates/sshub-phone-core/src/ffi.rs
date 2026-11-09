@@ -6,8 +6,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use rand_core::{OsRng, RngCore};
 use sshub_sync_proto::wire::{
-    PhoneOpsWire, SignedOpBytes, TerminalsBlock, KIND_CERT_EXTEND_REQUEST, KIND_CERT_RENEW_REQUEST,
-    KIND_CERT_REQUEST, KIND_CHALLENGE, KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL,
+    PhoneHandoverRequestWire, PhoneOpsWire, SignedOpBytes, TerminalsBlock,
+    KIND_CERT_EXTEND_REQUEST, KIND_CERT_RENEW_REQUEST, KIND_CERT_REQUEST, KIND_CHALLENGE,
+    KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_HANDOVER_REQUEST,
     KIND_PHONE_OPS, KIND_RECOVERY_NOTICE, WIRE_MAGIC,
 };
 use zeroize::Zeroizing;
@@ -32,6 +33,7 @@ enum Pending {
     Notice(PendingNotice),
     Cert(PendingCert),
     Reshare(PendingReshare),
+    Handover(PhoneHandoverRequestWire),
     /// Head adoption: bound to the (seq, hash) of the head the person was shown.
     Chain {
         seq: u64,
@@ -299,6 +301,27 @@ impl Inner {
                 }
                 Ok(o)
             }
+            KIND_PHONE_HANDOVER_REQUEST => {
+                let req = match PhoneHandoverRequestWire::decode(frame) {
+                    Ok(r) => r,
+                    Err(e) => return Ok(refused(format!("Not a handover request: {e:#}"))),
+                };
+                let u = self.unlocked.as_ref().ok_or(CoreError::Locked)?;
+                match crate::handover::describe_phone_handover(&u.state, &req) {
+                    Ok(handover) => {
+                        self.pending.clear();
+                        self.pending.insert(t, Pending::Handover(req));
+                        Ok(Opened::PhoneHandover {
+                            view: PhoneHandoverView {
+                                token: t,
+                                handover,
+                                note: "Compare these words with the terminal's screen. They must be identical, word for word: if they differ, refuse. Approving also needs a second terminal and the paper phrase; this phone stops being a device of yours when it completes.".to_string(),
+                            },
+                        })
+                    }
+                    Err(e) => Ok(refused(e.reason().to_string())),
+                }
+            }
             KIND_PHONE_OPS => {
                 let (ops, sender, terminals) = match PhoneOpsWire::decode(frame) {
                     Ok(w) => (w.ops, w.sender, w.terminals),
@@ -508,6 +531,7 @@ impl PhoneCore {
             Pending::Release(r) => Some(Pending::Release(r.clone())),
             Pending::Notice(n) => Some(Pending::Notice(n.clone())),
             Pending::Cert(c) => Some(Pending::Cert(c.clone())),
+            Pending::Handover(r) => Some(Pending::Handover(r.clone())),
             Pending::Chain { seq, hash } => Some(Pending::Chain {
                 seq: *seq,
                 hash: hash.clone(),
@@ -534,6 +558,13 @@ impl PhoneCore {
                 cert::approve_cert(p, typed_id.as_deref(), ctx)
             }
             (Pending::Reshare(p), Decision::Approve { .. }) => reshare::publish_reshare(p, ctx),
+            (Pending::Handover(r), Decision::Approve { .. }) => {
+                crate::handover::build_phone_handover(ctx.state, ctx.id, &r, ctx.now)?;
+                crate::outgoing::ops_out(
+                    &chain::courier_ops(ctx.state, COURIER_TAIL),
+                    "Carry this to the terminal that asked: it holds this phone's part of the handover. It completes after a second terminal and the paper phrase approve it.",
+                )
+            }
             (
                 Pending::Chain { seq: shown, hash },
                 d @ (Decision::Approve { .. } | Decision::AcceptSingleSource),
@@ -564,6 +595,22 @@ impl PhoneCore {
             Opened::Refused { view } => Err(CoreError::bad(view.reason)),
             _ => Err(CoreError::internal("unexpected view")),
         }
+    }
+
+    /// The NEW phone's own admission to the ring: signs a `RedPhoneSign` over the handover op the old phone made
+    /// (`op_hash_hex`, 64 hex characters, shown by the terminal) and returns the list to carry to a terminal.
+    pub fn sign_handover_admission(&self, op_hash_hex: String, now: i64) -> Result<Outgoing> {
+        let hash: [u8; 32] = hex::decode(op_hash_hex.trim())
+            .ok()
+            .and_then(|b| b.try_into().ok())
+            .ok_or_else(|| CoreError::bad("An operation hash is 64 hex characters."))?;
+        let mut g = self.lock_inner();
+        let u = g.unlocked.as_mut().ok_or(CoreError::Locked)?;
+        crate::handover::sign_handover_admission(&mut u.state, &u.id, hash, now)?;
+        crate::outgoing::ops_out(
+            &chain::courier_ops(&u.state, COURIER_TAIL),
+            "Carry this to a terminal: it holds this phone's own approval of the handover.",
+        )
     }
 
     /// "This key never signed anything": only with this phone's device id typed.
@@ -1543,6 +1590,54 @@ mod tests {
         assert!(
             matches!(last.body, sshub_sync_proto::oplog::OpBody::CertRenew { expiry, .. } if expiry == t0 + 2 * 86_400)
         );
+    }
+
+    #[test]
+    fn a_handover_request_shows_the_words_and_approval_signs_it_then_the_new_phone_signs_its_admission(
+    ) {
+        use sshub_sync_proto::oplog::{canonical::decode_op, OpBody};
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let old = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
+        c.lock_inner().unlocked.as_mut().unwrap().state = PhoneState {
+            enrolled: Some(crate::state::Enrolled {
+                device_id: old.device_id().to_string(),
+                name: "old phone".into(),
+                at: 1,
+            }),
+            ..PhoneState::default()
+        };
+        let new = PhoneIdentity::new(&[0x55; 32], 0).unwrap().public();
+        let req = PhoneHandoverRequestWire {
+            new_phone: new.clone(),
+            name: "new phone".into(),
+            terminal: [3; 8],
+        };
+        let now = 1_893_452_400;
+        let Opened::PhoneHandover { view } = c.open_frame(req.encode(), now).unwrap() else {
+            panic!("not a handover card")
+        };
+        let want = sshub_sync_proto::crypto::handover_words(
+            &new,
+            "new phone",
+            &hex::decode(old.device_id()).unwrap().try_into().unwrap(),
+        );
+        assert_eq!(view.handover.words, want);
+        let out = c
+            .decide(view.token, Decision::Approve { typed_id: None }, now)
+            .unwrap();
+        let ops = PhoneOpsWire::decode(&out.frame).unwrap().ops;
+        let last = decode_op(&ops.last().unwrap().0, ops.last().unwrap().1).unwrap();
+        assert!(matches!(last.body, OpBody::PhoneHandover { .. }));
+        // the new phone (another core) signs its admission over that op's hash
+        let n = core();
+        n.unlock(vec![0x55; 32]).unwrap();
+        let hash = hex::encode(sshub_sync_proto::crypto::chain_hash(&ops.last().unwrap().0));
+        let out = n.sign_handover_admission(hash, now).unwrap();
+        let ops = PhoneOpsWire::decode(&out.frame).unwrap().ops;
+        let sign = decode_op(&ops.last().unwrap().0, ops.last().unwrap().1).unwrap();
+        assert!(matches!(sign.body, OpBody::RedPhoneSign { .. }));
+        assert!(n.sign_handover_admission("zz".into(), now).is_err());
     }
 
     #[test]

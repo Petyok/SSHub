@@ -341,6 +341,24 @@ pub struct RenewView {
     pub refusal: Option<String>,
 }
 
+/// What the old phone shows for a handover request (contract 4j `HandoverView`): compare `words` with the terminal's screen.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct HandoverView {
+    pub name: String,
+    /// `HANDOVER_WORDS` words.
+    pub words: Vec<String>,
+    /// The trust sessions this phone issued that still count and stay valid for the successor.
+    pub certs_carried: Vec<String>,
+}
+
+/// Kind 12: a terminal shows the OLD phone a request to hand the ring over to a new phone.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct PhoneHandoverView {
+    pub token: u64,
+    pub handover: HandoverView,
+    pub note: String,
+}
+
 /// Kind 11: a terminal asks this phone to renew a trust session it issued.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct CertRenewView {
@@ -448,6 +466,7 @@ pub enum Opened {
     CertRequest { view: CertRequestView },
     CertExtend { view: CertExtendView },
     CertRenew { view: CertRenewView },
+    PhoneHandover { view: PhoneHandoverView },
     Reshare { view: ReshareView },
     Chain { view: ChainAdopted },
     Enroll { view: EnrollView },
