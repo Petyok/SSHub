@@ -430,6 +430,48 @@ fn the_unlocker_fills_the_gate_for_a_real_host_row_and_nothing_else() {
 }
 
 #[test]
+fn using_a_credential_heals_it_to_a_holder_that_joined_later() {
+    use crate::sync::cred_ops::heal_plan;
+    use crate::sync::oplog::{Attendance, DeviceKind};
+    let d = ring(3);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    let row = d[0]
+        .store
+        .create_host(&crate::store::NewHost::launcher("web", "10.0.0.1"))
+        .unwrap();
+    let uid = d[0].store.host_uid(row.id).unwrap().unwrap();
+    cred_put(&d[0].store, &d[0].id, &uid, &payload("opened")).unwrap();
+    all_to_all(&d);
+    // A replacement terminal joins after the credential was written: it holds no share of it.
+    let fresh = Dev::new();
+    d[0].trust_with(&fresh, Attendance::Attended, DeviceKind::Terminal);
+    assert_eq!(heal_plan(&d[0].store).unwrap(), vec![uid]);
+    let unlocker = QuorumUnlocker::with_profile(
+        d[0].store.clone(),
+        d[0].id.clone(),
+        Arc::new(crate::credentials::SecretGate::default()),
+        Box::new(FromPeer {
+            store: d[1].store.clone(),
+            id: d[1].id.clone(),
+        }),
+        None,
+        FAST,
+    );
+    ensure_unlocked(
+        &[SecretRef::Key(crate::credentials::host_key(row.id))],
+        &unlocker,
+    )
+    .unwrap();
+    assert!(
+        heal_plan(&d[0].store).unwrap().is_empty(),
+        "healed by the first use"
+    );
+    let (_, wraps) = d[0].store.sync_cred_ciphertext(&uid).unwrap().unwrap();
+    assert!(wraps.iter().any(|w| w.recipient == fresh.did));
+}
+
+#[test]
 fn certificates_are_enforced_by_the_holders() {
     let d = ring(4); // 0 = phone, 1 = delegated terminal, 2 and 3 enforcing holders
     let phone = &d[0];
@@ -1691,4 +1733,39 @@ fn two_computers_are_enough_to_cut_one_off() {
         s.contains("2 computers") && s.contains("You have 1") && s.contains("paper"),
         "{s}"
     );
+}
+
+#[test]
+fn heal_re_seals_a_credential_to_a_new_holder_and_refuses_one_a_removed_device_holds() {
+    use crate::sync::cred_ops::{heal_credential, heal_plan};
+    use crate::sync::oplog::{Attendance, DeviceKind};
+    let d = ring(4);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    let (h1, h2) = ([1u8; 16], [2u8; 16]);
+    for h in [&h1, &h2] {
+        cred_put(&d[0].store, &d[0].id, h, &payload("x")).unwrap();
+    }
+    all_to_all(&d);
+    assert!(heal_plan(&d[0].store).unwrap().is_empty());
+    // A replacement terminal joins: it holds no share of either credential.
+    let fresh = Dev::new();
+    d[0].trust_with(&fresh, Attendance::Attended, DeviceKind::Terminal);
+    assert_eq!(heal_plan(&d[0].store).unwrap(), vec![h1, h2]);
+    heal_credential(&d[0].store, &d[0].id, &h1, &payload("x")).unwrap();
+    let (_, wraps) = d[0].store.sync_cred_ciphertext(&h1).unwrap().unwrap();
+    assert!(
+        wraps.iter().any(|w| w.recipient == fresh.did),
+        "healed to the new holder"
+    );
+    assert_eq!(heal_plan(&d[0].store).unwrap(), vec![h2]);
+    // A removed device still holds a share of h2: it is exposed, not healable.
+    append(
+        &d[0],
+        OpBody::DeviceRevoke {
+            device_id: d[3].did.clone(),
+        },
+    );
+    assert!(heal_plan(&d[0].store).unwrap().is_empty());
+    assert!(heal_credential(&d[0].store, &d[0].id, &h2, &payload("x")).is_err());
 }

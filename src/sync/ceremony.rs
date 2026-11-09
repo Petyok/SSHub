@@ -1248,3 +1248,87 @@ pub fn require_gated(store: &LauncherStore, op: &Op) -> Result<()> {
 
 #[cfg(test)]
 mod tests;
+
+/// One proof a Red op still waits for and who could give it (the Waiting screen, design 6.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Blocker {
+    pub proof: RedProof,
+    /// Names (device names, or "the paper phrase") of whoever can give it. For a second device these are the attended
+    /// terminals that are neither the proposer nor the subject of the op.
+    pub who: Vec<String>,
+    /// When the op was written (its author stamp): since when this proof is wanted. Display only.
+    pub since: Option<i64>,
+}
+
+/// What `op` waits for, by name. Empty for an op that is complete or not gated. For removing a computer the second-device
+/// entry also says the paper phrase waives it.
+pub fn blocking_view(store: &LauncherStore, op: &Op, now: i64) -> Result<Vec<Blocker>> {
+    if !is_gated(store, op)? {
+        return Ok(Vec::new());
+    }
+    let st = red_status(store, op, now)?;
+    let devices = effective_devices(store, Some(op.lamport))?;
+    let subject: Option<DeviceId> = match &op.body {
+        OpBody::DeviceRevoke { device_id }
+        | OpBody::DeviceRoleChange { device_id, .. }
+        | OpBody::CertIssue { device_id, .. }
+        | OpBody::ExemptionSet { device_id, .. } => Some(device_id.clone()),
+        OpBody::DeviceAdd { device, .. } => Some(device.device_id()),
+        _ => None,
+    };
+    let removing_a_computer = matches!(&op.body, OpBody::DeviceRevoke { device_id }
+        if devices.iter().any(|d| d.id == *device_id && d.role == DeviceRole::Holder && d.kind == DeviceKind::Terminal));
+    let since = Some(op.timestamp);
+    let mut out = Vec::new();
+    for missing in st.missing {
+        let who: Vec<String> = match &missing {
+            RedProof::Phone => devices
+                .iter()
+                .filter(|d| d.kind == DeviceKind::Phone && d.role == DeviceRole::Holder)
+                .filter(|d| !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised))
+                .map(|d| d.name.clone())
+                .collect(),
+            RedProof::SecondDevice => {
+                let mut names: Vec<String> = devices
+                    .iter()
+                    .filter(|d| {
+                        terminal_holder(d)
+                            && d.id != op.device_id
+                            && Some(&d.id) != subject.as_ref()
+                    })
+                    .map(|d| d.name.clone())
+                    .collect();
+                if removing_a_computer {
+                    names.push("or the paper phrase instead".to_string());
+                }
+                names
+            }
+            RedProof::Factor(Some(ThirdFactor::Paper)) => vec!["the paper phrase".to_string()],
+            RedProof::Factor(Some(ThirdFactor::EmailCode)) => {
+                let sender = registered_before(store, ThirdFactor::EmailCode, Some(op.lamport))?
+                    .and_then(|r| r.2)
+                    .and_then(|s| devices.iter().find(|d| d.id == s).map(|d| d.name.clone()));
+                vec![format!(
+                    "the emailed code{}",
+                    sender.map_or(String::new(), |n| format!(" (mailed by {n})"))
+                )]
+            }
+            RedProof::Factor(None) => {
+                let mut f = Vec::new();
+                if registered_before(store, ThirdFactor::Paper, Some(op.lamport))?.is_some() {
+                    f.push("the paper phrase".to_string());
+                }
+                if registered_before(store, ThirdFactor::EmailCode, Some(op.lamport))?.is_some() {
+                    f.push("the emailed code".to_string());
+                }
+                f
+            }
+        };
+        out.push(Blocker {
+            proof: missing,
+            who,
+            since,
+        });
+    }
+    Ok(out)
+}

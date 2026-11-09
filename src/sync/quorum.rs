@@ -918,6 +918,12 @@ impl Unlocker for QuorumUnlocker {
             let plain = self.open_one(&uid)?;
             let payload = super::cred_ops::CredPayload::from_bytes(&plain)
                 .map_err(|e| UnlockError::Failed(e.to_string()))?;
+            // Heal on use (design 4.1): the secret is open on this terminal, so a credential that lacks a current holder
+            // (a replacement terminal, a new phone) is re-sealed to the current recipients now, with no extra prompt. Best
+            // effort: a failure here never fails the unlock.
+            if super::cred_ops::heal_plan(&self.store).is_ok_and(|plan| plan.contains(&uid)) {
+                let _ = super::cred_ops::heal_credential(&self.store, &self.id, &uid, &payload);
+            }
             // The gate holds the password the TUI asks the store for; an identity key goes to the
             // gate's key holder (a private ssh-agent, contract 3d), never to a file of its own.
             self.gate.insert(

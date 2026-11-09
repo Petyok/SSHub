@@ -1028,3 +1028,13 @@ what the implementation codes against. Each is cheap now and structural later.
     TUI for comparison (review M5).
 12. **Snapshot limits are enforced by the phone**, the issuer, not by the peer
     holding the blob (review M6).
+
+## Phase B (UX fixes of the epic): what changed in the core
+
+The full design is `host-sync-plan/review/ux-13-phase-b-design.md` (Revision 2); the contract text is sections 4j and 4k of `host-sync-contract.md`. In short:
+verdicts are pure functions of the log (a ceremony op past its window stays pending and completes when its proofs arrive); removing a computer needs the phone
+and the paper (the second device is waived with the paper; the emailed code never counts) and is possible with one other computer left (degraded: the
+credentials the removed device held a share of are listed, not reshared); the paper is mandatory for Quorum and for a third holder; a one-computer ring recovers
+a lost phone with its own acknowledgement, the paper twice and a 14 day lock; a recovery is bound to the phone it was started against; heal re-seals credentials
+to a new holder on first use; a trust session renews up to twice (180 days at most) by a phone-only op that every ring device counts the same way and that is
+mailed. Residuals are named in the Phase B design, sections 3.4, 5.5 and 6.1.
