@@ -546,7 +546,8 @@ fn execute(paths: &ProfilePaths, cmd: Cmd, opts: Opts) -> Result<i32> {
                 rk::rekey_apply(&store, &id, &entries)?
             };
             if !new_keys.is_empty() {
-                let k = rk::rekey_new_key(&store, &id, &new_keys)?;
+                let mut install = rk::exec_installer(paths);
+                let k = rk::rekey_new_key(&store, &id, &new_keys, &mut install)?;
                 r.lines.extend(k.lines);
             }
             report(opts, &r)
@@ -1746,7 +1747,7 @@ pub fn print_help(cmd: &str) {
         "sync-export" => ("sync-export --window <seconds> --out <path> [--wait <seconds>] [--format plain|json]", "Bulk export (Red, window up to 3600 s): propose it, wait for the ceremony, then write every credential to a new 0600 file in the Termius CSV format (import it from a directory as L00t.csv)."),
         "sync-migrate" => ("sync-migrate [--remove-local] [--format plain|json]", "Write this profile's existing host and identity secrets as replicated credentials; --remove-local deletes the local copies afterwards."),
         "sync-heal" => ("sync-heal [--format plain|json]", "After a device was replaced or retired: re-seal the saved passwords that a current full device does not hold a piece of yet, under a fresh key to every current device. The 24 paper words are read once, without echo; this terminal's own piece plus the paper's piece open each one, no phone needed. Passwords a removed device held a piece of are skipped: change those (sync-rekey)."),
-        "sync-rekey" => ("sync-rekey [--csv FILE | --stdin] [--new-key HOST]... [--format plain|json]", "For a stolen device: list the saved passwords that share a key with a removed device (no option), or save new secrets: lines `host,newpassword` from --csv FILE or --stdin, and --new-key HOST to generate a new key and save it (its public key is printed to install on the server). SSHub cannot change a password on a server: change it there first. Each host gets its own result line; a host not saved stays on the list."),
+        "sync-rekey" => ("sync-rekey [--csv FILE | --stdin] [--new-key HOST]... [--format plain|json]", "For a stolen device: list the saved passwords that share a key with a removed device (no option), or save new secrets: lines `host,newpassword` from --csv FILE or --stdin, and --new-key HOST to generate a new key, install it on the server with the credential the host has now (through `sshub exec`) and only then save it. You remove the old key's line from authorized_keys yourself. SSHub cannot change a password on a server: change it there first. Each host gets its own result line; a host not saved stays on the list."),
         "sync-replace-terminal" => ("sync-replace-terminal <old computer> [--new <computer>] [--format plain|json]", "Replace a full computer in steps: without --new it says how to enroll the new one (sshub sync-join on it); with --new it proposes the new computer as a full device (needs the phone and the paper phrase) and, run again once that is approved, proposes removing the old one. The paper phrase is read once, without echo, and goes to both. The last line points at sync-heal and sync-rekey."),
         "sync-import-kit" => ("sync-import-kit", "On a new machine: read the ring kit (sshub:ring:1:...) and the six master words without echo and set up the Vault here."),
         _ => return,

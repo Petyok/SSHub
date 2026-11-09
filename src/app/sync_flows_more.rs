@@ -533,11 +533,12 @@ fn rekey_host(app: &mut App, name: String) {
                 }) as MenuFn,
             ),
             (
-                "Generate a new key and save it (its public key is shown to install on the server)"
+                "Generate a new key, install it on the server with the current login, then save it"
                     .to_string(),
                 Box::new(move |app: &mut App| {
                     report_job(app, move |env| {
-                        repair::rekey_new_key(&env.store, &env.identity, &[name])
+                        let mut install = repair::exec_installer(&env.paths);
+                        repair::rekey_new_key(&env.store, &env.identity, &[name], &mut install)
                     });
                 }),
             ),

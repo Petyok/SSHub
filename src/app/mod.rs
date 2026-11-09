@@ -26,7 +26,7 @@ pub(crate) mod panes;
 mod profile_manager;
 pub(crate) mod profile_migration;
 pub(crate) mod profile_transfer;
-mod push_key;
+pub(crate) mod push_key;
 mod session;
 mod session_picker;
 mod session_spawn;

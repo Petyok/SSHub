@@ -247,14 +247,7 @@ impl App {
             }
         };
 
-        let escaped_key = public_key.replace("'", "'\\''");
-        let remote_cmd = format!(
-            "umask 077 && mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && \
-             key='{}' && \
-             (grep -qxF \"$key\" ~/.ssh/authorized_keys || \
-              echo \"$key\" >> ~/.ssh/authorized_keys)",
-            escaped_key
-        );
+        let remote_cmd = install_key_command(&public_key);
 
         let resolved = match entry.managed() {
             Some(m) => match self.store.resolve_connection(m) {
@@ -434,4 +427,16 @@ impl App {
         base_argv.push(remote_cmd.to_string());
         base_argv
     }
+}
+
+/// The remote command that appends `public_key` to `~/.ssh/authorized_keys` once (the push-key verb and the rekey
+/// step install keys with the same one).
+pub(crate) fn install_key_command(public_key: &str) -> String {
+    let escaped_key = public_key.replace('\'', "'\\''");
+    format!(
+        "umask 077 && mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && \
+         key='{escaped_key}' && \
+         (grep -qxF \"$key\" ~/.ssh/authorized_keys || \
+          echo \"$key\" >> ~/.ssh/authorized_keys)"
+    )
 }
