@@ -601,7 +601,11 @@ pub struct App {
 pub(crate) fn is_overlay_mode(mode: AppMode) -> bool {
     !matches!(
         mode,
-        AppMode::Normal | AppMode::Connecting | AppMode::Session | AppMode::SyncForkAlert
+        AppMode::Normal
+            | AppMode::Connecting
+            | AppMode::Session
+            | AppMode::SyncForkAlert
+            | AppMode::SyncRecoveryAlert
     )
 }
 

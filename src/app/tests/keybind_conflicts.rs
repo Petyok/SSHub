@@ -102,6 +102,7 @@ const SYNC_TAB_ACTIONS: &[KeyAction] = &[
     KeyAction::SyncReview,
     KeyAction::SyncTrust,
     KeyAction::SyncAdmin,
+    KeyAction::SyncPaper,
 ];
 
 #[test]
@@ -129,6 +130,7 @@ fn sync_keys_do_not_shadow_a_global_or_hosts_tab_default() {
         KeyAction::SyncReview,
         KeyAction::SyncTrust,
         KeyAction::SyncAdmin,
+        KeyAction::SyncPaper,
         KeyAction::SyncEnroll,
         KeyAction::SyncBleDrop,
         // Map tab and overlay-only actions.
@@ -144,6 +146,7 @@ fn sync_keys_do_not_shadow_a_global_or_hosts_tab_default() {
         KeyAction::SyncReview,
         KeyAction::SyncTrust,
         KeyAction::SyncAdmin,
+        KeyAction::SyncPaper,
         KeyAction::SyncEnroll,
     ] {
         for spec in binds.binds(sync) {

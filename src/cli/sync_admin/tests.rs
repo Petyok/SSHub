@@ -45,6 +45,57 @@ fn ring(n: usize) -> Vec<Dev> {
         .collect()
 }
 
+fn with_paper(store: &LauncherStore) {
+    let phrase = crate::sync::crypto::bip39_encode(&[0x42; 32]);
+    crate::sync::quorum::paper_setup(store, &phrase).unwrap();
+}
+
+#[test]
+fn quorum_mode_needs_a_registered_paper() {
+    let r = ring(1);
+    let e = mode(
+        &r[0].store,
+        &r[0].id,
+        CredMode::Quorum,
+        None,
+        "w",
+        &[0; 16],
+        1_000,
+    )
+    .unwrap_err();
+    assert!(
+        format!("{e:#}").contains("register the paper phrase first"),
+        "{e:#}"
+    );
+    assert!(crate::sync::quorum::ops_of(&r[0].store, "ModeChange", None)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn third_holder_needs_a_registered_paper() {
+    let r = ring(2);
+    let m = DeviceIdentity::generate();
+    r[0].store
+        .sync_register_device(
+            &m.public(),
+            "mirror",
+            DeviceRole::Mirror,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    let id = m.public().device_id().to_string();
+    let e = role(&r[0].store, &r[0].id, &id[..10], DeviceRole::Holder, 1_000).unwrap_err();
+    assert!(
+        format!("{e:#}").contains("register the paper phrase first"),
+        "{e:#}"
+    );
+    with_paper(&r[0].store);
+    role(&r[0].store, &r[0].id, &id[..10], DeviceRole::Holder, 1_000).unwrap();
+}
+
 #[test]
 fn every_verb_parses_its_synopsis() {
     assert_eq!(ok("sync-revoke", &["abc"]), Cmd::Revoke("abc".into()));
@@ -245,6 +296,7 @@ fn the_kit_sets_up_the_vault_and_keeps_the_ring_secret() {
 #[test]
 fn quorum_mode_needs_no_credentials_to_open_and_then_flips() {
     let r = ring(1);
+    with_paper(&r[0].store);
     let rep = mode(
         &r[0].store,
         &r[0].id,
@@ -342,4 +394,51 @@ fn a_repeated_export_continues_the_open_proposal() {
         .unwrap()
         .len();
     assert_eq!(n, 1, "the second command must not start a second ceremony");
+}
+
+#[test]
+fn the_alert_is_one_per_requester_with_a_count() {
+    let r = ring(3);
+    let mut ops = Vec::new();
+    for (i, n) in [(1usize, 1u8), (1, 2), (2, 3)] {
+        ops.push(
+            r[i].store
+                .sync_append_local(
+                    &r[i].id,
+                    OpBody::HostUpsert {
+                        host_uid: [n; 16],
+                        fields: Default::default(),
+                    },
+                )
+                .unwrap(),
+        );
+    }
+    let view = alert_view(&r[0].store, &ops, 1_000).unwrap().unwrap();
+    assert_eq!(
+        view.requesters,
+        vec![("dev1".to_string(), 2), ("dev2".to_string(), 1)]
+    );
+    assert_eq!(view.total, 3);
+    let lines = alert_lines(&view, 1_000).join(" ");
+    assert!(
+        lines.contains("3 open") && lines.contains("dev1 (2)"),
+        "{lines}"
+    );
+    assert!(alert_view(&r[0].store, &[], 1_000).unwrap().is_none());
+}
+
+#[test]
+fn the_enrollment_mail_hint_says_when_nothing_is_configured_and_names_a_shared_mailbox() {
+    let (configured, lines) = notify_hint(None);
+    assert!(!configured && lines.join(" ").contains("only show on terminal screens"));
+    let mut cfg = crate::config::NotifyConfig {
+        command: Some("sendmail -t -i".into()),
+        to: vec!["me@example.com".into()],
+        from: Some("sshub@example.com".into()),
+    };
+    let (configured, lines) = notify_hint(Some(&cfg));
+    assert!(configured && lines.len() == 1, "{lines:?}");
+    cfg.from = Some("me@example.com".into());
+    let (_, lines) = notify_hint(Some(&cfg));
+    assert!(lines.join(" ").contains("Shared mailbox"), "{lines:?}");
 }

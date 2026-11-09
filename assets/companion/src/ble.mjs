@@ -1,5 +1,5 @@
 // Bluetooth Low Energy frame channel, the phone (Web Bluetooth central) side of contract C20.
-// It moves whole frames ("SWR1" || version || kind || body, kinds 1 to 10) unchanged, in both directions. The link adds no
+// It moves whole frames ("SWR1" || version || kind || body, kinds 1 to 12) unchanged, in both directions. The link adds no
 // security and assumes none: no pairing, and every frame is signed or sealed end to end as on a camera or a speaker.
 // Three layers, each testable alone:
 //   cutFrame / Reassembler   pure chunking and the receiver rules
@@ -53,8 +53,8 @@ const u32 = (n) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 
 const rd16 = (b, at) => (b[at] << 8) | b[at + 1];
 const rd32 = (b, at) => ((b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3]) >>> 0;
 
-// A whole-frame check shared by both directions: the first four bytes are "SWR1" and the kind is 1..=10.
-export const frameLooksValid = (f) => f.length >= 7 && MAGIC.every((m, i) => f[i] === m) && f[6] >= 1 && f[6] <= 10;
+// A whole-frame check shared by both directions: the first four bytes are "SWR1" and the kind is 1..=12.
+export const frameLooksValid = (f) => f.length >= 7 && MAGIC.every((m, i) => f[i] === m) && f[6] >= 1 && f[6] <= 12;
 
 // ---------------------------------------------------------------- chunking
 // count = 1 + ceil(max(0, len - (chunk - 15)) / (chunk - 7))
@@ -63,7 +63,7 @@ export const chunkCount = (len, chunk) => 1 + Math.ceil(Math.max(0, len - (chunk
 // The DATA messages of one frame. Chunk 0 carries len and crc32 after the 7 byte header.
 export function cutFrame(frame, frameId, chunk) {
   if (!(chunk >= BLE.CHUNK_MIN && chunk <= BLE.CHUNK_MAX)) throw new Error(`chunk size ${chunk} is outside ${BLE.CHUNK_MIN}..${BLE.CHUNK_MAX}`);
-  if (!frameLooksValid(frame)) throw new Error('not a SSHub frame (SWR1, kind 1 to 10)');
+  if (!frameLooksValid(frame)) throw new Error('not a SSHub frame (SWR1, kind 1 to 12)');
   if (frame.length > BLE.MAX_FRAME_BYTES) throw new Error('frame is larger than 1 MiB');
   const count = chunkCount(frame.length, chunk);
   if (count > 0xffff) throw new Error(`the frame needs ${count} chunks of ${chunk} bytes, more than the 65535 a frame may have`);

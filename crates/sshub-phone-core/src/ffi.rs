@@ -94,7 +94,7 @@ pub fn is_word(word: String) -> bool {
     sshub_sync_proto::crypto::is_bip39_word(&word)
 }
 
-/// An SSHub frame: the `SWR1` magic and a kind from 1 to 10 (what `PhoneCore::open_frame` can look at).
+/// An SSHub frame: the `SWR1` magic and a kind from 1 to 12 (what `PhoneCore::open_frame` can look at).
 fn is_sshub_frame(b: &[u8]) -> bool {
     kind_of(b).is_some_and(|k| (1..=12).contains(&k))
 }

@@ -225,7 +225,13 @@ fn sync_phone_enroll_verifies_a_phone_and_proposes_it_as_a_red_holder() {
     crate::sync::ceremony::test_force(&t.store, false);
     let phone = crate::sync::crypto::DeviceIdentity::generate();
     let party = Party::new(&phone, "my phone", true);
-    let mut s = EnrollSession::new(&t.store, &t.id, "terminal", false);
+    let mut s = EnrollSession::new(&t.store, &t.id, "terminal", false).with_notify(Some(
+        crate::config::NotifyConfig {
+            command: Some("sendmail -t -i".into()),
+            to: vec!["me@example.com".into()],
+            from: Some("me@example.com".into()),
+        },
+    ));
     let mut out = Vec::new();
     s.start(&mut out);
     let first_lines = lines(&out);
@@ -312,6 +318,17 @@ fn sync_phone_enroll_verifies_a_phone_and_proposes_it_as_a_red_holder() {
     assert!(l
         .iter()
         .any(|x| x.starts_with("admitted: ") && x.contains("is enrolled")));
+    // The enrollment says whether a recovery of this phone is mailed, and names a shared mailbox.
+    assert!(
+        l.iter()
+            .any(|x| x.starts_with("notify_hint: ") && x.contains("mailed to me@example.com")),
+        "{l:?}"
+    );
+    assert!(
+        l.iter()
+            .any(|x| x.starts_with("notify_hint: ") && x.contains("Shared mailbox")),
+        "{l:?}"
+    );
     assert!(t
         .store
         .sync_devices()
@@ -523,4 +540,30 @@ fn the_ble_flag_is_parsed_and_a_build_without_bluetooth_says_so() {
             "{err:#}"
         );
     }
+}
+
+#[test]
+fn the_chain_text_shows_the_terminal_count_when_the_list_carries_it_and_a_fallback_when_not() {
+    use crate::sync::wire::TerminalsBlock;
+    let now = 1_000_000;
+    let one = terminals_line(
+        Some(&TerminalsBlock {
+            count: 1,
+            newest_op_ts: now - 7_200,
+        }),
+        now,
+    );
+    assert!(
+        one.contains("1 terminal;") && one.contains("2 h old"),
+        "{one}"
+    );
+    let three = terminals_line(
+        Some(&TerminalsBlock {
+            count: 3,
+            newest_op_ts: now,
+        }),
+        now,
+    );
+    assert!(three.contains("3 terminals"), "{three}");
+    assert!(terminals_line(None, now).contains("does not say how many"));
 }

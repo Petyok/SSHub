@@ -38,7 +38,7 @@ test('chunking: count formula, sizes, chunk 0 carries len and crc, every message
   assert.throws(() => cutFrame(frameOf(10), 1, 19));
   assert.throws(() => cutFrame(frameOf(10), 1, 513));
   assert.throws(() => cutFrame(new Uint8Array(10), 1, 244), /SWR1/);
-  assert.throws(() => cutFrame(frameOf(10, 11), 1, 244), /SWR1/);
+  assert.throws(() => cutFrame(frameOf(10, 13), 1, 244), /SWR1/);
 });
 
 test('reassembly: every size round-trips; ACK after window/2 chunks and after the last', () => {
@@ -108,7 +108,7 @@ test('receiver rules: too large, count mismatch, busy, order, crc, length, magic
   assert.deepEqual(abortOf(o2[o2.length - 1]), [9, ABORT.CRC]);
 
   // "SWR1" and kind 1..10 are checked on the completed frame, before it is handed on
-  for (const bad of [Uint8Array.of(0x58, 0x57, 0x52, 0x31, 0, 1, 1, 1, 1), Uint8Array.of(0x53, 0x57, 0x52, 0x31, 0, 1, 0, 1, 1), Uint8Array.of(0x53, 0x57, 0x52, 0x31, 0, 1, 11, 1, 1)]) {
+  for (const bad of [Uint8Array.of(0x58, 0x57, 0x52, 0x31, 0, 1, 1, 1, 1), Uint8Array.of(0x53, 0x57, 0x52, 0x31, 0, 1, 0, 1, 1), Uint8Array.of(0x53, 0x57, 0x52, 0x31, 0, 1, 13, 1, 1)]) {
     const m = [T.DATA, 0, 1, 0, 0, 0, 1, 0, 0, 0, bad.length, ...new Uint8Array(new Uint32Array([0]).buffer)];
     const view = new DataView(new ArrayBuffer(15 + bad.length));
     view.setUint8(0, T.DATA);
@@ -125,6 +125,8 @@ test('receiver rules: too large, count mismatch, busy, order, crc, length, magic
     assert.equal(out.frame, undefined);
   }
   assert.ok(frameLooksValid(frameOf(7, 10)) && !frameLooksValid(frameOf(7, 0)));
+  // Phase B: the renewal (11) and handover (12) requests are frames too; 13 is not
+  assert.ok(frameLooksValid(frameOf(7, 11)) && frameLooksValid(frameOf(7, 12)) && !frameLooksValid(frameOf(7, 13)));
 
   // a repeated last chunk after completion is acknowledged again, not taken as a new frame
   r = new Reassembler({ chunk });

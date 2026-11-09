@@ -703,6 +703,10 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
         screens::sync::render_fork_alert(frame, app);
         return;
     }
+    if app.mode == AppMode::SyncRecoveryAlert {
+        screens::sync::render_recovery_alert(frame, app);
+        return;
+    }
     let session_behind_picker = session_behind_picker(app);
 
     // Embedded session takes over the whole frame — no dashboard chrome.
@@ -5890,6 +5894,7 @@ mod tests {
             AppMode::SyncUnlock,
             AppMode::SyncSas,
             AppMode::SyncForkAlert,
+            AppMode::SyncRecoveryAlert,
             AppMode::TrustSessionScope,
             AppMode::TrustSessionTtl,
             AppMode::SyncReleaseConfirm,
