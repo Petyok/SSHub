@@ -1697,3 +1697,31 @@ pub fn accept_head(state: &mut PhoneState, shown: (u64, &[u8]), acknowledged_sin
 
 **Rules every lane keeps:** a Red or Green verdict reads only the log (D0, D0b): no `last_seen`, no `received_at`, no `now` except the inherent use-time checks;
 `log_live` is advice for screens. The alert has no acknowledge key. Group approval touches only hold reason `stale`. The emailed code never counts for a holder revoke or a handover.
+
+### 4k. Phase B host core as built (lane C; wave 1 and 2)
+
+What exists on top of 4j, with the names the screens and the scenarios use:
+
+* **Verdicts** (D0b): `ceremony::red_status` never reads `now` or the local receipt time for a verdict; `expired` only says the window passed on this clock
+  and the op is not complete. `ceremony::blocking_view(store, op, now) -> Vec<Blocker { proof, who, since }>` names, per missing proof, the devices
+  (or "the paper phrase", "the emailed code (mailed by NAME)") that can give it; for removing a computer the second-device entry adds "or the paper
+  phrase instead". `since` is the op's author stamp, display only.
+* **Revocation:** `revocation::revoke_mode(store, &target) -> RevokeMode { Full, Degraded, Refused(String) }`; `check_revocable` refuses only on
+  `Refused`. `TERMINALS_TO_CUT_OFF` is 2 (the removed device plus one remaining). `quorum::exposed_credentials(store) -> Vec<Exposure { host_uid,
+  devices, kind: Removed | NotHeldBy }>` is derived from the log and never stored.
+* **Heal** (`cred_ops`): `heal_plan(store)` lists the Quorum credentials whose newest sharing lacks a current holder and that no removed device holds a
+  share of; `heal_credential(store, id, host, payload)` re-seals one under a fresh DEK to the current recipients and is refused for any other. Heal on use:
+  `QuorumUnlocker::unlock` calls it after a successful open (best effort, no extra prompt).
+* **Recovery:** `recovery::open_for_alert(store, &DeviceIdentity, now)` and `open_for_alert_for(store, &DeviceId, now)`; `ReenrollVerdict::Superseded` for a
+  recovery that a later in-force `PhoneHandover` replaced (`PhoneHandover` is a gated Red op: three proofs until the handover rules land);
+  `recovery::is_solo`. A build with the cargo feature `e2e-hooks` (the e2e image only) reads `SSHUB_E2E_SOLO_LOCK_SECS` to shorten the 14 day solo lock.
+* **Certificates:** `DelegationCert::effective_expiry(store)` and `renewals(store)` read the folded record of the log (`oplog::cert_record`): renewals count
+  clock-free, in `(lamport, device, seq)` order, and only while the delegate is a holder in force; `cert_allows` and `extension_budget` use the effective end;
+  `cert::cert_renew_request(store, cert_id, term_secs, now)` builds the kind 11 request (new end = effective end + term, at most the first term, at most
+  `CERT_LIFETIME_MAX_SECS` after the issue, at most `CERT_MAX_RENEWALS` renewals; evidence = one `HeadEvidence` per holder terminal other than the
+  delegate). Every ingested `CertRenew` is mailed once through `[sync.notify]` (`cert::owed_renew_mails`, `cert::send_renew_mails`, hooked in
+  `SyncRuntime::mail_owed_codes`; the CLI `sshub sync` path must call `send_renew_mails` too); the sticky notice is a terminal screen.
+* **Phone list:** `hub::phone_chain_wire` fills the kind 5 `terminals` block: the number of non-removed terminals (this one included) and the newest op stamp
+  of the list. Unsigned, informational.
+* **Not yet** (wave 3): the `PhoneHandover` rules (Paper-only third factor, the new phone's own proof, the effect lamport, `successor_of` for certificates,
+  `handover::handover_words` over the proto crate's eight word function).
