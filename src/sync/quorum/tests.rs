@@ -1260,6 +1260,12 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
 
     let mut d = ring(4); // 0, 1, 2 stay; 3 is revoked
     quorum_mode(&d[0]);
+    // A ring of four holders has its paper (design 3.1); removing a computer needs it.
+    append(
+        &d[0],
+        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32]))
+            .unwrap(),
+    );
     all_to_all(&d);
     let hosts: Vec<HostUid> = (1..=3u8).map(|n| [100 + n; 16]).collect();
     for h in &hosts {
@@ -1363,12 +1369,12 @@ fn revoking_a_holder_runs_rotate_reshare_adopt_and_retire_without_prompts() {
     let mine = wraps.iter().find(|w| w.recipient == did0).unwrap();
     assert!(crate::sync::crypto::hybrid_unwrap(id0, &mine.sealed).is_err());
 
-    // With only two holders left, a revocation is refused up front.
+    // A ring of two computers without a registered paper cannot remove one: nothing independent could approve.
     let _ = did1;
     let two = ring(2);
     assert!(
         check_revocable(&two[0].store, &two[1].did, now).is_err(),
-        "one remaining holder cannot contribute"
+        "removing a computer needs the paper registered"
     );
 }
 
@@ -1481,12 +1487,16 @@ pub(crate) fn complete(d: &[Dev], op: &Op, second: usize, paper: Option<&str>) {
 }
 
 #[test]
-fn check_revocable_reads_the_log_not_the_contact_clock() {
-    use crate::sync::revocation::check_revocable;
-    // Four holders; the fourth is to go, three remain. Two of them wrote to the ring, the contact clock knows nobody.
+fn check_revocable_reads_the_ring_not_the_contact_clock_nor_who_wrote_lately() {
+    use crate::sync::revocation::{check_revocable, revoke_mode, RevokeMode};
+    // Four holders; the fourth is to go, three remain; nobody was heard from. Whether a remaining device is reachable is
+    // advice for the screens, not a rule (design 3.2: a terminal that is away never holds the revoke).
     let d = ring(4);
-    d[0].append_host();
-    d[1].append_host();
+    append(
+        &d[0],
+        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32]))
+            .unwrap(),
+    );
     all_to_all(&d);
     for x in &d {
         x.store
@@ -1498,11 +1508,187 @@ fn check_revocable_reads_the_log_not_the_contact_clock() {
     }
     let now = crate::store::now_ts() + 5;
     check_revocable(&d[0].store, &d[3].did, now).unwrap();
+    assert_eq!(
+        revoke_mode(&d[0].store, &d[3].did).unwrap(),
+        RevokeMode::Full
+    );
 
-    // And the other way round: one writer only, even though every contact is fresh.
+    // Three terminals and no paper: refused, with the paper named.
     let e = ring(4);
-    e[0].append_host();
-    all_to_all(&e);
     let err = check_revocable(&e[0].store, &e[3].did, now).unwrap_err();
-    assert!(err.to_string().contains("written to the ring"), "{err}");
+    assert!(err.to_string().contains("paper"), "{err}");
+
+    // Two terminals and the paper: one remains, the phone and the paper authorize it.
+    let two = ring(2);
+    append(
+        &two[0],
+        crate::sync::quorum::paper_registration(&crate::sync::crypto::bip39_encode(&[0x61; 32]))
+            .unwrap(),
+    );
+    all_to_all(&two);
+    assert_eq!(
+        revoke_mode(&two[0].store, &two[1].did).unwrap(),
+        RevokeMode::Degraded
+    );
+    // The last terminal is refused whatever else holds.
+    let one = ring(1);
+    assert!(matches!(
+        revoke_mode(&one[0].store, &one[0].did).unwrap(),
+        RevokeMode::Refused(_)
+    ));
+}
+
+#[test]
+fn exposed_credentials_lists_what_a_removed_device_still_holds_and_what_a_new_holder_lacks() {
+    use crate::sync::oplog::{Attendance, DeviceKind};
+    use crate::sync::quorum::{exposed_credentials, ExposureKind};
+    let d = ring(4);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    let hosts = [[1u8; 16], [2u8; 16]];
+    for h in &hosts {
+        cred_put(&d[0].store, &d[0].id, h, &payload("x")).unwrap();
+    }
+    all_to_all(&d);
+    assert!(exposed_credentials(&d[0].store).unwrap().is_empty());
+
+    // d[3] is removed and nobody reshared yet: it still holds a share of both credentials.
+    append(
+        &d[0],
+        OpBody::DeviceRevoke {
+            device_id: d[3].did.clone(),
+        },
+    );
+    all_to_all(&d[..3]);
+    let ex = exposed_credentials(&d[0].store).unwrap();
+    assert_eq!(ex.len(), 2, "{ex:?}");
+    assert!(ex
+        .iter()
+        .all(|e| e.kind == ExposureKind::Removed && e.devices == vec![d[3].did.clone()]));
+
+    // A holder that joined later has no share of the newest sharing.
+    let fresh = Dev::new();
+    d[0].trust_with(&fresh, Attendance::Attended, DeviceKind::Terminal);
+    let ex = exposed_credentials(&d[0].store).unwrap();
+    assert_eq!(ex.len(), 4, "{ex:?}");
+    assert!(ex
+        .iter()
+        .any(|e| e.kind == ExposureKind::NotHeldBy && e.devices == vec![fresh.did.clone()]));
+}
+
+/// crypto L1: one batch is not a reshare. The revocation closes when two distinct share-holding terminals wrote batches of
+/// one epoch that leave the removed device out.
+#[test]
+fn a_revocation_stays_open_until_two_share_holders_wrote_batches_of_one_epoch() {
+    use crate::sync::oplog::OpBody;
+    use crate::sync::revocation::{next_actions, RevocationAction};
+    let d = ring(4);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    cred_put(&d[0].store, &d[0].id, &[7u8; 16], &payload("x")).unwrap();
+    all_to_all(&d);
+    let now = crate::store::now_ts();
+    append(
+        &d[0],
+        OpBody::DeviceRevoke {
+            device_id: d[3].did.clone(),
+        },
+    );
+    all_to_all(&d[..3]);
+    let mut holders: Vec<_> = d[..3].iter().map(|x| x.did.clone()).collect();
+    holders.sort();
+    let batch = || OpBody::ShareReshareBatch {
+        epoch: 1,
+        new_holders: holders.clone(),
+        items: vec![],
+    };
+    assert!(next_actions(&d[0].store, &d[0].id, now)
+        .unwrap()
+        .contains(&RevocationAction::Rotate));
+    append(&d[1], batch());
+    all_to_all(&d[..3]);
+    assert!(
+        next_actions(&d[0].store, &d[0].id, now)
+            .unwrap()
+            .contains(&RevocationAction::Rotate),
+        "one batch closed the revocation"
+    );
+    append(&d[2], batch());
+    all_to_all(&d[..3]);
+    assert!(
+        !next_actions(&d[0].store, &d[0].id, now)
+            .unwrap()
+            .contains(&RevocationAction::Rotate),
+        "two distinct share holders in one epoch close it"
+    );
+}
+
+/// A degraded revocation: only one terminal holds a share, so nobody contributes (nothing can be reshared).
+#[test]
+fn contribute_is_offered_only_with_two_share_holding_terminals() {
+    use crate::sync::oplog::{Attendance, DeviceKind, OpBody};
+    use crate::sync::revocation::{next_actions, perform, RevocationAction};
+    let mut d = ring(3);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    cred_put(&d[0].store, &d[0].id, &[8u8; 16], &payload("x")).unwrap();
+    all_to_all(&d);
+    // A third terminal joins after the credential was written: it holds no share of it.
+    let fresh = Dev::new();
+    for x in &d {
+        x.trust_with(&fresh, Attendance::Attended, DeviceKind::Terminal);
+    }
+    // d[1] and d[2] are removed: d[0] is the only share-holding terminal left (the new one holds no share).
+    for gone in [&d[1], &d[2]] {
+        append(
+            &d[0],
+            OpBody::DeviceRevoke {
+                device_id: gone.did.clone(),
+            },
+        );
+    }
+    let now = crate::store::now_ts();
+    let store = d[0].store.clone();
+    let bodies = perform(
+        &store,
+        std::sync::Arc::get_mut(&mut d[0].id).unwrap(),
+        &RevocationAction::Rotate,
+    )
+    .unwrap();
+    for b in bodies {
+        append(&d[0], b);
+    }
+    let later = now + 2 * 86_400; // past the rotation grace
+    let actions = next_actions(&d[0].store, &d[0].id, later).unwrap();
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, RevocationAction::Contribute { .. })),
+        "{actions:?}"
+    );
+}
+
+#[test]
+fn two_computers_are_enough_to_cut_one_off() {
+    use crate::sync::revocation::{
+        cut_off_sentence, terminals_missing_to_cut_off, TERMINALS_TO_CUT_OFF,
+    };
+    assert_eq!(TERMINALS_TO_CUT_OFF, 2);
+    assert_eq!(
+        terminals_missing_to_cut_off(&ring(1)[0].store).unwrap(),
+        Some(1)
+    );
+    assert_eq!(
+        terminals_missing_to_cut_off(&ring(2)[0].store).unwrap(),
+        None
+    );
+    assert_eq!(
+        terminals_missing_to_cut_off(&ring(3)[0].store).unwrap(),
+        None
+    );
+    let s = cut_off_sentence(1);
+    assert!(
+        s.contains("2 computers") && s.contains("You have 1") && s.contains("paper"),
+        "{s}"
+    );
 }

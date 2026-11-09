@@ -170,15 +170,15 @@ fn a_gated_op_waits_for_all_three_proofs_from_the_right_participants() {
 }
 
 #[test]
-fn a_ui_cannot_approve_a_red_op_early_and_a_stale_ceremony_is_dropped() {
+fn a_ui_cannot_approve_a_red_op_early_and_a_late_ceremony_is_kept_pending_not_dropped() {
     let d = world(&[R, A, B]);
     let op = propose(
         &d,
         R,
         OpBody::ModeChange {
-            to: CredMode::Quorum,
+            to: CredMode::Vault,
             migrated_on: d[R].did.clone(),
-            cosigner: None,
+            cosigner: Some(d[A].did.clone()),
         },
     );
     sync(&d);
@@ -192,16 +192,89 @@ fn a_ui_cannot_approve_a_red_op_early_and_a_stale_ceremony_is_dropped() {
         1,
         "still pending"
     );
-    // Rejecting is always allowed; so is a stale one: after the TTL nothing can complete it.
+    // Past the window on this clock the screens call it expired, but it is NOT dropped: dropping it would make this
+    // device disagree with every device that has not yet heard the proofs (D0b).
     let late = op.timestamp + RED_CEREMONY_TTL_SECS + 1;
     let report = settle_red_ops(&d[OBS].store, late).unwrap();
-    assert_eq!(report.rejected.len(), 1);
-    assert!(d[OBS].store.sync_pending().unwrap().is_empty());
+    assert!(report.rejected.is_empty(), "{report:?}");
+    assert_eq!(d[OBS].store.sync_pending().unwrap().len(), 1);
+    assert!(status(&d, &op, late).expired);
+}
+
+/// D0b: the proofs of a ceremony that completed inside the window count whatever this device's clock says and whenever it
+/// received them.
+#[test]
+fn ceremony_verdicts_do_not_read_received_at_or_now() {
+    let d = world(&[R, A, B]);
+    let phrase = bip39_encode(&[0x41; 32]);
+    let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
+    append(&d[P], red_phone_sign_body(&reg));
+    append(&d[A], red_approve_body(&reg));
+    sync(&d);
+    let before = status(&d, &reg, reg.timestamp + 60);
+    assert!(before.complete, "{before:?}");
+    // The observer heard every proof a year late and judges a year later.
+    d[OBS]
+        .store
+        .with_conn(|c| {
+            c.execute(
+                "UPDATE sync_ops SET received_at = received_at + 31536000",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let after = status(&d, &reg, reg.timestamp + 31_536_000 + 60);
+    assert!(after.complete && after.missing.is_empty(), "{after:?}");
+    assert!(
+        !after.expired,
+        "a complete ceremony is never expired: {after:?}"
+    );
+}
+
+/// D0b: an op past the window on this clock still completes when its proofs arrive: this device did not reject it.
+#[test]
+fn a_late_device_still_completes_an_op_when_its_proofs_arrive() {
+    let d = world(&[R, A, B]);
+    let phrase = bip39_encode(&[0x42; 32]);
+    let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
+    let late = reg.timestamp + RED_CEREMONY_TTL_SECS + 1;
+    // The observer has the op, its clock is past the window, no proof yet: a settle round keeps it.
+    assert!(settle_red_ops(&d[OBS].store, late)
+        .unwrap()
+        .rejected
+        .is_empty());
+    // The proofs were written inside the window (author stamps) and reach the observer only now.
+    append(&d[P], red_phone_sign_body(&reg));
+    append(&d[A], red_approve_body(&reg));
+    sync(&d);
+    assert_eq!(
+        settle_red_ops(&d[OBS].store, late).unwrap().applied,
+        vec![reg.hash()]
+    );
+}
+
+/// D0b: the window is measured on the authors' stamps: a proof stamped long after the op never counts.
+#[test]
+fn a_proof_stamped_after_the_window_does_not_count() {
+    let d = world(&[R, A, B]);
+    let phrase = bip39_encode(&[0x43; 32]);
+    let old = crate::store::now_ts() - RED_CEREMONY_TTL_SECS - 100;
+    let reg = d[R]
+        .store
+        .sync_append_local_at(&d[R].id, factor_register_paper(&phrase).unwrap(), old)
+        .unwrap();
+    sync(&d);
+    append(&d[P], red_phone_sign_body(&reg));
+    append(&d[A], red_approve_body(&reg));
+    sync(&d);
+    let st = status(&d, &reg, reg.timestamp + 60);
+    assert!(!st.complete, "{st:?}");
 }
 
 #[test]
 fn rules_that_make_an_op_impossible_reject_it_instead_of_waiting() {
-    // Revoking a holder with only one other terminal left cannot reshare.
+    // Removing a computer without a registered paper cannot be completed: nothing independent can approve (design 3.2).
     let small = world(&[R, A]);
     let revoke = propose(
         &small,
@@ -213,9 +286,7 @@ fn rules_that_make_an_op_impossible_reject_it_instead_of_waiting() {
     sync(&small);
     let st = red_status(&small[OBS].store, &revoke, revoke.timestamp).unwrap();
     assert!(
-        st.blocked
-            .as_deref()
-            .is_some_and(|b| b.contains("two remaining")),
+        st.blocked.as_deref().is_some_and(|b| b.contains("paper")),
         "{st:?}"
     );
 }
@@ -568,6 +639,24 @@ mod in_force {
     fn a_revocation_reshares_nothing_until_complete() {
         use crate::sync::revocation::next_actions;
         let (d, phrase) = ring_with_paper();
+        // A Quorum credential: without one nothing is shared with the removed device and its revocation closes at once.
+        let mc = append(
+            &d[0],
+            OpBody::ModeChange {
+                to: crate::sync::oplog::CredMode::Quorum,
+                migrated_on: d[0].did.clone(),
+                cosigner: None,
+            },
+        );
+        complete(&d, &mc, 1, Some(&phrase));
+        crate::sync::cred_ops::cred_put(
+            &d[0].store,
+            &d[0].id,
+            &[5u8; 16],
+            &crate::sync::quorum::tests::payload("x"),
+        )
+        .unwrap();
+        all_to_all_pull(&d);
         let target = d[2].did.clone();
         let holders = live_holder_count(&d[0].store).unwrap();
         let rev = append(&d[0], OpBody::DeviceRevoke { device_id: target });
@@ -741,6 +830,14 @@ mod review {
     fn a_non_holder_cannot_close_a_revocation_with_a_reshare_batch() {
         let d = ring(4);
         quorum_mode(&d[0]);
+        all_to_all(&d);
+        crate::sync::cred_ops::cred_put(
+            &d[0].store,
+            &d[0].id,
+            &[6u8; 16],
+            &crate::sync::quorum::tests::payload("x"),
+        )
+        .unwrap();
         all_to_all(&d);
         let m = mirror_in(&d);
         let now = crate::store::now_ts();
@@ -970,9 +1067,10 @@ mod review {
         let _ = ok;
     }
 
-    // crypto F6: a Red op stamped in the future expires like any other.
+    // crypto F6: a Red op stamped far in the future is refused at ingest (skew grace), so no peer ever judges it; the
+    // window of D0b is measured on author stamps and is not what protects against a future date.
     #[test]
-    fn a_future_dated_red_op_expires_like_any_other() {
+    fn a_future_dated_red_op_never_reaches_a_peer() {
         let d = ring_phone(3);
         let phrase = bip39_encode(&[0x66; 32]);
         let now = crate::store::now_ts();
@@ -985,11 +1083,13 @@ mod review {
             )
             .unwrap();
         sync_pull(&d);
-        append(&d[3], red_phone_sign_body(&reg));
-        append(&d[1], red_approve_body(&reg));
-        sync_pull(&d);
-        let st = red_status(&d[2].store, &reg, now + 400 * 86_400).unwrap();
-        assert!(st.expired && !st.complete, "{st:?}");
+        assert!(
+            !ops_of(&d[2].store, "FactorRegister", None)
+                .unwrap()
+                .iter()
+                .any(|o| o.hash() == reg.hash()),
+            "a peer applied an op dated five years ahead"
+        );
     }
 
     // crypto F7a: the emailed code is never in clear in sync_meta, and only this device's key opens it.
@@ -1130,9 +1230,11 @@ mod review {
         assert!(seen <= op.timestamp + 5, "{seen} vs {}", op.timestamp);
     }
 
-    // crypto round 2, F1: a proof is as old as its receipt, whatever stamp its author chose.
+    // D0b residual (design section 1): a signer can stamp its own proof inside the window, and the verdict does not
+    // read when it was received. A proof still needs the three independent participants; a control proves a stamp
+    // OUTSIDE the window is refused.
     #[test]
-    fn a_backdated_late_factor_does_not_complete_a_stale_ceremony() {
+    fn a_proof_stamped_inside_the_window_counts_whenever_it_arrives_and_one_outside_never_does() {
         let d = ring_phone(3);
         let phrase = bip39_encode(&[0x31; 32]);
         let reg = append(
@@ -1169,15 +1271,15 @@ mod review {
         sync_pull(&d);
         assert!(
             !in_force(&d[0].store, &op).unwrap(),
-            "control: a late proof is refused"
+            "control: a proof stamped ten days after the op is outside the window"
         );
         d[1].store
             .sync_append_local_at(&d[1].id, red_factor_paper(&recover, &op), t0 + 7_200)
             .unwrap();
         sync_pull(&d);
         assert!(
-            !in_force(&d[0].store, &op).unwrap(),
-            "a factor proof received ten days late completed the ceremony because its stamp is backdated"
+            in_force(&d[0].store, &op).unwrap(),
+            "a proof stamped inside the window counts on a device that received it late"
         );
     }
 
@@ -1513,6 +1615,21 @@ fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_en
     let st = red_status(&a.store, &add, now).unwrap();
     assert!(st.complete, "the first phone of a ring: {st:?}");
 
+    // The paper first (design 3.1): a third holder needs it. A ring of one terminal and its phone registers it with the
+    // phone's proof alone (the bootstrap).
+    let phrase = bip39_encode(&[0x37; 32]);
+    let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
+    let reg = append(
+        &a,
+        crate::sync::quorum::paper_registration(&phrase).unwrap(),
+    );
+    pull(&a, &ph);
+    append(&ph, red_phone_sign_body(&reg));
+    pull(&ph, &a);
+    let st = red_status(&a.store, &reg, now).unwrap();
+    assert!(st.complete, "{st:?}");
+    settle_red_ops(&a.store, now).unwrap();
+
     // `sync-role b holder`: the phone exists now, so its proof is needed; b signs for itself; no factor exists.
     let role = append(
         &a,
@@ -1531,8 +1648,8 @@ fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_en
         "{st:?}"
     );
     assert!(
-        !st.missing.iter().any(|m| matches!(m, RedProof::Factor(_))),
-        "no factor can exist at setup: {st:?}"
+        st.missing.iter().any(|m| matches!(m, RedProof::Factor(_))),
+        "with the paper registered the third holder needs it: {st:?}"
     );
     pull(&a, &b);
     append(&b, red_approve_body(&role));
@@ -1540,12 +1657,10 @@ fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_en
     pull(&a, &ph);
     append(&ph, red_phone_sign_body(&role));
     pull(&ph, &a);
+    append(&a, red_factor_paper(&recover, &role));
     let st = red_status(&a.store, &role, now).unwrap();
     assert!(st.complete, "{st:?}");
-    assert!(
-        st.note.as_deref().is_some_and(|n| n.contains("ring setup")),
-        "what was waived is said, not silent: {st:?}"
-    );
+    assert!(st.note.is_none(), "{st:?}");
 
     // The ring has a phone and two terminal holders in force: setup is over, for good.
     let third = append(
@@ -1570,22 +1685,11 @@ fn a_ring_from_a_fresh_install_reaches_a_phone_and_two_holders_and_setup_then_en
     );
     assert!(st.note.is_none(), "{st:?}");
 
-    // A later Red op (the paper registration, a bootstrap: phone and a second holder) completes, and nothing
-    // that was valid at ring setup is judged again against the ring as it is now: on every device view the
+    // Nothing that was valid at ring setup is judged again against the ring as it is now: on every device view the
     // phone and b stay holders, c (whose promotion is not complete) stays a mirror, proposer included.
-    let reg = append(
-        &a,
-        crate::sync::quorum::paper_registration(&bip39_encode(&[0x37; 32])).unwrap(),
-    );
-    pull(&a, &ph);
-    append(&ph, red_phone_sign_body(&reg));
-    pull(&a, &b);
-    append(&b, red_approve_body(&reg));
     for x in [&ph, &b, &c] {
         pull(x, &a);
     }
-    let st = red_status(&a.store, &reg, now).unwrap();
-    assert!(st.complete, "{st:?}");
     for x in [&b, &c, &ph] {
         pull(&a, x);
         pull(&ph, x);
@@ -1815,4 +1919,221 @@ fn the_promotion_block_clears_when_no_quorum_credential_is_left() {
     // Judged at the op's own position: before the replacement the credential was a Quorum one.
     assert!(quorum_credentials_before(&d[0].store, later.lamport).unwrap());
     assert!(!quorum_credentials_before(&d[0].store, first.lamport).unwrap());
+}
+
+// ---------------------------------------------------------------- Phase B: revocation, paper, replacement (lane C)
+
+/// Register the paper through the bootstrap ceremony and settle it everywhere; returns the paper's recover identity.
+fn paper_ready(d: &[Dev]) -> DeviceIdentity {
+    let phrase = bip39_encode(&[0x51; 32]);
+    let reg = propose(d, R, factor_register_paper(&phrase).unwrap());
+    append(&d[P], red_phone_sign_body(&reg));
+    append(&d[A], red_approve_body(&reg));
+    sync(d);
+    for x in d {
+        settle_red_ops(&x.store, reg.timestamp + 5).unwrap();
+    }
+    paper_derive(&phrase, PaperDomain::Recover).unwrap()
+}
+
+#[test]
+fn a_holder_revoke_needs_the_phone_and_the_paper_and_the_second_device_is_waived() {
+    let d = world(&[R, A, B]);
+    let recover = paper_ready(&d);
+    let rev = propose(
+        &d,
+        R,
+        OpBody::DeviceRevoke {
+            device_id: d[B].did.clone(),
+        },
+    );
+    append(&d[P], red_phone_sign_body(&rev));
+    sync(&d);
+    let st = status(&d, &rev, rev.timestamp + 30);
+    assert!(st.blocked.is_none(), "{st:?}");
+    assert_eq!(
+        st.missing,
+        vec![
+            RedProof::SecondDevice,
+            RedProof::Factor(Some(ThirdFactor::Paper))
+        ]
+    );
+    // The paper alone completes it with the phone: the second device (A) is away.
+    append(&d[R], red_factor_paper(&recover, &rev));
+    sync(&d);
+    let st = status(&d, &rev, rev.timestamp + 30);
+    assert!(st.complete, "{st:?}");
+}
+
+#[test]
+fn the_emailed_code_never_counts_for_removing_a_holder() {
+    let d = world(&[R, A, B]);
+    let recover = paper_ready(&d);
+    let (body, code) = factor_register_email(&d[B].did).unwrap();
+    let ereg = propose(&d, R, body);
+    append(&d[P], red_phone_sign_body(&ereg));
+    append(&d[A], red_approve_body(&ereg));
+    append(&d[R], red_factor_paper(&recover, &ereg));
+    sync(&d);
+    for x in &d {
+        settle_red_ops(&x.store, ereg.timestamp + 5).unwrap();
+    }
+    remember_email_code(&d[B].store, &d[B].id, &code).unwrap();
+    let rev = propose(
+        &d,
+        R,
+        OpBody::DeviceRevoke {
+            device_id: d[A].did.clone(),
+        },
+    );
+    append(&d[P], red_phone_sign_body(&rev));
+    append(&d[B], red_approve_body(&rev));
+    append(&d[B], red_factor_email(&d[B].store, &code, &rev).unwrap());
+    sync(&d);
+    let st = status(&d, &rev, rev.timestamp + 30);
+    assert!(
+        !st.complete,
+        "the emailed code completed a holder revoke: {st:?}"
+    );
+    assert_eq!(st.missing, vec![RedProof::Factor(Some(ThirdFactor::Paper))]);
+}
+
+#[test]
+fn the_last_terminal_cannot_be_removed() {
+    let d = world(&[R]);
+    paper_ready(&d);
+    let rev = propose(
+        &d,
+        R,
+        OpBody::DeviceRevoke {
+            device_id: d[R].did.clone(),
+        },
+    );
+    let st = status(&d, &rev, rev.timestamp + 30);
+    assert!(
+        st.blocked
+            .as_deref()
+            .is_some_and(|b| b.contains("last terminal")),
+        "{st:?}"
+    );
+}
+
+#[test]
+fn removing_a_computer_without_a_registered_paper_is_blocked() {
+    let d = world(&[R, A, B]);
+    let rev = propose(
+        &d,
+        R,
+        OpBody::DeviceRevoke {
+            device_id: d[B].did.clone(),
+        },
+    );
+    let st = status(&d, &rev, rev.timestamp + 30);
+    assert!(
+        st.blocked.as_deref().is_some_and(|b| b.contains("paper")),
+        "{st:?}"
+    );
+}
+
+/// crypto M1: a replacement terminal in a one-terminal ring completes with the phone and the paper; it is not one of
+/// the terminals that count for the second device.
+#[test]
+fn promotion_in_a_one_terminal_ring_completes_with_phone_and_paper() {
+    let d = world(&[R]);
+    let recover = {
+        let phrase = bip39_encode(&[0x52; 32]);
+        let reg = propose(&d, R, factor_register_paper(&phrase).unwrap());
+        append(&d[P], red_phone_sign_body(&reg));
+        sync(&d);
+        for x in &d {
+            settle_red_ops(&x.store, reg.timestamp + 5).unwrap();
+        }
+        paper_derive(&phrase, PaperDomain::Recover).unwrap()
+    };
+    let new = Dev::new();
+    crate::sync::ceremony::test_force(&new.store, false);
+    let add = propose(
+        &d,
+        R,
+        OpBody::DeviceAdd {
+            device: new.id.public(),
+            name: "replacement".into(),
+            role: DeviceRole::Holder,
+            attendance: Attendance::Attended,
+            kind: DeviceKind::Terminal,
+            verified_by: VerifiedBy::Sas,
+        },
+    );
+    append(&d[P], red_phone_sign_body(&add));
+    append(&d[R], red_factor_paper(&recover, &add));
+    sync(&d);
+    // The proposer's own store has the subject as a row of its view (it applied its own op at once); the verdict must be
+    // the same there as on a peer.
+    for store in [&d[OBS].store, &d[R].store] {
+        let st = red_status(store, &add, add.timestamp + 30).unwrap();
+        assert!(
+            st.single_machine_ring,
+            "the subject is not a second terminal: {st:?}"
+        );
+        assert!(st.complete, "{st:?}");
+    }
+}
+
+#[test]
+fn quorum_mode_needs_a_registered_paper() {
+    let d = world(&[R, A, B]);
+    let op = propose(
+        &d,
+        R,
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            migrated_on: d[R].did.clone(),
+            cosigner: None,
+        },
+    );
+    let st = status(&d, &op, op.timestamp + 30);
+    assert!(
+        st.blocked.as_deref().is_some_and(|b| b.contains("paper")),
+        "{st:?}"
+    );
+    let recover = paper_ready(&d);
+    let _ = recover;
+    let op2 = propose(
+        &d,
+        R,
+        OpBody::ModeChange {
+            to: CredMode::Quorum,
+            migrated_on: d[R].did.clone(),
+            cosigner: None,
+        },
+    );
+    assert!(status(&d, &op2, op2.timestamp + 30).blocked.is_none());
+}
+
+#[test]
+fn third_holder_needs_a_registered_paper() {
+    // The ring has the phone and one terminal: a second terminal is the third holder.
+    let d = world(&[R]);
+    let new = Dev::new();
+    let add = |paper: bool| {
+        let _ = paper;
+        propose(
+            &d,
+            R,
+            OpBody::DeviceAdd {
+                device: new.id.public(),
+                name: "second".into(),
+                role: DeviceRole::Holder,
+                attendance: Attendance::Attended,
+                kind: DeviceKind::Terminal,
+                verified_by: VerifiedBy::Sas,
+            },
+        )
+    };
+    let op = add(false);
+    let st = status(&d, &op, op.timestamp + 30);
+    assert!(
+        st.blocked.as_deref().is_some_and(|b| b.contains("paper")),
+        "{st:?}"
+    );
 }

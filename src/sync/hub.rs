@@ -26,7 +26,7 @@ use crate::config::NotifyConfig;
 use crate::store::{uid_hex, LauncherStore};
 
 /// Op kinds that are announced: a recovery started, someone approved it, it was cancelled.
-/// `RecoveryAck` is the automatic "seen" record and is not announced.
+/// `RecoveryAck` records that an attended terminal showed the recovery to its user (it is not automatic): not announced.
 const ANNOUNCED: [&str; 3] = ["PhoneReenroll", "RecoveryApprove", "PhoneReenrollCancel"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

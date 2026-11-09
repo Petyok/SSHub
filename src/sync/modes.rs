@@ -105,7 +105,11 @@ pub fn validate_mode_change(store: &LauncherStore, op: &Op) -> Result<()> {
         "a mode change names the machine that migrates: it must be the author"
     );
     if *to == CredMode::Quorum {
-        super::quorum::paper_rule(store, super::quorum::live_holder_count(store)?)?;
+        // Whatever the size of the ring (design 3.1): without the paper a stolen device could not be cut off.
+        ensure!(
+            super::quorum::paper_pub(store)?.is_some(),
+            "switching to Quorum needs the paper phrase registered first: without it a stolen device could not be cut off and a lost phone could not be recovered"
+        );
     }
     if *to == CredMode::Vault {
         let cosigner = cosigner

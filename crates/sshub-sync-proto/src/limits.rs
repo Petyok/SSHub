@@ -18,9 +18,11 @@ pub const PHONE_FRESH_SECS: i64 = 14 * DAY;
 pub const PHONE_FRESH_WARN_SECS: i64 = 7 * DAY;
 /// Window in which a device's self-signed head counts as "live" for recovery.
 pub const LIVE_DEVICE_WINDOW_SECS: i64 = 14 * DAY;
+/// A Red op that has not completed its ceremony by then is dropped; proofs older than this do not count. Seven days,
+/// so an away holder can still approve; it stays below prune delay plus checkpoint interval (see the assert below),
+/// so the ops of a ceremony are never pruned while it is still open.
+pub const RED_CEREMONY_TTL_SECS: i64 = 7 * DAY;
 /// Timelock of `PhoneReenroll`.
-/// A Red op that has not completed its ceremony by then is dropped; proofs older than this do not count.
-pub const RED_CEREMONY_TTL_SECS: i64 = 3 * DAY;
 pub const RECOVERY_TIMELOCK_SECS: i64 = 7 * DAY;
 /// Phase B (contract 4j): a recovery in a ring where the requester is the only attended holder runs this long.
 pub const RECOVERY_TIMELOCK_SOLO_SECS: i64 = 14 * DAY;
@@ -100,6 +102,8 @@ pub const CHECKPOINT_MIN_INTERVAL_SECS: i64 = DAY;
 pub const CHECKPOINT_AFTER_RESHARE_SECS: i64 = 7 * DAY;
 /// Pruning waits this long after the newest checkpoint is accepted.
 pub const CHECKPOINT_PRUNE_DELAY_SECS: i64 = 7 * DAY;
+const _: () =
+    assert!(RED_CEREMONY_TTL_SECS < CHECKPOINT_PRUNE_DELAY_SECS + CHECKPOINT_MIN_INTERVAL_SECS);
 /// Accepted checkpoints whose span stays on disk (the cut of the older one is the prune floor).
 pub const CHECKPOINT_RETAIN_SPANS: usize = 2;
 /// Distinct attended terminals that must sign, besides every live attended terminal.
