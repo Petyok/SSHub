@@ -38,6 +38,7 @@ pub fn handover_request(
         new_phone,
         name: name.to_string(),
         terminal,
+        op: None,
     })
 }
 
