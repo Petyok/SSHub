@@ -704,7 +704,10 @@ mod in_force {
         let req = cert_renew_request(store, cert.id, 5 * day, now).unwrap();
         assert_eq!(req.expiry, now + 15 * day);
         assert_eq!(req.evidence.len(), 2, "{:?}", req.evidence);
-        assert!(cert_renew_request(store, cert.id, 11 * day, now).is_err(), "longer than the first term");
+        assert!(
+            cert_renew_request(store, cert.id, 11 * day, now).is_err(),
+            "longer than the first term"
+        );
 
         // After the original end the session is dead; a renewal revives it, within the caps.
         let late = now + 12 * day;
@@ -723,25 +726,40 @@ mod in_force {
         }
         assert_eq!(cert.effective_expiry(&d[0].store).unwrap(), now + 30 * day);
         cert_allows(&cert, &pk, &d[0].store, &d[1].did, &host, late, late).unwrap();
-        assert!(cert_renew_request(&d[0].store, cert.id, 5 * day, now).is_err(), "the cap is reached");
+        assert!(
+            cert_renew_request(&d[0].store, cert.id, 5 * day, now).is_err(),
+            "the cap is reached"
+        );
     }
 
     #[test]
     fn the_blocking_view_names_who_can_give_each_missing_proof() {
         let (d, phrase) = ring_with_paper();
         let _ = phrase;
-        let rev = append(&d[0], OpBody::DeviceRevoke { device_id: d[2].did.clone() });
+        let rev = append(
+            &d[0],
+            OpBody::DeviceRevoke {
+                device_id: d[2].did.clone(),
+            },
+        );
         all_to_all_pull(&d);
         let now = rev.timestamp + 30;
         let b = blocking_view(&d[1].store, &rev, now).unwrap();
         let proofs: Vec<_> = b.iter().map(|x| x.proof.clone()).collect();
         assert_eq!(
             proofs,
-            vec![RedProof::Phone, RedProof::SecondDevice, RedProof::Factor(Some(ThirdFactor::Paper))]
+            vec![
+                RedProof::Phone,
+                RedProof::SecondDevice,
+                RedProof::Factor(Some(ThirdFactor::Paper))
+            ]
         );
         assert!(b.iter().all(|x| !x.who.is_empty()), "{b:?}");
         assert_eq!(b[2].who, vec!["the paper phrase".to_string()]);
-        assert!(b[1].who.iter().any(|w| w.contains("paper")), "the paper shortcut is offered: {b:?}");
+        assert!(
+            b[1].who.iter().any(|w| w.contains("paper")),
+            "the paper shortcut is offered: {b:?}"
+        );
         assert_eq!(b[0].since, Some(rev.timestamp));
     }
 

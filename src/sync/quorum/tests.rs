@@ -1712,7 +1712,10 @@ fn heal_re_seals_a_credential_to_a_new_holder_and_refuses_one_a_removed_device_h
     assert_eq!(heal_plan(&d[0].store).unwrap(), vec![h1, h2]);
     heal_credential(&d[0].store, &d[0].id, &h1, &payload("x")).unwrap();
     let (_, wraps) = d[0].store.sync_cred_ciphertext(&h1).unwrap().unwrap();
-    assert!(wraps.iter().any(|w| w.recipient == fresh.did), "healed to the new holder");
+    assert!(
+        wraps.iter().any(|w| w.recipient == fresh.did),
+        "healed to the new holder"
+    );
     assert_eq!(heal_plan(&d[0].store).unwrap(), vec![h2]);
     // A removed device still holds a share of h2: it is exposed, not healable.
     append(

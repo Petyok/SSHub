@@ -226,9 +226,7 @@ pub fn extension_budget(store: &LauncherStore, cert: &DelegationCert, now: i64) 
             OpBody::CertExtend {
                 cert_id,
                 extra_hosts,
-            } if cert_id == cert.id && o.timestamp < end => {
-                Some((o.timestamp, extra_hosts))
-            }
+            } if cert_id == cert.id && o.timestamp < end => Some((o.timestamp, extra_hosts)),
             _ => None,
         })
         .collect();
