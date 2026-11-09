@@ -1572,12 +1572,22 @@ mod tests {
                 head_seq: 3,
                 head_ts: now - 60,
             }],
+            opened: vec!["web1".into(), "db1".into()],
+            opened_total: 5,
         };
         let Opened::CertRenew { view } = c.open_frame(req.encode(), now).unwrap() else {
             panic!("not a renewal card")
         };
         assert_eq!(view.renew.refusal, None);
         assert_eq!(view.renew.evidence_age_secs, Some(60));
+        assert_eq!(
+            (view.renew.opened.clone(), view.renew.opened_total),
+            (vec!["web1".to_string(), "db1".to_string()], 5)
+        );
+        assert!(view
+            .rows
+            .iter()
+            .any(|r| r.label == "Hosts it opened" && r.value == "web1, db1 and 3 more (5 in all)"));
         let out = c
             .decide(view.token, Decision::Approve { typed_id: None }, now)
             .unwrap();
