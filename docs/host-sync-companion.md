@@ -239,6 +239,15 @@ phone is the author and signer of the certificate, so a stolen terminal cannot i
   extension of the same certificate within 24 hours (it says when the next one is possible). An extension covers its
   own 24 hours only and never changes scope or term.
 
+- **Request to renew** (kind 11): a terminal that is not the trusted device asks to keep a trust session going. The
+  phone alone signs it, no second terminal is needed, and the card says so. It shows the trusted device, the scope, the
+  new end date, the renewals left and **the age of the freshest news from another terminal** (red when none or older
+  than 6 hours). It refuses, with the reason and no Approve button: a certificate this phone did not issue or that was
+  revoked, a third renewal, an end date that is not later or is longer than the first term or past 180 days from the
+  start, news only from the trusted device itself or older than 6 hours, a phone that has not taken its chain, and a
+  certificate whose epochs ended before this phone's epoch (the renewal would be refused at use). The card cannot list
+  the hosts the device opened: the request carries no such list.
+
 The same menu lists the certificates this phone issued (active, expired or revoked, with extensions) and a **Revoke
 this trust session** button for each active one. Carry the signed revocation to any terminal; peers stop honouring the
 certificate on their next sync.
@@ -286,7 +295,10 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
   shows a red card until the phone has taken its chain: ask a terminal for this phone's own newest ops (a list the
   terminal can show as a QR code or as text), tap **Take my chain from a terminal** and scan or paste it. The page
   checks that every op is by this key, verifies each signature and that they form one chain. **One list is not
-  enough**, because a terminal can be behind and signing on top of an old list forks the chain: take a second list
+  enough by default**, because a terminal can be behind and signing on top of an old list forks the chain. When the
+  terminal reports how many terminals your ring has (an unsigned count that comes with the list), one list is accepted
+  after you tick that you know the risk: the card shows the count and how old the newest op is, never calls the terminal
+  trusted, and a dead or away terminal never blocks the restore. Without the count: take a second list
   from a different terminal (`sshub sync-phone-chain <this phone's id>` on each, or "Show a restored phone's own ops" in
   the terminal's sync menu) and the page continues only when both end at the same newest op. The same terminal's list
   scanned twice is refused ("This list comes from the same terminal as the first one"): the lists name the terminal that

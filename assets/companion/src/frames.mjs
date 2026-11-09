@@ -18,7 +18,7 @@
 import { blake3 } from '../vendor/noble-hashes-2.4.0/blake3.js';
 import { concat, utf8 } from './lib.mjs';
 
-export const KIND = { CHALLENGE: 1, RESPONSE: 2, RECOVERY_NOTICE: 3, PHONE_OPS: 5, ENROLL_COMMIT: 6, ENROLL_REVEAL: 7, ENROLL_CONFIRM: 8, CERT_REQUEST: 9, CERT_EXTEND_REQUEST: 10 };
+export const KIND = { CHALLENGE: 1, RESPONSE: 2, RECOVERY_NOTICE: 3, PHONE_OPS: 5, ENROLL_COMMIT: 6, ENROLL_REVEAL: 7, ENROLL_CONFIRM: 8, CERT_REQUEST: 9, CERT_EXTEND_REQUEST: 10, CERT_RENEW_REQUEST: 11, PHONE_HANDOVER_REQUEST: 12 };
 export const MAX_COURIER_OPS = 8;
 export const MAX_COURIER_OP_BYTES = 256 * 1024;
 export const MAX_COURIER_LIST_BYTES = 1024 * 1024;
@@ -194,6 +194,30 @@ export function decodeCertExtendRequest(frame) {
   const extra_hosts = rd32(body, 32);
   if (extra_hosts === 0 || extra_hosts > CERT_NEW_HOSTS_PER_DAY) throw new Error(`an extension is 1 to ${CERT_NEW_HOSTS_PER_DAY} hosts`);
   return { cert_id: hexU(body.subarray(0, 32)), extra_hosts };
+}
+
+// Kind 11 (contract 4j): cert_id(32) || expiry i64 BE || n u8 || n x (terminal(8) || head_seq u64 BE || head_ts i64 BE), n <= 32.
+// { cert_id: hex(32), expiry: BigInt, evidence: [{ terminal: hex(8), head_seq: BigInt, head_ts: BigInt }] }.
+export const MAX_RENEW_EVIDENCE = 32;
+export function decodeCertRenewRequest(frame) {
+  const { kind, body } = decodeFrame(frame);
+  if (kind !== KIND.CERT_RENEW_REQUEST) throw new Error('not a certificate renewal request');
+  if (body.length < 41) throw new Error('a certificate renewal request is truncated');
+  const n = body[40];
+  if (n > MAX_RENEW_EVIDENCE) throw new Error(`a renewal request carries at most ${MAX_RENEW_EVIDENCE} evidence entries`);
+  if (body.length !== 41 + n * 24) throw new Error('a certificate renewal request does not match its evidence count');
+  const evidence = [];
+  for (let i = 0; i < n; i++) {
+    const at = 41 + i * 24;
+    evidence.push({ terminal: hexU(body.subarray(at, at + 8)), head_seq: rd64(body, at + 8).getBigUint64(0), head_ts: rd64(body, at + 16).getBigInt64(0) });
+  }
+  return { cert_id: hexU(body.subarray(0, 32)), expiry: rd64(body, 32).getBigInt64(0), evidence };
+}
+
+// The terminal side (tests only): the inverse of decodeCertRenewRequest.
+export function encodeCertRenewRequest(r) {
+  const hex = (s) => Uint8Array.from(s.match(/../g), (b) => parseInt(b, 16));
+  return encodeFrame(KIND.CERT_RENEW_REQUEST, hex(r.cert_id), i64(r.expiry), Uint8Array.of(r.evidence.length), ...r.evidence.map((e) => concat(hex(e.terminal), u64(e.head_seq), i64(e.head_ts))));
 }
 
 export const encodeCertExtendRequest = (r) => encodeFrame(KIND.CERT_EXTEND_REQUEST, Uint8Array.from(r.cert_id.match(/../g), (b) => parseInt(b, 16)), u32(r.extra_hosts));

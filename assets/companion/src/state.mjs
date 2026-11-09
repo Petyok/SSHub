@@ -3,7 +3,7 @@
 // All of it is public or low-value data; the secret lives only in the PIN-wrapped key blob.
 import { edVerify, hexOf } from './lib.mjs';
 import { blake3 } from '../vendor/noble-hashes-2.4.0/blake3.js';
-import { encodeCertExtend, encodeCertIssue, encodeCertRevoke, encodeHeadAttest, encodePhoneReenrollCancel, encodeRedPhoneSign, encodeShareReshareConfirmBatch, encodeShareStorageKey, encodeWrapKeyRotate, isU64, parseOp, signOp, ZERO32 } from './ops.mjs';
+import { encodeCertExtend, encodeCertIssue, encodeCertRenew, encodeCertRevoke, encodeHeadAttest, encodePhoneReenrollCancel, encodeRedPhoneSign, encodeShareReshareConfirmBatch, encodeShareStorageKey, encodeWrapKeyRotate, isU64, parseOp, signOp, ZERO32 } from './ops.mjs';
 import { crockfordEncode, snapshotSeal } from './quorum.mjs';
 import { WRAP_GEN_MAX, randomBytes } from './keys.mjs';
 
@@ -271,6 +271,7 @@ export function appendRedPhoneSign(state, id, opHashHex, now, seen) {
 // has already enforced the limits; these only chain, sign and return the new entry (entry.hash is the cert id).
 export const appendCertIssue = (state, id, req, now, seen) => appendCanonical(state, id, encodeCertIssue(nextHeader(state, id, now, seen), req), now);
 export const appendCertRevoke = (state, id, certIdHex, now, seen) => appendCanonical(state, id, encodeCertRevoke(nextHeader(state, id, now, seen), certIdHex), now);
+export const appendCertRenew = (state, id, certIdHex, expiry, now, seen) => appendCanonical(state, id, encodeCertRenew(nextHeader(state, id, now, seen), certIdHex, expiry), now);
 export const appendCertExtend = (state, id, certIdHex, extraHosts, now, seen) => appendCanonical(state, id, encodeCertExtend(nextHeader(state, id, now, seen), certIdHex, extraHosts), now);
 
 // Newest ops of the chain as { canonical, signature } for the courier lists.

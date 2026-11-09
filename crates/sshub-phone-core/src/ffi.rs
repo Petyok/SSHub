@@ -1488,6 +1488,55 @@ mod tests {
     }
 
     #[test]
+    fn a_renewal_request_opens_and_is_signed_through_open_frame_and_decide() {
+        use sshub_sync_proto::oplog::CertScope;
+        use sshub_sync_proto::wire::{CertRenewRequestWire, HeadEvidence};
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let t0 = 1_893_452_400;
+        let cert_id = {
+            let mut g = c.lock_inner();
+            let u = g.unlocked.as_mut().unwrap();
+            u.state = PhoneState::default();
+            chain::cert_issue(
+                &mut u.state,
+                &u.id,
+                "0102030405060708".into(),
+                CertScope::Hosts(vec![[1; 16]]),
+                t0 + 86_400,
+                2,
+                0,
+                1,
+                t0,
+                None,
+            )
+            .unwrap()
+            .hash
+        };
+        let now = t0 + 3_600;
+        let req = CertRenewRequestWire {
+            cert_id,
+            expiry: t0 + 2 * 86_400,
+            evidence: vec![HeadEvidence {
+                terminal: [9; 8],
+                head_seq: 3,
+                head_ts: now - 60,
+            }],
+        };
+        let Opened::CertRenew { view } = c.open_frame(req.encode(), now).unwrap() else {
+            panic!("not a renewal card")
+        };
+        assert_eq!(view.renew.refusal, None);
+        assert_eq!(view.renew.evidence_age_secs, Some(60));
+        let out = c
+            .decide(view.token, Decision::Approve { typed_id: None }, now)
+            .unwrap();
+        let ops = PhoneOpsWire::decode(&out.frame).unwrap().ops;
+        let last = sshub_sync_proto::oplog::canonical::decode_op(&ops.last().unwrap().0, ops.last().unwrap().1).unwrap();
+        assert!(matches!(last.body, sshub_sync_proto::oplog::OpBody::CertRenew { expiry, .. } if expiry == t0 + 2 * 86_400));
+    }
+
+    #[test]
     fn one_list_head_needs_the_tick_through_decide() {
         let c = core();
         c.unlock(vec![0x42; 32]).unwrap();
