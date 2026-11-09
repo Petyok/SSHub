@@ -232,10 +232,7 @@ impl<'a> EnrollSession<'a> {
 
 /// What a kind 5 list says about the ring's terminals (the `terminals` block, unsigned and informational), in plain
 /// words; a plain fallback when the sender did not say.
-pub(crate) fn terminals_line(
-    t: Option<&crate::sync::wire::TerminalsBlock>,
-    now: i64,
-) -> String {
+pub(crate) fn terminals_line(t: Option<&crate::sync::wire::TerminalsBlock>, now: i64) -> String {
     match t {
         Some(t) => format!(
             "This list says the ring has {} terminal{}; the newest change it names is {} old. The phone shows this when you accept one list.",
