@@ -35,3 +35,35 @@ fn the_request_names_the_terminal_and_refuses_a_bad_name() {
     let back = PhoneHandoverRequestWire::decode(&req.encode()).unwrap();
     assert_eq!(back, req);
 }
+
+#[test]
+fn the_admission_frame_carries_the_op_hash_and_lamport() {
+    let new = Dev::new();
+    let phone = Dev::new();
+    let term = Dev::new();
+    let op = phone
+        .store
+        .sync_append_local(
+            &phone.id,
+            OpBody::PhoneHandover {
+                new_phone: new.id.public(),
+                name: "next".into(),
+            },
+        )
+        .unwrap();
+    let req = handover_admission_request(&op, &term.did).unwrap();
+    assert_eq!(req.op, Some((op.hash(), op.lamport)));
+    assert_eq!(req.new_phone, new.id.public());
+    // Stage 1 has no trailer; both survive the wire.
+    let stage1 = handover_request(new.id.public(), "next", &term.did).unwrap();
+    assert_eq!(stage1.op, None);
+    for r in [&req, &stage1] {
+        assert_eq!(&PhoneHandoverRequestWire::decode(&r.encode()).unwrap(), r);
+    }
+    // Any other op is refused.
+    let other = phone
+        .store
+        .sync_append_local(&phone.id, OpBody::RedApprove { op_hash: [1; 32] })
+        .unwrap();
+    assert!(handover_admission_request(&other, &term.did).is_err());
+}

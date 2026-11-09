@@ -1757,5 +1757,9 @@ small next to a card that cannot show what it exists to show.
    same 8 words so the new owner can compare them with the old phone; `sign_handover_admission(state, id, op_hash, now)` takes the hash from the view, never from a typed
    argument. A new phone refuses to sign unless the frame's `new_phone` is its own public key. Its `RedPhoneSign` returns to the terminal as ordinary phone ops (kind 5)
    and counts only for the op that names its key (a wrong hash signs nothing that can be used).
+   The trailer is unsigned, so the new phone refuses a frame whose `op_lamport` is above `u32::MAX` (a forged huge value would push its counters out of range). The host
+   needs no matching cap of its own: it never issues such a lamport (a device's lamport is at most the ring's maximum plus one), ingest rejects any op more than
+   `LAMPORT_JUMP_CAP` (100 000) above the highest lamport it holds, and `red_status` counts a proof only when its lamport is higher than its op's (`valid_proof`), so
+   a `RedPhoneSign` written before its op never counts.
 Owners and cost: P kind 12 optional trailer, vectors 2 h; PH-core view and refusal, page parity 2 h; PH-android new-phone screen (inside the 12 h handover line);
 T `sync-phone-enroll --replace` shows the second frame (inside its 10 h line); E `phone2` scans stage 2 (inside 78a); about 4 h extra in all.
