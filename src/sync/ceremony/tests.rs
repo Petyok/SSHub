@@ -715,13 +715,19 @@ mod in_force {
             .unwrap();
         let web_uid = store.host_uid(web.id).unwrap().unwrap();
         append(&d[0], crate::sync::cert::cert_opened_body(&cert, &web_uid));
-        append(&d[2], crate::sync::cert::cert_opened_body(&cert, &[77u8; 16]));
+        append(
+            &d[2],
+            crate::sync::cert::cert_opened_body(&cert, &[77u8; 16]),
+        );
         all_to_all_pull(&d);
         let req = cert_renew_request(&d[0].store, cert.id, 5 * day, now).unwrap();
         assert_eq!(req.opened_total, 2);
         assert_eq!(req.opened.len(), 2);
         assert!(req.opened.contains(&"web".to_string()), "{:?}", req.opened);
-        assert!(req.opened.contains(&"4d4d4d4d".to_string()), "a host with no name here is its first hex digits");
+        assert!(
+            req.opened.contains(&"4d4d4d4d".to_string()),
+            "a host with no name here is its first hex digits"
+        );
         // It survives the wire.
         assert_eq!(
             crate::sync::wire::CertRenewRequestWire::decode(&req.encode()).unwrap(),
@@ -2376,22 +2382,23 @@ fn the_effect_lamport_is_the_highest_counted_proof_and_the_phone_changes_only_fr
     let sign_lamport = ops_of(&d[OBS].store, "RedPhoneSign", None)
         .unwrap()
         .iter()
-        .chain(
-            d[OBS]
-                .store
-                .sync_chain_tail(&new.did, 0)
-                .unwrap()
-                .iter(),
-        )
+        .chain(d[OBS].store.sync_chain_tail(&new.did, 0).unwrap().iter())
         .map(|o| o.lamport)
         .max()
         .unwrap();
     let effect = handover_effect(&d[OBS].store, &h).unwrap().unwrap();
-    assert_eq!(effect, sign_lamport, "the last proof is the completion point");
+    assert_eq!(
+        effect, sign_lamport,
+        "the last proof is the completion point"
+    );
     let phone_at = |upto: Option<u64>| {
         phone_device_in(&effective_devices(&d[OBS].store, upto).unwrap()).unwrap()
     };
-    assert_eq!(phone_at(Some(effect - 1)), Some(d[P].did.clone()), "under the old phone");
+    assert_eq!(
+        phone_at(Some(effect - 1)),
+        Some(d[P].did.clone()),
+        "under the old phone"
+    );
     assert_eq!(phone_at(Some(h.lamport)), Some(d[P].did.clone()));
     assert_eq!(phone_at(Some(effect)), Some(new.did.clone()));
     assert_eq!(phone_at(None), Some(new.did.clone()));
@@ -2427,7 +2434,10 @@ fn the_emailed_code_never_counts_for_a_handover_and_it_needs_a_registered_paper(
     append(&d[B], red_factor_email(&d[B].store, &code, &h).unwrap());
     sync(&d);
     let st = status(&d, &h, h.timestamp + 30);
-    assert!(!st.complete, "the emailed code completed a handover: {st:?}");
+    assert!(
+        !st.complete,
+        "the emailed code completed a handover: {st:?}"
+    );
     assert_eq!(st.missing, vec![RedProof::Factor(Some(ThirdFactor::Paper))]);
 }
 
@@ -2443,7 +2453,10 @@ fn a_handover_to_a_key_the_ring_knows_is_a_rule_violation() {
         },
     );
     let st = status(&d, &h, h.timestamp + 30);
-    assert!(st.rule_violation.is_some() && st.blocked.is_some(), "{st:?}");
+    assert!(
+        st.rule_violation.is_some() && st.blocked.is_some(),
+        "{st:?}"
+    );
 }
 
 #[test]
@@ -2459,7 +2472,9 @@ fn a_handover_not_written_by_the_live_phone_is_refused() {
     );
     let st = status(&d, &h, h.timestamp + 30);
     assert!(
-        st.rule_violation.as_deref().is_some_and(|v| v.contains("live phone")),
+        st.rule_violation
+            .as_deref()
+            .is_some_and(|v| v.contains("live phone")),
         "{st:?}"
     );
 }
@@ -2481,8 +2496,74 @@ fn of_two_handovers_by_one_phone_the_first_to_complete_wins() {
     let e1 = handover_effect(&d[OBS].store, &h1).unwrap();
     let e2 = handover_effect(&d[OBS].store, &h2).unwrap();
     assert!(e1.is_some(), "the first completed");
-    assert!(e2.is_none(), "the second lost: {:?}", status(&d, &h2, h2.timestamp + 30));
+    assert!(
+        e2.is_none(),
+        "the second lost: {:?}",
+        status(&d, &h2, h2.timestamp + 30)
+    );
     assert!(status(&d, &h2, h2.timestamp + 30)
         .rule_violation
         .is_some_and(|v| v.contains("completed first")));
+}
+
+/// Design 5.4: the unattended jobs of a trust session must not stop at a phone upgrade.
+#[test]
+fn trust_session_survives_a_handover() {
+    use crate::sync::cert::{cert_allows, extension_budget, issuer_phones, DelegationCert};
+    use crate::sync::oplog::CertScope;
+    let (d, recover, new) = handover_world();
+    let host = [60u8; 16];
+    let now = crate::store::now_ts();
+    let cert_op = propose(
+        &d,
+        P,
+        OpBody::CertIssue {
+            device_id: d[R].did.clone(),
+            scope: CertScope::Hosts(vec![host]),
+            expiry: now + 10 * 86_400,
+            max_new_hosts_per_day: 2,
+            epoch_lo: 0,
+            epoch_hi: 10,
+        },
+    );
+    append(&d[A], red_approve_body(&cert_op));
+    append(&d[B], red_factor_paper(&recover, &cert_op));
+    sync(&d);
+    for x in &d {
+        settle_red_ops(&x.store, cert_op.timestamp + 5).unwrap();
+    }
+    let cert = DelegationCert::from_op(&cert_op).unwrap();
+    let old_key = d[P].id.public().ed25519_pub;
+    let at = cert_op.timestamp + 60;
+    cert_allows(&cert, &old_key, &d[OBS].store, &d[R].did, &host, at, at).unwrap();
+
+    // The ring hands over to a new phone.
+    let h = hand_over(&d, &new, "next phone");
+    append(&d[A], red_approve_body(&h));
+    append(&d[B], red_factor_paper(&recover, &h));
+    sync(&d);
+    new_phone_signs(&d, &new, &h);
+    for x in &d {
+        settle_red_ops(&x.store, h.timestamp + 60).unwrap();
+    }
+    let store = &d[OBS].store;
+    assert_eq!(
+        issuer_phones(store, &new.did).unwrap(),
+        vec![new.did.clone(), d[P].did.clone()]
+    );
+    // The session still verifies against the RETIRED phone's key and is honoured; extensions by the new phone count.
+    cert_allows(&cert, &old_key, store, &d[R].did, &host, at, at).unwrap();
+    let ext = append(
+        &new,
+        OpBody::CertExtend {
+            cert_id: cert.id,
+            extra_hosts: 3,
+        },
+    );
+    pull(&new, &d[OBS]);
+    assert_eq!(
+        extension_budget(store, &cert, ext.timestamp + 10).unwrap(),
+        3,
+        "the new phone is the issuer of record"
+    );
 }

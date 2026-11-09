@@ -1023,28 +1023,32 @@ pub fn trust_grant(
 ) -> Result<(Vec<u8>, Option<OpBody>)> {
     let phone =
         phone_device(store)?.context("the ring has no phone: no trust session can exist")?;
-    let row = store
-        .sync_devices()?
-        .into_iter()
-        .find(|d| d.id == phone)
-        .context("the phone is not a device of this ring")?;
     let mut last = anyhow!("the requester has no trust session");
-    for op in ops_of(store, "CertIssue", Some(&phone))?.into_iter().rev() {
-        let Ok(cert) = super::cert::DelegationCert::from_op(&op) else {
-            continue;
-        };
-        if cert.device_id != *requester {
-            continue;
-        }
-        let grant = Grant::Cert {
-            cert: &cert,
-            issuer_ed25519: row.public.ed25519_pub,
-            phone_head_ts: phone_signed_at(store, &phone, now)?,
-            now,
-        };
-        match release_share_for(store, id, host, epoch, eph_x25519_pub, requester, grant) {
-            Ok(done) => return Ok(done),
-            Err(e) => last = e,
+    // The certificates of the phone this one took over from stay valid (design 5.4): their issue signatures verify with the
+    // retired phone's key, which stays in the device table.
+    for issuer in super::cert::issuer_phones(store, &phone)? {
+        let row = store
+            .sync_devices()?
+            .into_iter()
+            .find(|d| d.id == issuer)
+            .context("the phone is not a device of this ring")?;
+        for op in ops_of(store, "CertIssue", Some(&issuer))?.into_iter().rev() {
+            let Ok(cert) = super::cert::DelegationCert::from_op(&op) else {
+                continue;
+            };
+            if cert.device_id != *requester {
+                continue;
+            }
+            let grant = Grant::Cert {
+                cert: &cert,
+                issuer_ed25519: row.public.ed25519_pub,
+                phone_head_ts: phone_signed_at(store, &phone, now)?,
+                now,
+            };
+            match release_share_for(store, id, host, epoch, eph_x25519_pub, requester, grant) {
+                Ok(done) => return Ok(done),
+                Err(e) => last = e,
+            }
         }
     }
     Err(last)

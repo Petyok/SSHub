@@ -220,16 +220,25 @@ pub fn recorded_openings(
 /// after it.
 pub fn extension_budget(store: &LauncherStore, cert: &DelegationCert, now: i64) -> Result<u32> {
     let end = cert.effective_expiry(store)?;
-    let mut ops: Vec<_> = super::quorum::ops_of(store, "CertExtend", Some(&cert.issuer))?
-        .into_iter()
-        .filter_map(|o| match o.body {
-            OpBody::CertExtend {
-                cert_id,
-                extra_hosts,
-            } if cert_id == cert.id && o.timestamp < end => Some((o.timestamp, extra_hosts)),
-            _ => None,
-        })
-        .collect();
+    // By the issuer or by the phone that took over its certificates in a handover (design 5.4).
+    let mut ops: Vec<(i64, u32)> = Vec::new();
+    for o in super::quorum::ops_of(store, "CertExtend", None)? {
+        let OpBody::CertExtend {
+            cert_id,
+            extra_hosts,
+        } = &o.body
+        else {
+            continue;
+        };
+        if *cert_id != cert.id || o.timestamp >= end {
+            continue;
+        }
+        if store.sync_cert_holder_at(&cert.issuer, (o.lamport, &o.device_id, o.seq))? != o.device_id
+        {
+            continue;
+        }
+        ops.push((o.timestamp, *extra_hosts));
+    }
     ops.sort();
     let mut last: Option<i64> = None;
     let mut sum = 0u32;
@@ -518,4 +527,18 @@ pub fn send_renew_mails(
         }
     }
     Ok(sent)
+}
+
+/// The phones whose certificates the phone `current` honours: itself and every phone it took over from in a handover
+/// (their `CertIssue` signatures still verify with the retired phone's key, which stays in the device table).
+pub fn issuer_phones(store: &LauncherStore, current: &DeviceId) -> Result<Vec<DeviceId>> {
+    let mut out = vec![current.clone()];
+    for h in store.sync_handovers()? {
+        if store.sync_successor_of(&h.old_phone)?.as_ref() == Some(current)
+            && !out.contains(&h.old_phone)
+        {
+            out.push(h.old_phone);
+        }
+    }
+    Ok(out)
 }
