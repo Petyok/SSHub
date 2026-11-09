@@ -369,7 +369,8 @@ fn the_mail_step_writes_the_config_and_sends_a_test_through_the_command() {
     type_and_enter(&mut r.app, "sshub@example.com");
     type_and_enter(&mut r.app, &format!("{} -t -i", script.display()));
     pump(&mut r.app, "the test mail", |a| {
-        std::fs::read_to_string(&sink).is_ok_and(|t| t.contains("mail test")) && a.mode != AppMode::SyncPrompt
+        std::fs::read_to_string(&sink).is_ok_and(|t| t.contains("mail test"))
+            && a.mode != AppMode::SyncPrompt
     });
     let cfg = crate::config::load_config_at(&r.paths.config_file).unwrap();
     assert_eq!(cfg.sync.notify.to, ["me@example.com"]);
