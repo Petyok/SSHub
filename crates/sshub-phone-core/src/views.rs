@@ -157,6 +157,10 @@ pub struct IssuedCertView {
     /// The signed time of the `CertIssue` op, the expiry it names and the term between them (seconds).
     pub issued_at: i64,
     pub expiry: i64,
+    /// The end date that counts: `expiry`, or the newest renewal that counts. `term_secs` stays the first term.
+    pub effective_expiry: i64,
+    /// Renewals that count (at most 2).
+    pub renewals: u32,
     pub term_secs: i64,
     /// `term_secs` in the page's words ("30 days", "36 h 5 min").
     pub term_text: String,
@@ -319,6 +323,35 @@ pub struct CertExtendView {
     pub note: String,
 }
 
+/// What the phone shows for a renewal request (contract 4j `RenewView`). `opened` stays empty: kind 11 carries no list of
+/// opened hosts and the phone keeps none.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RenewView {
+    pub delegate: String,
+    pub scope: String,
+    /// What the renewal adds to the end that counts now, in seconds.
+    pub term_secs: i64,
+    pub budget: u32,
+    pub renewals_left: u32,
+    pub new_end: i64,
+    pub opened: Vec<String>,
+    /// Age of the freshest evidence of a terminal other than the delegate; `None` when none came.
+    pub evidence_age_secs: Option<i64>,
+    /// When set the phone refuses to sign.
+    pub refusal: Option<String>,
+}
+
+/// Kind 11: a terminal asks this phone to renew a trust session it issued.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct CertRenewView {
+    pub token: u64,
+    pub headline: String,
+    pub plain: String,
+    pub rows: Vec<Row>,
+    pub renew: RenewView,
+    pub note: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct ContributorView {
     pub device_id: String,
@@ -414,6 +447,7 @@ pub enum Opened {
     ReenrollNotice { view: ReenrollNoticeView },
     CertRequest { view: CertRequestView },
     CertExtend { view: CertExtendView },
+    CertRenew { view: CertRenewView },
     Reshare { view: ReshareView },
     Chain { view: ChainAdopted },
     Enroll { view: EnrollView },
@@ -469,7 +503,7 @@ pub enum ScanEvent {
     Document {
         bytes: Vec<u8>,
     },
-    /// A completed document that is not an SSHub frame (no `SWR1` magic, or a kind outside 1..=10): the page ignores it
+    /// A completed document that is not an SSHub frame (no `SWR1` magic, or a kind outside 1..=12): the page ignores it
     /// ("not what this step needs"). The collector was reset; nothing is handed to `open_frame`.
     Foreign {
         len: u32,

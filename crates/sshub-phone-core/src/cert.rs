@@ -5,10 +5,15 @@
 
 use std::collections::BTreeMap;
 
-use sshub_sync_proto::limits::{CERT_NEW_HOSTS_PER_DAY, CERT_TERM_MAX_SECS};
+use sshub_sync_proto::limits::{
+    CERT_LIFETIME_MAX_SECS, CERT_MAX_RENEWALS, CERT_NEW_HOSTS_PER_DAY, CERT_RENEW_EVIDENCE_MAX_AGE_SECS,
+    CERT_TERM_MAX_SECS,
+};
 use sshub_sync_proto::oplog::{canonical::decode_op, CertScope, OpBody};
 use sshub_sync_proto::uid::uid_hex;
-use sshub_sync_proto::wire::{CertExtendRequestWire, CertRequestWire, MAX_CERT_REQUEST_HOSTS};
+use sshub_sync_proto::wire::{
+    CertExtendRequestWire, CertRenewRequestWire, CertRequestWire, PhoneOpsWire, MAX_CERT_REQUEST_HOSTS,
+};
 
 use crate::chain;
 use crate::ctx::Ctx;
@@ -18,8 +23,8 @@ use crate::outgoing::ops_out;
 use crate::state::{PhoneState, COURIER_TAIL};
 use crate::text::{iso, safe_text};
 use crate::views::{
-    CertExtendView, CertExtensionView, CertRequestView, CertStatus, IssuedCertView, Opened,
-    RefusalView, Row,
+    CertExtendView, CertExtensionView, CertRenewView, CertRequestView, CertStatus, IssuedCertView, Opened,
+    RefusalView, RenewView, Row,
 };
 
 /// A terminal asks for the phone's current epoch plus this much slack (`src/app/sync_trust.rs` passes 1): a certificate
@@ -36,6 +41,7 @@ mod tests;
 pub enum PendingCert {
     Request(CertRequestWire),
     Extend(CertExtendRequestWire),
+    Renew(CertRenewRequestWire),
 }
 
 /// `1 day 3 h`, `2 h 5 min`, `7 min`, `45 s`; floor semantics of the page (`Math.floor`), so a negative term reads the
@@ -219,11 +225,21 @@ pub struct IssuedCert {
     pub revoked: bool,
     /// `(timestamp of the op, extra hosts)`.
     pub extensions: Vec<(i64, u32)>,
+    /// The end dates of the renewals that count (contract 4j validity of `CertRenew`, read in chain order).
+    pub renewals: Vec<i64>,
 }
 
 impl IssuedCert {
+    /// The end date that counts: the newest renewal, else the one the full ceremony granted.
+    pub fn effective_expiry(&self) -> i64 {
+        self.renewals.last().copied().unwrap_or(self.expiry)
+    }
     pub fn live(&self, now: i64) -> bool {
-        !self.revoked && now < self.expiry
+        !self.revoked && now < self.effective_expiry()
+    }
+    /// The first term, which no renewal exceeds.
+    pub fn original_term(&self) -> i64 {
+        self.expiry.saturating_sub(self.issued_at)
     }
 }
 
@@ -254,6 +270,7 @@ pub fn issued_cert_records(state: &PhoneState) -> Vec<IssuedCert> {
                 epoch_hi,
                 revoked: false,
                 extensions: Vec::new(),
+                renewals: Vec::new(),
             }),
             OpBody::CertRevoke { cert_id } => {
                 if let Some(c) = certs.iter_mut().find(|c| c.id == cert_id) {
@@ -266,6 +283,19 @@ pub fn issued_cert_records(state: &PhoneState) -> Vec<IssuedCert> {
             } => {
                 if let Some(c) = certs.iter_mut().find(|c| c.id == cert_id) {
                     c.extensions.push((op.timestamp, extra_hosts));
+                }
+            }
+            OpBody::CertRenew { cert_id, expiry } => {
+                if let Some(c) = certs.iter_mut().find(|c| c.id == cert_id) {
+                    let so_far = c.effective_expiry();
+                    if !c.revoked
+                        && expiry > so_far
+                        && expiry <= so_far.saturating_add(c.original_term())
+                        && expiry.saturating_sub(c.issued_at) <= CERT_LIFETIME_MAX_SECS
+                        && c.renewals.len() < CERT_MAX_RENEWALS as usize
+                    {
+                        c.renewals.push(expiry);
+                    }
                 }
             }
             _ => {}
@@ -293,7 +323,7 @@ pub fn extend_problems(
     if cert.revoked {
         out.push("That certificate was revoked; there is nothing to extend.".to_string());
     }
-    if now >= cert.expiry {
+    if now >= cert.effective_expiry() {
         out.push("That certificate has expired; an extension never revives it.".to_string());
     }
     if req.extra_hosts < 1 || req.extra_hosts > CERT_NEW_HOSTS_PER_DAY {
@@ -323,13 +353,18 @@ pub fn describe_cert(c: &IssuedCert, aliases: &BTreeMap<String, String>) -> Stri
         CertScope::Hosts(h) => format!("{} listed host{}", h.len(), plural(h.len())),
     };
     format!(
-        "{who}: {scope}, until {}, {} new hosts per day{}{}",
-        iso(c.expiry),
+        "{who}: {scope}, until {}, {} new hosts per day{}{}{}",
+        iso(c.effective_expiry()),
         c.max_new_hosts_per_day,
         if c.extensions.is_empty() {
             String::new()
         } else {
             format!(", extended {}x", c.extensions.len())
+        },
+        if c.renewals.is_empty() {
+            String::new()
+        } else {
+            format!(", renewed {}x", c.renewals.len())
         },
         if c.revoked { ", REVOKED" } else { "" }
     )
@@ -354,7 +389,7 @@ pub fn issued_certs(
                 summary: describe_cert(c, aliases),
                 status: if c.revoked {
                     CertStatus::Revoked
-                } else if now < c.expiry {
+                } else if now < c.effective_expiry() {
                     CertStatus::Active
                 } else {
                     CertStatus::Expired
@@ -366,6 +401,8 @@ pub fn issued_certs(
                 hosts,
                 issued_at: c.issued_at,
                 expiry: c.expiry,
+                effective_expiry: c.effective_expiry(),
+                renewals: c.renewals.len() as u32,
                 term_secs,
                 term_text: describe_term(term_secs),
                 max_new_hosts_per_day: c.max_new_hosts_per_day,
@@ -460,8 +497,8 @@ pub fn open_cert_extend(frame: &[u8], ctx: &Ctx, token: u64) -> (Opened, Option<
         });
         rows.push(Row {
             label: "Remaining term".into(),
-            value: if c.expiry > ctx.now {
-                describe_term(c.expiry.saturating_sub(ctx.now))
+            value: if c.effective_expiry() > ctx.now {
+                describe_term(c.effective_expiry().saturating_sub(ctx.now))
             } else {
                 "expired".into()
             },
@@ -505,6 +542,228 @@ pub fn open_cert_extend(frame: &[u8], ctx: &Ctx, token: u64) -> (Opened, Option<
     )
 }
 
+const RENEW_NOTE: &str = "A renewal needs no second terminal: this phone alone extends the trust session within the limits shown. Approve only if you know the computer still needs it.";
+
+/// Everything a renewal request is checked against, from this phone's own chain and the request: the refusals (empty =
+/// the phone may sign), the certificate, and the age of the freshest evidence. The same clock-free rule the host applies
+/// (contract 4j, validity of `CertRenew`); `now` only dates the evidence.
+fn renew_problems(
+    state: &PhoneState,
+    req: &CertRenewRequestWire,
+    now: i64,
+) -> (Vec<String>, Option<IssuedCert>, Option<i64>) {
+    let mut out = Vec::new();
+    if state.head_pending {
+        out.push(crate::state::HEAD_PENDING_MESSAGE.to_string());
+    }
+    let Some(cert) = issued_cert_records(state)
+        .into_iter()
+        .find(|c| c.id == req.cert_id)
+    else {
+        out.push("This phone did not issue that certificate (or an earlier phone did). Only the issuing phone renews it.".to_string());
+        return (out, None, None);
+    };
+    let so_far = cert.effective_expiry();
+    if cert.revoked {
+        out.push("That certificate was revoked; there is nothing to renew.".to_string());
+    }
+    if cert.renewals.len() >= CERT_MAX_RENEWALS as usize {
+        out.push(format!(
+            "This trust session was renewed {CERT_MAX_RENEWALS} times already: a new one needs the full approval."
+        ));
+    }
+    if req.expiry <= so_far {
+        out.push("The new end date is not later than the current one.".to_string());
+    } else if req.expiry > so_far.saturating_add(cert.original_term()) {
+        out.push("A renewal is at most as long as the first term.".to_string());
+    }
+    if req.expiry.saturating_sub(cert.issued_at) > CERT_LIFETIME_MAX_SECS {
+        out.push("A trust session never lives past 180 days from its start, renewals included.".to_string());
+    }
+    if state.epoch > cert.epoch_hi {
+        out.push(format!(
+            "The certificate holds for epochs {} to {} and this phone is at epoch {}: a renewal would be refused at use. A new trust session is needed.",
+            cert.epoch_lo, cert.epoch_hi, state.epoch
+        ));
+    }
+    let delegate = decode_id8(&cert.device_id);
+    let age = req
+        .evidence
+        .iter()
+        .filter(|e| Some(e.terminal) != delegate)
+        .map(|e| now.saturating_sub(e.head_ts).max(0))
+        .min();
+    match age {
+        None => out.push("The list of opened hosts came only through the trusted device itself: no other terminal vouches for it. Ask a terminal that is not that device.".to_string()),
+        Some(a) if a > CERT_RENEW_EVIDENCE_MAX_AGE_SECS => out.push(format!(
+            "No other terminal has news fresher than {} (the newest is {} old): its list of opened hosts may be out of date. Sync the terminals and ask again.",
+            describe_term(CERT_RENEW_EVIDENCE_MAX_AGE_SECS),
+            describe_term(a)
+        )),
+        Some(_) => {}
+    }
+    (out, Some(cert), age)
+}
+
+fn decode_id8(hex_id: &str) -> Option<[u8; 8]> {
+    hex::decode(hex_id).ok()?.try_into().ok()
+}
+
+/// What the screen shows for a kind 11 request (contract 4j `describe_cert_renew`). A certificate this phone does not
+/// know does not fail: the view carries the refusal.
+pub fn describe_cert_renew(
+    state: &PhoneState,
+    req: &CertRenewRequestWire,
+    now: i64,
+) -> Result<RenewView> {
+    let mut aliases: BTreeMap<String, String> = state
+        .ring
+        .iter()
+        .map(|(id, d)| (id.clone(), d.name.clone()))
+        .collect();
+    aliases.extend(state.aliases.clone());
+    let (problems, cert, age) = renew_problems(state, req, now);
+    let refusal = (!problems.is_empty()).then(|| problems.join(" "));
+    let Some(c) = cert else {
+        return Ok(RenewView {
+            delegate: String::new(),
+            scope: String::new(),
+            term_secs: 0,
+            budget: 0,
+            renewals_left: 0,
+            new_end: req.expiry,
+            opened: Vec::new(),
+            evidence_age_secs: age,
+            refusal,
+        });
+    };
+    let who = match alias(&aliases, &c.device_id) {
+        Some(n) => format!("{} [{}]", safe_text(n), c.device_id),
+        None => format!("(no name known) [{}]", c.device_id),
+    };
+    let scope = match &c.scope {
+        CertScope::Group(g) => format!("every host of group {}", uid_hex(g)),
+        CertScope::Hosts(h) => format!("{} listed host{}", h.len(), plural(h.len())),
+    };
+    Ok(RenewView {
+        delegate: who,
+        scope,
+        term_secs: req.expiry.saturating_sub(c.effective_expiry()),
+        budget: c.max_new_hosts_per_day,
+        renewals_left: CERT_MAX_RENEWALS.saturating_sub(c.renewals.len() as u32),
+        new_end: req.expiry,
+        // ponytail: kind 11 carries no list of opened hosts and the phone keeps none; add when the wire carries one
+        opened: Vec::new(),
+        evidence_age_secs: age,
+        refusal,
+    })
+}
+
+/// Kind 11: a terminal asks this phone to renew a trust session it issued. With a refusal nothing can be approved.
+pub fn open_cert_renew(frame: &[u8], ctx: &Ctx, token: u64) -> (Opened, Option<PendingCert>) {
+    let req = match CertRenewRequestWire::decode(frame) {
+        Ok(r) => r,
+        Err(e) => return (refused(format!("Not a renewal request: {e:#}")), None),
+    };
+    let renew = match describe_cert_renew(&*ctx.state, &req, ctx.now) {
+        Ok(v) => v,
+        Err(e) => return (refused(e.reason().to_string()), None),
+    };
+    let clean = renew.refusal.is_none();
+    let rows = vec![
+        Row {
+            label: "Trusted device".into(),
+            value: renew.delegate.clone(),
+            danger: false,
+        },
+        Row {
+            label: "Scope".into(),
+            value: renew.scope.clone(),
+            danger: false,
+        },
+        Row {
+            label: "New end".into(),
+            value: format!(
+                "{} (adds {})",
+                iso(renew.new_end),
+                describe_term(renew.term_secs)
+            ),
+            danger: true,
+        },
+        Row {
+            label: "New hosts per day".into(),
+            value: renew.budget.to_string(),
+            danger: false,
+        },
+        Row {
+            label: "Renewals left after this".into(),
+            value: renew.renewals_left.saturating_sub(1).to_string(),
+            danger: false,
+        },
+        Row {
+            label: "Freshest news from another terminal".into(),
+            value: match renew.evidence_age_secs {
+                Some(a) => format!("{} old", describe_term(a)),
+                None => "none".into(),
+            },
+            danger: renew
+                .evidence_age_secs
+                .is_none_or(|a| a > CERT_RENEW_EVIDENCE_MAX_AGE_SECS),
+        },
+    ];
+    let view = CertRenewView {
+        token,
+        headline: format!(
+            "Renew the trust session of {} until {}",
+            renew.delegate,
+            iso(renew.new_end)
+        ),
+        plain: crate::plain::plain_cert_renew(&renew),
+        rows,
+        note: if clean {
+            RENEW_NOTE.to_string()
+        } else {
+            String::new()
+        },
+        renew,
+    };
+    (
+        Opened::CertRenew { view },
+        clean.then_some(PendingCert::Renew(req)),
+    )
+}
+
+/// Signs the renewal, re-checking every limit at the moment of signing (contract 4j `build_cert_renew`): it refuses stale
+/// evidence, the caps and a phone that cannot sign. Returns the kind 5 list to carry to a terminal.
+pub fn build_cert_renew(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    req: &CertRenewRequestWire,
+    now: i64,
+) -> Result<Vec<u8>> {
+    renew_cert(state, id, req, now)?;
+    Ok(PhoneOpsWire {
+        sender: None,
+        terminals: None,
+        ops: chain::courier_ops(state, COURIER_TAIL),
+    }
+    .encode())
+}
+
+fn renew_cert(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    req: &CertRenewRequestWire,
+    now: i64,
+) -> Result<()> {
+    let (problems, _, _) = renew_problems(state, req, now);
+    if !problems.is_empty() {
+        return Err(CoreError::refused(problems.join(" ")));
+    }
+    chain::cert_renew(state, id, req.cert_id, req.expiry, now, None)?;
+    Ok(())
+}
+
 /// Signs what the person approved, re-checking every limit at the moment of signing (the clock moved, the chain may
 /// have). A delegate this phone never met needs its device id typed in (`typed_id`).
 pub fn approve_cert(
@@ -524,6 +783,13 @@ pub fn approve_cert(
             ops_out(
                 &chain::courier_ops(ctx.state, COURIER_TAIL),
                 "Carry this to the terminal: it holds the certificate this phone signed. The ring activates it after the second terminal and the third factor approve it.",
+            )
+        }
+        PendingCert::Renew(req) => {
+            renew_cert(ctx.state, ctx.id, &req, ctx.now)?;
+            ops_out(
+                &chain::courier_ops(ctx.state, COURIER_TAIL),
+                "Carry this to the terminal that asked.",
             )
         }
         PendingCert::Extend(req) => {

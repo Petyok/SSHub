@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use rand_core::{OsRng, RngCore};
 use sshub_sync_proto::wire::{
-    PhoneOpsWire, SignedOpBytes, TerminalsBlock, KIND_CERT_EXTEND_REQUEST, KIND_CERT_REQUEST,
+    PhoneOpsWire, SignedOpBytes, TerminalsBlock, KIND_CERT_EXTEND_REQUEST, KIND_CERT_RENEW_REQUEST, KIND_CERT_REQUEST,
     KIND_CHALLENGE, KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_OPS,
     KIND_RECOVERY_NOTICE, WIRE_MAGIC,
 };
@@ -94,7 +94,7 @@ pub fn is_word(word: String) -> bool {
 
 /// An SSHub frame: the `SWR1` magic and a kind from 1 to 10 (what `PhoneCore::open_frame` can look at).
 fn is_sshub_frame(b: &[u8]) -> bool {
-    kind_of(b).is_some_and(|k| (1..=10).contains(&k))
+    kind_of(b).is_some_and(|k| (1..=12).contains(&k))
 }
 fn kind_of(frame: &[u8]) -> Option<u8> {
     (frame.len() >= 7 && frame[..4] == WIRE_MAGIC).then(|| frame[6])
@@ -284,10 +284,12 @@ impl Inner {
                 }
                 Ok(o)
             }
-            KIND_CERT_REQUEST | KIND_CERT_EXTEND_REQUEST => {
+            KIND_CERT_REQUEST | KIND_CERT_EXTEND_REQUEST | KIND_CERT_RENEW_REQUEST => {
                 let ctx = self.ctx(now)?;
                 let (o, p) = if kind == KIND_CERT_REQUEST {
                     cert::open_cert_request(frame, &ctx, t)
+                } else if kind == KIND_CERT_RENEW_REQUEST {
+                    cert::open_cert_renew(frame, &ctx, t)
                 } else {
                     cert::open_cert_extend(frame, &ctx, t)
                 };
@@ -1391,8 +1393,10 @@ mod tests {
         );
         assert!(is_sshub_frame(&real) && !is_sshub_frame(&alien));
         let mut bad_kind = real.clone();
-        bad_kind[6] = 11;
+        bad_kind[6] = 13;
         assert!(!is_sshub_frame(&bad_kind));
+        bad_kind[6] = 11;
+        assert!(is_sshub_frame(&bad_kind), "kind 11 and 12 are frames since Phase B");
     }
 
     #[test]

@@ -287,6 +287,23 @@ pub fn cert_extend(
     )
 }
 
+pub fn cert_renew(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    cert_id: [u8; 32],
+    expiry: i64,
+    now: i64,
+    seen: Option<Seen>,
+) -> Result<Authored> {
+    append(
+        state,
+        id,
+        now,
+        seen,
+        OpBody::CertRenew { cert_id, expiry },
+    )
+}
+
 /// Newest ops of the chain as signed bytes for the courier lists.
 pub fn courier_ops(state: &PhoneState, count: usize) -> Vec<SignedOpBytes> {
     let n = count.min(COURIER_TAIL);
