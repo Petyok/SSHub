@@ -167,7 +167,7 @@ impl BleSession {
         s.drain();
     }
 
-    /// Queues a whole frame (kinds 1 to 10) for the terminal; one is in flight at a time and a newer one replaces a
+    /// Queues a whole frame (kinds 1 to 12) for the terminal; one is in flight at a time and a newer one replaces a
     /// queued one that has not started. Whether it arrived is not reported on success; a refusal by the terminal shows in
     /// `take_send_failure`.
     pub fn send_frame(&self, frame: Vec<u8>, now_ms: u64) -> Result<()> {
@@ -197,7 +197,7 @@ impl BleSession {
         Ok(())
     }
 
-    /// Whole frames received from the terminal since the last call, each checked (`SWR1`, kind 1 to 10, CRC).
+    /// Whole frames received from the terminal since the last call, each checked (`SWR1`, kind 1 to 12, CRC).
     pub fn take_frames(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.lock().frames)
     }
@@ -334,6 +334,25 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn renewal_and_handover_requests_cross_the_link_in_both_directions() {
+        let mut r = Rig::open(247);
+        for kind in [11u8, 12] {
+            let down = frame(300, kind, 1);
+            r.t.send_frame(r.at(5), down.clone()).unwrap();
+            r.run(5, &mut |_| false);
+            assert_eq!(r.s.take_frames(), vec![down], "kind {kind} down");
+            let up = frame(300, kind, 2);
+            r.s.send_frame(up.clone(), 10).unwrap();
+            r.run(10, &mut |_| false);
+            assert_eq!(r.t_frames.last(), Some(&up), "kind {kind} up");
+        }
+        assert!(
+            r.s.send_frame(frame(300, 13, 3), 20).is_err(),
+            "kind 13 is not a frame"
+        );
     }
 
     #[test]

@@ -499,7 +499,7 @@ pub enum ScanEvent {
         total: u32,
         damaged: u32,
     },
-    /// A completed document (a whole frame of kinds 1 to 10): hand it to `open_frame`.
+    /// A completed document (a whole frame of kinds 1 to 12): hand it to `open_frame`.
     Document {
         bytes: Vec<u8>,
     },

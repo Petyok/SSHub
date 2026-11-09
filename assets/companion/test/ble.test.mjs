@@ -125,6 +125,8 @@ test('receiver rules: too large, count mismatch, busy, order, crc, length, magic
     assert.equal(out.frame, undefined);
   }
   assert.ok(frameLooksValid(frameOf(7, 10)) && !frameLooksValid(frameOf(7, 0)));
+  // Phase B: the renewal (11) and handover (12) requests are frames too; 13 is not
+  assert.ok(frameLooksValid(frameOf(7, 11)) && frameLooksValid(frameOf(7, 12)) && !frameLooksValid(frameOf(7, 13)));
 
   // a repeated last chunk after completion is acknowledged again, not taken as a new frame
   r = new Reassembler({ chunk });
