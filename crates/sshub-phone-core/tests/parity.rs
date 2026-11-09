@@ -803,6 +803,76 @@ fn cert_renew_views_refusals_and_signed_ops_are_the_pages() {
 }
 
 #[test]
+fn phone_handover_view_and_signed_ops_are_the_pages() {
+    use sshub_phone_core::handover;
+    use sshub_phone_core::state::Enrolled;
+    use sshub_sync_proto::wire::PhoneHandoverRequestWire;
+    let p = page();
+    const NOW: i64 = 1_893_452_400;
+    let old = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
+    let new = PhoneIdentity::new(&[0x55; 32], 0).unwrap();
+    let mut st = PhoneState::default();
+    st.enrolled = Some(Enrolled {
+        device_id: old.device_id().to_string(),
+        name: "old phone".into(),
+        at: NOW,
+    });
+    chain::cert_issue(
+        &mut st,
+        &old,
+        "cccccccccccccccc".into(),
+        CertScope::Hosts(vec![uid_hex(&"01".repeat(16))]),
+        NOW + 86_400,
+        2,
+        0,
+        1,
+        NOW,
+        None,
+    )
+    .unwrap();
+    let req = PhoneHandoverRequestWire {
+        new_phone: new.public(),
+        name: "new phone".into(),
+        terminal: [7; 8],
+        op: None,
+    };
+    let w = &p["phone_handover"];
+    let strings = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|x| s(x).to_string())
+            .collect()
+    };
+    let v = handover::describe_phone_handover(&st, &req).unwrap();
+    assert_eq!(v.words, strings(&w["view"]["words"]));
+    assert_eq!(v.name, s(&w["view"]["name"]));
+    assert_eq!(v.certs_carried, strings(&w["view"]["certs_carried"]));
+    handover::build_phone_handover(&mut st, &old, &req, NOW + 1).unwrap();
+    let mut fresh = PhoneState::default();
+    let admission = PhoneHandoverRequestWire {
+        op: Some(([9; 32], 700)),
+        ..req.clone()
+    };
+    let av = handover::describe_handover_admission(&new, &admission).unwrap();
+    assert_eq!(
+        hex::encode(av.op_hash.unwrap()),
+        s(&w["admission_view"]["op_hash"])
+    );
+    assert_eq!(av.op_lamport, w["admission_view"]["op_lamport"].as_u64());
+    handover::sign_handover_admission(&mut fresh, &new, &admission, NOW + 2).unwrap();
+    for (state, key) in [(&st, "old_ops"), (&fresh, "new_ops")] {
+        let tail = chain::courier_ops(state, 8);
+        let want = w[key].as_array().unwrap();
+        assert_eq!(tail.len(), want.len(), "{key}");
+        for ((c, sig), x) in tail.iter().zip(want) {
+            assert_eq!(hex::encode(c), s(&x["canonical"]), "{key}");
+            assert_eq!(hex::encode(sig), s(&x["signature"]), "{key}");
+        }
+    }
+}
+
+#[test]
 fn reshare_fixture_the_core_combines_to_the_same_shares() {
     let p = page();
     let fx = load("reshare.json");

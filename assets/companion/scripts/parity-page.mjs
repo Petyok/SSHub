@@ -19,6 +19,7 @@ import {
 } from '../src/state.mjs';
 import { approveRelease, evaluateChallenge } from '../src/release.mjs';
 import { buildCertRenew, certRequestProblems, describeCertRenew, describeCertRequest, openedText, describeTerm, issuedCerts } from '../src/cert.mjs';
+import { buildPhoneHandover, describeHandoverAdmission, describePhoneHandover, signHandoverAdmission } from '../src/handover.mjs';
 import { envelopeAad, ownStorageKey, planReshare, publishReshare } from '../src/reshare.mjs';
 import { commitOf, confirmMessage, encodeEnrollCommit, encodeEnrollConfirm, encodeEnrollReveal, transcriptHash } from '../src/frames.mjs';
 import { fountainEncode } from '../src/quorum.mjs';
@@ -183,6 +184,23 @@ out.identity = ['42', '0b'].map((s) => Array.from({ length: 3 }, (_, g) => {
   out.cert_renews.push({ name: 'after_two', view: describeCertRenew(state, mk(certId, NOW + 28 * DAY, [[t, now]]), now), opened_text: 'no list sent' });
   out.cert_renews.push({ name: 'after_two_next_ok', view: describeCertRenew(state, mk(certId, NOW + 22 * DAY, [[t, now]]), now), opened_text: 'no list sent' });
   out.cert_renew_ops = ops(courierOps(state, 8));
+}
+
+// ---------------------------------------------------------------- PhoneHandover: the view, the old phone's op and the new phone's admission
+{
+  const NOW = 1_893_452_400;
+  const oldId = identityOfSecret(h(SECRET));
+  const newId = identityOfSecret(h('55'.repeat(32)));
+  const state = { ...emptyState(), enrolled: { device_id: oldId.deviceId, name: 'old phone', at: NOW } };
+  appendCertIssue(state, oldId, { device_id: 'cccccccccccccccc', scope: { hosts: ['01'.repeat(16)] }, expiry: BigInt(NOW + 86400), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 1n }, NOW, null);
+  const req = { new_phone: { ed25519_pub: newId.edPub, x25519_pub: newId.xPub, mlkem_pub: newId.mlkemPub }, name: 'new phone', terminal: '07'.repeat(8) };
+  const view = describePhoneHandover(state, req);
+  buildPhoneHandover(state, oldId, req, NOW + 1);
+  const fresh = emptyState();
+  const admission = { ...req, op: { hash: '09'.repeat(32), lamport: 700n } };
+  const admissionView = describeHandoverAdmission(newId, admission);
+  signHandoverAdmission(fresh, newId, admission, NOW + 2);
+  out.phone_handover = { view, admission_view: admissionView, old_ops: ops(courierOps(state, 8)), new_ops: ops(courierOps(fresh, 8)) };
 }
 
 // ---------------------------------------------------------------- reshare: the Rust-made fixture adopted by the page
