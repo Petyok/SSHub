@@ -19,6 +19,7 @@ use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::canonical::{b64_decode, b64_encode};
+use super::cert_fold;
 use super::fork;
 use super::merge::{hex, insert_op, load_op, op_at, State};
 use super::op::*;
@@ -275,7 +276,17 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
                 "epoch_lo": epoch_lo,
                 "epoch_hi": epoch_hi,
                 "issuer": op.device_id,
+                "issued_at": op.timestamp,
+                "issue_sig": hex(&op.signature),
+                "issue_canonical_hash": hex(hash),
             }),
+        )],
+        // Folded into one record per certificate by `cert_fold` (a checkpoint carries the record, not these).
+        OpBody::CertRenew { cert_id, expiry } => vec![(
+            "cert_renew",
+            format!("{}:{}", hex(cert_id), hex(hash)),
+            0,
+            json!({ "expiry": expiry }),
         )],
         OpBody::CertRevoke { cert_id } => vec![("cert_revoked", hex(cert_id), 0, json!({}))],
         OpBody::CertHostOpened { cert_id, host_uid } => vec![(
@@ -355,7 +366,7 @@ pub(crate) fn record_anchor_device(
 
 // -------------------------------------------------------------------- fold
 
-type Cut = BTreeMap<DeviceId, u64>;
+pub(super) type Cut = BTreeMap<DeviceId, u64>;
 
 fn cut_of(entries: &[CutEntry]) -> Cut {
     entries
@@ -369,22 +380,28 @@ fn in_cut(cut: Option<&Cut>, device: &str, seq: u64) -> bool {
 }
 
 #[derive(Clone)]
-struct Win {
-    ord: u64,
-    lamport: u64,
-    device: String,
-    seq: u64,
-    value: Value,
+pub(super) struct Win {
+    pub(super) ord: u64,
+    pub(super) lamport: u64,
+    pub(super) device: String,
+    pub(super) seq: u64,
+    pub(super) value: Value,
 }
 
-fn fold_writes(conn: &Connection, cut: Option<&Cut>) -> Result<BTreeMap<(String, String), Win>> {
+/// `only_key`: just the writes whose key is that string or starts with `<it>:` (the certificate sections).
+pub(super) fn fold_writes(
+    conn: &Connection,
+    cut: Option<&Cut>,
+    only_key: Option<&str>,
+) -> Result<BTreeMap<(String, String), Win>> {
     let mut stmt = conn.prepare(
         "SELECT w.section, w.key, w.ord, w.lamport, w.device_id, w.seq, w.value,
                 w.op_hash = zeroblob(32), o.state
          FROM sync_writes w LEFT JOIN sync_ops o ON o.op_hash = w.op_hash
+         WHERE ?1 IS NULL OR w.key = ?1 OR w.key LIKE ?1 || ':%'
          ORDER BY w.ord, w.lamport, w.device_id, w.seq",
     )?;
-    let rows = stmt.query_map([], |r| {
+    let rows = stmt.query_map([only_key], |r| {
         Ok((
             r.get::<_, String>(0)?,
             r.get::<_, String>(1)?,
@@ -626,7 +643,7 @@ fn fork_set(conn: &Connection) -> Result<BTreeSet<DeviceId>> {
 /// The state blob as of `cut`, with the tombstone horizon measured at `ts`.
 fn fold_state(conn: &Connection, cut_entries: &[CutEntry], ts: i64) -> Result<Vec<u8>> {
     let cut = cut_of(cut_entries);
-    let wins = fold_writes(conn, Some(&cut))?;
+    let wins = fold_writes(conn, Some(&cut), None)?;
     let heads = head_facts(conn, cut_entries)?;
     let forks = fork_set(conn)?;
     let devices = device_section(&wins, &heads, &forks);
@@ -672,9 +689,8 @@ fn fold_state(conn: &Connection, cut_entries: &[CutEntry], ts: i64) -> Result<Ve
         .collect();
     let mut writes = Vec::new();
     for ((section, key), w) in &wins {
-        if matches!(section.as_str(), "device" | "revoke" | "wrap") {
-            // Folded into the device table below, but kept as writes too so a
-            // bootstrapped store has the winners' keys.
+        if matches!(section.as_str(), "cert_renew" | "cert_fold") {
+            continue; // carried as the folded record below
         }
         let mut value = w.value.clone();
         if section == "cred" && resharded.contains(key.as_str()) {
@@ -684,6 +700,9 @@ fn fold_state(conn: &Connection, cut_entries: &[CutEntry], ts: i64) -> Result<Ve
             "section": section, "key": key, "ord": w.ord, "lamport": w.lamport,
             "device_id": w.device, "seq": w.seq, "value": value,
         }));
+    }
+    for (rec, issue) in cert_fold::fold_certs(&wins).values() {
+        writes.push(cert_fold::state_write(rec, issue));
     }
     let epochs: Vec<Value> = heads
         .iter()
@@ -1438,6 +1457,7 @@ pub(crate) fn prune(conn: &Connection, now: i64) -> Result<PruneReport> {
         "ord, lamport, device_id, seq",
         "section, key, op_hash, ord, lamport, device_id, seq, value",
     )?;
+    cert_fold::compact(conn)?;
     collapse_tombstones(conn)?;
     forget_dead_entities(conn, now)?;
 
@@ -1831,6 +1851,7 @@ fn check_bundle(
     }
     let state: Value = serde_json::from_slice(&bundle.state).context("state is not JSON")?;
     let devices = state["devices"].as_array().cloned().unwrap_or_default();
+    cert_fold::verify_state_writes(state["writes"].as_array().map_or(&[][..], Vec::as_slice))?;
     // This device's own chains (it cannot have signed a checkpoint it is catching up to).
     let mine: BTreeSet<DeviceId> = if local {
         let mut st = conn.prepare("SELECT DISTINCT device_id FROM sync_ops WHERE local = 1")?;
@@ -2202,7 +2223,7 @@ pub(crate) fn rebuild_caches_for_test(conn: &Connection) -> Result<()> {
 }
 
 fn rebuild_caches(conn: &Connection, now: i64) -> Result<()> {
-    let wins = fold_writes(conn, None)?;
+    let wins = fold_writes(conn, None, None)?;
     // ASCII-checked: a non-hex byte in the state is an empty value, never a slice through a char.
     let unhex = |s: &str| -> Vec<u8> { hex::decode(s).unwrap_or_default() };
     for ((section, key), w) in &wins {
@@ -2350,7 +2371,7 @@ pub(crate) fn share_envelopes(
     host: &Uid,
 ) -> Result<Vec<(DeviceId, u64, Vec<u8>)>> {
     let hex_host = uid_hex(host);
-    let wins = fold_writes(conn, None)?;
+    let wins = fold_writes(conn, None, None)?;
     Ok(wins
         .iter()
         .filter(|((s, _), w)| s == "share" && w.value["host_uid"] == hex_host.as_str())
@@ -2365,7 +2386,7 @@ pub(crate) fn share_envelopes(
 }
 
 pub(crate) fn storage_key(conn: &Connection, device: &str) -> Result<Option<(u64, Vec<u8>)>> {
-    let wins = fold_writes(conn, None)?;
+    let wins = fold_writes(conn, None, None)?;
     Ok(wins
         .get(&("storage".to_string(), device.to_string()))
         .and_then(|w| Some((w.ord, b64_decode(w.value["sealed"].as_str()?)?))))

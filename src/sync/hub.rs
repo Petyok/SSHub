@@ -18,15 +18,17 @@ use anyhow::{bail, Result};
 use rusqlite::params;
 
 use super::crypto::DeviceIdentity;
-use super::oplog::{DeviceId, Op, OpBody};
+use super::oplog::{DeviceId, DeviceKind, DeviceStatus, Op, OpBody};
 use super::protocol::{ingest_ops, run_sync_serve, RoundSummary, SyncLink};
 use super::quorum::{meta_get, meta_set};
-use super::wire::{PhoneOpsWire, RecoveryNoticeWire, SignedOpBytes, MAX_COURIER_OPS};
+use super::wire::{
+    PhoneOpsWire, RecoveryNoticeWire, SignedOpBytes, TerminalsBlock, MAX_COURIER_OPS,
+};
 use crate::config::NotifyConfig;
 use crate::store::{uid_hex, LauncherStore};
 
 /// Op kinds that are announced: a recovery started, someone approved it, it was cancelled.
-/// `RecoveryAck` is the automatic "seen" record and is not announced.
+/// `RecoveryAck` records that an attended terminal showed the recovery to its user (it is not automatic): not announced.
 const ANNOUNCED: [&str; 3] = ["PhoneReenroll", "RecoveryApprove", "PhoneReenrollCancel"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -254,13 +256,29 @@ pub fn phone_chain_wire(store: &LauncherStore, phone: &str, me: &str) -> Result<
         bail!("this computer holds no change of that phone yet: sync, or ask another computer");
     };
     let ops = store.sync_chain_tail(&phone, head.saturating_sub(MAX_COURIER_OPS as u64))?;
+    // The unsigned count the restored phone shows next to the list (contract 4j): terminals not removed, this one included,
+    // attended or not, holders or mirrors.
+    let rows = store.sync_devices()?;
+    let mut terminals = rows
+        .iter()
+        .filter(|d| {
+            d.kind == DeviceKind::Terminal
+                && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+        })
+        .count();
+    if !rows.iter().any(|d| d.id == me) {
+        terminals += 1;
+    }
     Ok(PhoneOpsWire {
         ops: ops
             .iter()
             .map(|o| (o.canonical_bytes(), o.signature))
             .collect(),
         sender: Some(sender),
-        terminals: None,
+        terminals: Some(TerminalsBlock {
+            count: u8::try_from(terminals).unwrap_or(u8::MAX),
+            newest_op_ts: ops.iter().map(|o| o.timestamp).max().unwrap_or(0),
+        }),
     })
 }
 

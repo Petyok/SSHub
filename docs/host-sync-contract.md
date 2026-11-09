@@ -1000,8 +1000,9 @@ new bodies canonical bytes, vectors and oracle checks; `apply` does nothing for 
 
 Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, not op-log):
 
-* Proofs count only if they name `op.hash()`, were written after the op and within `RED_CEREMONY_TTL_SECS` of
-  its timestamp, and their author is valid: `RedApprove` by an attended `Holder` `Terminal` that is not the proposer
+* Proofs count only if they name `op.hash()`, were written after the op (a higher lamport) and within `RED_CEREMONY_TTL_SECS` of
+  its timestamp (the AUTHORS' stamps; never the local receipt time and never `now`: D0b, a verdict is a pure function of the
+  log, so a device that was away longer than the window reaches the verdict of the others), and their author is valid: `RedApprove` by an attended `Holder` `Terminal` that is not the proposer
   (and, for `ModeChange` to Vault, is the named `cosigner`); `RedPhoneSign` by the device with `kind == Phone`
   (not needed for `CertIssue`, whose author is the phone); `RedFactor` whose `sig` verifies under the registered
   factor key over `b"sshub/sync/red/factor/v1" || op_hash || proposer id`.
@@ -1010,14 +1011,36 @@ Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, n
   (`aead_seal(Argon2id(code, salt), seed)`, `ARGON2_EMAIL`), `sender` names the device that holds the code. A first
   `FactorRegister` needs phone + second-device proofs only; a replacement also needs a `RedFactor` of the factor
   being replaced.
-* A ring with one attended `Holder` terminal waives the second-device proof; it needs the phone and the paper.
-* `DeviceRoleChange` and `DeviceAdd` as holder additionally require at least two attended holder terminals in the ring (counted
-  from the device view at the op's own position, never from contact: a verdict is the same on every device) so a reshare has k
-  contributors; `DeviceRevoke` of a holder requires at least two remaining holders after it (three before). Whether a
-  contributor is reachable now is advice for the screens (`ceremony::log_live`), not a rule.
+* A ring with one attended `Holder` terminal waives the second-device proof; it needs the phone and the paper. The subject
+  of a promotion (`DeviceAdd` or `DeviceRoleChange` as holder) is not one of the terminals counted for that waiver, so a
+  replacement terminal in a one-terminal ring completes with the phone and the paper (Phase B, crypto M1).
+* `DeviceRoleChange` and `DeviceAdd` as holder additionally require at least two attended holder terminals in the ring when a
+  Quorum credential exists (counted from the device view at the op's own position, never from contact: a verdict is the same
+  on every device). A third live holder (the phone included) and a `ModeChange` to Quorum, whatever the ring size, require a
+  registered paper (`FactorRegister{Paper}` in force at the op's position); without it the op is blocked.
+* `DeviceRevoke` of a holder needs the phone and, for a terminal, the PAPER: the emailed code never counts for it, and
+  the second-device proof is waived when the paper is among the proofs. It is blocked when the target is the last attended
+  terminal (read from the view only, never from whether a credential exists) and, for a terminal, when no paper is
+  registered. `revocation::revoke_mode` reports `Full` (two or more other attended terminals), `Degraded` (one) or
+  `Refused`; a degraded revocation reshares nothing (it needs two share-holding terminals) and leaves the credentials the
+  removed device held a share of on the exposure list (`quorum::exposed_credentials`). A revocation closes only when two
+  distinct share-holding terminals wrote `ShareReshareBatch` ops of one epoch that leave the target out, or when no
+  credential is shared with the target; `next_actions` offers `Contribute` only to a share-holding terminal and only when
+  two exist. Whether a contributor is reachable now is advice for the screens (`ceremony::log_live`), not a rule.
+* Recoveries are bound to their phone (H1): a cancellation by the phone is judged against the phone of the view at the
+  cancellation's own lamport, and a completion `DeviceRevoke` stands in for the ceremony only when it targets the phone of
+  the view at the recovery's own lamport and that phone is still live just before the completion. (The `Superseded` verdict
+  for an in-force `PhoneHandover` comes with the `PhoneHandover` op.)
+* One-terminal recovery (design 5.2): with no other attended holder terminal the requester's own `RecoveryAck` starts the
+  lock (`RECOVERY_TIMELOCK_SOLO_SECS`, 14 days), the paper authorizes it, and the paper again is the third factor
+  (`ThirdFactor::Paper` with `via_paper`); the live phone still cancels with no factor. `recovery::open_for_alert` lists
+  the open recoveries started by other devices (one alert per requester is the caller's job; the alert writes no op).
 * `RedStatus { missing: Vec<RedProof>, have: Vec<RedProof>, complete: bool, expired: bool }` is what the review
-  screen shows ("phone: signed, second device: waiting, paper: missing"). `settle_red_ops(store, now)` runs after
-  every ingest: it resolves a pending Red op as approved when complete and as rejected when expired.
+  screen shows ("phone: signed, second device: waiting, paper: missing"). `expired` is display and hygiene only: the window
+  passed on THIS clock and the ceremony is not complete; it decides nothing. `settle_red_ops(store, now)` runs after
+  every ingest: it resolves a pending Red op as approved when complete and as rejected when a rule blocks it. An op past
+  the window stays pending (it is not rejected), so a late proof still completes it on every device alike. Residual: a
+  signer can stamp its own proof inside the window; a proof still needs three independent participants.
 * Builders for the UI and the phone: `red_approve_body(op)`, `red_factor_paper(recover_identity, proposer, op)`,
   `red_factor_email(code, store, proposer, op)`, and for the phone `RedPhoneSign` is encoded by the page like its
   cancel op; the terminal shows a Red notice (the op as kind-3 notice frame) for the phone to scan or paste.
@@ -1674,3 +1697,31 @@ pub fn accept_head(state: &mut PhoneState, shown: (u64, &[u8]), acknowledged_sin
 
 **Rules every lane keeps:** a Red or Green verdict reads only the log (D0, D0b): no `last_seen`, no `received_at`, no `now` except the inherent use-time checks;
 `log_live` is advice for screens. The alert has no acknowledge key. Group approval touches only hold reason `stale`. The emailed code never counts for a holder revoke or a handover.
+
+### 4k. Phase B host core as built (lane C; wave 1 and 2)
+
+What exists on top of 4j, with the names the screens and the scenarios use:
+
+* **Verdicts** (D0b): `ceremony::red_status` never reads `now` or the local receipt time for a verdict; `expired` only says the window passed on this clock
+  and the op is not complete. `ceremony::blocking_view(store, op, now) -> Vec<Blocker { proof, who, since }>` names, per missing proof, the devices
+  (or "the paper phrase", "the emailed code (mailed by NAME)") that can give it; for removing a computer the second-device entry adds "or the paper
+  phrase instead". `since` is the op's author stamp, display only.
+* **Revocation:** `revocation::revoke_mode(store, &target) -> RevokeMode { Full, Degraded, Refused(String) }`; `check_revocable` refuses only on
+  `Refused`. `TERMINALS_TO_CUT_OFF` is 2 (the removed device plus one remaining). `quorum::exposed_credentials(store) -> Vec<Exposure { host_uid,
+  devices, kind: Removed | NotHeldBy }>` is derived from the log and never stored.
+* **Heal** (`cred_ops`): `heal_plan(store)` lists the Quorum credentials whose newest sharing lacks a current holder and that no removed device holds a
+  share of; `heal_credential(store, id, host, payload)` re-seals one under a fresh DEK to the current recipients and is refused for any other. Heal on use:
+  `QuorumUnlocker::unlock` calls it after a successful open (best effort, no extra prompt).
+* **Recovery:** `recovery::open_for_alert(store, &DeviceIdentity, now)` and `open_for_alert_for(store, &DeviceId, now)`; `ReenrollVerdict::Superseded` for a
+  recovery that a later in-force `PhoneHandover` replaced (`PhoneHandover` is a gated Red op: three proofs until the handover rules land);
+  `recovery::is_solo`. A build with the cargo feature `e2e-hooks` (the e2e image only) reads `SSHUB_E2E_SOLO_LOCK_SECS` to shorten the 14 day solo lock.
+* **Certificates:** `DelegationCert::effective_expiry(store)` and `renewals(store)` read the folded record of the log (`oplog::cert_record`): renewals count
+  clock-free, in `(lamport, device, seq)` order, and only while the delegate is a holder in force; `cert_allows` and `extension_budget` use the effective end;
+  `cert::cert_renew_request(store, cert_id, term_secs, now)` builds the kind 11 request (new end = effective end + term, at most the first term, at most
+  `CERT_LIFETIME_MAX_SECS` after the issue, at most `CERT_MAX_RENEWALS` renewals; evidence = one `HeadEvidence` per holder terminal other than the
+  delegate). Every ingested `CertRenew` is mailed once through `[sync.notify]` (`cert::owed_renew_mails`, `cert::send_renew_mails`, hooked in
+  `SyncRuntime::mail_owed_codes`; the CLI `sshub sync` path must call `send_renew_mails` too); the sticky notice is a terminal screen.
+* **Phone list:** `hub::phone_chain_wire` fills the kind 5 `terminals` block: the number of non-removed terminals (this one included) and the newest op stamp
+  of the list. Unsigned, informational.
+* **Not yet** (wave 3): the `PhoneHandover` rules (Paper-only third factor, the new phone's own proof, the effect lamport, `successor_of` for certificates,
+  `handover::handover_words` over the proto crate's eight word function).

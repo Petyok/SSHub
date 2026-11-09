@@ -16,7 +16,7 @@
 
 use std::collections::BTreeSet;
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, Result};
 
 use super::crypto::DeviceIdentity;
 use super::oplog::{DeviceId, DeviceKind, DeviceRole, DeviceStatus, OpBody};
@@ -60,14 +60,14 @@ pub fn live_terminal_holders(store: &LauncherStore) -> Result<usize> {
         .count())
 }
 
-/// How many terminals a ring needs before a stolen one can be cut off: the one removed and two that remain
-/// to contribute (the phone approves, it does not contribute).
-pub const TERMINALS_TO_CUT_OFF: usize = 3;
+/// How many terminals a ring needs before a stolen one can be cut off: the one removed and one that remains (a degraded
+/// revocation: the phone and the paper approve; with two or more remaining the remaining terminals also reshare).
+pub const TERMINALS_TO_CUT_OFF: usize = 2;
 
 /// The plain sentence for a ring with `terminals` full terminals that cannot cut one off.
 pub fn cut_off_sentence(terminals: usize) -> String {
     format!(
-        "To remove a stolen or lost device you need {TERMINALS_TO_CUT_OFF} computers or servers you control, the one you remove included, so that two others can approve with the phone. You have {terminals}. Until then: change the passwords of its hosts and remove its key from every host's authorized_keys."
+        "To remove a stolen or lost device you need {TERMINALS_TO_CUT_OFF} computers or servers you control, the one you remove included, so that one other can approve with the phone and the paper phrase. You have {terminals}. Until then: change the passwords of its hosts and remove its key from every host's authorized_keys."
     )
 }
 
@@ -77,40 +77,99 @@ pub fn terminals_missing_to_cut_off(store: &LauncherStore) -> Result<Option<usiz
     Ok((n < TERMINALS_TO_CUT_OFF).then(|| TERMINALS_TO_CUT_OFF - n))
 }
 
-/// The rule that makes a revocation possible at all: two contributors must remain, so at least three
-/// holders exist before it. `target` is the holder to revoke. The error is the sentence a person reads.
-pub fn check_revocable(store: &LauncherStore, target: &DeviceId, now: i64) -> Result<()> {
-    let holders = live_holders(store)?;
-    ensure!(
-        holders.iter().any(|d| d.id == *target),
-        "{target} is not a live holder"
-    );
-    let remaining: Vec<_> = holders
-        .iter()
-        .filter(|d| d.id != *target && d.kind == DeviceKind::Terminal)
-        .collect();
-    let terminals = remaining.len()
-        + usize::from(
-            holders
-                .iter()
-                .any(|d| d.id == *target && d.kind == DeviceKind::Terminal),
-        );
-    ensure!(remaining.len() >= 2, "{}", cut_off_sentence(terminals));
-    super::quorum::paper_rule(store, holders.len() - 1)?;
-    // Alive means: wrote an op to the ring recently (the log, the same on every device), not "was last heard from here".
-    let fresh =
-        super::ceremony::log_live(store, remaining.iter().map(|d| (*d).clone()).collect(), now)?
-            .len();
-    ensure!(
-        fresh >= 2,
-        "fewer than two remaining holders have written to the ring recently enough to contribute"
-    );
-    Ok(())
+/// How a holder can be removed (design 3.2), from the log only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RevokeMode {
+    /// Two or more other attended terminals remain: the remaining terminals reshare the credentials.
+    Full,
+    /// Exactly one other attended terminal remains: the phone and the paper authorize it, the credentials the removed
+    /// device held a share of stay on the exposure list (`quorum::exposed_credentials`) until their secret changes.
+    Degraded,
+    /// It cannot be done; the sentence is what a person reads.
+    Refused(String),
 }
 
+/// What removing `target` would be, judged from the ring as it is now. Never reads contact or the clock: whether the other
+/// terminals are reachable is advice for screens (`ceremony::log_live`), not a rule.
+pub fn revoke_mode(store: &LauncherStore, target: &DeviceId) -> Result<RevokeMode> {
+    let holders = live_holders(store)?;
+    let Some(row) = holders.iter().find(|d| d.id == *target) else {
+        return Ok(RevokeMode::Refused(format!(
+            "{target} is not a live holder"
+        )));
+    };
+    let remaining = holders
+        .iter()
+        .filter(|d| {
+            d.id != *target
+                && d.kind == DeviceKind::Terminal
+                && d.attendance == super::oplog::Attendance::Attended
+        })
+        .count();
+    if remaining == 0 {
+        return Ok(RevokeMode::Refused(
+            "this is the last computer of the ring: add a replacement first (Replace this terminal), then remove the old one".into(),
+        ));
+    }
+    if row.kind == DeviceKind::Terminal && paper_pub(store)?.is_none() {
+        return Ok(RevokeMode::Refused(
+            "removing a computer needs the paper phrase registered: without it nothing independent of the other devices can approve".into(),
+        ));
+    }
+    if let Err(e) = super::quorum::paper_rule(store, holders.len() - 1) {
+        return Ok(RevokeMode::Refused(e.to_string()));
+    }
+    Ok(if remaining >= 2 {
+        RevokeMode::Full
+    } else {
+        RevokeMode::Degraded
+    })
+}
+
+/// The precheck a screen runs before it writes a `DeviceRevoke`: an error is the sentence a person reads. The ceremony
+/// judges the op itself again (`ceremony::red_status`).
+pub fn check_revocable(store: &LauncherStore, target: &DeviceId, _now: i64) -> Result<()> {
+    match revoke_mode(store, target)? {
+        RevokeMode::Refused(why) => bail!("{why}"),
+        RevokeMode::Full | RevokeMode::Degraded => Ok(()),
+    }
+}
+
+/// Does any Quorum credential's newest sharing include `device`?
+fn holds_a_share(store: &LauncherStore, device: &DeviceId) -> Result<bool> {
+    for host in super::reshare::quorum_credentials(store)? {
+        if let Some((_, wraps)) = store.sync_cred_ciphertext(&host)? {
+            if wraps.len() >= 2 && wraps.iter().any(|w| w.recipient == *device) {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Live terminal holders that hold a share of at least one Quorum credential: the only ones that can contribute to a reshare.
+/// A replacement terminal that joined after the credentials were written holds none until they are healed or reshared.
+fn share_holding_terminals(store: &LauncherStore) -> Result<Vec<super::oplog::DeviceRow>> {
+    let mut holding: BTreeSet<DeviceId> = BTreeSet::new();
+    for host in super::reshare::quorum_credentials(store)? {
+        if let Some((_, wraps)) = store.sync_cred_ciphertext(&host)? {
+            if wraps.len() >= 2 {
+                holding.extend(wraps.into_iter().map(|w| w.recipient));
+            }
+        }
+    }
+    Ok(live_holders(store)?
+        .into_iter()
+        .filter(|d| d.kind == DeviceKind::Terminal && holding.contains(&d.id))
+        .collect())
+}
 /// The newest revoked holder whose reshare is not finished: `(op lamport, timestamp, revoked id)`.
 fn open_revocation(store: &LauncherStore) -> Result<Option<(u64, i64, DeviceId)>> {
     let devices = super::ceremony::effective_devices(store, None)?;
+    let share_holders: BTreeSet<DeviceId> = share_holding_terminals(store)?
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
     let batches = reshare_ops(store, "ShareReshareBatch")?;
     let mut open = None;
     for op in ops_of(store, "DeviceRevoke", None)? {
@@ -127,9 +186,20 @@ fn open_revocation(store: &LauncherStore) -> Result<Option<(u64, i64, DeviceId)>
         if !was_holder {
             continue;
         }
-        let resolved = batches.iter().any(|b| {
-            b.lamport > op.lamport && matches!(&b.body, OpBody::ShareReshareBatch { new_holders, .. } if !new_holders.contains(device_id))
-        });
+        // Resolved when two DISTINCT share-holding terminals wrote batches of ONE epoch that leave the target out (a
+        // single batch, or a mirror's, is not a reshare: crypto L1), or when no credential is shared with the target.
+        let mut by_epoch: std::collections::BTreeMap<u64, BTreeSet<&DeviceId>> = Default::default();
+        for b in batches.iter().filter(|b| b.lamport > op.lamport) {
+            if let OpBody::ShareReshareBatch {
+                epoch, new_holders, ..
+            } = &b.body
+            {
+                if !new_holders.contains(device_id) && share_holders.contains(&b.device_id) {
+                    by_epoch.entry(*epoch).or_default().insert(&b.device_id);
+                }
+            }
+        }
+        let resolved = by_epoch.values().any(|c| c.len() >= 2) || !holds_a_share(store, device_id)?;
         if !resolved {
             open = Some((op.lamport, op.timestamp, device_id.clone()));
         }
@@ -239,7 +309,12 @@ pub fn next_actions(
         .iter()
         .any(|o| matches!(&o.body, OpBody::ShareReshareSession { epoch: e, .. } if *e == epoch));
     if !contributed {
-        out.push(RevocationAction::Contribute { epoch, new_holders });
+        // A contribution needs a share to contribute from: with fewer than two share-holding terminals nothing can be
+        // reshared (a degraded revocation): the credentials wait on the exposure list (`quorum::exposed_credentials`).
+        let share_holders = share_holding_terminals(store)?;
+        if share_holders.len() >= 2 && share_holders.iter().any(|d| d.id == me) {
+            out.push(RevocationAction::Contribute { epoch, new_holders });
+        }
         return Ok(out);
     }
     Ok(out)
@@ -256,8 +331,8 @@ fn membership_reshare(store: &LauncherStore, me: &DeviceId) -> Result<Option<Rev
         return Ok(None);
     }
     let live = live_holders(store)?;
-    let terminals = live.iter().filter(|d| d.kind == DeviceKind::Terminal);
-    if terminals.clone().count() < 2 || !terminals.clone().any(|d| d.id == *me) {
+    let terminals = share_holding_terminals(store)?;
+    if terminals.len() < 2 || !terminals.iter().any(|d| d.id == *me) {
         return Ok(None);
     }
     let mut new_holders: Vec<DeviceId> = live.iter().map(|d| d.id.clone()).collect();

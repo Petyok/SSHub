@@ -5,6 +5,42 @@ use super::*;
 const T0: i64 = 1_000_000;
 const NOW: i64 = T0 + 100;
 
+/// The tests that read or set `SSHUB_E2E_SOLO_LOCK_SECS` never run side by side.
+static SOLO_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The lock-shortening variable exists only in a build with `--features e2e-hooks`.
+#[test]
+fn the_solo_lock_env_hook_exists_only_in_the_e2e_build() {
+    let _env = SOLO_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let paper = Authorization::Paper {
+        signature_valid: true,
+    };
+    let mut r = Recovery::new();
+    r.apply(Event::Propose(Proposal {
+        solo: true,
+        ..proposal(paper)
+    }))
+    .unwrap();
+    r.apply(Event::Ack {
+        by: id("req"),
+        seen_at: T0 + 60,
+        attended: true,
+    })
+    .unwrap();
+    std::env::set_var("SSHUB_E2E_SOLO_LOCK_SECS", "3600");
+    let v = r.verdict(T0 + 60 + 3600);
+    std::env::remove_var("SSHUB_E2E_SOLO_LOCK_SECS");
+    #[cfg(feature = "e2e-hooks")]
+    assert_eq!(v, ReenrollVerdict::Ready);
+    #[cfg(not(feature = "e2e-hooks"))]
+    assert_eq!(
+        v,
+        ReenrollVerdict::NeedsMoreTime {
+            ready_at: T0 + 60 + 14 * 86_400
+        }
+    );
+}
+
 fn id(s: &str) -> DeviceId {
     s.into()
 }
@@ -18,7 +54,53 @@ fn proposal(auth: Authorization) -> Proposal {
         authorization: auth,
         third_factor_distinct: true,
         liveness_ok: true,
+        solo: false,
     }
+}
+
+/// Design 5.2: with no other attended computer the requester's own acknowledgement starts a lock of 14 days; the paper
+/// is the authorization.
+#[test]
+fn a_solo_recovery_is_acknowledged_by_its_requester_and_locks_for_fourteen_days() {
+    let _env = SOLO_ENV.lock().unwrap_or_else(|e| e.into_inner());
+    let paper = Authorization::Paper {
+        signature_valid: true,
+    };
+    let solo = Proposal {
+        solo: true,
+        ..proposal(paper)
+    };
+    let mut r = Recovery::new();
+    r.apply(Event::Propose(solo)).unwrap();
+    r.apply(Event::Ack {
+        by: id("req"),
+        seen_at: T0 + 60,
+        attended: true,
+    })
+    .unwrap();
+    let ready_at = T0 + 60 + 14 * 86_400;
+    assert_eq!(
+        r.verdict(T0 + 60 + 8 * 86_400),
+        ReenrollVerdict::NeedsMoreTime { ready_at }
+    );
+    assert_eq!(r.verdict(ready_at), ReenrollVerdict::Ready);
+    // With another attended computer the requester never acknowledges its own recovery.
+    let mut n = Recovery::new();
+    n.apply(Event::Propose(proposal(paper))).unwrap();
+    assert!(n
+        .apply(Event::Ack {
+            by: id("req"),
+            seen_at: T0 + 60,
+            attended: true
+        })
+        .is_err());
+    // A solo recovery is authorized by the paper: approvals cannot exist.
+    assert!(Recovery::new()
+        .apply(Event::Propose(Proposal {
+            solo: true,
+            ..proposal(Authorization::Approvals)
+        }))
+        .is_err());
 }
 
 fn approve(who: &str) -> Event {
@@ -1293,5 +1375,321 @@ mod over_the_log {
             validate_phone_reenroll(&w.d[OBS].store, &op, now).unwrap(),
             ReenrollVerdict::CancelledByFactor
         );
+    }
+
+    fn phone_swap(w: &World, by: usize, now: i64) -> Dev {
+        let new = Dev::new();
+        append(
+            &w.d[by],
+            OpBody::DeviceRevoke {
+                device_id: w.d[P].did.clone(),
+            },
+        );
+        let _ = now;
+        append(
+            &w.d[by],
+            OpBody::DeviceAdd {
+                device: new.id.public(),
+                name: "new phone".into(),
+                role: DeviceRole::Holder,
+                attendance: Attendance::Attended,
+                kind: DeviceKind::Phone,
+                verified_by: VerifiedBy::Sas,
+            },
+        );
+        w.sync();
+        new
+    }
+
+    // H1 (crypto): a cancellation by the phone that was live stays a cancellation after the ring swaps its phone.
+    #[test]
+    fn cancelled_recovery_stays_cancelled_after_a_phone_swap() {
+        let w = world();
+        let op = w.reenroll(false, None, None);
+        let now = op.timestamp + 60;
+        append(
+            &w.d[P],
+            OpBody::PhoneReenrollCancel {
+                reenroll_hash: op.hash(),
+                by_phone: true,
+                third_factor: None,
+            },
+        );
+        w.sync();
+        assert_eq!(
+            w.verdict(&op, now).unwrap(),
+            ReenrollVerdict::CancelledByPhone
+        );
+        phone_swap(&w, A, now);
+        assert_eq!(
+            w.verdict(&op, now).unwrap(),
+            ReenrollVerdict::CancelledByPhone,
+            "the cancel was judged against today's phone and dropped"
+        );
+    }
+
+    // H1 (crypto): a recovery that was started against the old phone cannot remove the phone that replaced it.
+    #[test]
+    fn recovery_started_before_a_phone_swap_cannot_revoke_the_new_phone() {
+        use crate::sync::recovery::{ack_body, approve_body, ready_recovery_for, start_body};
+        let w = world();
+        let now = crate::store::now_ts();
+        let long_ago = now - 9 * 86_400;
+        let at =
+            |d: &Dev, body: OpBody, t: i64| d.store.sync_append_local_at(&d.id, body, t).unwrap();
+        let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
+        let start = start_body(
+            &w.d[R].store,
+            &w.d[R].id,
+            long_ago,
+            None,
+            ThirdFactor::Paper,
+        )
+        .unwrap();
+        let op = at(&w.d[R], start, long_ago);
+        at(
+            &w.d[R],
+            crate::sync::ceremony::red_factor_paper(&recover, &op),
+            long_ago + 30,
+        );
+        at(&w.d[A], approve_body(&op).unwrap(), long_ago + 60);
+        at(&w.d[B], approve_body(&op).unwrap(), long_ago + 61);
+        at(
+            &w.d[A],
+            ack_body(&op, long_ago + 120).unwrap(),
+            long_ago + 120,
+        );
+        w.sync();
+        for x in &w.d {
+            x.store
+                .with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_ops SET received_at = timestamp WHERE timestamp < received_at",
+                        [],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert_eq!(w.verdict(&op, now).unwrap(), ReenrollVerdict::Ready);
+        // Another path replaces the phone (a second recovery, a handover); then the old recovery's requester tries to
+        // remove the phone that is live now.
+        let new = phone_swap(&w, A, now);
+        let revoke_new = at(
+            &w.d[R],
+            OpBody::DeviceRevoke {
+                device_id: new.did.clone(),
+            },
+            now + 2,
+        );
+        w.sync();
+        assert!(
+            !ready_recovery_for(&w.d[OBS].store, &revoke_new, now + 2).unwrap(),
+            "a recovery started against the old phone stood in for the ceremony that removes the new one"
+        );
+    }
+
+    /// Only `R` stays an attended terminal: the others run on their own.
+    fn solo_world() -> World {
+        let w = world();
+        for x in &w.d {
+            paper_setup(&x.store, &w.phrase).unwrap();
+        }
+        for x in &w.d {
+            x.store
+                .with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_devices SET attendance = 'unattended' WHERE device_id IN (?1, ?2, ?3)",
+                        rusqlite::params![w.d[A].did, w.d[B].did, w.d[OBS].did],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        w
+    }
+
+    fn settle_received_at(w: &World) {
+        for x in &w.d {
+            x.store
+                .with_conn(|c| {
+                    c.execute(
+                        "UPDATE sync_ops SET received_at = timestamp WHERE timestamp < received_at",
+                        [],
+                    )?;
+                    Ok(())
+                })
+                .unwrap();
+        }
+    }
+
+    // Design 5.2: a ring of one terminal and the phone: the paper authorizes and stands for the third factor too, the
+    // requester's own acknowledgement starts a 14 day lock.
+    #[test]
+    fn recovery_in_a_one_terminal_ring_completes_after_the_lock() {
+        let _env = super::SOLO_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        use crate::sync::recovery::{ack_body, is_solo, start_body};
+        let w = solo_world();
+        assert!(is_solo(&w.d[OBS].store, &w.d[R].did).unwrap());
+        let now = crate::store::now_ts();
+        let started = now - 15 * 86_400;
+        let at =
+            |d: &Dev, body: OpBody, t: i64| d.store.sync_append_local_at(&d.id, body, t).unwrap();
+        let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
+        let start = start_body(
+            &w.d[R].store,
+            &w.d[R].id,
+            started,
+            Some(&recover),
+            ThirdFactor::Paper,
+        )
+        .unwrap();
+        let op = at(&w.d[R], start, started);
+        at(
+            &w.d[R],
+            crate::sync::ceremony::red_factor_paper(&recover, &op),
+            started + 30,
+        );
+        at(&w.d[R], ack_body(&op, started + 60).unwrap(), started + 60);
+        w.sync();
+        settle_received_at(&w);
+        // The ordinary 7 day lock would be over eight days in; the solo lock is not.
+        assert_eq!(
+            validate_phone_reenroll(&w.d[OBS].store, &op, started + 60 + 8 * 86_400).unwrap(),
+            ReenrollVerdict::NeedsMoreTime {
+                ready_at: started + 60 + 14 * 86_400
+            }
+        );
+        assert_eq!(
+            validate_phone_reenroll(&w.d[OBS].store, &op, now).unwrap(),
+            ReenrollVerdict::Ready
+        );
+    }
+
+    #[test]
+    fn solo_recovery_is_cancelled_by_the_live_phone() {
+        use crate::sync::recovery::{ack_body, start_body};
+        let w = solo_world();
+        let now = crate::store::now_ts();
+        let started = now - 15 * 86_400;
+        let at =
+            |d: &Dev, body: OpBody, t: i64| d.store.sync_append_local_at(&d.id, body, t).unwrap();
+        let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
+        let start = start_body(
+            &w.d[R].store,
+            &w.d[R].id,
+            started,
+            Some(&recover),
+            ThirdFactor::Paper,
+        )
+        .unwrap();
+        let op = at(&w.d[R], start, started);
+        at(
+            &w.d[R],
+            crate::sync::ceremony::red_factor_paper(&recover, &op),
+            started + 30,
+        );
+        at(&w.d[R], ack_body(&op, started + 60).unwrap(), started + 60);
+        at(
+            &w.d[P],
+            OpBody::PhoneReenrollCancel {
+                reenroll_hash: op.hash(),
+                by_phone: true,
+                third_factor: None,
+            },
+            started + 120,
+        );
+        w.sync();
+        settle_received_at(&w);
+        assert_eq!(
+            validate_phone_reenroll(&w.d[OBS].store, &op, now).unwrap(),
+            ReenrollVerdict::CancelledByPhone
+        );
+    }
+
+    #[test]
+    fn an_open_recovery_alerts_the_other_attended_terminals_and_a_cancelled_one_does_not() {
+        use crate::sync::recovery::{open_for_alert, open_for_alert_for};
+        let w = world();
+        // A device records itself at enrollment; the fixture does not for the terminals.
+        w.d[A]
+            .store
+            .sync_register_device(
+                &w.d[A].id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        let op = w.reenroll(false, None, None);
+        let now = op.timestamp + 60;
+        let alerts = open_for_alert_for(&w.d[A].store, &w.d[A].did, now).unwrap();
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].hash(), op.hash());
+        assert_eq!(
+            open_for_alert(&w.d[A].store, &w.d[A].id, now)
+                .unwrap()
+                .len(),
+            1
+        );
+        // Not for the requester itself, nor for a device nobody sits at.
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[R].did, now)
+            .unwrap()
+            .is_empty());
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[H].did, now)
+            .unwrap()
+            .is_empty());
+        append(
+            &w.d[P],
+            OpBody::PhoneReenrollCancel {
+                reenroll_hash: op.hash(),
+                by_phone: true,
+                third_factor: None,
+            },
+        );
+        w.sync();
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
+            .unwrap()
+            .is_empty());
+    }
+
+    // H1 rule 4: a handover in force after a recovery started leaves that recovery superseded, and nobody is alerted to it.
+    #[test]
+    fn superseded_recovery_is_not_alerted() {
+        use crate::sync::recovery::open_for_alert_for;
+        let w = world();
+        w.d[A]
+            .store
+            .sync_register_device(
+                &w.d[A].id.public(),
+                "self",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        let op = w.reenroll(false, None, None);
+        let now = op.timestamp + 60;
+        assert_eq!(
+            open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
+                .unwrap()
+                .len(),
+            1
+        );
+        append(
+            &w.d[P],
+            OpBody::PhoneHandover {
+                new_phone: Dev::new().id.public(),
+                name: "next phone".into(),
+            },
+        );
+        w.sync();
+        assert_eq!(w.verdict(&op, now).unwrap(), ReenrollVerdict::Superseded);
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
+            .unwrap()
+            .is_empty());
     }
 }

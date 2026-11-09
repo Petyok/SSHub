@@ -158,6 +158,45 @@ pub fn cred_put(
     store.sync_append_local(id, cred_update_body(store, &id.public(), host, payload)?)
 }
 
+/// The credentials that can be healed: their newest sharing lacks a current holder (a replacement terminal, a new phone)
+/// and no removed device holds a share of it. A credential a removed device still holds a share of is NOT healed:
+/// re-sealing the same secret leaves the old ciphertext in the log, which opens to the same password; its secret must be
+/// changed instead (`quorum::exposed_credentials`, kind `Removed`).
+pub fn heal_plan(store: &LauncherStore) -> Result<Vec<HostUid>> {
+    use super::quorum::{exposed_credentials, ExposureKind};
+    let exposed = exposed_credentials(store)?;
+    let removed: Vec<HostUid> = exposed
+        .iter()
+        .filter(|e| e.kind == ExposureKind::Removed)
+        .map(|e| e.host_uid)
+        .collect();
+    let mut out: Vec<HostUid> = Vec::new();
+    for e in exposed
+        .iter()
+        .filter(|e| e.kind == ExposureKind::NotHeldBy && !removed.contains(&e.host_uid))
+    {
+        if !out.contains(&e.host_uid) {
+            out.push(e.host_uid);
+        }
+    }
+    Ok(out)
+}
+
+/// Re-seal the credential of `host` under a fresh DEK to the current recipients, with the secret the caller opened (heal on
+/// use after a two-share unlock, or in bulk with the paper). Refused unless [`heal_plan`] lists the host.
+pub fn heal_credential(
+    store: &LauncherStore,
+    id: &super::crypto::DeviceIdentity,
+    host: &HostUid,
+    payload: &CredPayload,
+) -> Result<Op> {
+    ensure!(
+        heal_plan(store)?.contains(host),
+        "this credential needs no healing, or a removed device still holds a share of it: change its secret instead"
+    );
+    cred_put(store, id, host, payload)
+}
+
 /// What a migration read and would replicate.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct MigrationReport {

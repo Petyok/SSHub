@@ -205,12 +205,17 @@ impl SyncRuntime {
         if notify.command.is_none() {
             return;
         }
+        let mut send = |subject: &str, body: &str| {
+            crate::sync::notify::send_notification(notify, subject, body)
+        };
         let _ = crate::sync::ceremony::send_owed_codes(
             &self.store,
             &self.identity,
             crate::store::now_ts(),
-            &mut |subject, body| crate::sync::notify::send_notification(notify, subject, body),
+            &mut send,
         );
+        // Every renewal of a trust session is mailed (design 6.1, abuse M1): a stolen phone renewing quietly is the case.
+        let _ = crate::sync::cert::send_renew_mails(&self.store, &mut send);
     }
 
     /// Ask `holder` for a share over its recorded host, inside an authenticated

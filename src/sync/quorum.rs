@@ -417,6 +417,72 @@ pub fn live_holder_count(store: &LauncherStore) -> Result<usize> {
         .count())
 }
 
+/// Why a Quorum credential is on the exposure list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExposureKind {
+    /// A removed device (revoked or compromised) still holds a share of its newest sharing: the credential stays exposed
+    /// until its secret changes (a reshare cannot take a share back from a device that kept it).
+    Removed,
+    /// A current holder has no share of its newest sharing (a replacement terminal, a new phone): it opens the credential
+    /// only with the phone and the paper until the credential is healed (`cred_ops::heal_credential`).
+    NotHeldBy,
+}
+
+/// One credential and the devices that make it exposed or incompletely shared.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Exposure {
+    pub host_uid: HostUid,
+    pub devices: Vec<DeviceId>,
+    pub kind: ExposureKind,
+}
+
+/// Derived from the log, never stored: the Quorum credentials whose newest sharing includes a removed device, and those
+/// that lack a current holder. A Vault credential (one wrap) is never listed. Sorted by host, `Removed` before `NotHeldBy`.
+pub fn exposed_credentials(store: &LauncherStore) -> Result<Vec<Exposure>> {
+    let devices = super::ceremony::effective_devices(store, None)?;
+    let gone = |d: &super::oplog::DeviceRow| {
+        matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+    };
+    let mut out = Vec::new();
+    for host in super::reshare::quorum_credentials(store)? {
+        let Some((_, wraps)) = store.sync_cred_ciphertext(&host)? else {
+            continue;
+        };
+        if wraps.len() < 2 {
+            continue;
+        }
+        let recipients: std::collections::BTreeSet<&DeviceId> =
+            wraps.iter().map(|w| &w.recipient).collect();
+        let mut removed: Vec<DeviceId> = devices
+            .iter()
+            .filter(|d| gone(d) && recipients.contains(&d.id))
+            .map(|d| d.id.clone())
+            .collect();
+        removed.sort();
+        if !removed.is_empty() {
+            out.push(Exposure {
+                host_uid: host,
+                devices: removed,
+                kind: ExposureKind::Removed,
+            });
+        }
+        let mut lacking: Vec<DeviceId> = devices
+            .iter()
+            .filter(|d| d.role == DeviceRole::Holder && !gone(d) && !recipients.contains(&d.id))
+            .map(|d| d.id.clone())
+            .collect();
+        lacking.sort();
+        if !lacking.is_empty() {
+            out.push(Exposure {
+                host_uid: host,
+                devices: lacking,
+                kind: ExposureKind::NotHeldBy,
+            });
+        }
+    }
+    Ok(out)
+}
+
 // ------------------------------------------------------------------ sharings
 
 /// Holders that receive a share of a new credential: devices with the holder role that are neither
@@ -852,6 +918,12 @@ impl Unlocker for QuorumUnlocker {
             let plain = self.open_one(&uid)?;
             let payload = super::cred_ops::CredPayload::from_bytes(&plain)
                 .map_err(|e| UnlockError::Failed(e.to_string()))?;
+            // Heal on use (design 4.1): the secret is open on this terminal, so a credential that lacks a current holder
+            // (a replacement terminal, a new phone) is re-sealed to the current recipients now, with no extra prompt. Best
+            // effort: a failure here never fails the unlock.
+            if super::cred_ops::heal_plan(&self.store).is_ok_and(|plan| plan.contains(&uid)) {
+                let _ = super::cred_ops::heal_credential(&self.store, &self.id, &uid, &payload);
+            }
             // The gate holds the password the TUI asks the store for; an identity key goes to the
             // gate's key holder (a private ssh-agent, contract 3d), never to a file of its own.
             self.gate.insert(

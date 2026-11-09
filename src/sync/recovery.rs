@@ -5,8 +5,9 @@
 //!
 //! A re-enrollment needs, all at once: an authorization (two `RecoveryApprove` ops from distinct
 //! attended devices other than the requester, or the paper signature carried in the op, never both
-//! counted from one artifact), a third factor that is a different artifact, one `RecoveryAck`
-//! (the automatic "I have seen it" record) from a device other than the requester that starts the
+//! counted from one artifact), a third factor that is a different artifact, one `RecoveryAck` (an attended
+//! terminal's record that its user was shown the recovery: it is written when the screen was shown, never
+//! automatically) from a device other than the requester that starts the
 //! 7 day clock, and proof of liveness. A live phone cancels with no factor; any other device needs
 //! the third factor.
 
@@ -14,7 +15,9 @@ use std::collections::BTreeSet;
 
 use anyhow::{bail, ensure, Result};
 
-use super::limits::{RECOVERY_TIMELOCK_SECS, TIMESTAMP_SKEW_GRACE_SECS};
+use super::limits::{
+    RECOVERY_TIMELOCK_SECS, RECOVERY_TIMELOCK_SOLO_SECS, TIMESTAMP_SKEW_GRACE_SECS,
+};
 use super::oplog::DeviceId;
 
 /// A recovery stays completable this long after its time lock ended; then it must be started again.
@@ -43,6 +46,8 @@ pub enum ReenrollVerdict {
     Lapsed,
     /// The old phone is revoked and the new one enrolled: the recovery is spent.
     Completed,
+    /// A phone handover came into force after this recovery started: the phone it was started against is gone.
+    Superseded,
 }
 
 /// What the machine is told about the op that proposes the recovery. The caller has already checked
@@ -60,6 +65,9 @@ pub struct Proposal {
     pub third_factor_distinct: bool,
     /// The op's liveness set matches what this device knows to be fresh.
     pub liveness_ok: bool,
+    /// The ring has no attended holder terminal other than the requester (design 5.2): nobody else can acknowledge it, so
+    /// the requester's own acknowledgement starts the lock, the paper authorizes it, and the lock is doubled.
+    pub solo: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,6 +166,10 @@ impl Recovery {
                     p.liveness_ok,
                     "the liveness set excludes a device known to be fresh"
                 );
+                ensure!(
+                    !p.solo || matches!(p.authorization, Authorization::Paper { .. }),
+                    "a recovery in a ring of one computer is authorized by the paper phrase"
+                );
                 self.proposal = Some(p);
             }
             Event::Approve { by, attended } => {
@@ -184,7 +196,7 @@ impl Recovery {
                 let p = self.open()?;
                 ensure!(attended, "only a device with a person at the keyboard acknowledges a recovery: a device that runs on its own has seen nothing");
                 ensure!(
-                    by != p.requester,
+                    by != p.requester || p.solo,
                     "the requester cannot acknowledge its own recovery"
                 );
                 ensure!(
@@ -248,7 +260,12 @@ impl Recovery {
         let Some(first) = self.first_ack else {
             return ReenrollVerdict::AwaitingAck;
         };
-        let ready_at = first + RECOVERY_TIMELOCK_SECS;
+        let ready_at = first
+            + if p.solo {
+                solo_lock_secs()
+            } else {
+                RECOVERY_TIMELOCK_SECS
+            };
         if now < ready_at {
             ReenrollVerdict::NeedsMoreTime { ready_at }
         } else if now >= ready_at + RECOVERY_READY_WINDOW_SECS {
@@ -347,6 +364,20 @@ fn fresh_devices(store: &LauncherStore, now: i64) -> Result<Vec<DeviceRow>> {
     super::ceremony::log_live(store, super::ceremony::effective_devices(store, None)?, now)
 }
 
+/// Is `requester` the only attended holder terminal of the ring? Then a recovery cannot be acknowledged by anyone else.
+pub fn is_solo(store: &LauncherStore, requester: &DeviceId) -> Result<bool> {
+    Ok(is_solo_in(
+        &super::ceremony::effective_devices(store, None)?,
+        requester,
+    ))
+}
+
+fn is_solo_in(devices: &[DeviceRow], requester: &DeviceId) -> bool {
+    !devices
+        .iter()
+        .any(|d| d.id != *requester && d.kind == DeviceKind::Terminal && attended_live(d))
+}
+
 fn attended_live(row: &DeviceRow) -> bool {
     // Approvers and ackers are holders in force: a mirror (or a device whose promotion never completed)
     // is not a participant of a recovery.
@@ -358,8 +389,11 @@ fn attended_live(row: &DeviceRow) -> bool {
         )
 }
 
-/// Ops of one kind in any state but rejected or void, in log order: a recovery vote is a signed
-/// statement whether or not this device's user has reviewed it yet.
+/// The phone of the ring as the ceremony saw it at lamport `upto`.
+fn phone_in_view(store: &LauncherStore, upto: u64) -> Result<Option<DeviceId>> {
+    super::quorum::phone_device_in(&super::ceremony::effective_devices(store, Some(upto))?)
+}
+
 /// Does a phone-loss recovery of `requester` stand in for the ceremony of `op`, one of its two completion
 /// ops (revoke the lost phone, admit the new one)? Yes when that recovery is `Ready` at `now`, older than
 /// `op`, and no new phone was admitted through it yet: one recovery buys exactly one replacement. The
@@ -369,6 +403,20 @@ pub(crate) fn ready_recovery_for(store: &LauncherStore, op: &Op, now: i64) -> Re
     for re in signed_ops(store, "PhoneReenroll")?.into_iter().rev() {
         if re.device_id != op.device_id || re.lamport >= op.lamport {
             continue;
+        }
+        // A recovery is bound to the phone it was started against (H1): its completion may remove only that phone, and
+        // only while it is still the live phone in the completion's own view. A recovery that outlived a phone swap
+        // stands for nothing against the new phone.
+        if let OpBody::DeviceRevoke { device_id } = &op.body {
+            let started_against = phone_in_view(store, re.lamport).unwrap_or(None);
+            if started_against.as_ref() != Some(device_id)
+                || phone_in_view(store, op.lamport.saturating_sub(1))
+                    .unwrap_or(None)
+                    .as_ref()
+                    != Some(device_id)
+            {
+                continue;
+            }
         }
         if !matches!(
             validate_phone_reenroll_upto(store, &re, now, Some(op.lamport)),
@@ -433,6 +481,46 @@ pub fn validate_phone_reenroll(
     validate_phone_reenroll_upto(store, op, now, None)
 }
 
+/// The recoveries this device's user should be told about: every `PhoneReenroll` that is still open (not cancelled,
+/// completed or lapsed) and was not started by this device, as the ops. Empty for a device nobody sits at. The caller
+/// shows ONE alert, deduped by requester, with the count and the earliest lock end; it never writes an op from the alert.
+pub fn open_for_alert(store: &LauncherStore, me: &DeviceIdentity, now: i64) -> Result<Vec<Op>> {
+    open_for_alert_for(store, &me.public().device_id(), now)
+}
+
+/// [`open_for_alert`] for a caller that holds only this device's id (the screens).
+pub fn open_for_alert_for(store: &LauncherStore, me: &DeviceId, now: i64) -> Result<Vec<Op>> {
+    let me = me.clone();
+    let devices = super::ceremony::effective_devices(store, None)?;
+    if !devices
+        .iter()
+        .any(|d| d.id == me && d.kind == DeviceKind::Terminal && attended_live(d))
+    {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for re in signed_ops(store, "PhoneReenroll")? {
+        if re.device_id == me {
+            continue;
+        }
+        // A bad proposal is an error: it never alerts.
+        let Ok(verdict) = validate_phone_reenroll(store, &re, now) else {
+            continue;
+        };
+        if !matches!(
+            verdict,
+            ReenrollVerdict::CancelledByPhone
+                | ReenrollVerdict::CancelledByFactor
+                | ReenrollVerdict::Lapsed
+                | ReenrollVerdict::Superseded
+                | ReenrollVerdict::Completed
+        ) {
+            out.push(re);
+        }
+    }
+    Ok(out)
+}
+
 /// [`validate_phone_reenroll`] judged against the devices in force up to lamport `upto`: what the completion
 /// ops of a recovery use, since they are themselves part of the device view and must not feed back into it.
 fn validate_phone_reenroll_upto(
@@ -487,9 +575,10 @@ fn validate_phone_reenroll_upto(
             bail!("a paper signature on a recovery that is not authorized by paper")
         }
     };
+    let solo = is_solo_in(&devices, &op.device_id);
     let factor_distinct = match third_factor {
         ThirdFactor::EmailCode => true,
-        ThirdFactor::Paper => !*via_paper,
+        ThirdFactor::Paper => !*via_paper || solo,
         #[allow(unreachable_patterns)]
         _ => false,
     };
@@ -531,9 +620,19 @@ fn validate_phone_reenroll_upto(
         },
         third_factor_distinct: factor_distinct,
         liveness_ok,
+        solo,
     }))?;
 
-    let phone = super::quorum::phone_device_in(&devices)?;
+    // The phone is the phone of the view at each event's OWN position, never the phone of today (H1): a later phone swap
+    // (a recovery, a handover) must not turn an earlier cancellation by the then-live phone into a dropped event.
+    let phone_at = |lamport: u64| -> Result<Option<DeviceId>> {
+        let view = lamport.min(upto.unwrap_or(u64::MAX));
+        if Some(view) == upto {
+            super::quorum::phone_device_in(&devices)
+        } else {
+            phone_in_view(store, view)
+        }
+    };
     let row = |id: &DeviceId| devices.iter().find(|d| d.id == *id);
     let mut events: Vec<(u64, DeviceId, u64, Event)> = Vec::new();
     for a in signed_ops(store, "RecoveryApprove")? {
@@ -586,7 +685,7 @@ fn validate_phone_reenroll_upto(
             if *reenroll_hash == hash {
                 let ev = if *by_phone {
                     Event::CancelByPhone {
-                        by_phone: phone.as_ref() == Some(&c.device_id),
+                        by_phone: phone_at(c.lamport)?.as_ref() == Some(&c.device_id),
                     }
                 } else {
                     // The factor is PROVEN for this cancellation (a RedFactor over its hash), not just named.
@@ -615,6 +714,23 @@ fn validate_phone_reenroll_upto(
         let _ = m.apply(ev); // an event that does not qualify changes nothing
     }
     let v = m.verdict(now);
+    // A phone handover in force after this recovery started replaced the phone it was started against (H1 rule 4): the
+    // recovery stands for nothing, whatever else holds.
+    if !matches!(
+        v,
+        ReenrollVerdict::CancelledByPhone
+            | ReenrollVerdict::CancelledByFactor
+            | ReenrollVerdict::Completed
+    ) {
+        for h in super::quorum::ops_of(store, "PhoneHandover", None)? {
+            if h.lamport > op.lamport
+                && upto.is_none_or(|u| h.lamport <= u)
+                && super::ceremony::in_force(store, &h)?
+            {
+                return Ok(ReenrollVerdict::Superseded);
+            }
+        }
+    }
     if v == ReenrollVerdict::Ready {
         let voters: Vec<DeviceId> = signed_ops(store, "RecoveryApprove")?
             .into_iter()
@@ -649,8 +765,11 @@ pub fn start_body(
     third_factor: ThirdFactor,
 ) -> Result<OpBody> {
     let via_paper = paper_recover.is_some();
+    // In a ring of one computer nobody else can acknowledge, send or approve: the paper phrase stands for the
+    // authorization and for the third factor too (design 5.2). The lock is doubled and the live phone can still cancel.
+    let solo = is_solo(store, &me.public().device_id())?;
     ensure!(
-        !(via_paper && third_factor == ThirdFactor::Paper),
+        !(via_paper && third_factor == ThirdFactor::Paper) || solo,
         "the paper phrase authorizes this recovery, so the emailed code must be the proof"
     );
     let mut body = OpBody::PhoneReenroll {
@@ -782,3 +901,16 @@ pub fn clear_snapshots(store: &LauncherStore) -> Result<usize> {
 
 #[cfg(test)]
 mod tests;
+
+/// The lock of a one-terminal recovery. The e2e image (built with `--features e2e-hooks`, never a release) may shorten it
+/// with `SSHUB_E2E_SOLO_LOCK_SECS` so a scenario need not wait fourteen days; every other build reads the constant.
+fn solo_lock_secs() -> i64 {
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(secs) = std::env::var("SSHUB_E2E_SOLO_LOCK_SECS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+    {
+        return secs;
+    }
+    RECOVERY_TIMELOCK_SOLO_SECS
+}

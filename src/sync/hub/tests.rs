@@ -240,3 +240,35 @@ fn the_phone_chain_list_carries_the_terminals_own_id_and_the_newest_eight_ops() 
     // a terminal that holds nothing of that phone says so
     assert!(phone_chain_wire(&d[1].store, "0123456789abcdef", &d[1].did).is_err());
 }
+
+#[test]
+fn the_phone_chain_list_carries_the_terminals_block() {
+    let d = ring(3);
+    all_to_all(&d);
+    d[0].append_host();
+    all_to_all(&d);
+    let wire = phone_chain_wire(&d[1].store, &d[0].did, &d[1].did).unwrap();
+    let block = wire.terminals.expect("a terminals block");
+    assert_eq!(block.count, 3, "the three terminals, this one included");
+    let newest = wire
+        .ops
+        .iter()
+        .map(|(c, s)| Op::from_canonical(c, *s).unwrap().timestamp)
+        .max()
+        .unwrap();
+    assert_eq!(block.newest_op_ts, newest);
+    // A removed terminal is not counted.
+    d[1].store
+        .with_conn(|c| {
+            c.execute(
+                "UPDATE sync_devices SET status = 'revoked' WHERE device_id = ?1",
+                rusqlite::params![d[2].did],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let wire = phone_chain_wire(&d[1].store, &d[0].did, &d[1].did).unwrap();
+    assert_eq!(wire.terminals.unwrap().count, 2);
+    // It survives the wire.
+    assert_eq!(PhoneOpsWire::decode(&wire.encode()).unwrap(), wire);
+}

@@ -2,6 +2,7 @@
 //! merge rules and review. The `LauncherStore::sync_*` methods live in
 //! [`store_impl`].
 
+pub mod cert_fold;
 pub mod checkpoint;
 pub mod fork;
 pub mod ingest;
@@ -9,6 +10,7 @@ pub mod merge;
 pub mod pending;
 pub mod store_impl;
 
+pub use cert_fold::{cert_record, CertRecord, Renewal};
 pub use checkpoint::{
     ring_fingerprint, BootstrapTrust, CheckpointBundle, CheckpointRow, CheckpointStatus,
     CheckpointVerdict, PruneReport, Pruned,
