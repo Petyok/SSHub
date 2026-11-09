@@ -1725,3 +1725,27 @@ What exists on top of 4j, with the names the screens and the scenarios use:
   of the list. Unsigned, informational.
 * **Not yet** (wave 3): the `PhoneHandover` rules (Paper-only third factor, the new phone's own proof, the effect lamport, `successor_of` for certificates,
   `handover::handover_words` over the proto crate's eight word function).
+
+### 4l. Two interface decisions that amend 4j (S, 2026-11-09; announced to every lane)
+
+**(a) The renewal card shows the hosts the delegate opened: DECIDED, kind 11 carries them.** The phone keeps no host list and the renewal screen exists to show
+what the delegate did, so the host, which reads it from the log, supplies it. Kind 11 gets a trailing block after the evidence entries:
+`m u8 (m <= 8) || m x (len u8 || host name utf8, 1 to 48 bytes) || total u16 BE`: the `m` most recently opened hosts of the certificate (newest first) and the total
+number opened under it. Hosts come from `cert::recorded_openings` (what the holders recorded, never the delegate's own claim), names from the host table (a host
+with no name here is listed as its first 8 hex digits); `RenewView.opened` is the name list and `RenewView` gains `opened_total: u32`. A frame without the block
+decodes as before and reads as "the terminal sent no list": the phone says so and shows the evidence age only (the card never claims an empty list means nothing
+was opened). Owners and cost (hours come out of the lane's slack, not new budget): P wire encode/decode, vectors, oracle 3 h; C `cert_renew_request` fills it 1 h;
+PH-core `describe_cert_renew`, page parity 3 h; PH-android card 1 h; T the terminal view 1 h; E scenario 75a asserts the list 1 h. About 10 h in all.
+Rejected: dropping the list from the design. The mail and the sticky notice come after the fact; this is the only moment before the signature, and 10 h is
+small next to a card that cannot show what it exists to show.
+
+**(b) The new phone receives the handover op hash inside kind 12 itself.** Two stages of one frame, nothing new on the wire:
+1. *Request (old phone).* The terminal shows `PhoneHandoverRequestWire` as in 4j; the old phone compares the 8 words, signs and builds the `PhoneHandover` op.
+2. *Admission (new phone).* After the terminal ingested that op it shows the NEW phone a second kind 12 frame whose layout is the 4j layout followed by
+   `0x01 || op_hash(32)` (the hash of the `PhoneHandover` op just ingested). Without the trailing block the frame is a request; a trailing block that is not exactly
+   `0x01` and 32 bytes is an error. The new phone's `describe_phone_handover` returns `HandoverView.op_hash: Option<[u8; 32]>` (present in stage 2 only) and shows the
+   same 8 words so the new owner can compare them with the old phone; `sign_handover_admission(state, id, op_hash, now)` takes the hash from the view, never from a typed
+   argument. A new phone refuses to sign unless the frame's `new_phone` is its own public key. Its `RedPhoneSign` returns to the terminal as ordinary phone ops (kind 5)
+   and counts only for the op that names its key (a wrong hash signs nothing that can be used).
+Owners and cost: P kind 12 optional trailer, vectors 2 h; PH-core view and refusal, page parity 2 h; PH-android new-phone screen (inside the 12 h handover line);
+T `sync-phone-enroll --replace` shows the second frame (inside its 10 h line); E `phone2` scans stage 2 (inside 78a); about 4 h extra in all.
