@@ -345,3 +345,70 @@ fn the_paper_sheet_is_one_private_file_that_is_never_overwritten_and_the_only_co
         }
     }
 }
+
+/// Design 7b item 5: the mail step writes `[sync.notify]` and sends a test message through the command; a command
+/// that fails is said plainly.
+#[test]
+fn the_mail_step_writes_the_config_and_sends_a_test_through_the_command() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    assert!(
+        r.app.sync.no_mail,
+        "a ring without mail shows the standing line"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("fakemail");
+    let sink = dir.path().join("sent.txt");
+    std::fs::write(&script, format!("#!/bin/sh\ncat > {}\n", sink.display())).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    crate::app::sync_flows_more::mail_setup(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncPrompt);
+    type_and_enter(&mut r.app, "me@example.com");
+    type_and_enter(&mut r.app, "sshub@example.com");
+    type_and_enter(&mut r.app, &format!("{} -t -i", script.display()));
+    pump(&mut r.app, "the test mail", |a| {
+        sink.exists() && a.mode != AppMode::SyncPrompt
+    });
+    let cfg = crate::config::load_config_at(&r.paths.config_file).unwrap();
+    assert_eq!(cfg.sync.notify.to, ["me@example.com"]);
+    assert_eq!(cfg.sync.notify.from.as_deref(), Some("sshub@example.com"));
+    let sent = std::fs::read_to_string(&sink).unwrap();
+    assert!(
+        sent.contains("To: me@example.com") && sent.contains("mail test"),
+        "{sent}"
+    );
+    r.app.refresh_sync_view();
+    assert!(!r.app.sync.no_mail);
+
+    // A command that cannot run: settings saved, the failure is said.
+    crate::app::sync_flows_more::mail_setup(&mut r.app);
+    type_and_enter(&mut r.app, "me@example.com");
+    type_and_enter(&mut r.app, "sshub@example.com");
+    type_and_enter(&mut r.app, "/nonexistent/mailer -t -i");
+    pump(&mut r.app, "the failure", |a| {
+        info_lines(a).join(" ").contains("FAILED") || notice(a).contains("FAILED")
+    });
+}
+
+/// "Not now" is recorded and the offer after enrolling does not come again by itself.
+#[test]
+fn not_now_at_the_mail_step_is_recorded() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    crate::app::sync_flows_more::mail_offer_after_enroll(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncMenu);
+    r.app.handle_key(key(KeyCode::Down)).unwrap();
+    r.app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert!(
+        crate::config::load_config_at(&r.paths.config_file)
+            .unwrap()
+            .sync
+            .notify_declined
+    );
+    r.app.mode = AppMode::Normal;
+    crate::app::sync_flows_more::mail_offer_after_enroll(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::Normal);
+    assert!(r.app.sync.no_mail);
+}

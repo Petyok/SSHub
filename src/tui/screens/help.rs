@@ -455,11 +455,11 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "Enter",
-        desc: "Details of the selected device (with its id as a QR for the phone app). A device that missed some changes or was away too long: sync it first; a COMPROMISED one: show the proof",
+        desc: "Details of the selected device (with its id as a QR for the phone app). A device that was away: nothing is blocked, and if a round reports behind, Enter re-enrolls it; a COMPROMISED one: show the proof",
     },
     HelpItem::Entry {
         key: "R",
-        desc: "Review every change waiting for approval, with why it waits (a approve, r reject, Esc close). A big change shows its three approvals: a adds this device's approval, p types the paper phrase, e the emailed code",
+        desc: "Review every change waiting for approval, with why it waits (a approve, r reject, Esc close; A approves every change of the same device that waits only because it was away and touches no address, jump host or command). A big change shows its three approvals: a adds this device's approval, p types the paper phrase, e the emailed code",
     },
     HelpItem::Entry {
         key: "t",
@@ -471,7 +471,7 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     },
     HelpItem::Entry {
         key: "",
-        desc: "In the M menu: master phrase exemption (Quorum only; with it this computer alone plus the master phrase opens every password), export of every saved password (propose; choose it again once the others approved: it continues; the file is written owner-only and never overwritten), the paper phrase wizard (write down, then type back) and a printable paper phrase sheet. A mode switch or export that was approved shows a Finish row on the Sync tab.",
+        desc: "In the M menu: master phrase exemption (Quorum only; with it this computer alone plus the master phrase opens every password), export of every saved password (propose; choose it again once the others approved: it continues; the file is written owner-only and never overwritten), the paper phrase wizard (write down, then type three random words back; P on the Sync tab opens it) and a printable paper phrase sheet. A mode switch or export that was approved shows a Finish row on the Sync tab.",
     },
     HelpItem::Entry {
         key: "",

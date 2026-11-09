@@ -60,6 +60,7 @@ pub enum KeyAction {
     SyncReview,
     SyncTrust,
     SyncAdmin,
+    SyncPaper,
     SyncEnroll,
     SyncBleDrop,
     MapUp,
@@ -131,7 +132,7 @@ pub enum KeyAction {
 
 impl KeyAction {
     /// All editable actions, in display order.
-    pub const ALL: [KeyAction; 118] = [
+    pub const ALL: [KeyAction; 119] = [
         KeyAction::Save,
         KeyAction::Quit,
         KeyAction::Help,
@@ -183,6 +184,7 @@ impl KeyAction {
         KeyAction::SyncReview,
         KeyAction::SyncTrust,
         KeyAction::SyncAdmin,
+        KeyAction::SyncPaper,
         KeyAction::SyncEnroll,
         KeyAction::SyncBleDrop,
         KeyAction::MapUp,
@@ -304,6 +306,7 @@ impl KeyAction {
             KeyAction::SyncNow => "Sync tab: sync now",
             KeyAction::SyncReview => "Sync tab: review pending changes",
             KeyAction::SyncTrust => "Sync tab: open a trust session",
+            KeyAction::SyncPaper => "Sync tab: register the paper phrase",
             KeyAction::SyncAdmin => {
                 "Sync tab: manage the ring (revoke, roles, mode, recovery, paper)"
             }
@@ -435,6 +438,7 @@ pub struct KeybindsConfig {
     pub sync_review: Vec<String>,
     pub sync_trust: Vec<String>,
     pub sync_admin: Vec<String>,
+    pub sync_paper: Vec<String>,
     pub sync_enroll: Vec<String>,
     pub sync_ble_drop: Vec<String>,
     pub map_up: Vec<String>,
@@ -558,6 +562,7 @@ impl Default for KeybindsConfig {
             sync_review: vec!["R".into()],
             sync_trust: vec!["t".into()],
             sync_admin: vec!["M".into()],
+            sync_paper: vec!["K".into()],
             sync_enroll: vec!["A".into()],
             sync_ble_drop: vec!["Ctrl+B".into()],
             map_up: vec!["Up".into()],
@@ -789,6 +794,7 @@ impl KeybindsConfig {
             KeyAction::SyncReview => &self.sync_review,
             KeyAction::SyncTrust => &self.sync_trust,
             KeyAction::SyncAdmin => &self.sync_admin,
+            KeyAction::SyncPaper => &self.sync_paper,
             KeyAction::SyncEnroll => &self.sync_enroll,
             KeyAction::SyncBleDrop => &self.sync_ble_drop,
             KeyAction::MapUp => &self.map_up,
@@ -912,6 +918,7 @@ impl KeybindsConfig {
             KeyAction::SyncReview => self.sync_review = binds,
             KeyAction::SyncTrust => self.sync_trust = binds,
             KeyAction::SyncAdmin => self.sync_admin = binds,
+            KeyAction::SyncPaper => self.sync_paper = binds,
             KeyAction::SyncEnroll => self.sync_enroll = binds,
             KeyAction::SyncBleDrop => self.sync_ble_drop = binds,
             KeyAction::MapUp => self.map_up = binds,
