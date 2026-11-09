@@ -798,40 +798,7 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
                 std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)?;
                 text
             };
-            let (s, ceremony) = phone_ops(&store, &text)?;
-            let skipped = skipped_ops(&store, &s)?;
-            emit(
-                &mut out,
-                a.json,
-                "ops",
-                format!(
-                    "{} received, {} applied, {} waiting for approval",
-                    s.received, s.applied, s.pending_arrived
-                ),
-                json!({"received": s.received, "applied": s.applied, "pending": s.pending_arrived, "skipped": skipped, "red": ceremony}),
-            );
-            if !a.json {
-                for k in &skipped {
-                    emit(&mut out, false, "skipped", skipped_line(k), json!({}));
-                }
-                for c in &ceremony {
-                    emit(&mut out, false, "red", c.clone(), json!({}));
-                }
-            }
-            // Contract 4l (b): the second kind 12 frame, for the NEW phone.
-            for (frame, words) in admission_lines(&store, &id) {
-                emit(
-                    &mut out,
-                    a.json,
-                    "handover_admission",
-                    frame.clone(),
-                    json!({"frame": frame, "words": words}),
-                );
-                if !a.json {
-                    emit(&mut out, false, "handover_words", words, json!({}));
-                }
-            }
-            Ok(0)
+            phone_ops_cmd(&store, &id, &text, a.json, &mut out)
         }
         "sync-share-request" => share_request(paths, &store, &id, a, &mut out),
         "sync-cert-request" => {
@@ -937,6 +904,51 @@ fn trust_renew(
     if a.ble {
         return super::sync_phone_ble::push(&wire.encode(), a.json, a.wait, out);
     }
+    Ok(0)
+}
+
+/// `sync-phone-ops` after the phone's list was read: ingest it and print what applied, what was skipped, the ceremony of
+/// every Red op and, for a pending handover, the second kind 12 frame for the new phone.
+fn phone_ops_cmd(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    text: &str,
+    json: bool,
+    out: &mut impl Write,
+) -> Result<i32> {
+        let (s, ceremony) = phone_ops(store, text)?;
+        let skipped = skipped_ops(store, &s)?;
+        emit(
+            out,
+            json,
+            "ops",
+            format!(
+                "{} received, {} applied, {} waiting for approval",
+                s.received, s.applied, s.pending_arrived
+            ),
+            json!({"received": s.received, "applied": s.applied, "pending": s.pending_arrived, "skipped": skipped, "red": ceremony}),
+        );
+        if !json {
+            for k in &skipped {
+                emit(out, false, "skipped", skipped_line(k), json!({}));
+            }
+            for c in &ceremony {
+                emit(out, false, "red", c.clone(), json!({}));
+            }
+        }
+        // Contract 4l (b): the second kind 12 frame, for the NEW phone.
+        for (frame, words) in admission_lines(store, id) {
+            emit(
+                out,
+                json,
+                "handover_admission",
+                frame.clone(),
+                json!({"frame": frame, "words": words}),
+            );
+            if !json {
+                emit(out, false, "handover_words", words, json!({}));
+            }
+        }
     Ok(0)
 }
 

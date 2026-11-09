@@ -719,3 +719,40 @@ fn the_admission_frame_carries_the_op_hash_and_lamport_and_the_same_eight_words(
     other.body = OpBody::CertRevoke { cert_id: [1; 32] };
     assert!(handover_admission(&other, &old, [9; 8]).is_err());
 }
+
+#[test]
+fn sync_phone_ops_prints_the_second_kind_12_frame_once_the_handover_op_is_in() {
+    use crate::sync::wire::PhoneHandoverRequestWire;
+    let d = world();
+    let new = crate::sync::crypto::DeviceIdentity::generate();
+    // No handover op yet: no frame.
+    assert!(admission_lines(&d[1].store, &d[1].id).is_empty());
+    let op = append(
+        &d[2],
+        OpBody::PhoneHandover {
+            new_phone: new.public(),
+            name: "new phone".into(),
+        },
+    );
+    let text = B64.encode(
+        crate::sync::wire::PhoneOpsWire {
+            sender: None,
+            terminals: None,
+            ops: vec![(op.canonical_bytes(), op.signature)],
+        }
+        .encode(),
+    );
+    let mut out = Vec::new();
+    assert_eq!(
+        phone_ops_cmd(&d[1].store, &d[1].id, &text, false, &mut out).unwrap(),
+        0
+    );
+    let l = lines(&out);
+    let req = PhoneHandoverRequestWire::decode(
+        &B64.decode(value_of(&l, "handover_admission")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(req.op, Some((op.hash(), op.lamport)), "{l:?}");
+    assert_eq!(req.new_phone, new.public());
+    assert_eq!(value_of(&l, "handover_words").split_whitespace().count(), 8);
+}
