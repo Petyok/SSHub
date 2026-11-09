@@ -1,0 +1,50 @@
+{
+  "meta": {
+    "contract": "docs/host-sync-contract.md sections 4j, 4l",
+    "op_hash": "null = the request; set = the admission frame"
+  },
+  "vectors": [
+    {
+      "id": "handover-request",
+      "inputs": {
+        "ed": "0101010101010101010101010101010101010101010101010101010101010101",
+        "x": "0202020202020202020202020202020202020202020202020202020202020202",
+        "mlkem": "3031323334",
+        "name": "new phone",
+        "terminal": "0909090909090909",
+        "op_hash": null
+      },
+      "outputs": {
+        "frame": "5357523100010c0101010101010101010101010101010101010101010101010101010101010101020202020202020202020202020202020202020202020202020202020202020200053031323334096e65772070686f6e650909090909090909"
+      }
+    },
+    {
+      "id": "handover-admission",
+      "inputs": {
+        "ed": "0101010101010101010101010101010101010101010101010101010101010101",
+        "x": "0202020202020202020202020202020202020202020202020202020202020202",
+        "mlkem": "3031323334",
+        "name": "new phone",
+        "terminal": "0909090909090909",
+        "op_hash": "abababababababababababababababababababababababababababababababab"
+      },
+      "outputs": {
+        "frame": "5357523100010c0101010101010101010101010101010101010101010101010101010101010101020202020202020202020202020202020202020202020202020202020202020200053031323334096e65772070686f6e65090909090909090901abababababababababababababababababababababababababababababababab"
+      }
+    },
+    {
+      "id": "handover-admission-long-name",
+      "inputs": {
+        "ed": "0101010101010101010101010101010101010101010101010101010101010101",
+        "x": "0202020202020202020202020202020202020202020202020202020202020202",
+        "mlkem": "3031323334",
+        "name": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+        "terminal": "0909090909090909",
+        "op_hash": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+      },
+      "outputs": {
+        "frame": "5357523100010c0101010101010101010101010101010101010101010101010101010101010101020202020202020202020202020202020202020202020202020202020202020200053031323334ff6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e6e0909090909090909015a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a"
+      }
+    }
+  ]
+}
