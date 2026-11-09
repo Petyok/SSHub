@@ -561,10 +561,12 @@ The paper phrase must be registered before a switch to Quorum and before a chang
 devices: \fBsync\-mode quorum\fR and \fBsync\-role \fIDEVICE\fR \fBholder\fR refuse without it. In the terminal screen the key
 \fBK\fR on the Sync tab opens the wizard (24 words shown, three random ones typed back).
 .TP
-.B sshub sync\-phone\-enroll
+.B sshub sync\-phone\-enroll \fR[\fB\-\-replace\fR]
 Add the phone from this terminal as text. Prints the terminal's frames; read the phone's frames
 (base64, one per line) and then \fBy\fR or \fBn\fR for the four check words from standard input. A verified phone is
-registered and proposed as a full device (a big change).
+registered and proposed as a full device (a big change). With \fB\-\-replace\fR the verified phone is the new phone of a
+handover from the old one (which must still work): nothing is registered, and the kind 12 request for the old phone, the
+eight words to compare and the next steps are printed instead.
 .TP
 .B sshub sync\-notice \fIOP\fR
 Print the kind 3 notice (base64) of a big change for the phone.

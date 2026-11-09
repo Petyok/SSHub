@@ -363,7 +363,7 @@ sshub sync-rekey [--csv FILE|--stdin] [--new-key HOST]...   # after a stolen dev
 sshub sync-replace-terminal <old> [--new <computer>]   # replace a full computer in steps (enroll, promote, remove), the paper typed once
 sshub sync-trust-renew [<id>] [--days N]       # list renewable trust sessions, or print the kind 11 renewal request for the phone
 sshub sync-import-kit                         # second machine: set up the Vault from the kit and the phrase
-sshub sync-phone-enroll [--ble]               # enroll the phone as text: frames (base64) on stdin and stdout, the four words, then y or n (--ble: the frames also over Bluetooth)
+sshub sync-phone-enroll [--replace] [--ble]               # enroll the phone as text (--replace: the verified phone is the NEW phone of a handover from the old one, which still works): frames (base64) on stdin and stdout, the four words, then y or n (--ble: the frames also over Bluetooth)
 sshub sync-notice <op-id> [--ble]             # the kind 3 notice (base64) of a Red op for the phone (--ble: also handed over Bluetooth)
 sshub sync-phone-chain <phone-id> [--ble]   # the kind 5 list of a restored phone's own newest ops, naming this terminal (unsigned sender): the phone needs it from two different terminals
 sshub sync-phone-ops [--ble] < ops.txt        # take in the ops the phone copied (kind 5, base64); prints what applied and why the rest was skipped (chain-gap, already-known, invalid) (--ble: from the phone over Bluetooth)
