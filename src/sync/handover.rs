@@ -38,7 +38,23 @@ pub fn handover_request(
         new_phone,
         name: name.to_string(),
         terminal,
+        op: None,
     })
+}
+
+/// The second stage of kind 12 (contract 4l b): what the terminal shows the NEW phone after it ingested the `PhoneHandover`
+/// op. The same frame as the request plus the op's hash and lamport, so the new phone can sign over the hash with a
+/// lamport above the op's.
+pub fn handover_admission_request(
+    op: &Op,
+    terminal: &DeviceId,
+) -> Result<PhoneHandoverRequestWire> {
+    let OpBody::PhoneHandover { new_phone, name } = &op.body else {
+        anyhow::bail!("not a phone handover op");
+    };
+    let mut req = handover_request(new_phone.clone(), name, terminal)?;
+    req.op = Some((op.hash(), op.lamport));
+    Ok(req)
 }
 
 #[cfg(test)]
