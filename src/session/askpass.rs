@@ -770,6 +770,26 @@ pub fn maybe_run_askpass() -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// `output()` that retries ETXTBSY: a stand-in written by this test can still be open for writing in a child another test
+    /// thread forked a moment ago, until that child execs (close-on-exec). The file is never touched again, so a short retry ends.
+    trait OutputRetrying {
+        fn output_retrying(&mut self) -> std::process::Output;
+    }
+
+    impl OutputRetrying for std::process::Command {
+        fn output_retrying(&mut self) -> std::process::Output {
+            for _ in 0..200 {
+                match self.output() {
+                    Err(e) if e.raw_os_error() == Some(26) => {
+                        std::thread::sleep(std::time::Duration::from_millis(25))
+                    }
+                    other => return other.unwrap(),
+                }
+            }
+            self.output().unwrap()
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -833,8 +853,7 @@ mod tests {
                 .env("SSHUB_TEST_FILE_HELPER", "1")
                 .env("SSHUB_TEST_PROMPT", "ops@10.0.4.91's password: ")
                 .envs(guard.env(Path::new("unused")))
-                .output()
-                .unwrap();
+                .output_retrying();
             String::from_utf8_lossy(&out.stdout).into_owned()
         };
 
@@ -908,8 +927,7 @@ mod tests {
                 .env("SSHUB_TEST_FILE_HELPER", "1")
                 .env("SSHUB_TEST_PROMPT", prompt)
                 .envs(guard.env(Path::new("unused")))
-                .output()
-                .unwrap();
+                .output_retrying();
             String::from_utf8_lossy(&out.stdout).into_owned()
         };
         // The hop's own ssh, whose last argument is the host it connects to.
@@ -1055,8 +1073,7 @@ mod tests {
                 .env("SSHUB_TEST_FILE_HELPER", "1")
                 .env("SSHUB_TEST_PROMPT", prompt)
                 .envs(guard.env(Path::new("unused")))
-                .output()
-                .unwrap();
+                .output_retrying();
             String::from_utf8_lossy(&out.stdout).into_owned()
         };
         let ok = run("Enter passphrase for key '/home/u/.ssh/id': ");
