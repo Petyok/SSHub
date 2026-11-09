@@ -1270,17 +1270,31 @@ pub(crate) fn recovery_start(
     let recover = paper_phrase
         .map(|p| paper_derive(p, PaperDomain::Recover))
         .transpose()?;
-    let (third, kind) = if recover.is_some() {
+    // Design 5.2: the paper authorizes, so the third factor is the emailed code, except in a ring of one computer
+    // whose emailed code could only come from this computer itself: there the paper stands for both.
+    let me = id.public().device_id();
+    let paper_is_both = recover.is_some()
+        && rec::is_solo(store, &me)?
+        && crate::sync::ceremony::email_factor_sender(store)?.is_none_or(|s| s == me);
+    let (third, kind) = if recover.is_some() && !paper_is_both {
         (ThirdFactor::EmailCode, FactorKind::Email)
     } else {
         (ThirdFactor::Paper, FactorKind::Paper)
     };
     let body = rec::start_body(store, id, now, recover.as_ref(), third)?;
     let op = store.sync_append_local(id, body)?;
-    let mut lines = vec![format!(
-        "recovery started (change {}); the 7 day waiting period runs once another device has seen it",
-        short(&op.hash())
-    )];
+    let mut lines = vec![if paper_is_both {
+        format!(
+            "recovery started (change {}); this is the only computer, so the paper phrase is also the third proof; run `sshub sync-recovery ack {}` here to start the 14 day waiting period",
+            short(&op.hash()),
+            short(&op.hash())
+        )
+    } else {
+        format!(
+            "recovery started (change {}); the 7 day waiting period runs once another device has seen it",
+            short(&op.hash())
+        )
+    }];
     if let Some(secret) = third_secret.filter(|s| !s.trim().is_empty()) {
         let proof = factor_proof(store, kind, secret, &op)?;
         store.sync_append_local(id, proof)?;
@@ -1377,7 +1391,7 @@ fn recovery(
             // The third factor is proven now: the paper when two devices authorize, the emailed
             // code when the paper did. Empty input leaves the recovery awaiting it.
             let third = super::unlock::prompt_secret(if paper {
-                "Emailed code (empty: prove it later with sync-factor): "
+                "Emailed code, or the paper phrase again when this is the only computer (empty: prove it later with sync-factor): "
             } else {
                 "Paper phrase to prove it now (empty: prove it later with sync-factor): "
             });

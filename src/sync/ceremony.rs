@@ -1185,6 +1185,11 @@ pub fn red_factor_paper(paper_recover: &DeviceIdentity, op: &Op) -> OpBody {
     }
 }
 
+/// The sender device of the registered emailed-code factor, `None` when no such factor is registered or it names none.
+pub fn email_factor_sender(store: &LauncherStore) -> Result<Option<DeviceId>> {
+    Ok(registered(store, ThirdFactor::EmailCode)?.and_then(|(_, _, sender)| sender))
+}
+
 /// The emailed code's factor proof: opens the sealed seed with `code` and signs.
 pub fn red_factor_email(store: &LauncherStore, code: &str, op: &Op) -> Result<OpBody> {
     let (public, sealed, _) = registered(store, ThirdFactor::EmailCode)?

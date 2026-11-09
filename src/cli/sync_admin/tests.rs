@@ -442,3 +442,38 @@ fn the_enrollment_mail_hint_says_when_nothing_is_configured_and_names_a_shared_m
     let (_, lines) = notify_hint(Some(&cfg));
     assert!(lines.join(" ").contains("Shared mailbox"), "{lines:?}");
 }
+
+#[test]
+fn a_one_computer_ring_recovers_with_the_paper_as_the_third_factor_too() {
+    use crate::sync::oplog::{OpBody, ThirdFactor};
+    let phrase = crate::sync::crypto::bip39_encode(&[0x42; 32]);
+    let third = |r: &[Dev]| {
+        let rep = recovery_start(&r[0].store, &r[0].id, 1_000, Some(&phrase), None).unwrap();
+        let op = crate::sync::quorum::ops_of(&r[0].store, "PhoneReenroll", None)
+            .unwrap()
+            .pop()
+            .unwrap();
+        let OpBody::PhoneReenroll {
+            via_paper,
+            third_factor,
+            ..
+        } = op.body
+        else {
+            panic!("a PhoneReenroll")
+        };
+        assert!(via_paper);
+        (third_factor, rep.lines.join("\n"))
+    };
+    let solo = ring(1);
+    with_paper(&solo[0].store);
+    let (f, text) = third(&solo);
+    assert_eq!(f, ThirdFactor::Paper);
+    assert!(
+        text.contains("sync-recovery ack") && text.contains("14 day"),
+        "{text}"
+    );
+    // With a second computer the emailed code stays the third factor.
+    let two = ring(2);
+    with_paper(&two[0].store);
+    assert_eq!(third(&two).0, ThirdFactor::EmailCode);
+}
