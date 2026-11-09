@@ -2505,3 +2505,68 @@ fn of_two_handovers_by_one_phone_the_first_to_complete_wins() {
         .rule_violation
         .is_some_and(|v| v.contains("completed first")));
 }
+
+/// Design 5.4: the unattended jobs of a trust session must not stop at a phone upgrade.
+#[test]
+fn trust_session_survives_a_handover() {
+    use crate::sync::cert::{
+        cert_allows, cert_opened_body, extension_budget, issuer_phones, DelegationCert,
+    };
+    use crate::sync::oplog::CertScope;
+    let (d, recover, new) = handover_world();
+    let host = [60u8; 16];
+    let now = crate::store::now_ts();
+    let cert_op = propose(
+        &d,
+        P,
+        OpBody::CertIssue {
+            device_id: d[R].did.clone(),
+            scope: CertScope::Hosts(vec![host]),
+            expiry: now + 10 * 86_400,
+            max_new_hosts_per_day: 2,
+            epoch_lo: 0,
+            epoch_hi: 10,
+        },
+    );
+    append(&d[A], red_approve_body(&cert_op));
+    append(&d[B], red_factor_paper(&recover, &cert_op));
+    sync(&d);
+    for x in &d {
+        settle_red_ops(&x.store, cert_op.timestamp + 5).unwrap();
+    }
+    let cert = DelegationCert::from_op(&cert_op).unwrap();
+    let old_key = d[P].id.public().ed25519_pub;
+    let at = cert_op.timestamp + 60;
+    cert_allows(&cert, &old_key, &d[OBS].store, &d[R].did, &host, at, at).unwrap();
+
+    // The ring hands over to a new phone.
+    let h = hand_over(&d, &new, "next phone");
+    append(&d[A], red_approve_body(&h));
+    append(&d[B], red_factor_paper(&recover, &h));
+    sync(&d);
+    new_phone_signs(&d, &new, &h);
+    for x in &d {
+        settle_red_ops(&x.store, h.timestamp + 60).unwrap();
+    }
+    let store = &d[OBS].store;
+    assert_eq!(
+        issuer_phones(store, &new.did).unwrap(),
+        vec![new.did.clone(), d[P].did.clone()]
+    );
+    // The session still verifies against the RETIRED phone's key and is honoured; extensions by the new phone count.
+    cert_allows(&cert, &old_key, store, &d[R].did, &host, at, at).unwrap();
+    let ext = append(
+        &new,
+        OpBody::CertExtend {
+            cert_id: cert.id,
+            extra_hosts: 3,
+        },
+    );
+    pull(&new, &d[OBS]);
+    assert_eq!(
+        extension_budget(store, &cert, ext.timestamp + 10).unwrap(),
+        3,
+        "the new phone is the issuer of record"
+    );
+    let _ = cert_opened_body;
+}
