@@ -87,7 +87,8 @@ pub(crate) fn start(app: &mut App) {
 /// Menu entry: hand the ring over to a new phone while the old one still works (design 5).
 pub(crate) fn start_replace(app: &mut App) {
     if !matches!(crate::sync::quorum::phone_device(&app.store), Ok(Some(_))) {
-        app.host_notice = Some("the ring has no phone to hand over from: use \"Add the phone\"".into());
+        app.host_notice =
+            Some("the ring has no phone to hand over from: use \"Add the phone\"".into());
         return;
     }
     begin(app, true);
@@ -410,7 +411,11 @@ pub(crate) fn handover_screen_lines(name: &str, words: &[String]) -> Vec<String>
         format!("    {}", words.join(" ")),
         "The old phone must show the same eight words. Different words mean the request was changed: do not sign.".to_string(),
     ];
-    lines.extend(crate::cli::sync_phone_cmd::handover_steps().into_iter().map(|l| format!("  {l}")));
+    lines.extend(
+        crate::cli::sync_phone_cmd::handover_steps()
+            .into_iter()
+            .map(|l| format!("  {l}")),
+    );
     lines
 }
 

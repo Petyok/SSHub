@@ -600,7 +600,13 @@ fn a_handover_enrollment_prints_the_kind_12_request_and_eight_words_and_adds_no_
     let mut out = Vec::new();
     s.start(&mut out);
     s.feed(
-        &B64.encode(EnrollFrame::Commit { role: INITIATOR, commit: party.commit(INITIATOR) }.encode()),
+        &B64.encode(
+            EnrollFrame::Commit {
+                role: INITIATOR,
+                commit: party.commit(INITIATOR),
+            }
+            .encode(),
+        ),
         &mut out,
     );
     let reveal_frame = value_of(&lines(&out), "frame");
@@ -612,7 +618,13 @@ fn a_handover_enrollment_prints_the_kind_12_request_and_eight_words_and_adds_no_
     let term_reveal = Reveal::from_bytes(&reveal).unwrap();
     out.clear();
     s.feed(
-        &B64.encode(EnrollFrame::Reveal { role: INITIATOR, reveal: party.reveal.bytes() }.encode()),
+        &B64.encode(
+            EnrollFrame::Reveal {
+                role: INITIATOR,
+                reveal: party.reveal.bytes(),
+            }
+            .encode(),
+        ),
         &mut out,
     );
     let th = transcript_hash(&party.reveal, &term_reveal);
@@ -621,31 +633,56 @@ fn a_handover_enrollment_prints_the_kind_12_request_and_eight_words_and_adds_no_
     out.clear();
     s.feed(
         &B64.encode(
-            EnrollFrame::Confirm { role: INITIATOR, ok: true, sig: phone.sign(&confirm_message(INITIATOR, true, &th)) }.encode(),
+            EnrollFrame::Confirm {
+                role: INITIATOR,
+                ok: true,
+                sig: phone.sign(&confirm_message(INITIATOR, true, &th)),
+            }
+            .encode(),
         ),
         &mut out,
     );
     let l = lines(&out);
     assert_eq!(s.done, Some(true), "{l:?}");
     // The request for the old phone decodes to the new phone, its name and this terminal.
-    let req = PhoneHandoverRequestWire::decode(&B64.decode(value_of(&l, "handover")).unwrap()).unwrap();
+    let req =
+        PhoneHandoverRequestWire::decode(&B64.decode(value_of(&l, "handover")).unwrap()).unwrap();
     assert_eq!(req.new_phone, phone.public());
     assert_eq!(req.name, "new phone");
     // Eight words, the same the old phone computes from the request and its own id.
     let words = value_of(&l, "handover_words");
-    let old_id: [u8; 8] = hex::decode(old.public().device_id()).unwrap().try_into().unwrap();
+    let old_id: [u8; 8] = hex::decode(old.public().device_id())
+        .unwrap()
+        .try_into()
+        .unwrap();
     assert_eq!(words.split_whitespace().count(), 8, "{words}");
-    assert_eq!(words, crate::sync::crypto::handover_words(&req.new_phone, &req.name, &old_id).join(" "));
-    assert!(l.iter().any(|x| x.starts_with("next: ") && x.contains("sync-heal")), "{l:?}");
+    assert_eq!(
+        words,
+        crate::sync::crypto::handover_words(&req.new_phone, &req.name, &old_id).join(" ")
+    );
+    assert!(
+        l.iter()
+            .any(|x| x.starts_with("next: ") && x.contains("sync-heal")),
+        "{l:?}"
+    );
     // The new phone is NOT in the ring yet: the op the old phone signs adds it.
-    assert!(!t.store.sync_devices().unwrap().iter().any(|d| d.id == phone.public().device_id()));
+    assert!(!t
+        .store
+        .sync_devices()
+        .unwrap()
+        .iter()
+        .any(|d| d.id == phone.public().device_id()));
 }
 
 #[test]
 fn a_handover_needs_a_phone_in_the_ring() {
     let t = Dev::new();
     let phone = crate::sync::crypto::DeviceIdentity::generate();
-    let v = crate::sync::phone_enroll::Verified { frame: Vec::new(), phone: phone.public(), name: "p".into() };
+    let v = crate::sync::phone_enroll::Verified {
+        frame: Vec::new(),
+        phone: phone.public(),
+        name: "p".into(),
+    };
     let err = handover_offer(&t.store, &t.id, &v).err().expect("refused");
     assert!(format!("{err:#}").contains("no phone"), "{err:#}");
 }

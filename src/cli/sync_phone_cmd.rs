@@ -213,7 +213,13 @@ impl<'a> EnrollSession<'a> {
                     self.done = Some(true);
                 }
                 Err(e) => {
-                    emit(out, j, "error", format!("{e:#}"), json!({"error": format!("{e:#}")}));
+                    emit(
+                        out,
+                        j,
+                        "error",
+                        format!("{e:#}"),
+                        json!({"error": format!("{e:#}")}),
+                    );
                     self.done = Some(false);
                 }
             },
