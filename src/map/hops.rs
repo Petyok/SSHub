@@ -247,11 +247,16 @@ mod tests {
 
     /// Characters outside what a login or host name is made of. ssh takes some
     /// of them (`$`, `=`, `/`, `\\`) and hands the user to a shell, so we refuse
-    /// them whatever the local ssh says; a leading `-` likewise.
+    /// them whatever the local ssh says; a leading `-` likewise. A login may
+    /// hold any letter (`Администратор`), a host name ASCII only.
     fn outside_the_allowlist(token: &str) -> bool {
         let rest = token.strip_prefix("ssh://").unwrap_or(token);
-        rest.chars()
-            .any(|c| !(c.is_ascii_alphanumeric() || ".+-_%@:[]".contains(c)))
+        let (user, host) = rest.rsplit_once('@').unwrap_or(("", rest));
+        user.chars()
+            .any(|c| !(c.is_alphanumeric() || ".+-_%@".contains(c)))
+            || host
+                .chars()
+                .any(|c| !(c.is_ascii_alphanumeric() || ".-_%:[]".contains(c)))
             || rest.starts_with('-')
             || rest.split('@').any(|p| p.starts_with('-'))
     }
@@ -297,6 +302,10 @@ mod tests {
             "a=b@h",
             "a/b@h",
             "ops.dev+x%y@h-1.example:22",
+            // No non-ASCII login here: the macOS CI runner's ssh refuses
+            // `Администратор@h` in -J, Linux ssh takes it. Which one ssh takes is
+            // the platform's call, not ours.
+            "u@é",
         ] {
             let ours = token_issue(token).is_none();
             let theirs = ssh_takes(token);
@@ -342,13 +351,15 @@ mod tests {
         assert!(parse_raw_hop("a@b@").is_none());
         // Allowlist: a login or host name, nothing a shell would expand.
         for bad in [
-            HOSTILE, "u@$HOME", "a=b@h", "a/b@h", "a\\b@h", "u@h$x", "u@h/x", "é@h",
+            HOSTILE, "u@$HOME", "a=b@h", "a/b@h", "a\\b@h", "u@h$x", "u@h/x", "u@é",
         ] {
             assert!(parse_raw_hop(bad).is_none(), "{bad:?}");
         }
         for good in [
             "ops.dev+x%y@h-1.example:22",
             "john@corp.com@10.0.0.1",
+            "é@h",
+            "Администратор@10.0.0.245:22",
             "[::1]:22",
             "a@[fe80::1%eth0]:2",
         ] {

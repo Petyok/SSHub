@@ -4,6 +4,12 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Logins with non-ASCII letters connect again** - a host with a user like
+  `Администратор` was refused before ssh ran, so Enter seemed to do nothing.
+  Shell metacharacters in a login are still refused.
+
 ## [0.22.0] - 2026-11-09
 
 ### Changed
