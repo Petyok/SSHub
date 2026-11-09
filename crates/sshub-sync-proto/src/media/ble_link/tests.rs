@@ -492,7 +492,7 @@ fn a_frame_without_the_magic_or_with_an_unknown_kind_never_reaches_the_applicati
             f
         },
         frame(100, 0, 1),
-        frame(100, 11, 1),
+        frame(100, 13, 1),
     ] {
         let mut p = Pair::new(244, 244);
         p.run(2, &mut clean(), &mut no_dup(), &|p| p.term.is_open());
