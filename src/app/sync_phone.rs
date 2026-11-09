@@ -295,6 +295,7 @@ fn present(app: &mut App, out: FlowOut) {
                 |app, _| {
                     app.phone_flow = None;
                     app.refresh_sync_view();
+                    super::sync_flows_more::mail_offer_after_enroll(app);
                 },
             );
         }

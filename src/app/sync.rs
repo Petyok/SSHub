@@ -609,6 +609,8 @@ pub struct SyncView {
     pub cut_off_missing: Option<usize>,
     /// A ring is set up but no paper phrase is registered (design 3.1): a standing line offers the wizard.
     pub no_paper: bool,
+    /// A ring is set up but no mail command and recipient are configured: a standing line says what that means.
+    pub no_mail: bool,
     /// Plain lines about saved passwords that are exposed or not yet shared with a current full device (design 4.3).
     pub exposure: Vec<String>,
     /// Names of the hosts whose saved password is on either list: the host row carries a marker.

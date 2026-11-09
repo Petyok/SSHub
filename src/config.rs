@@ -159,6 +159,9 @@ pub struct SyncConfig {
     /// under a trust certificate. Read when the device enrolls; a ring remembers what it was told then.
     #[serde(default)]
     pub unattended: bool,
+    /// The user chose "Not now" at the mail step after enrolling a phone: do not offer it again by itself.
+    #[serde(default)]
+    pub notify_declined: bool,
 }
 
 impl Default for SyncConfig {
@@ -167,8 +170,34 @@ impl Default for SyncConfig {
             auto_sync_on_start: true,
             notify: NotifyConfig::default(),
             unattended: false,
+            notify_declined: false,
         }
     }
+}
+
+/// The mail command the TUI proposes (design 7b): the local sendmail, with the recipients read from the headers.
+pub const DEFAULT_MAIL_COMMAND: &str = "/usr/sbin/sendmail -t -i";
+
+/// [`DEFAULT_MAIL_COMMAND`] when it exists on this machine.
+pub fn default_mail_command() -> Option<&'static str> {
+    Path::new("/usr/sbin/sendmail")
+        .exists()
+        .then_some(DEFAULT_MAIL_COMMAND)
+}
+
+/// Write `[sync.notify]` (and clear a recorded "Not now") into the config at `path`, keeping the rest of the file.
+pub fn write_notify_at(path: &Path, notify: NotifyConfig) -> anyhow::Result<()> {
+    let mut config = load_config_at(path)?;
+    config.sync.notify = notify;
+    config.sync.notify_declined = false;
+    save_config_at(path, &config)
+}
+
+/// Record "Not now" at the mail step.
+pub fn decline_notify_at(path: &Path) -> anyhow::Result<()> {
+    let mut config = load_config_at(path)?;
+    config.sync.notify_declined = true;
+    save_config_at(path, &config)
 }
 
 /// Notifications (a recovery started, a Hub went quiet), sent through a local
@@ -1416,6 +1445,31 @@ confirm_quit = false
             config.sync.notify.from.as_deref(),
             Some("sshub@example.com")
         );
+    }
+
+    #[test]
+    fn the_notify_writer_keeps_the_rest_of_the_file_and_not_now_is_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "# my notes\n[sync]\nauto_sync_on_start = false\n").unwrap();
+        decline_notify_at(&path).unwrap();
+        assert!(load_config_at(&path).unwrap().sync.notify_declined);
+        write_notify_at(
+            &path,
+            NotifyConfig {
+                command: Some(DEFAULT_MAIL_COMMAND.into()),
+                to: vec!["me@example.com".into()],
+                from: Some("sshub@example.com".into()),
+            },
+        )
+        .unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# my notes"), "{text}");
+        assert!(text.contains("[sync.notify]"), "{text}");
+        let back = load_config_at(&path).unwrap();
+        assert!(!back.sync.auto_sync_on_start && !back.sync.notify_declined);
+        assert_eq!(back.sync.notify.to, ["me@example.com"]);
+        assert_eq!(back.sync.notify.command.as_deref(), Some(DEFAULT_MAIL_COMMAND));
     }
 
     #[test]

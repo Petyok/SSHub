@@ -88,6 +88,8 @@ pub struct EnrollSession<'a> {
     pub done: Option<bool>,
     json: bool,
     ble: Option<&'a BleLink>,
+    /// `[sync.notify]` of this profile, for the mail hint after the phone is admitted.
+    notify: Option<crate::config::NotifyConfig>,
 }
 
 impl<'a> EnrollSession<'a> {
@@ -102,7 +104,14 @@ impl<'a> EnrollSession<'a> {
             done: None,
             json,
             ble: None,
+            notify: None,
         }
+    }
+
+    /// The profile's mail settings, so the hint after admission says whether a recovery is mailed.
+    pub fn with_notify(mut self, notify: Option<crate::config::NotifyConfig>) -> Self {
+        self.notify = notify;
+        self
     }
 
     /// Also carry the frames over Bluetooth (`--ble`).
@@ -191,9 +200,7 @@ impl<'a> EnrollSession<'a> {
                         for l in &r.lines {
                             emit(out, j, "admitted", l.clone(), json!({"line": l}));
                         }
-                        let cfg = crate::config::load_config().ok();
-                        let (configured, hint) =
-                            super::sync_admin::notify_hint(cfg.as_ref().map(|c| &c.sync.notify));
+                        let (configured, hint) = super::sync_admin::notify_hint(self.notify.as_ref());
                         for l in hint {
                             emit(out, j, "notify_hint", l, json!({"configured": configured}));
                         }
@@ -228,8 +235,10 @@ fn phone_enroll(
     input: impl BufRead,
     out: &mut impl Write,
     json_out: bool,
+    notify: Option<crate::config::NotifyConfig>,
 ) -> Result<i32> {
-    let mut s = EnrollSession::new(store, id, &crate::sync::runtime::device_name(), json_out);
+    let mut s = EnrollSession::new(store, id, &crate::sync::runtime::device_name(), json_out)
+        .with_notify(notify);
     s.start(out);
     for line in input.lines() {
         s.feed(&line?, out);
@@ -549,6 +558,9 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
     let secrets = crate::credentials::open_for_profile(paths);
     let id = load_or_init_identity(paths, secrets.as_ref())?;
     let mut out = std::io::stdout();
+    let notify = crate::config::load_config_at(&paths.config_file)
+        .ok()
+        .map(|c| c.sync.notify);
     // Every verb that talks to the page prints its fingerprint first; the enrollment session
     // does it itself so that its output starts with it.
     if matches!(
@@ -559,9 +571,9 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
     }
     match cmd {
         "sync-phone-enroll" if a.ble => {
-            super::sync_phone_ble::enroll(&store, &id, &mut out, a.json)
+            super::sync_phone_ble::enroll(&store, &id, &mut out, a.json, notify)
         }
-        "sync-phone-enroll" => phone_enroll(&store, &id, std::io::stdin().lock(), &mut out, a.json),
+        "sync-phone-enroll" => phone_enroll(&store, &id, std::io::stdin().lock(), &mut out, a.json, notify),
         "sync-notice" => {
             let (op, text) = notice_text(&store, &a.pos[0])?;
             emit(

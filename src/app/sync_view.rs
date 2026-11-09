@@ -826,6 +826,11 @@ impl App {
         sync.cut_off_missing = crate::sync::revocation::terminals_missing_to_cut_off(&store)?;
         sync.exposure = crate::cli::sync_admin::exposure_lines(&store)?;
         sync.exposed_hosts = crate::cli::sync_admin::exposed_host_names(&store)?;
+        sync.no_mail = sync.configured
+            && self.profile.as_ref().is_some_and(|p| {
+                crate::config::load_config_at(&p.config_file)
+                    .is_ok_and(|c| !super::sync_flows_more::mail_configured(&c))
+            });
         sync.no_paper = sync.configured && crate::sync::quorum::paper_pub(&store)?.is_none();
         if sync.ring_secret_missing.is_none() {
             // Only a Vault ring with a master key set up needs the ring secret on this machine.

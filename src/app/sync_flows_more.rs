@@ -313,3 +313,155 @@ pub(crate) fn paper_sheet(app: &mut App) {
         },
     );
 }
+
+// -------------------------------------------------------------------- mail
+
+/// Is a recovery of the phone mailed from this profile? (`[sync.notify]` has a command and a recipient.)
+pub(crate) fn mail_configured(cfg: &crate::config::AppConfig) -> bool {
+    cfg.sync.notify.command.is_some() && !cfg.sync.notify.to.is_empty()
+}
+
+fn config_path(app: &App) -> Option<PathBuf> {
+    app.profile.as_ref().map(|p| p.config_file.clone())
+}
+
+/// After a phone is enrolled: offer the mail step unless mail is already set up or "Not now" was chosen before.
+pub(crate) fn mail_offer_after_enroll(app: &mut App) {
+    let Some(cfg) = config_path(app).and_then(|p| crate::config::load_config_at(&p).ok()) else {
+        return;
+    };
+    if !mail_configured(&cfg) && !cfg.sync.notify_declined {
+        mail_offer(app);
+    }
+}
+
+pub(crate) fn mail_offer(app: &mut App) {
+    app.sync_menu(
+        "Be told when someone tries to replace this phone",
+        vec![
+            (
+                "Set up mail now (the local sendmail, a test message goes out)".to_string(),
+                Box::new(mail_setup) as MenuFn,
+            ),
+            (
+                "Not now (a hostile recovery would then only show on terminal screens)".to_string(),
+                Box::new(mail_not_now),
+            ),
+        ],
+    );
+}
+
+fn mail_not_now(app: &mut App) {
+    let Some(path) = config_path(app) else {
+        return;
+    };
+    app.host_notice = Some(match crate::config::decline_notify_at(&path) {
+        Ok(()) => "not now: the Sync tab keeps a line about it; M, Phone, Mail sets it up later".into(),
+        Err(e) => format!("could not record that: {e:#}"),
+    });
+}
+
+/// The `[sync.notify]` block shown where the setting lives on another machine.
+fn notify_block() -> Vec<String> {
+    vec![
+        "[sync.notify]".into(),
+        format!("command = \"{}\"", crate::config::DEFAULT_MAIL_COMMAND),
+        "to = [\"you@example.com\"]".into(),
+        "from = \"sshub@example.com\"".into(),
+    ]
+}
+
+/// The mail step: To, From, the command, then the settings are written and a test message goes out.
+pub(crate) fn mail_setup(app: &mut App) {
+    let hub = app
+        .sync
+        .devices
+        .iter()
+        .find(|d| d.unattended && !d.phone && !d.this)
+        .map(|d| d.name.clone());
+    let Some(hub) = hub else {
+        return mail_prompts(app);
+    };
+    let mut lines = vec![
+        format!("This ring has a Hub ({hub}). A Hub mails you about a recovery it receives, and its mail setting lives in the sshub config file ON THE HUB, not here. Put this block there:"),
+        String::new(),
+    ];
+    lines.extend(notify_block());
+    lines.push(String::new());
+    lines.push("Enter continues with the same setting for this computer.".into());
+    app.sync_info_with(
+        "Mail on the Hub",
+        lines,
+        Vec::new(),
+        Some(Box::new(mail_prompts) as MenuFn),
+    );
+}
+
+fn mail_prompts(app: &mut App) {
+    app.sync_prompt(
+        "Mail: who is told",
+        "Address to send the alert to (several: separate with commas)",
+        false,
+        |app, to| {
+            app.sync_prompt(
+                "Mail: sender",
+                "Sender address (From)",
+                false,
+                move |app, from| {
+                    let default = crate::config::default_mail_command();
+                    app.sync_prompt(
+                        "Mail: command",
+                        match default {
+                            Some(c) => format!("Command that sends mail, empty for {c}"),
+                            None => "Command that sends mail (sendmail-compatible, with -t -i); there is no /usr/sbin/sendmail here".into(),
+                        },
+                        false,
+                        move |app, command| mail_write_and_test(app, &to, &from, &command),
+                    );
+                },
+            );
+        },
+    );
+}
+
+fn mail_write_and_test(app: &mut App, to: &str, from: &str, command: &str) {
+    let to: Vec<String> = to
+        .split(',')
+        .map(|a| a.trim().to_string())
+        .filter(|a| !a.is_empty())
+        .collect();
+    let command = match (command.trim(), crate::config::default_mail_command()) {
+        ("", Some(d)) => d.to_string(),
+        ("", None) => {
+            app.host_notice = Some("no mail command given: nothing saved".into());
+            return;
+        }
+        (c, _) => c.to_string(),
+    };
+    if to.is_empty() || to.iter().any(|a| !a.contains('@')) || !from.contains('@') {
+        app.host_notice = Some("both addresses must look like name@host: nothing saved".into());
+        return;
+    }
+    let notify = crate::config::NotifyConfig {
+        command: Some(command.clone()),
+        to: to.clone(),
+        from: Some(from.trim().to_string()),
+    };
+    app.run_sync_job(move |env| {
+        crate::config::write_notify_at(&env.paths.config_file, notify.clone())?;
+        let sent = crate::sync::notify::send_notification(
+            &notify,
+            "SSHub: mail test",
+            "This is a test message. If you read it, SSHub can tell you when someone tries to replace your phone.",
+        );
+        Ok(match sent {
+            Ok(()) => format!(
+                "Mail settings saved. The test message was handed to `{command}` for {}: check that it arrived. If it did not, the command or the addresses are wrong (M, Phone, Mail changes them).",
+                to.join(", ")
+            ),
+            Err(e) => format!(
+                "Mail settings saved, but the test message FAILED: {e:#}. Nothing was delivered: fix the command or the addresses (M, Phone, Mail)."
+            ),
+        })
+    });
+}

@@ -102,6 +102,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             color(app, ColorRole::StatusWarning),
         ),
     });
+    if sync.no_mail {
+        lines.push(Line::styled(
+            "No mail configured: a hostile recovery would only show on terminal screens (M, Phone, Mail)",
+            color(app, ColorRole::StatusWarning),
+        ));
+    }
     if sync.no_paper {
         lines.push(Line::styled(
             format!(
