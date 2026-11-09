@@ -127,6 +127,53 @@ class TrustExtendViewModel(
     }
 }
 
+class TrustRenewViewModel(
+    private val core: TrustApi,
+    private val platform: Platform,
+    private val token: Long,
+) : ViewModel() {
+    private val base = MutableStateFlow<TrustRenewState?>(null)
+    val state: StateFlow<TrustRenewState?> =
+        combine(base, platform.clipboard.clearsInSeconds) { s, c -> s?.copy(clearsIn = c) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    private val openedAt = platform.clock.nowSeconds()
+
+    init { viewModelScope.launch { core.trustRenew(token)?.let { base.value = TrustRenewState(it) } } }
+
+    fun decline() {
+        viewModelScope.launch {
+            base.update { it?.copy(busy = true, error = null) }
+            try {
+                core.decideTrust(token, TrustDecision.Decline, platform.clock.nowSeconds())
+                base.update { it?.copy(busy = false, phase = TrustPhase.Declined) }
+            } catch (e: CoreException) {
+                base.update { it?.copy(busy = false, error = e.shown()) }
+            }
+        }
+    }
+
+    fun approve() {
+        val s = base.value ?: return
+        if (!s.approveEnabled) return
+        val now = platform.clock.nowSeconds()
+        if (now - openedAt > APPROVAL_WINDOW_SECONDS) { base.update { it?.copy(phase = TrustPhase.Closed) }; return }
+        viewModelScope.launch {
+            base.update { it?.copy(busy = true, error = null) }
+            try {
+                val out = core.decideTrust(token, TrustDecision.Approve(null), now) ?: throw CoreException(CoreException.Code.Internal, "no reply")
+                base.update { it?.copy(busy = false, phase = TrustPhase.Signed, handoff = TrustHandoff(HandoffKind.Renewal, s.view.signedSummary, out)) }
+            } catch (e: CoreException) {
+                base.update { it?.copy(busy = false, error = e.shown()) }
+            }
+        }
+    }
+
+    fun copy() {
+        val h = base.value?.handoff ?: return
+        platform.clipboard.copySensitive("SSHub signed answer", h.outgoing.text)
+    }
+}
+
 /** Hand-off screens (`trust-signed`, `trust-revoked`): shows what the holder carries. */
 class TrustHandoffViewModel(private val platform: Platform, holder: TrustHandoffHolder) : ViewModel() {
     private val handoff = holder.current

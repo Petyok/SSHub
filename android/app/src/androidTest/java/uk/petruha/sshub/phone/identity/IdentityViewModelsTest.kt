@@ -241,6 +241,34 @@ class ChainHeadViewModelTest {
         assertFalse(core.headPending)
     }
 
+    @Test fun one_list_needs_the_tick_and_adopts_with_the_acknowledgement() {
+        val vm = vm()
+        onMain { vm.onOpened(IdentitySamples.singleSourceList(count = 3)) }
+        assertEquals(2, vm.state.value.lists)
+        onMain { vm.adopt() }
+        assertNull("no tick, no adoption", core.adoptedToken)
+        onMain { vm.onTickSingle(true) }
+        onMain { vm.adopt() }
+        assertEquals(7L, core.adoptedToken)
+        assertTrue("the core is told about the tick", core.adoptedAcknowledged)
+    }
+
+    @Test fun two_agreeing_lists_adopt_without_a_tick_and_without_the_acknowledgement() {
+        val vm = vm()
+        onMain { vm.onOpened(IdentitySamples.chainList(agreed = true)) }
+        onMain { vm.adopt() }
+        assertEquals(7L, core.adoptedToken)
+        assertFalse(core.adoptedAcknowledged)
+    }
+
+    @Test fun a_new_list_clears_an_earlier_tick() {
+        val vm = vm()
+        onMain { vm.onOpened(IdentitySamples.singleSourceList()) }
+        onMain { vm.onTickSingle(true) }
+        onMain { vm.onOpened(IdentitySamples.singleSourceList()) }
+        assertFalse(vm.state.value.singleTicked)
+    }
+
     @Test fun a_refused_list_is_a_value_and_try_another_goes_back_to_reading() {
         val vm = vm()
         onMain { vm.onOpened(IdentitySamples.refusedList()) }

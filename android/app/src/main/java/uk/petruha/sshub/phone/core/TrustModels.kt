@@ -6,6 +6,39 @@ data class OpenedTrustRequest(val view: TrustRequestView) : Opened
 /** `Opened.TrustExtend`: a terminal asks for a budget extension of a certificate (kind 10). */
 data class OpenedTrustExtend(val view: TrustExtendView) : Opened
 
+/** `Opened.CertRenew`: a terminal asks this phone to renew a trust session it issued (kind 11). */
+data class OpenedTrustRenew(val view: TrustRenewView) : Opened
+
+/** The core's `CERT_RENEW_EVIDENCE_MAX_AGE_SECS`: older news from another terminal is stale. */
+const val RENEW_EVIDENCE_MAX_AGE_SECS = 6 * 3600L
+
+/** What the phone shows for a renewal (the core's `RenewView` plus its card text). Signing needs `refusal == null`. */
+data class TrustRenewView(
+    val token: Long,
+    val headline: String,
+    /** One plain sentence from the core; empty when none. */
+    val plain: String,
+    val delegate: String,
+    val scope: String,
+    /** What the renewal adds to the end that counts now, seconds. */
+    val termSecs: Long,
+    val budget: Int,
+    val renewalsLeft: Int,
+    /** The new end date, unix seconds. */
+    val newEnd: Long,
+    /** Hosts the delegate opened; empty when the core has no list. */
+    val opened: List<String>,
+    /** Age of the freshest news from a terminal other than the delegate; null: none, or only the delegate vouches for the list. */
+    val evidenceAgeSecs: Long?,
+    val refusal: TrustRefusal?,
+    val note: String,
+    val signedSummary: String,
+) {
+    val evidenceStale: Boolean get() = evidenceAgeSecs == null || evidenceAgeSecs > RENEW_EVIDENCE_MAX_AGE_SECS
+    /** Red: the core refuses, or the evidence is missing, stale or only the delegate's own. */
+    val red: Boolean get() = refusal != null || evidenceStale
+}
+
 sealed interface TrustDecision {
     /** `typedId` is what the user typed for a requester never met, else null. */
     data class Approve(val typedId: String?) : TrustDecision
@@ -99,6 +132,8 @@ data class IssuedCert(
     val extensions: List<CertExtensionInfo>,
     /** Chain position of the cert op; null when the core gives none. */
     val lamport: Long?,
+    /** Renewals that count (0 to 2); [endsAt] already includes them. */
+    val renewals: Int = 0,
 ) {
     /** The scope line: the group name, else the host count. */
     val scope: String get() = group?.let { "group $it" } ?: "${hosts.size} hosts"
@@ -117,5 +152,5 @@ sealed interface CodeIssuedView {
 }
 
 /** What a hand-off screen shows: the signed reply of a certificate, a revocation or an extension. */
-enum class HandoffKind { Certificate, Revocation, Extension }
+enum class HandoffKind { Certificate, Revocation, Extension, Renewal }
 class TrustHandoff(val kind: HandoffKind, val summary: String, val outgoing: Outgoing)

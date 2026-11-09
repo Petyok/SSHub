@@ -18,6 +18,7 @@ import uk.petruha.sshub.phone.core.OpenedRed
 import uk.petruha.sshub.phone.core.OpenedRefused
 import uk.petruha.sshub.phone.core.OpenedRelease
 import uk.petruha.sshub.phone.core.OpenedTrustExtend
+import uk.petruha.sshub.phone.core.OpenedTrustRenew
 import uk.petruha.sshub.phone.core.OpenedTrustRequest
 import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.core.ProofState
@@ -38,12 +39,14 @@ import uk.petruha.sshub.phone.core.ShortCodeState
 import uk.petruha.sshub.phone.core.TrustDevice
 import uk.petruha.sshub.phone.core.TrustEpochView
 import uk.petruha.sshub.phone.core.TrustExtendView
+import uk.petruha.sshub.phone.core.TrustRenewView
 import uk.petruha.sshub.phone.core.TrustFieldView
 import uk.petruha.sshub.phone.core.TrustRefusal
 import uk.petruha.sshub.phone.core.TrustRequestView
 import uk.petruha.sshub.phone.ui.components.QrMatrix
 import java.time.Instant
 import uniffi.sshub_phone_core.CertExtendView as RsCertExtendView
+import uniffi.sshub_phone_core.CertRenewView as RsCertRenewView
 import uniffi.sshub_phone_core.ChainAdopted as RsChainAdopted
 import uniffi.sshub_phone_core.CertRequestView as RsCertRequestView
 import uniffi.sshub_phone_core.CertStatus as RsCertStatus
@@ -271,6 +274,19 @@ internal fun mapTrustExtend(v: RsCertExtendView): OpenedTrustExtend {
     )
 }
 
+internal fun mapTrustRenew(v: RsCertRenewView): OpenedTrustRenew {
+    val r = v.renew
+    return OpenedTrustRenew(
+        TrustRenewView(
+            token = v.token.toLong(), headline = v.headline, plain = v.plain,
+            delegate = r.delegate, scope = r.scope, termSecs = r.termSecs, budget = r.budget.toInt(), renewalsLeft = r.renewalsLeft.toInt(),
+            newEnd = r.newEnd, opened = r.opened, evidenceAgeSecs = r.evidenceAgeSecs,
+            refusal = r.refusal?.let { TrustRefusal(-1, REFUSED_TITLE, it) },
+            note = v.note, signedSummary = v.headline,
+        ),
+    )
+}
+
 internal fun mapReshare(v: RsReshareView): ReshareView {
     val verified = v.contributors.count { it.verified }
     val note = "$verified of ${v.contributors.size} contributors have a verified signature." +
@@ -289,7 +305,8 @@ internal fun mapReshare(v: RsReshareView): ReshareView {
 }
 
 internal fun mapChain(v: RsChainAdopted) = OpenedChain(
-    ChainAdopted(v.token.toLong(), v.agreed, v.headSeq.toLong(), v.newestAt, v.ops.toInt(), v.previousSeq?.toLong(), v.summary, v.note, v.sender),
+    ChainAdopted(v.token.toLong(), v.agreed, v.headSeq.toLong(), v.newestAt, v.ops.toInt(), v.previousSeq?.toLong(), v.summary, v.note, v.sender,
+        v.singleSource, v.terminalsCount?.toInt(), v.terminalsNewestAt),
     emptyList<ChainCheck>(),
 )
 
@@ -314,6 +331,7 @@ internal fun tokenOf(o: RsOpened): Long? = when (o) {
     is RsOpened.ReenrollNotice -> o.view.token.toLong()
     is RsOpened.CertRequest -> o.view.token.toLong()
     is RsOpened.CertExtend -> o.view.token.toLong()
+    is RsOpened.CertRenew -> o.view.token.toLong()
     is RsOpened.Reshare -> o.view.token.toLong()
     is RsOpened.Chain -> o.view.token.toLong()
     is RsOpened.Refused, is RsOpened.Enroll, is RsOpened.Enrolled -> null
@@ -345,7 +363,8 @@ internal fun mapCert(v: RsIssuedCertView) = IssuedCert(
     hosts = v.hosts,
     group = v.group,
     issuedAt = v.issuedAt,
-    endsAt = v.expiry,
+    endsAt = v.effectiveExpiry,
+    renewals = v.renewals.toInt(),
     epochLo = v.epochLo.toLong(),
     epochHi = v.epochHi.toLong(),
     termText = v.termText,

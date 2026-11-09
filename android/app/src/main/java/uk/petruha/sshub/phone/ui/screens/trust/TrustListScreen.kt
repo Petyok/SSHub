@@ -104,6 +104,7 @@ fun TrustListScreen(state: TrustListState, on: TrustListActions) {
                         }
                         KeyValue("issued", isoDate(c.issuedAt))
                         KeyValue("term", "${c.termText}, ends ${isoDate(c.endsAt)}")
+                        if (c.renewals > 0) KeyValue("renewals", "${c.renewals} of 2")
                         KeyValue("epoch range", "epoch ${c.epochLo} to ${c.epochHi}")
                         KeyValue("trust session", c.certId)
                         c.lamport?.let { KeyValue("chain position", it.toString()) }

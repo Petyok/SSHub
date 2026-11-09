@@ -95,6 +95,31 @@ class TakeChainScreenTest {
         rule.assertTargets48()
     }
 
+    @Test fun single_source_card_shows_the_count_and_age_and_the_tick_gates_adopt() {
+        var ticks = 0; var adopt = 0
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadSingle, ChainHeadActions(onAdopt = { adopt++ }, onTickSingle = { ticks++ })) }
+        rule.onNodeWithText("One list only").assertExists()
+        rule.onAllNodesWithText("Two lists agree").assertCountEquals(0)
+        rule.onNodeWithText("The terminal says your ring has 3 terminals.", substring = true).assertExists()
+        rule.onNodeWithText("signed 2 hours 0 minutes ago", substring = true).assertExists()
+        rule.onNodeWithText("Your ring has 3 terminals and I can reach only this one").performScrollTo().performClick()
+        assertEquals(1, ticks)
+        rule.onNodeWithText("Adopt: continue after seq 41").assertIsNotEnabled()
+        rule.onAllNodesWithText("trusted", substring = true).assertCountEquals(0)
+    }
+
+    @Test fun single_source_ticked_enables_adopt() {
+        var adopt = 0
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadSingle.copy(singleTicked = true), ChainHeadActions(onAdopt = { adopt++ })) }
+        rule.onNodeWithText("Adopt: continue after seq 41").assertIsEnabled().performClick()
+        assertEquals(1, adopt)
+    }
+
+    @Test fun single_source_tick_text_for_a_one_terminal_ring() {
+        rule.setScreen { TakeChainScreen(IdentitySamples.chainHeadSingleOneTerminal, ChainHeadActions()) }
+        rule.onNodeWithText("Your ring has one terminal").assertExists()
+    }
+
     @Test fun paste_variant_check_needs_a_long_enough_text() {
         var typed = ""; var check = 0
         rule.setScreen {

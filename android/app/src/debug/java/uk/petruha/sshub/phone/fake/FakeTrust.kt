@@ -19,12 +19,13 @@ import uk.petruha.sshub.phone.core.TrustEpochView
 import uk.petruha.sshub.phone.core.TrustExtendView
 import uk.petruha.sshub.phone.core.TrustFieldView
 import uk.petruha.sshub.phone.core.TrustRefusal
+import uk.petruha.sshub.phone.core.TrustRenewView
 import uk.petruha.sshub.phone.core.TrustRequestView
 import uk.petruha.sshub.phone.ui.components.QrMatrix
 
 /**
  * Sample data of the prototype (data.js, A-trust.js) for previews and tests.
- * Request tokens: 1 ok, 2 never met, 10 + n refusal n (0..8). Extension tokens: 20 ok, 21 notmine, 22 revoked, 23 again.
+ * Renewal tokens: 30 fresh, 31 stale, 32 delegate only, 33 over the cap. Request tokens: 1 ok, 2 never met, 10 + n refusal n (0..8). Extension tokens: 20 ok, 21 notmine, 22 revoked, 23 again.
  */
 object TrustSamples {
     /** 2026-10-26 09:41 UTC. */
@@ -119,6 +120,21 @@ object TrustSamples {
         TrustRefusal(2, "Refused. Extended less than 24 hours ago.", "A second extension of the same certificate within 24 hours is refused. Possible again in 17 h 22 min."),
         TrustAgain(17 * 3600L + 22 * 60L, 86_400L))
 
+    private fun renew(token: Long, evidenceAge: Long?, refusal: TrustRefusal? = null, left: Int = 2) = TrustRenewView(
+        token = token, headline = "Renew the trust session of workstation [9C61-E2A8] until 2026-11-17",
+        plain = "workstation may keep opening 3 hosts for 14 more days.",
+        delegate = "workstation [9C61-E2A8]", scope = "3 listed hosts", termSecs = 14 * 86_400L, budget = 10, renewalsLeft = left,
+        newEnd = day(2026, 11, 17), opened = emptyList(), evidenceAgeSecs = evidenceAge, refusal = refusal,
+        note = if (refusal == null) "A renewal needs no second terminal: this phone alone extends the trust session within the limits shown." else "",
+        signedSummary = "workstation [9C61-E2A8], until 2026-11-17",
+    )
+
+    /** Renewal tokens: 30 fresh evidence, 31 stale (a day old), 32 only the delegate vouches, 33 over the cap (refused). */
+    val renewFresh = renew(30, 60)
+    val renewStale = renew(31, 86_400)
+    val renewDelegateOnly = renew(32, null)
+    val renewOverCap = renew(33, 60, TrustRefusal(-1, "Request refused", "This trust session was renewed 2 times already: a new one needs the full approval."), left = 0)
+
     fun certs(): List<IssuedCert> = listOf(
         IssuedCert("3F9A-07C2", "laptop-main", "7B3E-0D15", CertState.Active, UIDS, null, day(2026, 10, 12), day(2026, 11, 11), PHONE_EPOCH, PHONE_EPOCH + 1, "30 days", 10,
             listOf(CertExtensionInfo(day(2026, 10, 26) + 3 * 3600 + 3 * 60, 10)), 42),
@@ -155,6 +171,7 @@ class FakeTrust(var now: Long = TrustSamples.NOW) : TrustApi {
         for (n in 0..8) put((10 + n).toLong(), TrustSamples.requestRefused(n))
     }
     val extensions = mapOf(20L to TrustSamples.extendOk, 21L to TrustSamples.extendNotMine, 22L to TrustSamples.extendRevoked, 23L to TrustSamples.extendAgain)
+    val renewals = mapOf(30L to TrustSamples.renewFresh, 31L to TrustSamples.renewStale, 32L to TrustSamples.renewDelegateOnly, 33L to TrustSamples.renewOverCap)
     val certs = TrustSamples.certs().toMutableList()
     val codes = TrustSamples.codes().toMutableList()
     var pendingCode: CodeIssuedView? = TrustSamples.codeIssued()
@@ -163,6 +180,7 @@ class FakeTrust(var now: Long = TrustSamples.NOW) : TrustApi {
 
     override suspend fun trustRequest(token: Long) = requests[token]
     override suspend fun trustExtend(token: Long) = extensions[token]
+    override suspend fun trustRenew(token: Long) = renewals[token]
 
     override suspend fun decideTrust(token: Long, decision: TrustDecision, now: Long): Outgoing? {
         decisions += token to decision
@@ -174,6 +192,10 @@ class FakeTrust(var now: Long = TrustSamples.NOW) : TrustApi {
                 throw CoreException(CoreException.Code.Refused, "The typed id does not match the requester.")
             }
             return TrustSamples.outgoing("trust-$token")
+        }
+        renewals[token]?.let {
+            if (it.red) throw CoreException(CoreException.Code.Refused, it.refusal?.text ?: "The news from the other terminals is too old.")
+            return TrustSamples.outgoing("renew-$token")
         }
         val ext = extensions[token] ?: throw CoreException(CoreException.Code.Malformed, "unknown token")
         if (ext.refusal != null) throw CoreException(CoreException.Code.Refused, ext.refusal.text)

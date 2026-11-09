@@ -64,6 +64,7 @@ import uk.petruha.sshub.phone.ui.screens.trust.trustExtendRoute
 import uk.petruha.sshub.phone.ui.theme.LocalReducedMotion
 import uk.petruha.sshub.phone.ui.theme.SshubTheme
 import uk.petruha.sshub.phone.core.OpenedTrustExtend
+import uk.petruha.sshub.phone.core.OpenedTrustRenew
 import uk.petruha.sshub.phone.core.OpenedTrustRequest
 import uk.petruha.sshub.phone.core.RecoveryNoticeOpened
 import uk.petruha.sshub.phone.core.ReshareOpened
@@ -85,7 +86,7 @@ private fun hidesBar(route: String?): Boolean {
 
 private fun tabOf(route: String?): NavTab? = when (route?.substringBefore("/")) {
     Routes.Home, Routes.ChainHead -> NavTab.Ring
-    Routes.Approvals, Routes.Red, Routes.Release, Routes.Refusal, Routes.TrustRequest, Routes.TrustSigned, Routes.TrustExtend -> NavTab.Approvals
+    Routes.Approvals, Routes.Red, Routes.Release, Routes.Refusal, Routes.TrustRequest, Routes.TrustSigned, Routes.TrustExtend, Routes.TrustRenew -> NavTab.Approvals
     Routes.Enroll1, Routes.Enroll4, Routes.EnrollDone -> NavTab.Enroll
     else -> NavTab.Security
 }
@@ -96,6 +97,7 @@ class AppRouter(private val blocked: () -> Boolean = { false }) : OpenedRouter {
     override fun route(opened: Opened): String? = if (blocked()) null else routeFor(opened) ?: when (opened) {
         is OpenedTrustRequest -> trustRequestRoute(opened.view.token)
         is OpenedTrustExtend -> trustExtendRoute(opened.view.token)
+        is OpenedTrustRenew -> trustRenewRoute(opened.view.token)
         is ReshareOpened -> reshareRoute(opened.token)
         is RecoveryNoticeOpened -> recoveryNoticeRoute(opened.token)
         else -> null
