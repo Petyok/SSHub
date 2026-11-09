@@ -687,12 +687,14 @@ pub struct CertRenewRequestWire {
     pub opened_total: u16,
 }
 
-/// Kind 12 (contract 4j): `ed25519(32) || x25519(32) || mlkem_len u16 BE || mlkem || name_len u8 || name utf8 || terminal(8)`.
+/// Kind 12 (contract 4j, 4l b): `ed25519(32) || x25519(32) || mlkem_len u16 BE || mlkem || name_len u8 || name utf8 || terminal(8)`,
+/// then for the admission frame shown to the NEW phone `0x01 || op_hash(32) || op_lamport u64 BE` (the ingested `PhoneHandover` op). `op` is `None` for the request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhoneHandoverRequestWire {
     pub new_phone: super::crypto::DevicePublic,
     pub name: String,
     pub terminal: [u8; 8],
+    pub op: Option<([u8; 32], u64)>,
 }
 
 impl CertRenewRequestWire {
@@ -815,6 +817,11 @@ impl PhoneHandoverRequestWire {
         out.push(u8::try_from(self.name.len()).expect("name fits u8"));
         out.extend_from_slice(self.name.as_bytes());
         out.extend_from_slice(&self.terminal);
+        if let Some((hash, lamport)) = &self.op {
+            out.push(1);
+            out.extend_from_slice(hash);
+            out.extend_from_slice(&lamport.to_be_bytes());
+        }
         out
     }
 
@@ -828,9 +835,15 @@ impl PhoneHandoverRequestWire {
         let name_at = 66 + mlkem_len;
         let name_len = *body.get(name_at).ok_or_else(short)? as usize;
         let term_at = name_at + 1 + name_len;
-        if body.len() != term_at + 8 {
-            bail!("a phone handover request does not match its lengths");
-        }
+        let rest = body.get(term_at + 8..).ok_or_else(short)?;
+        let op = match rest {
+            [] => None,
+            [1, t @ ..] if t.len() == 40 => Some((
+                t[..32].try_into().unwrap(),
+                u64::from_be_bytes(t[32..].try_into().unwrap()),
+            )),
+            _ => bail!("a phone handover request does not match its lengths"),
+        };
         Ok(Self {
             new_phone: super::crypto::DevicePublic {
                 ed25519_pub: body[..32].try_into().unwrap(),
@@ -839,7 +852,8 @@ impl PhoneHandoverRequestWire {
             },
             name: String::from_utf8(body[name_at + 1..term_at].to_vec())
                 .map_err(|_| anyhow::anyhow!("a handover name is not UTF-8"))?,
-            terminal: body[term_at..].try_into().unwrap(),
+            terminal: body[term_at..term_at + 8].try_into().unwrap(),
+            op,
         })
     }
 }
@@ -1176,6 +1190,7 @@ mod tests {
                 },
                 name: name.into(),
                 terminal: [9; 8],
+                op: None,
             };
             let bytes = req.encode();
             assert_eq!(PhoneHandoverRequestWire::decode(&bytes).unwrap(), req);
@@ -1196,6 +1211,88 @@ mod tests {
         assert!(
             PhoneHandoverRequestWire::decode(&frame_header(KIND_PHONE_HANDOVER_REQUEST)).is_err()
         );
+    }
+
+    #[test]
+    fn kind_12_matches_the_python_oracle_vectors() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/vectors/wire/phone_handover_request.json"
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let hx = |v: &serde_json::Value| hex::decode(v.as_str().unwrap()).unwrap();
+        for v in doc["vectors"].as_array().unwrap() {
+            let i = &v["inputs"];
+            let req = PhoneHandoverRequestWire {
+                new_phone: crate::crypto::DevicePublic {
+                    ed25519_pub: hx(&i["ed"]).try_into().unwrap(),
+                    x25519_pub: hx(&i["x"]).try_into().unwrap(),
+                    mlkem_pub: hx(&i["mlkem"]),
+                },
+                name: i["name"].as_str().unwrap().into(),
+                terminal: hx(&i["terminal"]).try_into().unwrap(),
+                op: i["op_hash"].as_str().map(|h| {
+                    (
+                        hex::decode(h).unwrap().try_into().unwrap(),
+                        i["op_lamport"].as_u64().unwrap(),
+                    )
+                }),
+            };
+            let frame = hx(&v["outputs"]["frame"]);
+            assert_eq!(req.encode(), frame, "{}", v["id"]);
+            assert_eq!(
+                PhoneHandoverRequestWire::decode(&frame).unwrap(),
+                req,
+                "{}",
+                v["id"]
+            );
+        }
+    }
+
+    #[test]
+    fn kind_12_admission_frame_carries_the_op_hash_and_nothing_else_is_accepted() {
+        let req = PhoneHandoverRequestWire {
+            new_phone: crate::crypto::DevicePublic {
+                ed25519_pub: [1; 32],
+                x25519_pub: [2; 32],
+                mlkem_pub: vec![3; 1184],
+            },
+            name: "new phone".into(),
+            terminal: [9; 8],
+            op: None,
+        };
+        let plain = req.encode();
+        let stage2 = PhoneHandoverRequestWire {
+            op: Some(([0xAB; 32], 0x0102_0304_0506_0708)),
+            ..req.clone()
+        };
+        let bytes = stage2.encode();
+        assert_eq!(
+            bytes[..plain.len()],
+            plain[..],
+            "the 4j layout is unchanged"
+        );
+        assert_eq!(
+            bytes[plain.len()..],
+            [&[1u8][..], &[0xAB; 32], &[1, 2, 3, 4, 5, 6, 7, 8]].concat()
+        );
+        assert_eq!(PhoneHandoverRequestWire::decode(&bytes).unwrap(), stage2);
+        assert_eq!(PhoneHandoverRequestWire::decode(&plain).unwrap(), req);
+        // a trailer that is not exactly 0x01 and 40 bytes is an error
+        for cut in 1..=41 {
+            assert!(
+                PhoneHandoverRequestWire::decode(&bytes[..bytes.len() - cut]).is_err()
+                    == (cut < 41),
+                "cut {cut}"
+            );
+        }
+        let mut long = bytes.clone();
+        long.push(0);
+        assert!(PhoneHandoverRequestWire::decode(&long).is_err());
+        let mut tag = bytes.clone();
+        tag[plain.len()] = 2;
+        assert!(PhoneHandoverRequestWire::decode(&tag).is_err());
     }
 
     #[test]
