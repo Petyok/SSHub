@@ -342,7 +342,7 @@ mod tests {
         let bad = json!({ "section": "cert_fold", "key": rec.cert_id, "value": reset });
         assert!(verify_state_writes(&[issue.clone(), bad]).is_err());
         // a record with no issue write, and one that disagrees with it
-        assert!(verify_state_writes(&[good.clone()]).is_err());
+        assert!(verify_state_writes(std::slice::from_ref(&good)).is_err());
         let mut other = issue.clone();
         other["value"]["issuer"] = json!("someone else");
         assert!(verify_state_writes(&[other, good]).is_err());
