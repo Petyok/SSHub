@@ -240,6 +240,42 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
         OpBody::DeviceRevoke { device_id } => {
             vec![("revoke", device_id.clone(), 0, json!({ "by": hex(hash) }))]
         }
+        // New phone live, old phone retired, and the fact itself (the successor of a phone is read from it).
+        OpBody::PhoneHandover { new_phone, name } if new_phone.validate().is_ok() => vec![
+            (
+                "device",
+                new_phone.device_id(),
+                0,
+                json!({
+                    "id": new_phone.device_id(),
+                    "ed25519": hex(&new_phone.ed25519_pub),
+                    "x25519": hex(&new_phone.x25519_pub),
+                    "mlkem": b64_encode(&new_phone.mlkem_pub),
+                    "name": name,
+                    "role": super::merge::role_db(super::merge::HANDOVER_PHONE.0),
+                    "attendance": super::merge::attendance_db(super::merge::HANDOVER_PHONE.1),
+                    "kind": super::merge::kind_db(super::merge::HANDOVER_PHONE.2),
+                    "verified_by": super::merge::verified_db(super::merge::HANDOVER_PHONE.3),
+                    "added_by": hex(hash),
+                }),
+            ),
+            (
+                "revoke",
+                op.device_id.clone(),
+                0,
+                json!({ "by": hex(hash) }),
+            ),
+            (
+                "handover",
+                hex(hash),
+                0,
+                json!({
+                    "old_phone": op.device_id,
+                    "new_phone": new_phone.device_id(),
+                    "name": name,
+                }),
+            ),
+        ],
         OpBody::WrapKeyRotate {
             device_id,
             wrap_epoch,
@@ -388,7 +424,8 @@ pub(super) struct Win {
     pub(super) value: Value,
 }
 
-/// `only_key`: just the writes whose key is that string or starts with `<it>:` (the certificate sections).
+/// `only_key`: just the writes whose key is that string or starts with `<it>:` (the certificate sections), and the
+/// handover facts (a certificate's holder of record follows them).
 pub(super) fn fold_writes(
     conn: &Connection,
     cut: Option<&Cut>,
@@ -398,7 +435,7 @@ pub(super) fn fold_writes(
         "SELECT w.section, w.key, w.ord, w.lamport, w.device_id, w.seq, w.value,
                 w.op_hash = zeroblob(32), o.state
          FROM sync_writes w LEFT JOIN sync_ops o ON o.op_hash = w.op_hash
-         WHERE ?1 IS NULL OR w.key = ?1 OR w.key LIKE ?1 || ':%'
+         WHERE ?1 IS NULL OR w.key = ?1 OR w.key LIKE ?1 || ':%' OR w.section = 'handover'
          ORDER BY w.ord, w.lamport, w.device_id, w.seq",
     )?;
     let rows = stmt.query_map([only_key], |r| {
