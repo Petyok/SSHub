@@ -1692,3 +1692,38 @@ fn two_computers_are_enough_to_cut_one_off() {
         "{s}"
     );
 }
+
+#[test]
+fn heal_re_seals_a_credential_to_a_new_holder_and_refuses_one_a_removed_device_holds() {
+    use crate::sync::cred_ops::{heal_credential, heal_plan};
+    use crate::sync::oplog::{Attendance, DeviceKind};
+    let d = ring(4);
+    quorum_mode(&d[0]);
+    all_to_all(&d);
+    let (h1, h2) = ([1u8; 16], [2u8; 16]);
+    for h in [&h1, &h2] {
+        cred_put(&d[0].store, &d[0].id, h, &payload("x")).unwrap();
+    }
+    all_to_all(&d);
+    assert!(heal_plan(&d[0].store).unwrap().is_empty());
+    // A replacement terminal joins: it holds no share of either credential.
+    let fresh = Dev::new();
+    d[0].trust_with(&fresh, Attendance::Attended, DeviceKind::Terminal);
+    assert_eq!(heal_plan(&d[0].store).unwrap(), vec![h1, h2]);
+    heal_credential(&d[0].store, &d[0].id, &h1, &payload("x")).unwrap();
+    let (_, wraps) = d[0].store.sync_cred_ciphertext(&h1).unwrap().unwrap();
+    assert!(
+        wraps.iter().any(|w| w.recipient == fresh.did),
+        "healed to the new holder"
+    );
+    assert_eq!(heal_plan(&d[0].store).unwrap(), vec![h2]);
+    // A removed device still holds a share of h2: it is exposed, not healable.
+    append(
+        &d[0],
+        OpBody::DeviceRevoke {
+            device_id: d[3].did.clone(),
+        },
+    );
+    assert!(heal_plan(&d[0].store).unwrap().is_empty());
+    assert!(heal_credential(&d[0].store, &d[0].id, &h2, &payload("x")).is_err());
+}

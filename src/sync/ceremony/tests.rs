@@ -672,6 +672,97 @@ mod in_force {
         assert!(!next_actions(&d[0].store, &d[0].id, now).unwrap().is_empty());
     }
 
+    // Phase B, design 6: renewals extend the end date that counts, within the caps; the request names the evidence.
+    #[test]
+    fn a_renewed_certificate_is_effective_until_the_new_end_and_a_third_renewal_is_not_counted() {
+        use crate::sync::cert::{cert_allows, cert_renew_request, DelegationCert};
+        use crate::sync::oplog::CertScope;
+        let (d, phrase) = ring_with_paper();
+        let phone = &d[3];
+        let host = [42u8; 16];
+        let now = crate::store::now_ts();
+        let day = 86_400;
+        let op = append(
+            phone,
+            OpBody::CertIssue {
+                device_id: d[1].did.clone(),
+                scope: CertScope::Hosts(vec![host]),
+                expiry: now + 10 * day,
+                max_new_hosts_per_day: 2,
+                epoch_lo: 0,
+                epoch_hi: 10,
+            },
+        );
+        complete(&d, &op, 2, Some(&phrase));
+        let cert = DelegationCert::from_op(&op).unwrap();
+        let pk = phone.id.public().ed25519_pub;
+        let store = &d[0].store;
+        assert_eq!(cert.effective_expiry(store).unwrap(), now + 10 * day);
+        assert_eq!(cert.renewals(store).unwrap(), 0);
+
+        // The request: five days more, evidence from the two terminals that are not the delegate.
+        let req = cert_renew_request(store, cert.id, 5 * day, now).unwrap();
+        assert_eq!(req.expiry, now + 15 * day);
+        assert_eq!(req.evidence.len(), 2, "{:?}", req.evidence);
+        assert!(
+            cert_renew_request(store, cert.id, 11 * day, now).is_err(),
+            "longer than the first term"
+        );
+
+        // After the original end the session is dead; a renewal revives it, within the caps.
+        let late = now + 12 * day;
+        assert!(cert_allows(&cert, &pk, store, &d[1].did, &host, late, late).is_err());
+        for (n, end) in [(1u32, 20 * day), (2, 30 * day), (3, 40 * day)] {
+            append(
+                phone,
+                OpBody::CertRenew {
+                    cert_id: cert.id,
+                    expiry: now + end,
+                },
+            );
+            all_to_all_pull(&d);
+            let counted = n.min(2);
+            assert_eq!(cert.renewals(&d[0].store).unwrap(), counted, "renewal {n}");
+        }
+        assert_eq!(cert.effective_expiry(&d[0].store).unwrap(), now + 30 * day);
+        cert_allows(&cert, &pk, &d[0].store, &d[1].did, &host, late, late).unwrap();
+        assert!(
+            cert_renew_request(&d[0].store, cert.id, 5 * day, now).is_err(),
+            "the cap is reached"
+        );
+    }
+
+    #[test]
+    fn the_blocking_view_names_who_can_give_each_missing_proof() {
+        let (d, phrase) = ring_with_paper();
+        let _ = phrase;
+        let rev = append(
+            &d[0],
+            OpBody::DeviceRevoke {
+                device_id: d[2].did.clone(),
+            },
+        );
+        all_to_all_pull(&d);
+        let now = rev.timestamp + 30;
+        let b = blocking_view(&d[1].store, &rev, now).unwrap();
+        let proofs: Vec<_> = b.iter().map(|x| x.proof.clone()).collect();
+        assert_eq!(
+            proofs,
+            vec![
+                RedProof::Phone,
+                RedProof::SecondDevice,
+                RedProof::Factor(Some(ThirdFactor::Paper))
+            ]
+        );
+        assert!(b.iter().all(|x| !x.who.is_empty()), "{b:?}");
+        assert_eq!(b[2].who, vec!["the paper phrase".to_string()]);
+        assert!(
+            b[1].who.iter().any(|w| w.contains("paper")),
+            "the paper shortcut is offered: {b:?}"
+        );
+        assert_eq!(b[0].since, Some(rev.timestamp));
+    }
+
     #[test]
     fn an_export_window_opens_only_when_complete() {
         let (d, phrase) = ring_with_paper();
