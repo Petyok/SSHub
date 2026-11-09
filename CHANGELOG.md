@@ -66,7 +66,7 @@ All notable changes to SSHub are documented in this file.
   cannot change a password on a server and says so; removing the old key's line from `authorized_keys` stays yours.
 - **Renew a trust session (host sync)** - `M`, Advanced, "Trust session: renew one", or `sshub sync-trust-renew [<id>]
   [--days N]`: another full computer shows the phone a request that carries what the other terminals saw of the delegate;
-  one phone confirmation renews it, at most twice and at most 180 days in all. The Sync tab says when a session ends
+  the request also lists the hosts opened under the session (names and a total, or "no list sent"); one phone confirmation renews it, at most twice and at most 180 days in all. The Sync tab says when a session ends
   within 3 days, and each renewal is mailed once when mail is set up.
 - **Replace a full computer (host sync)** - `M`, Devices, "Replace a full computer", or
   `sshub sync-replace-terminal <old> [--new <computer>]`: it says how to enroll the new one, proposes it as a full

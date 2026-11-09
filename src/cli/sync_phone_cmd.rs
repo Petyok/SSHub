@@ -757,6 +757,13 @@ fn trust_renew(
     );
     let wire =
         crate::sync::cert::cert_renew_request(store, row.cert_id, i64::from(a.days) * 86_400, now)?;
+    emit(
+        out,
+        a.json,
+        "opened",
+        crate::app::sync_trust::opened_line(&wire),
+        json!({"opened": wire.opened, "opened_total": wire.opened_total}),
+    );
     let text = b64(&wire.encode());
     emit(
         out,
