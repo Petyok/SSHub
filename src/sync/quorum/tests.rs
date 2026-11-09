@@ -458,8 +458,15 @@ fn using_a_credential_heals_it_to_a_holder_that_joined_later() {
         None,
         FAST,
     );
-    ensure_unlocked(&[SecretRef::Key(crate::credentials::host_key(row.id))], &unlocker).unwrap();
-    assert!(heal_plan(&d[0].store).unwrap().is_empty(), "healed by the first use");
+    ensure_unlocked(
+        &[SecretRef::Key(crate::credentials::host_key(row.id))],
+        &unlocker,
+    )
+    .unwrap();
+    assert!(
+        heal_plan(&d[0].store).unwrap().is_empty(),
+        "healed by the first use"
+    );
     let (_, wraps) = d[0].store.sync_cred_ciphertext(&uid).unwrap().unwrap();
     assert!(wraps.iter().any(|w| w.recipient == fresh.did));
 }

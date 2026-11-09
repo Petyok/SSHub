@@ -793,13 +793,23 @@ mod in_force {
         all_to_all_pull(&d);
         let owed = owed_renew_mails(&d[0].store).unwrap();
         assert_eq!(owed.len(), 1);
-        assert!(owed[0].1.contains("renewed") && owed[0].2.contains("1 of 2"), "{owed:?}");
+        assert!(
+            owed[0].1.contains("renewed") && owed[0].2.contains("1 of 2"),
+            "{owed:?}"
+        );
         let mut failing = |_: &str, _: &str| -> Result<()> { anyhow::bail!("no mta") };
         assert_eq!(send_renew_mails(&d[0].store, &mut failing).unwrap(), 0);
-        assert_eq!(owed_renew_mails(&d[0].store).unwrap().len(), 1, "tried again");
+        assert_eq!(
+            owed_renew_mails(&d[0].store).unwrap().len(),
+            1,
+            "tried again"
+        );
         let mut ok = |_: &str, _: &str| -> Result<()> { Ok(()) };
         assert_eq!(send_renew_mails(&d[0].store, &mut ok).unwrap(), 1);
-        assert!(owed_renew_mails(&d[0].store).unwrap().is_empty(), "mailed once");
+        assert!(
+            owed_renew_mails(&d[0].store).unwrap().is_empty(),
+            "mailed once"
+        );
     }
 
     #[test]
