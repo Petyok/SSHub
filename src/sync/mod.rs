@@ -13,6 +13,7 @@ pub mod entity_capture;
 pub mod exemption;
 pub mod export;
 pub mod health;
+pub mod handover;
 pub mod hub;
 pub mod identity_store;
 pub mod media;

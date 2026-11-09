@@ -263,7 +263,51 @@ pub fn effective_devices(store: &LauncherStore, upto: Option<u64>) -> Result<Vec
             d.status = DeviceStatus::Operational;
         }
     }
+    apply_handovers(store, upto, &mut rows)?;
     Ok(rows)
+}
+
+/// What phone handovers do to the device table as the ceremony sees it at `upto`. The oplog applies a handover's row
+/// effects when the op is stored (the old phone's row `revoked`, the new phone a holder phone); a view must not see them
+/// before the handover COMPLETED: the old phone is retired, and the new phone a holder, only from the completion
+/// lamport (`handover_effect`) on, so everything written before it is judged under the old phone (crypto M4, M7).
+fn apply_handovers(
+    store: &LauncherStore,
+    upto: Option<u64>,
+    rows: &mut [DeviceRow],
+) -> Result<()> {
+    let all = ops_of(store, "PhoneHandover", None)?;
+    if all.is_empty() {
+        return Ok(());
+    }
+    let revoke_ops = ops_of(store, "DeviceRevoke", None)?;
+    for h in all {
+        let OpBody::PhoneHandover { new_phone, .. } = &h.body else {
+            continue;
+        };
+        let (old, new) = (h.device_id.clone(), new_phone.device_id());
+        // A handover written at or after the view cannot have completed inside it.
+        let effect = if upto.is_some_and(|u| h.lamport >= u) {
+            None
+        } else {
+            handover_effect(store, &h)?
+        };
+        let live = effect.is_some_and(|e| upto.is_none_or(|u| e <= u));
+        for d in rows.iter_mut() {
+            if d.id == old && d.status == DeviceStatus::Revoked {
+                let by_revoke = revoke_ops.iter().any(
+                    |r| matches!(&r.body, OpBody::DeviceRevoke { device_id } if *device_id == old),
+                );
+                if !live && !by_revoke {
+                    d.status = DeviceStatus::Operational;
+                }
+            }
+            if d.id == new && !live {
+                d.role = DeviceRole::Mirror;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The credential mode the ring has agreed to: the projection's mode, unless the newest `ModeChange` is
@@ -438,7 +482,7 @@ fn own_admission_proof(
     phone: &super::crypto::DevicePublic,
     hash: &[u8; 32],
     valid_proof: &dyn Fn(&Op) -> bool,
-) -> Result<Option<i64>> {
+) -> Result<Option<(i64, u64)>> {
     let id = phone.device_id();
     let rows: Vec<(Vec<u8>, Vec<u8>, i64)> = store.with_conn(|c| {
         let mut st = c.prepare(
@@ -451,7 +495,7 @@ fn own_admission_proof(
         })?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     })?;
-    let mut first = None;
+    let mut first: Option<(i64, u64)> = None;
     for (canonical, sig, received) in rows {
         let Ok(sig) = <[u8; 64]>::try_from(sig) else {
             continue;
@@ -464,7 +508,10 @@ fn own_admission_proof(
             && p.verify(&phone.ed25519_pub)
             && valid_proof(&p)
         {
-            first = Some(first.map_or(received, |t: i64| t.min(received)));
+            let lamport = p.lamport;
+            first = Some(first.map_or((received, lamport), |(t, l): (i64, u64)| {
+                (t.min(received), l.min(lamport))
+            }));
         }
     }
     Ok(first)
@@ -472,9 +519,41 @@ fn own_admission_proof(
 
 /// Where the ceremony of `op` stands at `now`.
 pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus> {
+    Ok(red_eval(store, op, now, true)?.0)
+}
+
+/// When the ceremony of a `PhoneHandover` completed and took effect: the highest lamport among the counted proofs (the
+/// lowest valid one of each kind). `None` while it is not complete or breaks a rule. A pure function of the log.
+pub fn handover_effect(store: &LauncherStore, op: &Op) -> Result<Option<u64>> {
+    if !matches!(op.body, OpBody::PhoneHandover { .. }) {
+        return Ok(None);
+    }
+    let (st, lamport) = red_eval(store, op, op.timestamp, true)?;
+    Ok((st.missing.is_empty() && st.blocked.is_none() && st.rule_violation.is_none())
+        .then_some(lamport))
+}
+
+/// [`red_status`] and the completion lamport. `check_winner` is off when a handover is judged only to rank it against
+/// another of the same phone.
+fn red_eval(
+    store: &LauncherStore,
+    op: &Op,
+    now: i64,
+    check_winner: bool,
+) -> Result<(RedStatus, u64)> {
     let hash = op.hash();
     let proposer = &op.device_id;
-    let devices = effective_devices(store, Some(op.lamport))?;
+    let is_handover = matches!(&op.body, OpBody::PhoneHandover { .. });
+    // A handover takes effect at its completion, later than itself: it is judged in the view just before it, where the
+    // old phone is the live one.
+    let view = if is_handover {
+        op.lamport.saturating_sub(1)
+    } else {
+        op.lamport
+    };
+    let devices = effective_devices(store, Some(view))?;
+    let (mut lam_phone, mut lam_second, mut lam_factor): (Option<u64>, Option<u64>, Option<u64>) =
+        (None, None, None);
     // Two phones in force are a verdict on the op being judged, not an error in every evaluation.
     let (phone, phone_verdict) = match super::quorum::phone_device_in(&devices) {
         Ok(p) => (p, None),
@@ -651,6 +730,28 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         OpBody::BulkExport { window_secs, .. } if *window_secs == 0 || *window_secs > 3600 => {
             blocked = Some("a bulk export window is 1 to 3600 seconds".to_string());
         }
+        OpBody::PhoneHandover { new_phone, .. } => {
+            if !paper_registered {
+                blocked = Some(
+                    "a phone handover needs the paper phrase registered first: it is the only third factor that counts"
+                        .to_string(),
+                );
+            }
+            // The new phone is a new key: not one the ring already knows (its own row, made by this very handover, excepted).
+            let new_id = new_phone.device_id();
+            let known = devices.iter().any(|d| {
+                d.id != new_id
+                    && (d.public.ed25519_pub == new_phone.ed25519_pub
+                        || d.public.x25519_pub == new_phone.x25519_pub)
+            }) || super::quorum::paper_pub(store)?.is_some_and(|p| {
+                p.ed25519_pub == new_phone.ed25519_pub || p.x25519_pub == new_phone.x25519_pub
+            });
+            if known {
+                let why = "the new phone's keys are already known to the ring".to_string();
+                rule_violation = Some(why.clone());
+                blocked = Some(why);
+            }
+        }
         _ => {}
     }
 
@@ -668,11 +769,27 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     let authored_by_phone = phone.as_ref() == Some(proposer);
     let heard = |p: &Op| received_at(store, p).unwrap_or(p.timestamp);
     let mut complete_at = heard(op);
-    if authored_by_phone {
+    if let OpBody::PhoneHandover { new_phone, .. } = &op.body {
+        // The author is the ring's live phone; the NEW phone adds its own proof (its key is in the op, it is no device of
+        // this view yet, so its signature may still wait as the op of an unknown author).
+        if !authored_by_phone {
+            let why = "a handover is written by the ring's live phone".to_string();
+            rule_violation = Some(why.clone());
+            blocked = Some(why);
+        }
+        match own_admission_proof(store, new_phone, &hash, &valid_proof)? {
+            Some((t, lamport)) if authored_by_phone => {
+                complete_at = complete_at.max(t);
+                lam_phone = Some(lamport);
+                have.push(RedProof::Phone);
+            }
+            _ => missing.push(RedProof::Phone),
+        }
+    } else if authored_by_phone {
         have.push(RedProof::Phone);
     } else if let Some(dev) = &admitted_phone {
         match own_admission_proof(store, dev, &hash, &valid_proof)? {
-            Some(t) => {
+            Some((t, _)) => {
                 complete_at = complete_at.max(t);
                 have.push(RedProof::Phone);
             }
@@ -757,6 +874,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
             approved_own = true;
         }
         approved = true;
+        lam_second = Some(lam_second.map_or(p.lamport, |l: u64| l.min(p.lamport)));
         second_at = Some(second_at.map_or(heard(&p), |t: i64| t.min(heard(&p))));
         approvers.push(p.device_id.clone());
     }
@@ -796,6 +914,8 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
     let mut factor_ok = false;
     let mut factor_named: Option<ThirdFactor> = None;
     let mut factor_at: Option<i64> = None;
+    // Removing a computer and handing the ring to a new phone take the paper as their only third factor.
+    let paper_only = revoked_terminal_holder || is_handover;
     for p in ops_of(store, "RedFactor", None)? {
         let OpBody::RedFactor {
             op_hash,
@@ -815,7 +935,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         let Some(key) = key else { continue };
         // The mailbox duty is a participant of its own: the registered sender neither proposed the op nor
         // gave its second-device vote.
-        if *factor == ThirdFactor::EmailCode && revoked_terminal_holder {
+        if *factor == ThirdFactor::EmailCode && paper_only {
             // The emailed code never counts for removing a holder: the paper is its only third factor.
             continue;
         }
@@ -834,6 +954,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         }
         if verify(&key, &factor_message(&hash, proposer), sig) {
             factor_ok = true;
+            lam_factor = Some(lam_factor.map_or(p.lamport, |l: u64| l.min(p.lamport)));
             factor_named = Some(factor.clone());
             factor_at = Some(factor_at.map_or(heard(&p), |t: i64| t.min(heard(&p))));
         }
@@ -853,7 +974,7 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
         complete_at = complete_at.max(factor_at.unwrap_or(0));
         have.push(RedProof::Factor(factor_named.clone()));
     } else if !bootstrap {
-        missing.push(RedProof::Factor(if revoked_terminal_holder {
+        missing.push(RedProof::Factor(if paper_only {
             Some(ThirdFactor::Paper)
         } else {
             replacing.clone().filter(|r| {
@@ -919,20 +1040,49 @@ pub fn red_status(store: &LauncherStore, op: &Op, now: i64) -> Result<RedStatus>
             setup_waived.join(", ")
         ));
     }
-    let complete = missing.is_empty() && blocked.is_none();
+    // Among the handovers one phone wrote, the one that completed first wins (lowest `(completion lamport, device, seq)`);
+    // any other is a rule violation, whoever completed its proofs (crypto M7).
+    let completion_lamport = [lam_phone, lam_second, lam_factor]
+        .into_iter()
+        .flatten()
+        .max()
+        .unwrap_or(op.lamport);
+    let done = missing.is_empty() && blocked.is_none();
+    if is_handover && check_winner && done && rule_violation.is_none() {
+        for other in ops_of(store, "PhoneHandover", Some(proposer))? {
+            if other.hash() == hash {
+                continue;
+            }
+            let (st, lamport) = red_eval(store, &other, now, false)?;
+            if st.missing.is_empty()
+                && st.blocked.is_none()
+                && st.rule_violation.is_none()
+                && (lamport, &other.device_id, other.seq)
+                    < (completion_lamport, &op.device_id, op.seq)
+            {
+                rule_violation =
+                    Some("another handover of the same phone completed first".to_string());
+                break;
+            }
+        }
+    }
+    let complete = done;
     // `expired`: the window passed on this clock and the ceremony is not complete. A screen says so; nothing is decided by it.
     let expired = past_window && !complete;
-    Ok(RedStatus {
-        have,
-        missing,
-        complete,
-        expired,
-        blocked,
-        single_machine_ring,
-        rule_violation,
-        note,
-        complete_at,
-    })
+    Ok((
+        RedStatus {
+            have,
+            missing,
+            complete,
+            expired,
+            blocked,
+            single_machine_ring,
+            rule_violation,
+            note,
+            complete_at,
+        },
+        completion_lamport,
+    ))
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
