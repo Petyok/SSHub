@@ -1307,10 +1307,23 @@ fn drop_old_blobs(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// How long a device may stay silent before it is stale. The e2e image (built with `--features e2e-hooks`, never a release) may
+/// shorten it with `SSHUB_E2E_STALE_AFTER_SECS` so a scenario need not wait thirty days; every other build reads the constant.
+pub(crate) fn stale_after_secs() -> i64 {
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(secs) = std::env::var("SSHUB_E2E_STALE_AFTER_SECS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+    {
+        return secs;
+    }
+    STALE_AFTER_SECS
+}
+
 fn flag_stale_devices(conn: &Connection, cut: &[CutEntry], ts: i64) -> Result<()> {
     for c in cut {
         let head = op_at(conn, &c.device_id, c.seq)?;
-        if head.is_some_and(|h| h.op.timestamp < ts - STALE_AFTER_SECS) {
+        if head.is_some_and(|h| h.op.timestamp < ts - stale_after_secs()) {
             conn.execute(
                 "INSERT OR REPLACE INTO sync_meta (key, value) VALUES (?1, ?2)",
                 params![
