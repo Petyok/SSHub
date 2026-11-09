@@ -439,7 +439,7 @@ mod tests {
             tried.push((host.to_string(), key.to_string()));
             bail!("permission denied")
         };
-        let r = rekey_new_key(store, id, &[name.clone()], &mut failing).unwrap();
+        let r = rekey_new_key(store, id, std::slice::from_ref(&name), &mut failing).unwrap();
         assert!(
             r.lines
                 .iter()
@@ -457,7 +457,7 @@ mod tests {
             seen.push((host.to_string(), key.to_string()));
             Ok(())
         };
-        let r = rekey_new_key(store, id, &[name.clone()], &mut ok).unwrap();
+        let r = rekey_new_key(store, id, std::slice::from_ref(&name), &mut ok).unwrap();
         assert!(
             r.lines
                 .iter()
