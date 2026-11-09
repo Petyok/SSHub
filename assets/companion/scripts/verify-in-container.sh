@@ -20,7 +20,7 @@ cp sshub-companion.html /tmp/build1.html
 step build-again node build.mjs
 cmp sshub-companion.html /tmp/build1.html && echo "REPRODUCIBLE yes" || { echo "REPRODUCIBLE no"; fail=1; }
 step build-selftest node build.mjs --selftest
-step node-tests node --test test/phone.test.mjs test/phone2.test.mjs test/phone3.test.mjs test/review-app-round1.test.mjs test/review-app-round2.test.mjs test/review-app-round3.test.mjs test/review-app-round3-browser.test.mjs test/ble.test.mjs test/quorum.test.mjs test/one-list.test.mjs test/cert-renew.test.mjs test/replay.test.js
+step node-tests node --test test/phone.test.mjs test/phone2.test.mjs test/phone3.test.mjs test/review-app-round1.test.mjs test/review-app-round2.test.mjs test/review-app-round3.test.mjs test/review-app-round3-browser.test.mjs test/ble.test.mjs test/quorum.test.mjs test/one-list.test.mjs test/cert-renew.test.mjs test/phone-handover.test.mjs test/replay.test.js
 # The deterministic scenario the Rust phone core is compared against (crates/sshub-phone-core/tests/parity.rs): the page
 # must still produce exactly the committed results.
 step parity-page node scripts/parity-page.mjs --check
