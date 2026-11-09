@@ -692,7 +692,9 @@ fn the_admission_frame_carries_the_op_hash_and_lamport_and_the_same_eight_words(
     use crate::sync::oplog::{Op, OpBody};
     use crate::sync::wire::PhoneHandoverRequestWire;
     let new = crate::sync::crypto::DeviceIdentity::generate();
-    let old = crate::sync::crypto::DeviceIdentity::generate().public().device_id();
+    let old = crate::sync::crypto::DeviceIdentity::generate()
+        .public()
+        .device_id();
     let op = Op {
         device_id: old.clone(),
         seq: 4,
