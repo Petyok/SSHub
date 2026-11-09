@@ -2377,6 +2377,223 @@ fn renew_survives_a_checkpoint_prune() {
     want(record(issuer));
 }
 
+/// The handover plumbing (design 5): an approved `PhoneHandover` makes the new phone a live holder phone and
+/// retires the old one; the old phone's later ops wait; the fact names the successor.
+#[test]
+fn an_approved_handover_makes_the_new_phone_live_and_retires_the_old_one() {
+    let ring = live_ring(vec![Peer::new(), Peer::new(), Peer::new()]);
+    touch(&ring);
+    settle(&ring);
+    let (old, ceremony) = (&ring[0], &ring[1]);
+    let new = Peer::new();
+    let handover = old.append(OpBody::PhoneHandover {
+        new_phone: new.id.public(),
+        name: "new phone".into(),
+    });
+    sync_all(&ring);
+    // Red: it waits for the ceremony on the terminal and changes nothing yet.
+    assert!(ceremony.store.sync_handovers().unwrap().is_empty());
+    let status = |p: &Peer, id: &str| {
+        p.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|d| d.id == id)
+            .map(|d| d.status)
+    };
+    assert!(matches!(status(ceremony, &old.dev()), Some(st) if st != DeviceStatus::Revoked));
+    assert_eq!(status(ceremony, &new.dev()), None);
+
+    ceremony
+        .store
+        .sync_resolve_pending(&handover.hash(), true)
+        .unwrap();
+    let facts = ceremony.store.sync_handovers().unwrap();
+    assert_eq!(facts.len(), 1);
+    assert_eq!(
+        (facts[0].old_phone.as_str(), facts[0].new_phone.as_str()),
+        (old.dev().as_str(), new.dev().as_str())
+    );
+    assert_eq!(
+        ceremony.store.sync_successor_of(&old.dev()).unwrap(),
+        Some(new.dev())
+    );
+    assert_eq!(ceremony.store.sync_successor_of(&new.dev()).unwrap(), None);
+    assert!(matches!(status(ceremony, &new.dev()), Some(st) if st != DeviceStatus::Revoked));
+    assert_eq!(status(ceremony, &old.dev()), Some(DeviceStatus::Revoked));
+    let row = ceremony
+        .store
+        .sync_devices()
+        .unwrap()
+        .into_iter()
+        .find(|d| d.id == new.dev())
+        .unwrap();
+    assert_eq!(
+        (row.role, row.kind),
+        (DeviceRole::Holder, DeviceKind::Phone)
+    );
+
+    let notes = |n: &str| HostFields {
+        notes: Some(Some(n.into())),
+        ..Default::default()
+    };
+    // The old phone's next op waits as revoked-author; the new phone's op is accepted (it is a device now).
+    old.append(upsert(60, notes("by the old phone")));
+    let new = {
+        for p in &ring {
+            new.store
+                .sync_register_device(
+                    &p.id.public(),
+                    "peer",
+                    DeviceRole::Holder,
+                    Attendance::Attended,
+                    DeviceKind::Terminal,
+                    VerifiedBy::Sas,
+                )
+                .unwrap();
+        }
+        new.store
+            .sync_register_device(
+                &new.id.public(),
+                "me",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Phone,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        for p in &ring {
+            pull(&new, p);
+        }
+        new
+    };
+    new.append(upsert(61, notes("by the new phone")));
+    pull(ceremony, old);
+    pull(ceremony, &new);
+    let reasons: Vec<String> = ceremony
+        .store
+        .sync_pending_with_reasons()
+        .unwrap()
+        .into_iter()
+        .map(|(_, r)| r)
+        .collect();
+    assert_eq!(reasons, vec!["revoked-author".to_string()]);
+    let note = |n: u8| ceremony.host(&uid(n)).and_then(|h| h.notes);
+    assert_eq!(
+        note(61).as_deref(),
+        Some("by the new phone"),
+        "the new phone writes"
+    );
+    assert_ne!(
+        note(60).as_deref(),
+        Some("by the old phone"),
+        "the old phone's op is held"
+    );
+}
+
+/// The handover fact and the successor's right to renew travel in the checkpoint: a device that bootstraps after
+/// a prune knows the new phone, knows the old phone is retired and counts the successor's renewal.
+#[test]
+fn the_handover_and_the_successor_renewal_survive_a_checkpoint_prune() {
+    let dir = tempfile::tempdir().unwrap();
+    let ring = live_ring(vec![
+        file_peer(dir.path()),
+        Peer::new(),
+        Peer::new(),
+        Peer::new(),
+    ]);
+    let t0 = crate::store::now_ts();
+    touch(&ring);
+    let (old, ceremony) = (&ring[3], &ring[2]);
+    let issue = old.append(OpBody::CertIssue {
+        device_id: ring[0].dev(),
+        scope: CertScope::Hosts(vec![uid(1)]),
+        expiry: t0 + 100_000,
+        max_new_hosts_per_day: 5,
+        epoch_lo: 0,
+        epoch_hi: 0,
+    });
+    let cert_id = issue.hash();
+    let new_id = DeviceIdentity::generate();
+    let handover = old.append(OpBody::PhoneHandover {
+        new_phone: new_id.public(),
+        name: "new phone".into(),
+    });
+    for n in 0..2 {
+        ceremony.append(upsert(70 + n, hf(&format!("later{n}"), "10.2.2.2")));
+    }
+    sync_all(&ring);
+    ceremony
+        .store
+        .sync_resolve_pending(&handover.hash(), true)
+        .unwrap();
+    settle(&ring);
+    let new = Peer {
+        store: LauncherStore::open_in_memory().unwrap(),
+        id: new_id,
+    };
+    for p in ring.iter().chain(std::iter::once(&new)) {
+        new.store
+            .sync_register_device(
+                &p.id.public(),
+                "peer",
+                DeviceRole::Holder,
+                Attendance::Attended,
+                DeviceKind::Phone,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+    }
+    for p in &ring {
+        pull(&new, p);
+    }
+    new.approve_all();
+    new.append(OpBody::CertRenew {
+        cert_id,
+        expiry: t0 + 190_000,
+    });
+    for p in &ring {
+        pull(p, &new);
+    }
+    settle(&ring);
+    let want = |p: &Peer| {
+        let r = p.store.sync_cert_record(&cert_id).unwrap().expect("known");
+        assert_eq!(
+            (r.renewals, r.effective_expiry),
+            (1, t0 + 190_000),
+            "the successor's renewal counts"
+        );
+        assert_eq!(
+            p.store.sync_successor_of(&old.dev()).unwrap(),
+            Some(new.dev())
+        );
+    };
+    want(&ring[0]);
+
+    // The retired phone no longer takes part in checkpoints.
+    let live = &ring[..3];
+    checkpoint_round(live, 0, t0);
+    touch(live);
+    settle(live);
+    let (_c2, h2) = checkpoint_round(live, 1, t0 + 100);
+    let report = ring[0].store.sync_prune(t0 + 8 * 86_400 + 1_000).unwrap();
+    assert!(report.ops_deleted > 0, "{report:?}");
+    want(&ring[0]);
+
+    let bundle = ring[1].store.sync_checkpoint_bundle(&h2).unwrap().unwrap();
+    let fresh = Peer::new();
+    let words = ring_fingerprint(&bundle.state).unwrap();
+    fresh
+        .store
+        .sync_bootstrap(&bundle, &BootstrapTrust::RingFingerprint(words))
+        .unwrap();
+    want(&fresh);
+    let devices = fresh.store.sync_devices().unwrap();
+    let status = |id: &str| devices.iter().find(|d| d.id == id).map(|d| d.status);
+    assert!(matches!(status(&new.dev()), Some(st) if st != DeviceStatus::Revoked));
+    assert_eq!(status(&old.dev()), Some(DeviceStatus::Revoked));
+}
+
 #[test]
 fn a_fork_at_the_prune_floor_is_still_proven_and_older_ops_are_covered() {
     let ring = live_ring(vec![Peer::new(), Peer::new(), Peer::new()]);
