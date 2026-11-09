@@ -2419,6 +2419,13 @@ fn an_approved_handover_makes_the_new_phone_live_and_retires_the_old_one() {
         Some(new.dev())
     );
     assert_eq!(ceremony.store.sync_successor_of(&new.dev()).unwrap(), None);
+    // A certificate of the old phone is held by the new one from the handover's order key on.
+    let holder = |at: (u64, &str, u64)| ceremony.store.sync_cert_holder_at(&old.dev(), at).unwrap();
+    assert_eq!(
+        holder((handover.lamport, &old.dev(), handover.seq)),
+        old.dev()
+    );
+    assert_eq!(holder((handover.lamport + 1, "", 0)), new.dev());
     assert!(matches!(status(ceremony, &new.dev()), Some(st) if st != DeviceStatus::Revoked));
     assert_eq!(status(ceremony, &old.dev()), Some(DeviceStatus::Revoked));
     let row = ceremony
