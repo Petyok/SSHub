@@ -93,11 +93,12 @@ pub fn parse_raw_hop(token: &str) -> Option<RawHop> {
     // through a shell without quoting the user, and itself accepts `$`, `\`,
     // `=` and `/` in one: `a$IFS-oProxyCommand=touch\$IFS/x@h` becomes an
     // injected option. A blocklist cannot keep up with that, so only what a real
-    // login or host name is made of gets through.
+    // login or host name is made of gets through. Non-ASCII letters stay in a
+    // login (a Windows `Администратор`): no shell gives them a meaning.
     let user_ok = |u: &str| {
         !u.starts_with('-')
             && u.chars()
-                .all(|c| c.is_ascii_alphanumeric() || ".+-_%@".contains(c))
+                .all(|c| c.is_alphanumeric() || ".+-_%@".contains(c))
     };
     let host_ok = |h: &str, ipv6: bool| {
         h.chars()
