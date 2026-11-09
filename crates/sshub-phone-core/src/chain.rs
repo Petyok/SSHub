@@ -287,6 +287,23 @@ pub fn cert_extend(
     )
 }
 
+pub fn phone_handover(
+    state: &mut PhoneState,
+    id: &PhoneIdentity,
+    new_phone: sshub_sync_proto::crypto::DevicePublic,
+    name: String,
+    now: i64,
+    seen: Option<Seen>,
+) -> Result<Authored> {
+    append(
+        state,
+        id,
+        now,
+        seen,
+        OpBody::PhoneHandover { new_phone, name },
+    )
+}
+
 pub fn cert_renew(
     state: &mut PhoneState,
     id: &PhoneIdentity,

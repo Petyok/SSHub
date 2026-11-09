@@ -13,9 +13,10 @@ import {
 import { TIMESTAMP_SKEW_GRACE_SECS, approveRelease, evaluateChallenge } from './release.mjs';
 import { describeOp, groupedHostUid, iso, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
 import {
-  KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeCertExtendRequest, decodeCertRenewRequest, decodeCertRequest, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
+  KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeCertExtendRequest, decodeCertRenewRequest, decodeCertRequest, decodePhoneHandoverRequest, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
   encodeEnrollConfirm, encodeEnrollReveal, encodePhoneOps, transcriptHash,
 } from './frames.mjs';
+import { buildPhoneHandover, describeHandoverAdmission, describePhoneHandover, signHandoverAdmission } from './handover.mjs';
 import { CERT_RENEW_EVIDENCE_MAX_AGE_SECS, buildCertRenew, certRequestProblems, describeCert, describeCertRenew, describeCertRequest, openedText, describeTerm, extendCert, extendProblems, issueCert, issuedCerts, revokeCert } from './cert.mjs';
 import { AUDIO_PROFILES, loopQr, playSamples, responseBurst, reverseQrFrames, toBase64 } from './channels.mjs';
 import { DocumentCollector, startCamera } from './scan.mjs';
@@ -496,7 +497,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     scan({
       heading: 'Scan the share request',
       hint: 'Open the unlock screen on the terminal and point the camera at its QR code.',
-      expect: [KIND.CHALLENGE, KIND.RECOVERY_NOTICE, KIND.CERT_REQUEST, KIND.CERT_EXTEND_REQUEST, KIND.CERT_RENEW_REQUEST],
+      expect: [KIND.CHALLENGE, KIND.RECOVERY_NOTICE, KIND.CERT_REQUEST, KIND.CERT_EXTEND_REQUEST, KIND.CERT_RENEW_REQUEST, KIND.PHONE_HANDOVER_REQUEST],
       onDoc: (bytes) => {
         let kind;
         try {
@@ -508,6 +509,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         if (kind === KIND.CERT_REQUEST) return certRequestScreen(bytes);
         if (kind === KIND.CERT_EXTEND_REQUEST) return certExtendScreen(bytes);
         if (kind === KIND.CERT_RENEW_REQUEST) return certRenewScreen(bytes);
+        if (kind === KIND.PHONE_HANDOVER_REQUEST) return handoverScreen(bytes);
         const ev = evaluateChallenge(bytes, { now: app.now(), identity: app.identity, ring: app.state.ring, aliases: app.state.aliases });
         if (!ev.ok) return refusalScreen(ev.refusal, ev.checks);
         release(ev);
@@ -1047,6 +1049,36 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         }
       }, 'danger', 'renew-approve'),
       btn('Back', home, '', 'refuse'),
+    );
+  }
+
+  function handoverScreen(bytes) {
+    let req;
+    let v;
+    try {
+      req = decodePhoneHandoverRequest(bytes);
+      v = req.op ? describeHandoverAdmission(app.identity, req) : describePhoneHandover(app.state, req);
+    } catch (e) {
+      return refusalScreen(`Not a handover request: ${e.message}`, []);
+    }
+    const msg = h('p', { class: 'err', id: 'handover-error' });
+    show(
+      title(req.op ? 'This phone is the new phone of the ring' : 'Hand the ring over to a new phone', `New phone: ${v.name}`),
+      req.op ? null : h('div', { class: 'headline', id: 'handover-words' }, v.words.join(' ')),
+      h('div', { class: 'refusal', id: 'handover-note' }, req.op ? "Signing is this phone's own approval of the handover; the ring counts it with the others. Sign only if you started this replacement." : "Compare these words with the terminal's screen. They must be identical, word for word: if they differ, refuse. Approving also needs a second terminal and the paper phrase; this phone stops being a device of yours when it completes."),
+      v.certs_carried.length ? h('div', { class: 'mut', id: 'handover-certs' }, `Trust sessions that stay valid for the new phone: ${v.certs_carried.join('; ')}`) : null,
+      msg,
+      btn(req.op ? 'Sign this phone\'s admission' : 'The words are identical: sign the handover', async () => {
+        try {
+          if (req.op) signHandoverAdmission(app.state, app.identity, req, app.now());
+          else buildPhoneHandover(app.state, app.identity, req, app.now());
+          await save();
+          opsOut({ heading: req.op ? 'Admission signed' : 'Handover signed', hint: req.op ? "Carry this to a terminal: it holds this phone's own approval of the handover." : "Carry this to the terminal that asked: it holds this phone's part of the handover.", ops: courierOps(app.state) });
+        } catch (e) {
+          msg.textContent = e.message;
+        }
+      }, 'danger', 'handover-approve'),
+      btn('Refuse', home, '', 'refuse'),
     );
   }
 

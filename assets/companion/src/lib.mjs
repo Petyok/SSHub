@@ -91,6 +91,15 @@ export const CONTEXTS = {
 
 export const edPubOfSeed = (seed32) => ed25519.getPublicKey(seed32);
 export const edSign = (seed32, msg) => ed25519.sign(msg, seed32);
+// Whether 32 bytes decode as an Ed25519 point (Rust: VerifyingKey::from_bytes). Small-order points are not refused, as in Rust.
+export const edPointValid = (pub32) => {
+  try {
+    ed25519.Point.fromBytes(pub32);
+    return true;
+  } catch {
+    return false;
+  }
+};
 export const edVerify = (pub32, msg, sig64) => ed25519.verify(sig64, msg, pub32);
 
 export const x25519Pub = (sec32) => x25519.getPublicKey(sec32);

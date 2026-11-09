@@ -196,6 +196,39 @@ export function decodeCertExtendRequest(frame) {
   return { cert_id: hexU(body.subarray(0, 32)), extra_hosts };
 }
 
+// Kind 12 (contract 4j): ed25519(32) || x25519(32) || mlkem_len u16 BE || mlkem || name_len u8 || name utf8 || terminal(8).
+// { new_phone: { ed25519_pub, x25519_pub, mlkem_pub: Uint8Array }, name, terminal: hex(8) }.
+export function decodePhoneHandoverRequest(frame) {
+  const { kind, body } = decodeFrame(frame);
+  if (kind !== KIND.PHONE_HANDOVER_REQUEST) throw new Error('not a handover request');
+  const short = () => new Error('a handover request is truncated');
+  if (body.length < 67) throw short();
+  const mlen = (body[64] << 8) | body[65];
+  const nameAt = 66 + mlen;
+  if (body.length < nameAt + 1) throw short();
+  const nlen = body[nameAt];
+  const termAt = nameAt + 1 + nlen;
+  if (body.length < termAt + 8) throw short();
+  // contract 4l b: the admission frame shown to the NEW phone carries 0x01 || op_hash(32) || op_lamport u64 BE after the terminal id
+  let op = null;
+  const rest = body.length - (termAt + 8);
+  if (rest === 41 && body[termAt + 8] === 1) op = { hash: hexU(body.subarray(termAt + 9, termAt + 41)), lamport: rd64(body, termAt + 41).getBigUint64(0) };
+  else if (rest !== 0) throw new Error('a handover request does not match its lengths');
+  let name;
+  try {
+    name = new TextDecoder('utf-8', { fatal: true }).decode(body.subarray(nameAt + 1, termAt));
+  } catch {
+    throw new Error('a handover name is not UTF-8');
+  }
+  return { new_phone: { ed25519_pub: body.slice(0, 32), x25519_pub: body.slice(32, 64), mlkem_pub: body.slice(66, nameAt) }, name, terminal: hexU(body.subarray(termAt, termAt + 8)), op };
+}
+
+// The terminal side (tests only): the inverse of decodePhoneHandoverRequest.
+export function encodePhoneHandoverRequest(r) {
+  const nm = utf8(r.name);
+  return encodeFrame(KIND.PHONE_HANDOVER_REQUEST, r.new_phone.ed25519_pub, r.new_phone.x25519_pub, u16(r.new_phone.mlkem_pub.length), r.new_phone.mlkem_pub, Uint8Array.of(nm.length), nm, Uint8Array.from(r.terminal.match(/../g), (b) => parseInt(b, 16)), ...(r.op ? [Uint8Array.of(1), Uint8Array.from(r.op.hash.match(/../g), (b) => parseInt(b, 16)), u64(r.op.lamport)] : []));
+}
+
 // Kind 11 (contract 4j): cert_id(32) || expiry i64 BE || n u8 || n x (terminal(8) || head_seq u64 BE || head_ts i64 BE), n <= 32.
 // { cert_id: hex(32), expiry: BigInt, evidence: [{ terminal: hex(8), head_seq: BigInt, head_ts: BigInt }] }.
 export const MAX_RENEW_EVIDENCE = 32;
