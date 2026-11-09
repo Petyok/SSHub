@@ -271,11 +271,7 @@ pub fn effective_devices(store: &LauncherStore, upto: Option<u64>) -> Result<Vec
 /// effects when the op is stored (the old phone's row `revoked`, the new phone a holder phone); a view must not see them
 /// before the handover COMPLETED: the old phone is retired, and the new phone a holder, only from the completion
 /// lamport (`handover_effect`) on, so everything written before it is judged under the old phone (crypto M4, M7).
-fn apply_handovers(
-    store: &LauncherStore,
-    upto: Option<u64>,
-    rows: &mut [DeviceRow],
-) -> Result<()> {
+fn apply_handovers(store: &LauncherStore, upto: Option<u64>, rows: &mut [DeviceRow]) -> Result<()> {
     let all = ops_of(store, "PhoneHandover", None)?;
     if all.is_empty() {
         return Ok(());
@@ -529,8 +525,10 @@ pub fn handover_effect(store: &LauncherStore, op: &Op) -> Result<Option<u64>> {
         return Ok(None);
     }
     let (st, lamport) = red_eval(store, op, op.timestamp, true)?;
-    Ok((st.missing.is_empty() && st.blocked.is_none() && st.rule_violation.is_none())
-        .then_some(lamport))
+    Ok(
+        (st.missing.is_empty() && st.blocked.is_none() && st.rule_violation.is_none())
+            .then_some(lamport),
+    )
 }
 
 /// [`red_status`] and the completion lamport. `check_winner` is off when a handover is judged only to rank it against

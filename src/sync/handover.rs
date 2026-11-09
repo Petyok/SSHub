@@ -29,9 +29,7 @@ pub fn handover_request(
     terminal: &DeviceId,
 ) -> Result<PhoneHandoverRequestWire> {
     ensure!(
-        !name.is_empty()
-            && name.len() <= 64
-            && name.chars().all(|c| !c.is_control()),
+        !name.is_empty() && name.len() <= 64 && name.chars().all(|c| !c.is_control()),
         "the new phone's name is one plain line of at most 64 bytes"
     );
     new_phone.validate().context("the new phone's keys")?;
