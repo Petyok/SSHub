@@ -534,7 +534,7 @@ fn recovery_start(app: &mut App) {
             app.sync_prompt(
                 "Start a recovery: paper phrase or emailed code",
                 if paper {
-                    "Type the emailed code (empty: prove it later; nothing is shown)"
+                    "Type the emailed code, or the 24 words again when this is the only computer (empty: prove it later; nothing is shown)"
                 } else {
                     "Type the 24 words of the paper phrase to prove it now (empty: prove it later; nothing is shown)"
                 },
