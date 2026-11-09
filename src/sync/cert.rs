@@ -431,12 +431,35 @@ pub fn cert_renew_request(
             break;
         }
     }
+    // The hosts opened under this session as the HOLDERS recorded them (never the delegate's own claim), newest first:
+    // up to eight names and the total, so the phone can show what the delegate did before it signs (contract 4l a).
+    let mut openings = recorded_openings(store, &cert)?;
+    openings.sort_by_key(|(_, at)| std::cmp::Reverse(*at));
+    let opened_total = u16::try_from(openings.len()).unwrap_or(u16::MAX);
+    let mut opened = Vec::new();
+    for (uid, _) in openings.iter().take(8) {
+        let name: Option<String> = store.with_conn(|c| {
+            Ok(c.query_row(
+                "SELECT name FROM hosts WHERE uid = ?1",
+                params![&uid[..]],
+                |r| r.get(0),
+            )
+            .ok())
+        })?;
+        let mut name = name
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| hex::encode(&uid[..4]));
+        while name.len() > 48 {
+            name.pop();
+        }
+        opened.push(name);
+    }
     Ok(super::wire::CertRenewRequestWire {
         cert_id,
         expiry,
         evidence,
-        opened: Vec::new(),
-        opened_total: 0,
+        opened,
+        opened_total,
     })
 }
 

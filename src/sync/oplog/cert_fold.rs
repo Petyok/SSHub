@@ -17,6 +17,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::checkpoint::{fold_writes, Win};
+use super::handover::{fact, facts, holder_at, sorted, HandoverFact};
 use crate::sync::limits::{CERT_LIFETIME_MAX_SECS, CERT_MAX_RENEWALS};
 
 /// One accepted renewal.
@@ -50,6 +51,7 @@ fn fold_one(
     mut rec: CertRecord,
     candidates: impl IntoIterator<Item = Renewal>,
     revoked: Option<(u64, String, u64)>,
+    handovers: &[HandoverFact],
 ) -> CertRecord {
     let term = rec.original_expiry - rec.issued_at;
     let all: BTreeSet<(u64, String, u64, i64)> = candidates
@@ -64,7 +66,8 @@ fn fold_one(
             .as_ref()
             .is_some_and(|r| (r.0, r.1.as_str(), r.2) < (lamport, device_id.as_str(), seq));
         let ok = !after_revoke
-            && device_id == rec.issuer
+            && (device_id == rec.issuer
+                || device_id == holder_at(&rec.issuer, handovers, (lamport, &device_id, seq)))
             && term > 0
             && expiry > rec.effective_expiry
             && expiry <= rec.effective_expiry + term
@@ -105,6 +108,7 @@ pub(super) fn fold_certs(
     wins: &BTreeMap<(String, String), Win>,
 ) -> BTreeMap<String, (CertRecord, &Win)> {
     let mut out = BTreeMap::new();
+    let handovers = facts(wins);
     for ((section, id), issue) in wins {
         if section != "cert" {
             continue;
@@ -133,7 +137,10 @@ pub(super) fn fold_certs(
         let revoked = wins
             .get(&("cert_revoked".to_string(), id.clone()))
             .map(|w| (w.lamport, w.device.clone(), w.seq));
-        out.insert(id.clone(), (fold_one(rec, candidates, revoked), issue));
+        out.insert(
+            id.clone(),
+            (fold_one(rec, candidates, revoked, &handovers), issue),
+        );
     }
     out
 }
@@ -156,6 +163,21 @@ pub(super) fn verify_state_writes(writes: &[Value]) -> Result<()> {
         .filter(|w| w["section"] == "cert")
         .filter_map(|w| Some((w["key"].as_str()?, &w["value"])))
         .collect();
+    let handovers = sorted(
+        writes
+            .iter()
+            .filter(|w| w["section"] == "handover")
+            .filter_map(|w| {
+                fact(
+                    w["key"].as_str()?,
+                    w["lamport"].as_u64()?,
+                    w["device_id"].as_str()?,
+                    w["seq"].as_u64()?,
+                    &w["value"],
+                )
+            })
+            .collect(),
+    );
     for w in writes.iter().filter(|w| w["section"] == "cert_fold") {
         let rec: CertRecord = serde_json::from_value(w["value"].clone())
             .map_err(|e| anyhow::anyhow!("a certificate record is malformed: {e}"))?;
@@ -183,7 +205,7 @@ pub(super) fn verify_state_writes(writes: &[Value]) -> Result<()> {
             ..rec.clone()
         };
         ensure!(
-            fold_one(base, rec.accepted.clone(), None) == rec,
+            fold_one(base, rec.accepted.clone(), None, &handovers) == rec,
             "a certificate record is not the replay of its renewals"
         );
     }
@@ -281,7 +303,7 @@ mod tests {
             r(6, "issuer", t(31)),
             r(7, "issuer", t(30)),
         ];
-        let rec = fold_one(base(), cands.clone(), None);
+        let rec = fold_one(base(), cands.clone(), None, &[]);
         // 20 (<= 10 + 10) ok, 31 refused (more than one term past 20), 30 ok, 40 is the third: refused
         assert_eq!((rec.effective_expiry, rec.renewals), (t(30), 2));
         assert_eq!(
@@ -290,9 +312,9 @@ mod tests {
         );
         let mut shuffled = cands;
         shuffled.reverse();
-        assert_eq!(fold_one(base(), shuffled, None), rec);
+        assert_eq!(fold_one(base(), shuffled, None, &[]), rec);
         // replaying the accepted list is a fixed point (what bootstrap checks)
-        assert_eq!(fold_one(base(), rec.accepted.clone(), None), rec);
+        assert_eq!(fold_one(base(), rec.accepted.clone(), None, &[]), rec);
     }
 
     #[test]
@@ -303,6 +325,7 @@ mod tests {
             base(),
             vec![r(5, "issuer", t(20)), r(7, "issuer", t(30))],
             revoked,
+            &[],
         );
         assert_eq!(rec.renewals, 1);
         let mut long = base();
@@ -315,6 +338,7 @@ mod tests {
                 r(2, "issuer", 1_000 + 180 * DAY),
             ],
             None,
+            &[],
         );
         assert_eq!(
             rec.effective_expiry,
@@ -324,11 +348,42 @@ mod tests {
     }
 
     #[test]
+    fn the_successor_phone_renews_only_after_the_handover() {
+        let t = |n: i64| 1_000 + n * DAY;
+        let h = |lamport: u64, old: &str, new: &str| HandoverFact {
+            op_hash: "h".into(),
+            old_phone: old.into(),
+            new_phone: new.into(),
+            name: "n".into(),
+            lamport,
+            device: old.into(),
+            seq: 1,
+        };
+        // issuer -> second at lamport 4, second -> third at lamport 8
+        let chain = [h(4, "issuer", "second"), h(8, "second", "third")];
+        let cands = vec![
+            r(3, "second", t(15)), // before the handover: refused
+            r(5, "second", t(15)), // the successor: counts
+            r(6, "third", t(20)),  // not yet the holder: refused
+            r(9, "third", t(20)),  // successor of the successor: counts
+            r(10, "stranger", t(25)),
+        ];
+        let rec = fold_one(base(), cands, None, &chain);
+        assert_eq!(
+            rec.accepted,
+            vec![r(5, "second", t(15)), r(9, "third", t(20))]
+        );
+        // the old phone may still renew what it issued
+        let rec = fold_one(base(), vec![r(5, "issuer", t(15))], None, &chain);
+        assert_eq!(rec.renewals, 1);
+    }
+
+    #[test]
     fn a_forged_record_is_refused_at_bootstrap() {
         let issue = json!({ "section": "cert", "key": "aa".repeat(32), "value": {
             "issuer": "issuer", "issued_at": 1_000, "expiry": 1_000 + 10 * DAY,
             "issue_sig": "bb".repeat(64), "issue_canonical_hash": "aa".repeat(32) } });
-        let rec = fold_one(base(), vec![r(5, "issuer", 1_000 + 20 * DAY)], None);
+        let rec = fold_one(base(), vec![r(5, "issuer", 1_000 + 20 * DAY)], None, &[]);
         let good = json!({ "section": "cert_fold", "key": rec.cert_id, "value": rec });
         verify_state_writes(&[issue.clone(), good.clone()]).unwrap();
         // a longer end date than the replay yields

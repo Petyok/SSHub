@@ -82,6 +82,19 @@ services:
       ADB_HOST: android
       ADB_PORT: "5037"
 
+  # The second phone (the new phone of a handover): same image and page, its own key and its own browser profile.
+  # Desktop target only (the emulator is one device). Driven with `phone2` in lib-creds.sh.
+  phone2:
+    image: sshub-hostsync-e2e-phone:local
+    pull_policy: never
+    hostname: phone2
+    networks: [e2e]
+    depends_on: [phone]
+    environment:
+      PHONE_TARGET: desktop
+      PHONE_SECRET_HEX: ${PHONE2_SECRET_HEX:-4343434343434343434343434343434343434343434343434343434343434343}
+      PHONE_PIN: e2e-phone2-pin-0002
+
   mailpit:
     image: axllent/mailpit:v1.32.0
     hostname: mailpit

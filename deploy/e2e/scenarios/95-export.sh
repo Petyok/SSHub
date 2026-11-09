@@ -16,7 +16,7 @@ check "peer-a migrates it into the ring" "peer peer-a $SSHUB sync-migrate"
 psh peer-a 'rm -rf /tmp/e2e-export && mkdir -p /tmp/e2e-export'
 
 show "outside the window: sync-export with no ceremony" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-export --window 120 --out $OUT"
-check "the export is refused while the ceremony is incomplete" "[ $LAST_RC -ne 0 ] && printf '%s' '$LAST_OUT' | grep -q 'ceremony is not complete'"
+check "the export is refused while the ceremony is incomplete" "[ $LAST_RC -ne 0 ] && printf '%s' '$LAST_OUT' | grep -q 'is not approved yet'"
 check "nothing was written outside the window" "! psh peer-a 'test -e $OUT'"
 
 BULK=$(lastop peer-a BulkExport)
