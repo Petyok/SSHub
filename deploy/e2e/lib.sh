@@ -106,10 +106,11 @@ finish() {
   fi
 }
 
-# A Phase B gate that exists before its feature does: print the gap and PASS. Replace the call with the real scenario body
-# when the lane's code is on the branch under test. Usage: skeleton NAME "what the scenario will show" "what it waits for".
+# A Phase B gate that exists before its feature does: it tests nothing, so it never says PASS. Prints the gap and
+# `@@@SCENARIO NAME SKIP gap`, exits 0 (run.sh counts it as skipped, not failed). Replace the call with the real scenario
+# body when the lane's code is on the branch under test. Usage: skeleton NAME "what the scenario will show" "what it waits for".
 skeleton() {
   echo "--- SKELETON: $2"
   echo "--- WAITS FOR: $3"
-  finish "$1"
+  echo "@@@SCENARIO $1 SKIP $2 (waits for: $3)"
 }
