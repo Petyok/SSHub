@@ -2948,84 +2948,84 @@
    "timestamp": 1,
    "lamport": 14,
    "seq": 14,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "device-revoke",
    "timestamp": 1,
    "lamport": 15,
    "seq": 15,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "cert-issue-hosts",
    "timestamp": 1,
    "lamport": 19,
    "seq": 19,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "cert-issue-group-extremes",
    "timestamp": 1,
    "lamport": 20,
    "seq": 20,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "mode-change-some",
    "timestamp": 1,
    "lamport": 29,
    "seq": 29,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "mode-change-none",
    "timestamp": 1,
    "lamport": 30,
    "seq": 30,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "factor-register-paper",
    "timestamp": 1,
    "lamport": 44,
    "seq": 44,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "factor-register-email",
    "timestamp": 1,
    "lamport": 45,
    "seq": 45,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "device-role-change",
    "timestamp": 1,
    "lamport": 46,
    "seq": 46,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "exemption-set-on",
    "timestamp": 1,
    "lamport": 48,
    "seq": 48,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "exemption-set-off",
    "timestamp": 1,
    "lamport": 49,
    "seq": 49,
-   "lapses_at": 259201
+   "lapses_at": 604801
   },
   {
    "id": "bulk-export",
    "timestamp": 1,
    "lamport": 47,
    "seq": 47,
-   "lapses_at": 259201
+   "lapses_at": 604801
   }
  ],
  "release": [

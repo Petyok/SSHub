@@ -59,10 +59,19 @@ function readOwnChain(identity, ops) {
 // sender id can be the first candidate but never agrees. A terminal-signed head would be stronger; see
 // docs/host-sync-companion.md.
 export const SAME_TERMINAL_MESSAGE = 'This list comes from the same terminal as the first one. Scan the list from another terminal.';
-export function adoptOwnChain(state, identity, ops, sender = null) {
+export const SINGLE_SOURCE_TICK_MESSAGE = 'This head comes from one list. Tick that you know the risk (the terminal may be behind, and the next approval would then fork your chain), or take a second list from another terminal.';
+// The card text for a head from one list: the count the terminal reported, the risk, never "trusted".
+export function singleSourceNote(headSeq, terminals) {
+  const ring = terminals && terminals.count === 1 ? 'Your ring has one terminal' : terminals ? `Your ring has ${terminals.count} terminals and I can reach only this one` : 'One list';
+  return `${ring}. This phone will continue after seq ${headSeq}. Risk: if that terminal is behind, or this phone signed something it never received, the next approval forks your chain and every device raises an alarm; you would then re-enroll this phone. The count is that terminal's own statement.`;
+}
+// One list is enough when its sender reports a ring (terminals.count >= 1, itself included): the user ticks the risk
+// (acceptHead). The first list stays a candidate, so a second agreeing list from another terminal upgrades it to the
+// two-list default that needs no tick. A dead or away terminal never blocks the restore.
+export function adoptOwnChain(state, identity, ops, sender = null, terminals = null) {
   const r = readOwnChain(identity, ops);
   const from = sender ? hexOf(sender) : null;
-  const info = { head_seq: r.head.seq, head_hash: r.head.hash, newest_at: r.head.timestamp, ops: r.chain.length, sender: from };
+  const info = { head_seq: r.head.seq, head_hash: r.head.hash, newest_at: r.head.timestamp, ops: r.chain.length, sender: from, single_source: false, terminals };
   const c = state.headCandidate;
   let keep = from;
   let previous = null;
@@ -70,7 +79,7 @@ export function adoptOwnChain(state, identity, ops, sender = null) {
     if (c.seq === r.head.seq && c.hash === r.head.hash) {
       if (c.sender && from && c.sender === from) throw new Error(SAME_TERMINAL_MESSAGE);
       if (c.sender && from) {
-        state.headProposal = { chain: r.chain, epoch: String(r.epoch), wrapEpoch: r.wrapEpoch };
+        state.headProposal = { chain: r.chain, epoch: String(r.epoch), wrapEpoch: r.wrapEpoch, singleSource: false };
         delete state.headCandidate;
         return { ...info, agreed: true };
       }
@@ -82,16 +91,21 @@ export function adoptOwnChain(state, identity, ops, sender = null) {
   }
   delete state.headProposal;
   state.headCandidate = { seq: r.head.seq, hash: r.head.hash, sender: keep };
+  if (terminals && terminals.count >= 1) {
+    state.headProposal = { chain: r.chain, epoch: String(r.epoch), wrapEpoch: r.wrapEpoch, singleSource: true };
+    return { ...info, agreed: true, single_source: true, previous_seq: previous };
+  }
   return { ...info, agreed: false, previous_seq: previous };
 }
 
 // The user looked at the agreed head (seq, newest op time) and accepted it. `shown` is { seq, hash } of the head the screen
 // showed: a proposal that has changed since is refused, so what is accepted is what was approved.
-export function acceptHead(state, shown = null) {
+export function acceptHead(state, shown = null, acknowledgedSingleSource = false) {
   const p = state.headProposal;
   if (!p) throw new Error('No chain head was agreed by two lists yet.');
   const last = p.chain[p.chain.length - 1];
   if (shown && (last.seq !== shown.seq || last.hash !== shown.hash)) throw new Error('The chain head changed since it was shown: take the chain again and look at it before accepting.');
+  if (p.singleSource && !acknowledgedSingleSource) throw new Error(SINGLE_SOURCE_TICK_MESSAGE);
   state.chain = p.chain;
   state.lamport = String(p.chain.reduce((m, e) => maxBig(m, big(e.lamport)), big(state.lamport)));
   state.epoch = String(maxBig(big(state.epoch), big(p.epoch)));

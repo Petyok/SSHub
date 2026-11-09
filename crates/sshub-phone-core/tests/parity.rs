@@ -928,7 +928,7 @@ fn the_red_notice_window_counts_from_the_signed_time() {
             assert_eq!(view.proposer, "723ed85f0566df0c");
             assert_eq!(view.proposer_name.as_deref(), Some("terminal A"));
         }
-        // and the page's refusal after the window: three days and a second after the signed time
+        // and the page's refusal after the window: seven days and a second after the signed time
         let mut id_ = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
         let mut state = PhoneState::default();
         state.ring.insert(
@@ -944,11 +944,11 @@ fn the_red_notice_window_counts_from_the_signed_time() {
             id: &mut id_,
             state: &mut state,
             rng: &mut r,
-            now: ts + 3 * 86_400 + 1,
+            now: ts + 7 * 86_400 + 1,
         };
         assert!(
             matches!(open_notice(&frame, &ctx, 1).0, Opened::Refused { .. }),
-            "{id}: lapsed after 3 days"
+            "{id}: lapsed after 7 days"
         );
     }
 }
