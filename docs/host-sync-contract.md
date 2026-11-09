@@ -1723,8 +1723,17 @@ What exists on top of 4j, with the names the screens and the scenarios use:
   `SyncRuntime::mail_owed_codes`; the CLI `sshub sync` path must call `send_renew_mails` too); the sticky notice is a terminal screen.
 * **Phone list:** `hub::phone_chain_wire` fills the kind 5 `terminals` block: the number of non-removed terminals (this one included) and the newest op stamp
   of the list. Unsigned, informational.
-* **Not yet** (wave 3): the `PhoneHandover` rules (Paper-only third factor, the new phone's own proof, the effect lamport, `successor_of` for certificates,
-  `handover::handover_words` over the proto crate's eight word function).
+* **PhoneHandover (wave 3):** `PhoneHandover` is a gated Red op judged in the view just BEFORE it (the old phone is the live one). Proofs: the author (the live
+  phone), the new phone's own `RedPhoneSign` (folded into `RedProof::Phone`; it may still wait as the op of an unknown author), a second attended terminal,
+  and `ThirdFactor::Paper` ONLY (the emailed code never counts; no registered paper blocks the op). The new phone's keys must be new to the ring (else a rule
+  violation). `ceremony::handover_effect(store, op) -> Option<u64>` is the completion lamport: the highest, over the proof kinds, of the lowest counted proof
+  lamport. Among handovers by one phone the lowest `(completion lamport, device, seq)` wins; any other is a rule violation (applied and still pending rivals both
+  count). `effective_devices(upto)` retires the old phone and makes the new phone a holder only from the completion lamport on (it undoes the oplog's row
+  effects for earlier views), so everything written before it is judged under the old phone. `handover::handover_words` is the proto crate's eight word
+  function; `handover::handover_request(new_phone, name, &terminal)` builds the kind 12 request. Certificates (design 5.4): `cert::issuer_phones(store, &current)`
+  lists the phone and the phones it took over from; `trust_grant` honours certificates of all of them (the retired key still verifies the issue op) and
+  `extension_budget` counts extensions by the successor (the oplog's `sync_cert_holder_at`, which orders handovers by their op lamport, not the completion
+  lamport: an old-phone extension written between the op and its completion is not counted, a harmless edge).
 
 ### 4l. Two interface decisions that amend 4j (S, 2026-11-09; announced to every lane)
 
@@ -1742,8 +1751,9 @@ small next to a card that cannot show what it exists to show.
 **(b) The new phone receives the handover op hash inside kind 12 itself.** Two stages of one frame, nothing new on the wire:
 1. *Request (old phone).* The terminal shows `PhoneHandoverRequestWire` as in 4j; the old phone compares the 8 words, signs and builds the `PhoneHandover` op.
 2. *Admission (new phone).* After the terminal ingested that op it shows the NEW phone a second kind 12 frame whose layout is the 4j layout followed by
-   `0x01 || op_hash(32)` (the hash of the `PhoneHandover` op just ingested). Without the trailing block the frame is a request; a trailing block that is not exactly
-   `0x01` and 32 bytes is an error. The new phone's `describe_phone_handover` returns `HandoverView.op_hash: Option<[u8; 32]>` (present in stage 2 only) and shows the
+   `0x01 || op_hash(32) || op_lamport u64 BE` (the hash and the lamport of the `PhoneHandover` op just ingested). Without the trailing block the frame is a request; a
+   trailing block that is not exactly `0x01` and 40 bytes is an error. The new phone's proof only counts when its lamport is HIGHER than the op's (a proof must come
+   after what it names), so `sign_handover_admission` writes its `RedPhoneSign` with `lamport = max(own next, op_lamport + 1)`. The new phone's `describe_phone_handover` returns `HandoverView.op_hash: Option<[u8; 32]>` and `op_lamport: Option<u64>` (present in stage 2 only) and shows the
    same 8 words so the new owner can compare them with the old phone; `sign_handover_admission(state, id, op_hash, now)` takes the hash from the view, never from a typed
    argument. A new phone refuses to sign unless the frame's `new_phone` is its own public key. Its `RedPhoneSign` returns to the terminal as ordinary phone ops (kind 5)
    and counts only for the op that names its key (a wrong hash signs nothing that can be used).
