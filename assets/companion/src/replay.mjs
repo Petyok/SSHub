@@ -66,6 +66,9 @@ export async function replayVectors(vectorsText, effWordsText, opts = {}) {
       case 'sas_words':
         if (lib.sasWords(h2b(i.transcript_hash)) !== o.words) throw new Error(`MISMATCH ${v.id}`);
         return;
+      case 'handover_words':
+        if (JSON.stringify(lib.handoverWords(h2b(i.ed25519_pub), h2b(i.x25519_pub), h2b(i.mlkem_pub), i.name, h2b(i.old_phone_id))) !== JSON.stringify(o.words)) throw new Error(`MISMATCH ${v.id}`);
+        return;
       case 'bip39':
         eqHex(lib.bip39Encode(h2b(i.entropy)), o.phrase, `${v.id} phrase`);
         if (o.decode_ok !== undefined && o.decode_ok) lib.bip39Decode(o.phrase);

@@ -8,7 +8,7 @@ import {
   PIN_MIN_CHARS, generateSecret, pinDelaySecs, pinProblem, identityOfSecret, randomBytes, secretFromWords, secretToWords, unwrapSecret, wrapSecret,
 } from './keys.mjs';
 import {
-  COURIER_TAIL, HEAD_PENDING_MESSAGE, SAME_TERMINAL_MESSAGE, acceptHead, adoptOwnChain, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, confirmNoChain, courierOps, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, restoredState, saveState,
+  COURIER_TAIL, HEAD_PENDING_MESSAGE, SAME_TERMINAL_MESSAGE, acceptHead, adoptOwnChain, singleSourceNote, appendRedPhoneSign, appendWrapKeyRotate, appendReenrollCancel, confirmNoChain, courierOps, indexedDbBackend, invalidateSnapshot, issueSnapshot, liveSnapshot, loadState, recordSnapshot, restoredState, saveState,
 } from './state.mjs';
 import { TIMESTAMP_SKEW_GRACE_SECS, approveRelease, evaluateChallenge } from './release.mjs';
 import { describeOp, groupedHostUid, iso, isRedOp, opHashHex, parseOp, safeText } from './ops.mjs';
@@ -22,7 +22,7 @@ import { DocumentCollector, startCamera } from './scan.mjs';
 import { ownStorageKey, planReshare, publishReshare } from './reshare.mjs';
 
 const RECOVERY_TIMELOCK_SECS = 7 * 86400;
-const RED_CEREMONY_TTL_SECS = 3 * 86400; // limits.rs
+const RED_CEREMONY_TTL_SECS = 7 * 86400; // limits.rs
 const MAX_QR_DOC_BYTES = 12000; // beyond this the animation is too long: text only
 
 function h(tag, attrs = {}, ...kids) {
@@ -357,7 +357,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
         const list = decodePhoneOps(bytes);
         let r;
         try {
-          r = adoptOwnChain(app.state, app.identity, list, list.sender);
+          r = adoptOwnChain(app.state, app.identity, list, list.sender, list.terminals);
         } catch (e) {
           if (e.message !== SAME_TERMINAL_MESSAGE) throw e;
           return show(
@@ -372,14 +372,26 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
             h('p', { class: 'mut', id: 'head-need' }, r.previous_seq ? `The earlier list ended at seq ${r.previous_seq}, so one of the two is behind. Take a list from another terminal that is up to date.` : r.sender ? 'Take a second list from another terminal before this chain head is trusted.' : 'This list does not say which terminal made it, so it cannot be one of the two. Take the chain from two different terminals that name themselves.'),
             btn('Take the next list', scanHead, 'primary', 'head-next'), btn('Back', home, '', 'back'));
         }
-        show(
-          title('Two lists agree', seen),
-          h('div', { class: 'refusal', id: 'head-agreed' }, `This phone will continue after seq ${r.head_seq}. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.`),
-          btn(`Adopt: continue after seq ${r.head_seq}`, async () => {
-            const a = acceptHead(app.state, { seq: r.head_seq, hash: r.head_hash });
+        const tick = r.single_source ? h('input', { id: 'head-tick', type: 'checkbox' }) : null;
+        const ring = r.terminals ? ` The terminal reports ${r.terminals.count} terminal(s) in your ring; the newest op it knows is from ${iso(Number(r.terminals.newestOpTs)).slice(0, 16)}Z (${Math.max(0, Math.floor((app.now() - Number(r.terminals.newestOpTs)) / 3600))} h ago).` : '';
+        const hmsg = h('p', { class: 'err', id: 'head-error' });
+        const adopt = btn(`Adopt: continue after seq ${r.head_seq}`, async () => {
+          try {
+            const a = acceptHead(app.state, { seq: r.head_seq, hash: r.head_hash }, !!tick && tick.checked);
             await save();
             show(title('Chain taken', `Continuing after seq ${a.head_seq} (${a.ops} op(s) read).`), btn('Done', home, 'primary', 'head-done'));
-          }, 'danger', 'head-adopt'),
+          } catch (e) {
+            hmsg.textContent = e.message;
+          }
+        }, 'danger', 'head-adopt');
+        if (tick) adopt.disabled = true;
+        if (tick) tick.addEventListener('change', () => (adopt.disabled = !tick.checked));
+        show(
+          title(r.single_source ? 'One list is enough here' : 'Two lists agree', seen),
+          h('div', { class: 'refusal', id: 'head-agreed' }, r.single_source ? singleSourceNote(r.head_seq, r.terminals) + ring : `This phone will continue after seq ${r.head_seq}. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.`),
+          tick ? h('label', { class: 'inline' }, tick, 'I know the risk and my ring has no other terminal I can reach.') : null,
+          hmsg,
+          adopt,
           btn('Cancel', home, '', 'back'));
       },
     });
@@ -1006,7 +1018,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : own ? edVerify(app.identity.edPub, n.op_canonical, n.op_signature) : null;
     if (sigOk === false) return refusalScreen(`The signature of ${op.device_id} does not verify over this operation.`, []);
     const age = app.now() - Number(op.timestamp);
-    if (age > RED_CEREMONY_TTL_SECS) return refusalScreen(`This operation is ${Math.floor(age / 86400)} days old; a big change must be approved within 3 days. Ask the terminal to propose it again.`, []);
+    if (age > RED_CEREMONY_TTL_SECS) return refusalScreen(`This operation is ${Math.floor(age / 86400)} days old; a big change must be approved within 7 days. Ask the terminal to propose it again.`, []);
     if (age < -TIMESTAMP_SKEW_GRACE_SECS) return refusalScreen('This operation is dated in the future.', []);
     // A trust certificate is authored by the phone itself: the phone's own signature is the proof.
     const blocked = op.kind === 'CertIssue' && !own ? 'A trust session must be signed by the phone itself. This one was written by another device: do not approve it.' : null;
