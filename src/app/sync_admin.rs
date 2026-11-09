@@ -94,6 +94,11 @@ fn phone(app: &mut App) {
         "Phone",
         vec![
             unless(
+                "Replace the phone while the old one still works (hand the ring over)",
+                super::sync_phone::start_replace,
+                (!has_phone).then_some("the ring has no phone yet"),
+            ),
+            unless(
                 "Add the phone (enroll it from here)",
                 super::sync_phone::start,
                 has_phone.then_some("the ring already has a phone; replacing it is a recovery"),

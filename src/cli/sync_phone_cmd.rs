@@ -91,6 +91,8 @@ pub struct EnrollSession<'a> {
     ble: Option<&'a BleLink>,
     /// `[sync.notify]` of this profile, for the mail hint after the phone is admitted.
     notify: Option<crate::config::NotifyConfig>,
+    /// `--replace`: the verified phone is the NEW phone of a handover, not an addition.
+    replace: bool,
 }
 
 impl<'a> EnrollSession<'a> {
@@ -106,7 +108,14 @@ impl<'a> EnrollSession<'a> {
             json,
             ble: None,
             notify: None,
+            replace: false,
         }
+    }
+
+    /// A handover: the new phone is verified here, then the live phone is shown a request to hand the ring over.
+    pub fn with_replace(mut self) -> Self {
+        self.replace = true;
+        self
     }
 
     /// The profile's mail settings, so the hint after admission says whether a recovery is mailed.
@@ -186,6 +195,28 @@ impl<'a> EnrollSession<'a> {
                 "the phone's confirmation is next".into(),
                 json!({}),
             ),
+            Step::Verified(v) if self.replace => match handover_offer(self.store, self.id, &v) {
+                Ok(offer) => {
+                    self.frame(out, &v.frame, true);
+                    let req = b64(&offer.request);
+                    emit(out, j, "handover", req.clone(), json!({"request": req}));
+                    emit(
+                        out,
+                        j,
+                        "handover_words",
+                        offer.words.join(" "),
+                        json!({"words": offer.words, "name": v.name}),
+                    );
+                    for l in handover_steps() {
+                        emit(out, j, "next", l.clone(), json!({"line": l}));
+                    }
+                    self.done = Some(true);
+                }
+                Err(e) => {
+                    emit(out, j, "error", format!("{e:#}"), json!({"error": format!("{e:#}")}));
+                    self.done = Some(false);
+                }
+            },
             Step::Verified(v) => {
                 let admitted = admit_phone(self.store, self.id, &v).and_then(|op| {
                     super::sync_admin::op_report(
@@ -231,6 +262,54 @@ impl<'a> EnrollSession<'a> {
     }
 }
 
+/// What the terminal shows for a handover (design 5): the kind 12 request for the LIVE phone to scan and the eight words
+/// it will show next to the new phone's name.
+pub(crate) struct HandoverOffer {
+    pub request: Vec<u8>,
+    pub words: Vec<String>,
+}
+
+/// Build the offer for the verified new phone. The ring must have a live phone; the new phone is NOT registered here:
+/// the handover op the old phone signs adds it, once the ceremony completes.
+pub(crate) fn handover_offer(
+    store: &LauncherStore,
+    id: &DeviceIdentity,
+    v: &crate::sync::phone_enroll::Verified,
+) -> Result<HandoverOffer> {
+    let old = crate::sync::quorum::phone_device(store)?
+        .context("the ring has no phone to hand over from: enroll the phone without --replace")?;
+    ensure!(
+        v.phone.device_id() != old,
+        "that is the phone the ring already has"
+    );
+    let terminal: [u8; 8] = hex::decode(id.public().device_id())
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .context("this terminal's device id is not 16 hex characters")?;
+    let old_id: [u8; 8] = hex::decode(&old)
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .context("the phone's device id is not 16 hex characters")?;
+    let words = crate::sync::crypto::handover_words(&v.phone, &v.name, &old_id);
+    let request = crate::sync::wire::PhoneHandoverRequestWire {
+        new_phone: v.phone.clone(),
+        name: v.name.clone(),
+        terminal,
+    }
+    .encode();
+    Ok(HandoverOffer { request, words })
+}
+
+/// What happens after the request is shown (plain steps for the person at the terminal).
+pub(crate) fn handover_steps() -> Vec<String> {
+    vec![
+        "1. Show the request to the OLD phone (it must still work): it shows the new phone's name and the eight words above; they must match, then it signs the handover.".to_string(),
+        "2. Bring the old phone's answer here with `sshub sync-phone-ops`; show the new phone the change so it signs its own admission, and bring that answer in the same way.".to_string(),
+        "3. Approve the handover with `sshub sync-approve <change-id>` on another computer and add the paper phrase with `sshub sync-factor <change-id> --paper`. Nothing changes before all three.".to_string(),
+        "4. Then run `sshub sync-heal`: the new phone holds your old saved passwords only after that. Retire the old phone yourself.".to_string(),
+    ]
+}
+
 /// What a kind 5 list says about the ring's terminals (the `terminals` block, unsigned and informational), in plain
 /// words; a plain fallback when the sender did not say.
 pub(crate) fn terminals_line(t: Option<&crate::sync::wire::TerminalsBlock>, now: i64) -> String {
@@ -252,9 +331,13 @@ fn phone_enroll(
     out: &mut impl Write,
     json_out: bool,
     notify: Option<crate::config::NotifyConfig>,
+    replace: bool,
 ) -> Result<i32> {
     let mut s = EnrollSession::new(store, id, &crate::sync::runtime::device_name(), json_out)
         .with_notify(notify);
+    if replace {
+        s = s.with_replace();
+    }
     s.start(out);
     for line in input.lines() {
         s.feed(&line?, out);
@@ -451,6 +534,8 @@ struct Args {
     pos: Vec<String>,
     /// Carry the frames over Bluetooth too (feature `bluetooth`).
     ble: bool,
+    /// `sync-phone-enroll --replace`: hand the ring over to a new phone.
+    replace: bool,
 }
 
 fn parse(args: &[String]) -> std::result::Result<Args, String> {
@@ -463,6 +548,7 @@ fn parse(args: &[String]) -> std::result::Result<Args, String> {
         hosts: Vec::new(),
         pos: Vec::new(),
         ble: false,
+        replace: false,
     };
     let mut i = 0;
     let value = |i: usize, flag: &str| {
@@ -504,6 +590,10 @@ fn parse(args: &[String]) -> std::result::Result<Args, String> {
             "--group" => {
                 a.group = Some(value(i, f)?);
                 i += 2;
+            }
+            "--replace" => {
+                a.replace = true;
+                i += 1;
             }
             "--ble" => {
                 a.ble = true;
@@ -554,6 +644,10 @@ pub fn run(
         "sync-share-request" => want(1, "one host name"),
         "sync-cert-request" => want(0, "no argument (use --group or --host)"),
         "sync-trust-renew" if a.pos.len() > 1 => want(1, "at most one trust session id"),
+        _ if a.replace && cmd != "sync-phone-enroll" => {
+            eprintln!("sshub: --replace belongs to sync-phone-enroll\n       run `sshub {cmd} --help` for usage");
+            Some(2)
+        }
         _ => None,
     };
     if let Some(code) = bad {
@@ -589,7 +683,7 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
     }
     match cmd {
         "sync-phone-enroll" if a.ble => {
-            super::sync_phone_ble::enroll(&store, &id, &mut out, a.json, notify)
+            super::sync_phone_ble::enroll(&store, &id, &mut out, a.json, notify, a.replace)
         }
         "sync-phone-enroll" => phone_enroll(
             &store,
@@ -598,6 +692,7 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
             &mut out,
             a.json,
             notify,
+            a.replace,
         ),
         "sync-notice" => {
             let (op, text) = notice_text(&store, &a.pos[0])?;
@@ -891,7 +986,7 @@ fn share_request(
 
 pub fn print_help(cmd: &str) {
     let (synopsis, text) = match cmd {
-        "sync-phone-enroll" => ("sync-phone-enroll [--ble] [--format plain|json]", "Enroll a phone from this terminal, as text. Prints the terminal's first frame (`frame:`); read each of the phone's frames (kind 6, 7, 8, base64) from stdin, one per line, and print the next frame to show. After the phone's reveal it prints the four words (`words:`): answer `y` or `n` on stdin. On a verified phone it registers it and proposes its admission (a Red change) and prints the last frame for the phone. Needs a ring. Exit 0 verified, 1 stopped or input ended. With --ble (a build with the `bluetooth` feature) the frames also travel over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone app's device list`, sends each frame it prints to the phone app and takes the phone's frames from Bluetooth or stdin; the four words are still answered on stdin."),
+        "sync-phone-enroll" => ("sync-phone-enroll [--replace] [--ble] [--format plain|json]", "With --replace the verified phone is the NEW phone of a handover: the ring keeps working with the old phone, and the terminal prints the kind 12 request for the OLD phone (`handover:`), the eight words to compare (`handover_words:`) and the next steps (`next:`) instead of adding the phone. Enroll a phone from this terminal, as text. Prints the terminal's first frame (`frame:`); read each of the phone's frames (kind 6, 7, 8, base64) from stdin, one per line, and print the next frame to show. After the phone's reveal it prints the four words (`words:`): answer `y` or `n` on stdin. On a verified phone it registers it and proposes its admission (a Red change) and prints the last frame for the phone. Needs a ring. Exit 0 verified, 1 stopped or input ended. With --ble (a build with the `bluetooth` feature) the frames also travel over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone app's device list`, sends each frame it prints to the phone app and takes the phone's frames from Bluetooth or stdin; the four words are still answered on stdin."),
         "sync-notice" => ("sync-notice <op-id> [--wait <seconds>] [--ble] [--format plain|json]", "Print the kind 3 notice (base64) of a Red op, for the phone to read: the op as signed, so the phone can show what it is asked to approve. <op-id> is a unique prefix (4+ hex characters) of the op's hash. With --ble (a build with the `bluetooth` feature) the notice is also handed to the phone app over Bluetooth: it prints `bluetooth: pick SSHub-XXXX in the phone app's device list` and waits up to --wait seconds until the phone has the frame (`sent:`)."),
         "sync-phone-chain" => ("sync-phone-chain <phone-device-id> [--wait <seconds>] [--ble] [--format plain|json]", "Print the kind 5 list (base64) of the phone's own newest ops (at most 8) that this terminal holds, for a RESTORED phone to take its chain back. The list names this terminal's device id as its sender (unsigned: it only lets the phone tell two lists apart). The phone adopts its chain only from two lists naming the same newest op that come from two DIFFERENT terminals, so run this on two terminals. Scanning one list twice is refused. <phone-device-id> is the 16 hex characters on the phone's home screen. With --ble (a build with the `bluetooth` feature) the list is also handed to the phone app over Bluetooth (`sent:`)."),
         "sync-phone-ops" => ("sync-phone-ops [--wait <seconds>] [--ble] [--format plain|json]", "Take in the ops the phone copied (kind 5, base64) from stdin, chain them into the log and print what applied, why the others were skipped (`skipped` in JSON: `chain-gap` with the first refused seq when the list starts past what the ring knows, `already-known`, `invalid`) and the ceremony of every pending Red op. A malformed text changes nothing. With --ble (a build with the `bluetooth` feature) the ops frame is received from the phone app over Bluetooth instead of stdin (`bluetooth: pick SSHub-XXXX in the phone app's device list`, up to --wait seconds)."),
