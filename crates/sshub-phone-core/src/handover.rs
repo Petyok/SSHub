@@ -204,12 +204,14 @@ mod tests {
 
     fn old() -> (PhoneIdentity, PhoneState) {
         let id = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
-        let mut s = PhoneState::default();
-        s.enrolled = Some(Enrolled {
-            device_id: id.device_id().to_string(),
-            name: "old phone".into(),
-            at: NOW,
-        });
+        let s = PhoneState {
+            enrolled: Some(Enrolled {
+                device_id: id.device_id().to_string(),
+                name: "old phone".into(),
+                at: NOW,
+            }),
+            ..PhoneState::default()
+        };
         (id, s)
     }
 
