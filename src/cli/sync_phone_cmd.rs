@@ -721,7 +721,7 @@ fn trust_renew(
         for r in &rows {
             let line = format!(
                 "{} {}: ends in {}, renewed {} of {} times",
-                hex_of(&r.cert_id)[..8].to_string(),
+                &hex_of(&r.cert_id)[..8],
                 plain(&r.delegate),
                 crate::sync::health::human_left(r.expiry - now),
                 r.renewals,
