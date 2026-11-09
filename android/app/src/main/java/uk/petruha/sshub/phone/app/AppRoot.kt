@@ -61,6 +61,7 @@ import uk.petruha.sshub.phone.ui.screens.release.routeFor
 import uk.petruha.sshub.phone.ui.screens.trust.trustGraph
 import uk.petruha.sshub.phone.ui.screens.trust.trustRequestRoute
 import uk.petruha.sshub.phone.ui.screens.trust.trustExtendRoute
+import uk.petruha.sshub.phone.ui.screens.trust.trustRenewRoute
 import uk.petruha.sshub.phone.ui.theme.LocalReducedMotion
 import uk.petruha.sshub.phone.ui.theme.SshubTheme
 import uk.petruha.sshub.phone.core.OpenedTrustExtend
