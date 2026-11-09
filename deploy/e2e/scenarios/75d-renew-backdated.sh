@@ -8,7 +8,7 @@
 . "$E2E_DIR/lib.sh"
 . "$E2E_DIR/lib-creds.sh"
 NAME=75d-renew-backdated
-TERM=$((30 * 86400))
+TERM=$((29 * 86400))
 BACK=-8640000
 
 step "ring with the phone, three terminals and a host" trust_ring
@@ -19,9 +19,9 @@ EXP0=$(printf '%s' "$S0" | pjq -r '.expiry')
 
 show "the phone's date moves 100 days back" phone clock-set "{\"offset_secs\":$BACK}"
 check "the page sees the earlier date" "[ \"$(pf "$LAST_OUT" page_now)\" -lt \"$(( $(date +%s) - 8000000 ))\" ]"
-step "renewal 1 signed with the backdated clock" renew_cert peer-a "$CERT_ID" 30
+step "renewal 1 signed with the backdated clock" renew_cert peer-a "$CERT_ID" 29
 echo "page answer: $RENEW_OPEN"
-step "renewal 2 signed with the backdated clock" renew_cert peer-a "$CERT_ID" 30
+step "renewal 2 signed with the backdated clock" renew_cert peer-a "$CERT_ID" 29
 for p in peer-a peer-b peer-c; do
   S=$(trust_sessions $p); echo "sessions on $p: $S"
   expect "$p: two renewals" "$S" '.renewals == 2'
@@ -30,7 +30,7 @@ done
 EXP2=$((EXP0 + 2 * TERM))
 
 echo "--- a third renewal, still backdated"
-show "peer-a sync-trust-renew (the third request)" peer peer-a $SSHUB sync-trust-renew "$CERT_ID" --days 30 --format json
+show "peer-a sync-trust-renew (the third request)" peer peer-a $SSHUB sync-trust-renew "$CERT_ID" --days 29 --format json
 if [ "$LAST_RC" -eq 0 ]; then
   show "the backdated phone reads the third request" phone renew-open "{\"frame\":\"$(pf "$LAST_OUT" request)\"}"
   expect "the page refuses it (no approve button)" "$LAST_OUT" '(.ok == false) or (.can_approve == false and .refusal != null)'
@@ -39,7 +39,7 @@ else
 fi
 show "the phone's date is restored" phone clock-set '{"offset_secs":0}'
 echo "--- a third renewal with the normal clock"
-show "peer-a sync-trust-renew (the third request)" peer peer-a $SSHUB sync-trust-renew "$CERT_ID" --days 30 --format json
+show "peer-a sync-trust-renew (the third request)" peer peer-a $SSHUB sync-trust-renew "$CERT_ID" --days 29 --format json
 if [ "$LAST_RC" -eq 0 ]; then
   show "the phone reads the third request" phone renew-open "{\"frame\":\"$(pf "$LAST_OUT" request)\"}"
   expect "the page refuses it (no approve button)" "$LAST_OUT" '(.ok == false) or (.can_approve == false and .refusal != null)'

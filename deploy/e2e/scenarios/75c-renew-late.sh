@@ -13,7 +13,7 @@ CERT_ID=$(trust_sessions peer-a | pjq -r '.id')
 EXP0=$(trust_sessions peer-a | pjq -r '.expiry')
 
 # the renewal without peer-c and peer-b taking part: only peer-a and the phone
-show "peer-a sync-trust-renew (the request)" peer peer-a $SSHUB sync-trust-renew "$CERT_ID" --days 30 --format json
+show "peer-a sync-trust-renew (the request)" peer peer-a $SSHUB sync-trust-renew "$CERT_ID" --days 29 --format json
 show "the phone reads the renewal request" phone renew-open "{\"frame\":\"$(pf "$LAST_OUT" request)\"}"
 show "the phone signs the renewal" phone renew-approve
 PHONE_OPS=$(pf "$LAST_OUT" ops)

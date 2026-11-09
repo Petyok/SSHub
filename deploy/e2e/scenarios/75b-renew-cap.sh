@@ -10,13 +10,13 @@ step "ring with the phone, three terminals and a host" trust_ring
 step "trust session of peer-c on certhost (30 days)" issue_cert peer-c certhost 30
 CERT_ID=$(trust_sessions peer-a | pjq -r '.id')
 for n in 1 2; do
-  step "renewal $n" renew_cert peer-a "$CERT_ID" 30
+  step "renewal $n" renew_cert peer-a "$CERT_ID" 29
   S=$(trust_sessions peer-a); echo "sessions on peer-a: $S"
   expect "renewed $n time(s)" "$S" ".renewals == $n"
 done
 EXP2=$(trust_sessions peer-a | pjq -r '.expiry')
 
-show "peer-a sync-trust-renew (the third request)" peer peer-a $SSHUB sync-trust-renew "$CERT_ID" --days 30 --format json
+show "peer-a sync-trust-renew (the third request)" peer peer-a $SSHUB sync-trust-renew "$CERT_ID" --days 29 --format json
 REQ3=$LAST_OUT
 if [ "$LAST_RC" -eq 0 ]; then
   show "the phone reads the third renewal request" phone renew-open "{\"frame\":\"$(pf "$REQ3" request)\"}"

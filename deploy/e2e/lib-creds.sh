@@ -319,7 +319,7 @@ trust_sessions() { peer "$1" $SSHUB sync-trust-renew --format json 2>/dev/null |
 # One renewal of the session $2 on peer-a ($3 = days): the request, the phone signs, the list goes to peer-a. Leaves the
 # phone's open answer in RENEW_OPEN, the terminal's request events in RENEW_REQ_OUT.
 renew_cert() {
-  show "peer-a sync-trust-renew $2 (the request)" peer peer-a $SSHUB sync-trust-renew "$2" --days "${3:-30}" --format json
+  show "peer-a sync-trust-renew $2 (the request)" peer peer-a $SSHUB sync-trust-renew "$2" --days "${3:-29}" --format json
   RENEW_REQ_OUT=$LAST_OUT
   [ "$LAST_RC" -eq 0 ] || return 1
   show "the phone reads the renewal request" phone renew-open "{\"frame\":\"$(pf "$LAST_OUT" request)\"}"
