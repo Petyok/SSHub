@@ -318,10 +318,15 @@ fn sync_phone_enroll_verifies_a_phone_and_proposes_it_as_a_red_holder() {
         .any(|x| x.starts_with("admitted: ") && x.contains("is enrolled")));
     // The enrollment says whether a recovery of this phone is mailed, and names a shared mailbox.
     assert!(
-        l.iter().any(|x| x.starts_with("notify_hint: ") && x.contains("mailed to me@example.com")),
+        l.iter()
+            .any(|x| x.starts_with("notify_hint: ") && x.contains("mailed to me@example.com")),
         "{l:?}"
     );
-    assert!(l.iter().any(|x| x.starts_with("notify_hint: ") && x.contains("Shared mailbox")), "{l:?}");
+    assert!(
+        l.iter()
+            .any(|x| x.starts_with("notify_hint: ") && x.contains("Shared mailbox")),
+        "{l:?}"
+    );
     assert!(t
         .store
         .sync_devices()

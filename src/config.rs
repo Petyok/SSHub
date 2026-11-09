@@ -1469,7 +1469,10 @@ confirm_quit = false
         let back = load_config_at(&path).unwrap();
         assert!(!back.sync.auto_sync_on_start && !back.sync.notify_declined);
         assert_eq!(back.sync.notify.to, ["me@example.com"]);
-        assert_eq!(back.sync.notify.command.as_deref(), Some(DEFAULT_MAIL_COMMAND));
+        assert_eq!(
+            back.sync.notify.command.as_deref(),
+            Some(DEFAULT_MAIL_COMMAND)
+        );
     }
 
     #[test]

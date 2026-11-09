@@ -200,7 +200,8 @@ impl<'a> EnrollSession<'a> {
                         for l in &r.lines {
                             emit(out, j, "admitted", l.clone(), json!({"line": l}));
                         }
-                        let (configured, hint) = super::sync_admin::notify_hint(self.notify.as_ref());
+                        let (configured, hint) =
+                            super::sync_admin::notify_hint(self.notify.as_ref());
                         for l in hint {
                             emit(out, j, "notify_hint", l, json!({"configured": configured}));
                         }
@@ -573,7 +574,14 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
         "sync-phone-enroll" if a.ble => {
             super::sync_phone_ble::enroll(&store, &id, &mut out, a.json, notify)
         }
-        "sync-phone-enroll" => phone_enroll(&store, &id, std::io::stdin().lock(), &mut out, a.json, notify),
+        "sync-phone-enroll" => phone_enroll(
+            &store,
+            &id,
+            std::io::stdin().lock(),
+            &mut out,
+            a.json,
+            notify,
+        ),
         "sync-notice" => {
             let (op, text) = notice_text(&store, &a.pos[0])?;
             emit(

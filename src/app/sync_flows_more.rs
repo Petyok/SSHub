@@ -356,7 +356,9 @@ fn mail_not_now(app: &mut App) {
         return;
     };
     app.host_notice = Some(match crate::config::decline_notify_at(&path) {
-        Ok(()) => "not now: the Sync tab keeps a line about it; M, Phone, Mail sets it up later".into(),
+        Ok(()) => {
+            "not now: the Sync tab keeps a line about it; M, Phone, Mail sets it up later".into()
+        }
         Err(e) => format!("could not record that: {e:#}"),
     });
 }
