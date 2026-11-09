@@ -85,9 +85,9 @@ pub fn crc32(data: &[u8]) -> u32 {
     })
 }
 
-/// A frame the channel may carry: `"SWR1" || version u16 || kind u8 || body`, kind 1 to 10.
+/// A frame the channel may carry: `"SWR1" || version u16 || kind u8 || body`, kind 1 to 12 (11 and 12 are the Phase B renewal and handover requests).
 pub fn valid_frame(f: &[u8]) -> bool {
-    f.len() >= 7 && f[..4] == *b"SWR1" && (1..=10).contains(&f[6])
+    f.len() >= 7 && f[..4] == *b"SWR1" && (1..=12).contains(&f[6])
 }
 
 /// A fresh pointer for the person to pick the right entry in the phone's chooser: 4 Crockford base32

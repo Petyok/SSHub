@@ -136,9 +136,14 @@ fn step_job(
                     format!("{} is enrolled; its admission is proposed", v.name),
                     crate::store::now_ts(),
                 )?;
+                let mut lines = report.lines;
+                let cfg = crate::config::load_config_at(&env.paths.config_file).ok();
+                lines.extend(
+                    crate::cli::sync_admin::notify_hint(cfg.as_ref().map(|c| &c.sync.notify)).1,
+                );
                 Ok(FlowOut::Admitted {
                     frame: v.frame,
-                    lines: report.lines,
+                    lines,
                 })
             }),
             Ok(step) => Ok(present_step(step).expect("verified handled above")),
@@ -290,6 +295,7 @@ fn present(app: &mut App, out: FlowOut) {
                 |app, _| {
                     app.phone_flow = None;
                     app.refresh_sync_view();
+                    super::sync_flows_more::mail_offer_after_enroll(app);
                 },
             );
         }
@@ -396,6 +402,7 @@ pub(crate) fn show_chain(app: &mut App) {
             "The phone's own changes",
             vec![
                 format!("{} change(s) the phone signed, as this computer knows them.", wire.ops.len()),
+                crate::cli::sync_phone_cmd::terminals_line(wire.terminals.as_ref(), crate::store::now_ts()),
                 "A restored phone takes its history only from two lists made by two DIFFERENT computers: show it, then do the same on another computer.".into(),
             ],
             frames,

@@ -373,7 +373,7 @@ fn print_sync_review() {
 USAGE:
     sshub [--profile NAME] sync-review [--format plain|json]
     sshub [--profile NAME] sync-review (--approve <id> | --reject <id>) [--format plain|json]
-    sshub [--profile NAME] sync-review --approve-all [--format plain|json]
+    sshub [--profile NAME] sync-review --approve-all [--device ID] [--format plain|json]
 
 Without a flag, lists each change waiting for review: an 8-digit id, the
 author device, a summary, and one line per field (`[!]` marks a dangerous
@@ -388,8 +388,11 @@ consent: the line names the requester, its full device id and the request age, a
 are written as the TUI confirmation would; a request older than 120 s is refused.
 --approve-all approves, in one pass, every waiting change that has no ceremony (a new host's address, a rename onto a
 taken name ...): for a ring that delivered thousands of changes, where one --approve call per change is not workable.
-Red changes (they need their own proofs), share releases and changes of unknown authors are left for --approve <id>;
+Red changes (they need their own proofs), share releases, changes of unknown authors and every change held as
+revoked-author, not-holder, revoke-conflict or resurrection are left for --approve <id>;
 it prints how many were approved and how many are left.
+--approve-all --device <id> approves, on this device only, just the changes of that device held as stale (it was away)
+that touch no address, jump host, remote command, user or key; everything else stays for --approve <id>.
 Read-only otherwise; never creates a device key (approving a share release loads the existing one).
 
 EXIT CODES:
@@ -407,8 +410,16 @@ USAGE:
     sshub [--profile NAME] sync-status [--format plain|json]
 
 Lists your devices (name, short id, kind, state, last in sync, last change number, host if
-known), the number of pending changes and the credential mode. Never creates a
-device key. An empty profile prints `No sync ring on this profile yet.`"#
+known), the number of pending changes and the credential mode, then the saved passwords that
+are exposed or not yet shared with a current full device. Never creates a device key on a
+profile without a ring, which prints `No sync ring on this profile yet.`
+
+EXIT CODES:
+    0  listed
+    1  error
+    2  usage error
+    3  a recovery of the phone is open and was not started here (it is listed; cancel it from the
+       phone if the phone is not lost)"#
     );
 }
 

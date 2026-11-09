@@ -528,6 +528,9 @@ pub enum AppMode {
     /// Full-screen alert naming a device caught forking its history. Not a
     /// popup: it takes over the frame, over a live session too.
     SyncForkAlert,
+    /// Full-screen notice that a recovery of the phone is open and was not started here. Like the fork alert it
+    /// takes over the frame; Esc only dismisses it, there is no acknowledge, and it never writes an op.
+    SyncRecoveryAlert,
     /// Trust session, step 1: scope.
     TrustSessionScope,
     /// Trust session, step 2: term.
