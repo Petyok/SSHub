@@ -252,6 +252,12 @@ fn mail_owed_codes(
             Err(e) => eprintln!("sshub: could not mail the code: {e:#}"),
         }
     }
+    // Every trust-session renewal that arrived is mailed once.
+    if let Err(e) = crate::sync::cert::send_renew_mails(store, &mut |s, b| {
+        crate::sync::notify::send_notification(cfg, s, b)
+    }) {
+        eprintln!("sshub: could not look for renewal mails: {e:#}");
+    }
 }
 
 /// A string a ring peer wrote, safe to print: control characters shown escaped.
