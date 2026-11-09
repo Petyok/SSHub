@@ -402,6 +402,7 @@ pub(crate) fn show_chain(app: &mut App) {
             "The phone's own changes",
             vec![
                 format!("{} change(s) the phone signed, as this computer knows them.", wire.ops.len()),
+                crate::cli::sync_phone_cmd::terminals_line(wire.terminals.as_ref(), crate::store::now_ts()),
                 "A restored phone takes its history only from two lists made by two DIFFERENT computers: show it, then do the same on another computer.".into(),
             ],
             frames,

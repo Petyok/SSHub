@@ -230,6 +230,23 @@ impl<'a> EnrollSession<'a> {
     }
 }
 
+/// What a kind 5 list says about the ring's terminals (the `terminals` block, unsigned and informational), in plain
+/// words; a plain fallback when the sender did not say.
+pub(crate) fn terminals_line(
+    t: Option<&crate::sync::wire::TerminalsBlock>,
+    now: i64,
+) -> String {
+    match t {
+        Some(t) => format!(
+            "This list says the ring has {} terminal{}; the newest change it names is {} old. The phone shows this when you accept one list.",
+            t.count,
+            if t.count == 1 { "" } else { "s" },
+            crate::sync::health::human_left(now - t.newest_op_ts)
+        ),
+        None => "This list does not say how many terminals the ring has.".to_string(),
+    }
+}
+
 fn phone_enroll(
     store: &LauncherStore,
     id: &DeviceIdentity,
@@ -605,8 +622,20 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
                 a.json,
                 "chain",
                 text.clone(),
-                json!({"chain": text, "sender": me, "ops": wire.ops.len()}),
+                json!({
+                    "chain": text, "sender": me, "ops": wire.ops.len(),
+                    "terminals": wire.terminals.map(|t| json!({"count": t.count, "newest_op_ts": t.newest_op_ts})),
+                }),
             );
+            if !a.json {
+                emit(
+                    &mut out,
+                    false,
+                    "terminals",
+                    terminals_line(wire.terminals.as_ref(), crate::store::now_ts()),
+                    json!({}),
+                );
+            }
             if a.ble {
                 return super::sync_phone_ble::push(&wire.encode(), a.json, a.wait, &mut out);
             }
