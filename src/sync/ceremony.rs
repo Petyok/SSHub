@@ -739,10 +739,14 @@ fn red_eval(
             }
             // The new phone is a new key: not one the ring already knows (its own row, made by this very handover, excepted).
             let new_id = new_phone.device_id();
+            // The row of the new phone itself (a phone, made by this very handover) is no earlier knowledge of the key.
             let known = devices.iter().any(|d| {
-                d.id != new_id
-                    && (d.public.ed25519_pub == new_phone.ed25519_pub
-                        || d.public.x25519_pub == new_phone.x25519_pub)
+                if d.id == new_id {
+                    d.kind != DeviceKind::Phone
+                } else {
+                    d.public.ed25519_pub == new_phone.ed25519_pub
+                        || d.public.x25519_pub == new_phone.x25519_pub
+                }
             }) || super::quorum::paper_pub(store)?.is_some_and(|p| {
                 p.ed25519_pub == new_phone.ed25519_pub || p.x25519_pub == new_phone.x25519_pub
             });

@@ -708,6 +708,25 @@ mod in_force {
             cert_renew_request(store, cert.id, 11 * day, now).is_err(),
             "longer than the first term"
         );
+        assert!(req.opened.is_empty() && req.opened_total == 0);
+        // Two hosts opened by the enforcing holders (not the delegate): the next request names them, newest first.
+        let web = store
+            .create_host(&crate::store::NewHost::launcher("web", "10.0.0.1"))
+            .unwrap();
+        let web_uid = store.host_uid(web.id).unwrap().unwrap();
+        append(&d[0], crate::sync::cert::cert_opened_body(&cert, &web_uid));
+        append(&d[2], crate::sync::cert::cert_opened_body(&cert, &[77u8; 16]));
+        all_to_all_pull(&d);
+        let req = cert_renew_request(&d[0].store, cert.id, 5 * day, now).unwrap();
+        assert_eq!(req.opened_total, 2);
+        assert_eq!(req.opened.len(), 2);
+        assert!(req.opened.contains(&"web".to_string()), "{:?}", req.opened);
+        assert!(req.opened.contains(&"4d4d4d4d".to_string()), "a host with no name here is its first hex digits");
+        // It survives the wire.
+        assert_eq!(
+            crate::sync::wire::CertRenewRequestWire::decode(&req.encode()).unwrap(),
+            req
+        );
 
         // After the original end the session is dead; a renewal revives it, within the caps.
         let late = now + 12 * day;
@@ -2302,6 +2321,8 @@ fn hand_over(d: &[Dev], new: &Dev, name: &str) -> Op {
 
 /// The new phone signs its own admission; its op reaches every ring device as the op of an unknown author.
 fn new_phone_signs(d: &[Dev], new: &Dev, h: &Op) {
+    // Its proof must come after the op (a higher lamport): the new phone has seen the op before it signs.
+    pull(&d[P], new);
     append(new, red_phone_sign_body(h));
     for x in d {
         pull(new, x);

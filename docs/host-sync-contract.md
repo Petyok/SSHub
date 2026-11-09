@@ -1742,8 +1742,9 @@ small next to a card that cannot show what it exists to show.
 **(b) The new phone receives the handover op hash inside kind 12 itself.** Two stages of one frame, nothing new on the wire:
 1. *Request (old phone).* The terminal shows `PhoneHandoverRequestWire` as in 4j; the old phone compares the 8 words, signs and builds the `PhoneHandover` op.
 2. *Admission (new phone).* After the terminal ingested that op it shows the NEW phone a second kind 12 frame whose layout is the 4j layout followed by
-   `0x01 || op_hash(32)` (the hash of the `PhoneHandover` op just ingested). Without the trailing block the frame is a request; a trailing block that is not exactly
-   `0x01` and 32 bytes is an error. The new phone's `describe_phone_handover` returns `HandoverView.op_hash: Option<[u8; 32]>` (present in stage 2 only) and shows the
+   `0x01 || op_hash(32) || op_lamport u64 BE` (the hash and the lamport of the `PhoneHandover` op just ingested). Without the trailing block the frame is a request; a
+   trailing block that is not exactly `0x01` and 40 bytes is an error. The new phone's proof only counts when its lamport is HIGHER than the op's (a proof must come
+   after what it names), so `sign_handover_admission` writes its `RedPhoneSign` with `lamport = max(own next, op_lamport + 1)`. The new phone's `describe_phone_handover` returns `HandoverView.op_hash: Option<[u8; 32]>` and `op_lamport: Option<u64>` (present in stage 2 only) and shows the
    same 8 words so the new owner can compare them with the old phone; `sign_handover_admission(state, id, op_hash, now)` takes the hash from the view, never from a typed
    argument. A new phone refuses to sign unless the frame's `new_phone` is its own public key. Its `RedPhoneSign` returns to the terminal as ordinary phone ops (kind 5)
    and counts only for the op that names its key (a wrong hash signs nothing that can be used).
