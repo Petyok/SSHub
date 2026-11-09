@@ -445,6 +445,19 @@ fn renew_term(app: &mut App, cert_id: [u8; 32], max_secs: i64) {
     app.sync_menu("Renew for how long?", items);
 }
 
+/// The opened-hosts line of a renewal request (contract 4l a): names newest first plus the total, or
+/// "no list sent" when the block is absent (the wire decodes that as no names and a zero total).
+pub(crate) fn opened_line(wire: &crate::sync::wire::CertRenewRequestWire) -> String {
+    if wire.opened.is_empty() && wire.opened_total == 0 {
+        return "Hosts opened under this session: no list sent".into();
+    }
+    format!(
+        "Hosts opened under this session: {} ({} in all)",
+        wire.opened.join(", "),
+        wire.opened_total
+    )
+}
+
 fn renew_request(app: &mut App, cert_id: [u8; 32], term_secs: i64) {
     match crate::sync::cert::cert_renew_request(&app.store, cert_id, term_secs, now()) {
         Ok(wire) => show_qr(
@@ -452,6 +465,7 @@ fn renew_request(app: &mut App, cert_id: [u8; 32], term_secs: i64) {
             "Renew a trust session",
             wire.encode(),
             vec![
+                opened_line(&wire),
                 "Show this code to the phone: it shows which hosts were opened and asks you to confirm the renewal.".into(),
                 "A renewal needs no second device and no paper phrase. Paste the answer the phone shows below.".into(),
             ],
@@ -473,6 +487,25 @@ mod renewal_tests {
             renewals,
             original_term_secs: 30 * 86_400,
         }
+    }
+
+    #[test]
+    fn the_opened_line_lists_names_and_total_or_says_no_list() {
+        use crate::sync::wire::CertRenewRequestWire;
+        let mut w = CertRenewRequestWire {
+            cert_id: [1; 32],
+            expiry: 1,
+            evidence: vec![],
+            opened: vec![],
+            opened_total: 0,
+        };
+        assert!(opened_line(&w).ends_with("no list sent"));
+        w.opened = vec!["web".into(), "db".into()];
+        w.opened_total = 5;
+        assert_eq!(
+            opened_line(&w),
+            "Hosts opened under this session: web, db (5 in all)"
+        );
     }
 
     #[test]

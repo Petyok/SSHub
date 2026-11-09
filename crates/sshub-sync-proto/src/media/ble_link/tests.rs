@@ -492,7 +492,7 @@ fn a_frame_without_the_magic_or_with_an_unknown_kind_never_reaches_the_applicati
             f
         },
         frame(100, 0, 1),
-        frame(100, 11, 1),
+        frame(100, 13, 1),
     ] {
         let mut p = Pair::new(244, 244);
         p.run(2, &mut clean(), &mut no_dup(), &|p| p.term.is_open());
@@ -521,9 +521,11 @@ fn a_frame_without_the_magic_or_with_an_unknown_kind_never_reaches_the_applicati
 
 #[test]
 fn valid_frame_checks_magic_length_and_kind() {
-    assert!(valid_frame(&frame(7, 1, 0)) && valid_frame(&frame(7, 10, 0)));
+    for k in 1..=12 {
+        assert!(valid_frame(&frame(7, k, 0)), "kind {k}");
+    }
     assert!(
-        !valid_frame(b"nope") && !valid_frame(&frame(7, 0, 0)) && !valid_frame(&frame(7, 11, 0))
+        !valid_frame(b"nope") && !valid_frame(&frame(7, 0, 0)) && !valid_frame(&frame(7, 13, 0))
     );
     assert!(!valid_frame(&frame(7, 2, 0)[..6]));
 }
