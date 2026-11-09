@@ -637,6 +637,7 @@ pub fn describe_cert_renew(
             renewals_left: 0,
             new_end: req.expiry,
             opened: Vec::new(),
+            opened_total: 0,
             evidence_age_secs: age,
             refusal,
         });
@@ -656,11 +657,29 @@ pub fn describe_cert_renew(
         budget: c.max_new_hosts_per_day,
         renewals_left: CERT_MAX_RENEWALS.saturating_sub(c.renewals.len() as u32),
         new_end: req.expiry,
-        // ponytail: kind 11 carries no list of opened hosts and the phone keeps none; add when the wire carries one
-        opened: Vec::new(),
+        opened: req.opened.iter().map(|n| safe_text(n)).collect(),
+        opened_total: u32::from(req.opened_total),
         evidence_age_secs: age,
         refusal,
     })
+}
+
+/// The opened-hosts row: the names the terminal listed and how many more there were; "no list sent" when the request
+/// carried no block (an empty list with a zero total).
+pub fn opened_text(v: &RenewView) -> String {
+    if v.opened.is_empty() && v.opened_total == 0 {
+        return "no list sent".to_string();
+    }
+    let more = (v.opened_total as usize).saturating_sub(v.opened.len());
+    format!(
+        "{}{}",
+        v.opened.join(", "),
+        if more > 0 {
+            format!(" and {more} more ({} in all)", v.opened_total)
+        } else {
+            String::new()
+        }
+    )
 }
 
 /// Kind 11: a terminal asks this phone to renew a trust session it issued. With a refusal nothing can be approved.
@@ -702,6 +721,11 @@ pub fn open_cert_renew(frame: &[u8], ctx: &Ctx, token: u64) -> (Opened, Option<P
         Row {
             label: "Renewals left after this".into(),
             value: renew.renewals_left.saturating_sub(1).to_string(),
+            danger: false,
+        },
+        Row {
+            label: "Hosts it opened".into(),
+            value: opened_text(&renew),
             danger: false,
         },
         Row {

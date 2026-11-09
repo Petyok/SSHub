@@ -199,25 +199,52 @@ export function decodeCertExtendRequest(frame) {
 // Kind 11 (contract 4j): cert_id(32) || expiry i64 BE || n u8 || n x (terminal(8) || head_seq u64 BE || head_ts i64 BE), n <= 32.
 // { cert_id: hex(32), expiry: BigInt, evidence: [{ terminal: hex(8), head_seq: BigInt, head_ts: BigInt }] }.
 export const MAX_RENEW_EVIDENCE = 32;
+export const MAX_RENEW_OPENED = 8;
+export const MAX_RENEW_OPENED_NAME_BYTES = 48;
 export function decodeCertRenewRequest(frame) {
   const { kind, body } = decodeFrame(frame);
   if (kind !== KIND.CERT_RENEW_REQUEST) throw new Error('not a certificate renewal request');
   if (body.length < 41) throw new Error('a certificate renewal request is truncated');
   const n = body[40];
   if (n > MAX_RENEW_EVIDENCE) throw new Error(`a renewal request carries at most ${MAX_RENEW_EVIDENCE} evidence entries`);
-  if (body.length !== 41 + n * 24) throw new Error('a certificate renewal request does not match its evidence count');
+  if (body.length < 41 + n * 24) throw new Error('a certificate renewal request does not match its evidence count');
   const evidence = [];
   for (let i = 0; i < n; i++) {
     const at = 41 + i * 24;
     evidence.push({ terminal: hexU(body.subarray(at, at + 8)), head_seq: rd64(body, at + 8).getBigUint64(0), head_ts: rd64(body, at + 16).getBigInt64(0) });
   }
-  return { cert_id: hexU(body.subarray(0, 32)), expiry: rd64(body, 32).getBigInt64(0), evidence };
+  // contract 4l: optional opened-hosts block m u8 (<= 8) || m x (len u8 || name utf8, 1..=48) || total u16 BE; absent = no list sent
+  let opened = [];
+  let opened_total = 0;
+  let at = 41 + n * 24;
+  if (at < body.length) {
+    const bad = () => new Error('the opened-hosts block of a renewal request is malformed');
+    const m = body[at++];
+    if (m > MAX_RENEW_OPENED) throw new Error(`a renewal request names at most ${MAX_RENEW_OPENED} opened hosts`);
+    for (let i = 0; i < m; i++) {
+      if (at >= body.length) throw bad();
+      const len = body[at++];
+      if (len < 1 || len > MAX_RENEW_OPENED_NAME_BYTES || at + len > body.length) throw bad();
+      try {
+        opened.push(new TextDecoder('utf-8', { fatal: true }).decode(body.subarray(at, at + len)));
+      } catch {
+        throw bad();
+      }
+      at += len;
+    }
+    if (body.length - at !== 2) throw bad();
+    opened_total = (body[at] << 8) | body[at + 1];
+    if (opened_total < m || (m === 0 && opened_total === 0)) throw bad();
+  }
+  return { cert_id: hexU(body.subarray(0, 32)), expiry: rd64(body, 32).getBigInt64(0), evidence, opened, opened_total };
 }
 
 // The terminal side (tests only): the inverse of decodeCertRenewRequest.
 export function encodeCertRenewRequest(r) {
   const hex = (s) => Uint8Array.from(s.match(/../g), (b) => parseInt(b, 16));
-  return encodeFrame(KIND.CERT_RENEW_REQUEST, hex(r.cert_id), i64(r.expiry), Uint8Array.of(r.evidence.length), ...r.evidence.map((e) => concat(hex(e.terminal), u64(e.head_seq), i64(e.head_ts))));
+  const opened = r.opened || [];
+  const block = opened.length || r.opened_total ? [Uint8Array.of(opened.length), ...opened.map((nm) => concat(Uint8Array.of(utf8(nm).length), utf8(nm))), u16(r.opened_total)] : [];
+  return encodeFrame(KIND.CERT_RENEW_REQUEST, hex(r.cert_id), i64(r.expiry), Uint8Array.of(r.evidence.length), ...r.evidence.map((e) => concat(hex(e.terminal), u64(e.head_seq), i64(e.head_ts))), ...block);
 }
 
 export const encodeCertExtendRequest = (r) => encodeFrame(KIND.CERT_EXTEND_REQUEST, Uint8Array.from(r.cert_id.match(/../g), (b) => parseInt(b, 16)), u32(r.extra_hosts));

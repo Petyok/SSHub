@@ -4703,9 +4703,11 @@
     "renewals_left": 2,
     "new_end": 1894662000,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": 3600,
     "refusal": null
-   }
+   },
+   "opened_text": "no list sent"
   },
   {
    "name": "stale",
@@ -4717,9 +4719,11 @@
     "renewals_left": 2,
     "new_end": 1894662000,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": 21601,
     "refusal": "No other terminal has news fresher than 6 h (the newest is 6 h old): its list of opened hosts may be out of date. Sync the terminals and ask again."
-   }
+   },
+   "opened_text": "no list sent"
   },
   {
    "name": "six_hours",
@@ -4731,9 +4735,11 @@
     "renewals_left": 2,
     "new_end": 1894662000,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": 21600,
     "refusal": null
-   }
+   },
+   "opened_text": "no list sent"
   },
   {
    "name": "no_evidence",
@@ -4745,9 +4751,11 @@
     "renewals_left": 2,
     "new_end": 1894662000,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": null,
     "refusal": "The list of opened hosts came only through the trusted device itself: no other terminal vouches for it. Ask a terminal that is not that device."
-   }
+   },
+   "opened_text": "no list sent"
   },
   {
    "name": "only_delegate",
@@ -4759,9 +4767,11 @@
     "renewals_left": 2,
     "new_end": 1894662000,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": null,
     "refusal": "The list of opened hosts came only through the trusted device itself: no other terminal vouches for it. Ask a terminal that is not that device."
-   }
+   },
+   "opened_text": "no list sent"
   },
   {
    "name": "freshest_counts",
@@ -4773,9 +4783,11 @@
     "renewals_left": 2,
     "new_end": 1894662000,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": 60,
     "refusal": null
-   }
+   },
+   "opened_text": "no list sent"
   },
   {
    "name": "too_long",
@@ -4787,9 +4799,11 @@
     "renewals_left": 2,
     "new_end": 1894662001,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": 0,
     "refusal": "A renewal is at most as long as the first term."
-   }
+   },
+   "opened_text": "no list sent"
   },
   {
    "name": "not_later",
@@ -4801,9 +4815,11 @@
     "renewals_left": 2,
     "new_end": 1894057200,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": 0,
     "refusal": "The new end date is not later than the current one."
-   }
+   },
+   "opened_text": "no list sent"
   },
   {
    "name": "lifetime",
@@ -4815,9 +4831,11 @@
     "renewals_left": 2,
     "new_end": 1910732400,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": 0,
     "refusal": "A renewal is at most as long as the first term. A trust session never lives past 180 days from its start, renewals included."
-   }
+   },
+   "opened_text": "no list sent"
   },
   {
    "name": "unknown",
@@ -4829,9 +4847,48 @@
     "renewals_left": 0,
     "new_end": 1894662000,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": null,
     "refusal": "This phone did not issue that certificate (or an earlier phone did). Only the issuing phone renews it."
-   }
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "opened_list",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662000,
+    "opened": [
+     "web1",
+     "db1"
+    ],
+    "opened_total": 5,
+    "evidence_age_secs": 0,
+    "refusal": null
+   },
+   "opened_text": "web1, db1 and 3 more (5 in all)"
+  },
+  {
+   "name": "opened_all",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662000,
+    "opened": [
+     "web1"
+    ],
+    "opened_total": 1,
+    "evidence_age_secs": 0,
+    "refusal": null
+   },
+   "opened_text": "web1"
   },
   {
    "name": "after_two",
@@ -4843,9 +4900,11 @@
     "renewals_left": 0,
     "new_end": 1895871600,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": 0,
     "refusal": "This trust session was renewed 2 times already: a new one needs the full approval."
-   }
+   },
+   "opened_text": "no list sent"
   },
   {
    "name": "after_two_next_ok",
@@ -4857,9 +4916,11 @@
     "renewals_left": 0,
     "new_end": 1895353200,
     "opened": [],
+    "opened_total": 0,
     "evidence_age_secs": 0,
     "refusal": "This trust session was renewed 2 times already: a new one needs the full approval."
-   }
+   },
+   "opened_text": "no list sent"
   }
  ],
  "cert_renew_ops": [
