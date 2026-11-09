@@ -6,7 +6,10 @@ use anyhow::{bail, ensure, Result};
 use rusqlite::params;
 
 use super::crypto::device_id_of;
-use super::limits::{CERT_NEW_HOSTS_PER_DAY, CERT_TERM_MAX_SECS, PHONE_FRESH_SECS};
+use super::limits::{
+    CERT_LIFETIME_MAX_SECS, CERT_MAX_RENEWALS, CERT_NEW_HOSTS_PER_DAY, CERT_TERM_MAX_SECS,
+    PHONE_FRESH_SECS,
+};
 use super::oplog::{CertScope, DeviceId, DeviceRole, DeviceStatus, GroupUid, HostUid, Op, OpBody};
 use crate::store::LauncherStore;
 
@@ -55,6 +58,44 @@ impl DelegationCert {
     pub fn issued_at(&self) -> i64 {
         self.op.timestamp
     }
+
+    /// The renewals that count, from the folded record of the log (`CertRenew` ops judged clock-free in
+    /// `(lamport, device, seq)` order: author, term, lifetime and count caps; design 6.1) and cut at the first one written
+    /// when the delegate was no holder in force: a renewal cannot revive a session for a device that was removed.
+    fn counted_renewals(&self, store: &LauncherStore) -> Result<Vec<super::oplog::Renewal>> {
+        let Some(record) = store.sync_cert_record(&self.id)? else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        for r in record.accepted {
+            let holder = super::ceremony::effective_devices(store, Some(r.lamport))?
+                .into_iter()
+                .any(|d| {
+                    d.id == self.device_id
+                        && d.role == DeviceRole::Holder
+                        && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+                });
+            if !holder {
+                break;
+            }
+            out.push(r);
+        }
+        Ok(out)
+    }
+
+    /// The end date that counts: the issue op's, or the newest counted renewal's. The local clock is read only by the
+    /// caller, against this date, when the session is used.
+    pub fn effective_expiry(&self, store: &LauncherStore) -> Result<i64> {
+        Ok(self
+            .counted_renewals(store)?
+            .last()
+            .map_or(self.expiry, |r| r.expiry))
+    }
+
+    /// How many renewals count (at most `CERT_MAX_RENEWALS`).
+    pub fn renewals(&self, store: &LauncherStore) -> Result<u32> {
+        Ok(u32::try_from(self.counted_renewals(store)?.len()).unwrap_or(u32::MAX))
+    }
 }
 
 fn host_in_group(store: &LauncherStore, host: &HostUid, group: &GroupUid) -> Result<bool> {
@@ -98,7 +139,10 @@ pub fn cert_allows(
         !store.sync_cert_revoked(&cert.id)?,
         "the trust session was ended"
     );
-    ensure!(now < cert.expiry, "the trust session has expired");
+    ensure!(
+        now < cert.effective_expiry(store)?,
+        "the trust session has expired"
+    );
     ensure!(
         cert.expiry - cert.issued_at() <= CERT_TERM_MAX_SECS,
         "the trust session lasts longer than allowed (90 days)"
@@ -175,13 +219,14 @@ pub fn recorded_openings(
 /// certificate's issuer before expiry, at most one counted per 24 hours, each valid for the 24 hours
 /// after it.
 pub fn extension_budget(store: &LauncherStore, cert: &DelegationCert, now: i64) -> Result<u32> {
+    let end = cert.effective_expiry(store)?;
     let mut ops: Vec<_> = super::quorum::ops_of(store, "CertExtend", Some(&cert.issuer))?
         .into_iter()
         .filter_map(|o| match o.body {
             OpBody::CertExtend {
                 cert_id,
                 extra_hosts,
-            } if cert_id == cert.id && o.timestamp < cert.expiry => {
+            } if cert_id == cert.id && o.timestamp < end => {
                 Some((o.timestamp, extra_hosts))
             }
             _ => None,
@@ -313,4 +358,84 @@ pub fn cert_request(
 /// Revoke a certificate (Yellow): any attended holder writes it; peers stop honouring the cert at once.
 pub fn cert_revoke_body(cert: &DelegationCert) -> OpBody {
     OpBody::CertRevoke { cert_id: cert.id }
+}
+
+/// What a terminal shows the phone to renew a trust session (kind 11, design 6.2). The new end date is `term_secs` after
+/// the end that counts, never more than the original term, never past `CERT_LIFETIME_MAX_SECS` after the issue; the
+/// evidence is one entry per holder terminal other than the delegate: its newest op seq and that op's author stamp, so the
+/// phone can tell whether the list of opened hosts comes from someone who saw the delegate's recent work. The request is
+/// built from a terminal that is NOT the delegate; `now` is not a rule (a UI rate hint at most).
+pub fn cert_renew_request(
+    store: &LauncherStore,
+    cert_id: [u8; 32],
+    term_secs: i64,
+    _now: i64,
+) -> Result<super::wire::CertRenewRequestWire> {
+    use anyhow::Context;
+    let issue = super::quorum::ops_of(store, "CertIssue", None)?
+        .into_iter()
+        .find(|o| o.hash() == cert_id)
+        .context("no such trust session")?;
+    let cert = DelegationCert::from_op(&issue)?;
+    ensure!(
+        !store.sync_cert_revoked(&cert_id)?,
+        "the trust session was ended"
+    );
+    ensure!(
+        cert.renewals(store)? < CERT_MAX_RENEWALS,
+        "this trust session was renewed {CERT_MAX_RENEWALS} times already: a new one needs the full approval"
+    );
+    let original_term = cert.expiry - cert.issued_at();
+    ensure!(
+        term_secs > 0 && term_secs <= original_term,
+        "a renewal is at most as long as the first term"
+    );
+    let so_far = cert.effective_expiry(store)?;
+    let expiry = (so_far + term_secs).min(cert.issued_at() + CERT_LIFETIME_MAX_SECS);
+    ensure!(
+        expiry > so_far,
+        "the trust session already reaches the longest lifetime (180 days)"
+    );
+    let mut evidence = Vec::new();
+    for d in super::ceremony::effective_devices(store, None)? {
+        if d.role != DeviceRole::Holder
+            || d.kind != super::oplog::DeviceKind::Terminal
+            || d.id == cert.device_id
+            || matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+        {
+            continue;
+        }
+        let Some(terminal) = hex::decode(&d.id)
+            .ok()
+            .and_then(|b| <[u8; 8]>::try_from(b).ok())
+        else {
+            continue;
+        };
+        let head_seq = store
+            .sync_chain_heads()?
+            .into_iter()
+            .find(|(id, _, _)| *id == d.id)
+            .map_or(0, |(_, seq, _)| seq);
+        let head_ts: i64 = store.with_conn(|c| {
+            Ok(c.query_row(
+                "SELECT COALESCE(MAX(timestamp), 0) FROM sync_ops
+                 WHERE device_id = ?1 AND state NOT IN ('rejected', 'void')",
+                params![d.id],
+                |r| r.get(0),
+            )?)
+        })?;
+        evidence.push(super::wire::HeadEvidence {
+            terminal,
+            head_seq,
+            head_ts,
+        });
+        if evidence.len() == super::wire::MAX_RENEW_EVIDENCE {
+            break;
+        }
+    }
+    Ok(super::wire::CertRenewRequestWire {
+        cert_id,
+        expiry,
+        evidence,
+    })
 }
