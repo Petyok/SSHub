@@ -25,7 +25,7 @@ expect "peer-a is the only full terminal (the Hub is a view-only copy)" "$st" '[
 
 # ---- recovery 1: left alone, becomes ready after the lock
 show "peer-a sync-recovery start --paper (the paper, then the paper again as the third proof)" sh -c "printf '%s\n%s\n' '$PAPER' '$PAPER' | $C exec -T peer-a env SSHUB_E2E_SOLO_LOCK_SECS=$SOLO $SSHUB sync-recovery start --paper"
-check "it says this is the only computer and to acknowledge here" "printf '%s' '$LAST_OUT' | grep -q 'only computer' && printf '%s' '$LAST_OUT' | grep -q 'sync-recovery ack'"
+check "it says this is the only computer and to acknowledge here" "printf '%s' \"\$LAST_OUT\" | grep -q 'only computer' && printf '%s' \"\$LAST_OUT\" | grep -q 'sync-recovery ack'"
 R1=$(printf '%s' "$LAST_OUT" | sed -n 's/.*change \([0-9a-f]*\)).*/\1/p' | sed -n 1p)
 check "the recovery is started" "[ '$LAST_RC' -eq 0 ]"
 V=$(verdict_of "$(printf '%s' "$R1" | cut -c1-8)"); echo "verdict before any ack: $V"

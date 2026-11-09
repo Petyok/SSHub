@@ -32,5 +32,5 @@ show "peer-a registers the paper (the phone's first signature on the continued c
 phone_signs peer-a "$(opid "$LAST_OUT")"
 expect "peer-a ingested the phone's approval" "$LAST_OUT" '.applied >= 1'
 show "peer-a sync-status" peer peer-a $SSHUB sync-status
-check "no fork alarm" "! printf '%s' '$LAST_OUT' | grep -qi 'fork'"
+check "no fork alarm" "! printf '%s' \"\$LAST_OUT\" | grep -qi 'fork'"
 finish "$NAME"

@@ -18,7 +18,7 @@ EXP0=$(printf '%s' "$S0" | pjq -r '.expiry')
 
 show "peer-c sync-trust-renew (on the delegate's own computer)" peer peer-c $SSHUB sync-trust-renew "$CERT_ID" --days 30 --format json
 check "the delegate's own computer refuses" "[ '$LAST_RC' -ne 0 ]"
-check "it says to renew from another full computer" "printf '%s' '$LAST_OUT' | grep -qi 'another full computer'"
+check "it says to renew from another full computer" "printf '%s' \"\$LAST_OUT\" | grep -qi 'another full computer'"
 
 step "renewal of the session on peer-a" renew_cert peer-a "$CERT_ID" 30
 expect "the request carries the opened-hosts block" "$RENEW_REQ_OUT" 'select(.event=="opened") | (.opened | type) == "array" and (.opened_total | type) == "number"'

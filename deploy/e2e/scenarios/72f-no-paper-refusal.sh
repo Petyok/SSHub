@@ -18,7 +18,7 @@ fi
 check "two full devices" "[ \"$(holders peer-a)\" -ge 2 ]"
 show "peer-a sync-revoke peer-b (no paper registered)" peer peer-a $SSHUB sync-revoke "$B_ID" --format json
 check "the removal is refused" "[ '$LAST_RC' -ne 0 ]"
-check "the refusal names the paper phrase and why" "printf '%s' '$LAST_OUT' | grep -qi 'needs the paper phrase registered'"
+check "the refusal names the paper phrase and why" "printf '%s' \"\$LAST_OUT\" | grep -qi 'needs the paper phrase registered'"
 st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
 expect "peer-b is still in the ring" "$st" '[.devices[] | select(.name=="peer-b") | .status] != ["revoked"]'
 finish "$NAME"

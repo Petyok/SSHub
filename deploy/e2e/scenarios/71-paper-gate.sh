@@ -15,7 +15,7 @@ ring2
 check "peer-a sets up the Vault" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-a $SSHUB sync-import-kit"
 show "peer-a sync-mode quorum without a paper" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
 check "the Quorum switch is refused" "[ '$LAST_RC' -ne 0 ]"
-check "the refusal names the paper phrase" "printf '%s' '$LAST_OUT' | grep -q '$GATE'"
+check "the refusal names the paper phrase" "printf '%s' \"\$LAST_OUT\" | grep -q '$GATE'"
 
 show "peer-a sync-role peer-b holder (the second full device, no paper needed)" peer peer-a $SSHUB sync-role "$(devid peer-a peer-b)" holder --format json
 ROLEOP=$(opid "$LAST_OUT")
@@ -28,7 +28,7 @@ echo "holders as peer-a sees them: $(holders peer-a)"
 check "two full devices now" "[ \"$(holders peer-a)\" -ge 2 ]"
 show "peer-a sync-revoke peer-b without a paper" peer peer-a $SSHUB sync-revoke "$(devid peer-a peer-b)" --format json
 check "the removal is refused" "[ '$LAST_RC' -ne 0 ]"
-check "the refusal names the paper phrase" "printf '%s' '$LAST_OUT' | grep -qi 'paper phrase'"
+check "the refusal names the paper phrase" "printf '%s' \"\$LAST_OUT\" | grep -qi 'paper phrase'"
 
 echo "=== part 2: the phone, no paper"
 phone_prep_page
@@ -40,8 +40,9 @@ expect "the phone is a full device on peer-a" "$st" '[.devices[] | select(.name=
 spread peer-b peer-a peer-b
 show "peer-a sync-role peer-b holder (the third full device)" peer peer-a $SSHUB sync-role "$(devid peer-a peer-b)" holder --format json
 check "the third full device is refused" "[ '$LAST_RC' -ne 0 ]"
-check "the refusal names the paper phrase" "printf '%s' '$LAST_OUT' | grep -q '$GATE'"
-check "peer-b is still not a full device" "[ \"$(peer peer-a $SSHUB sync-status --format json | pjq -r '[.devices[] | select(.name==\"peer-b\") | .role][0]')\" = mirror ]"
+check "the refusal names the paper phrase" "printf '%s' \"\$LAST_OUT\" | grep -q '$GATE'"
+st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
+expect "peer-b is still not a full device" "$st" '[.devices[] | select(.name=="peer-b") | .role] == ["mirror"]'
 
 show "peer-a registers the paper (the first registration needs the phone only)" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-a $SSHUB sync-factor-register paper --format json"
 expect "registering the paper is a Red change with a ceremony" "$LAST_OUT" '.tier == "Red" and (.ceremony != null)'
@@ -57,6 +58,6 @@ expect "the promotion ceremony is complete" "$LAST_OUT" '.ceremony.complete == t
 
 check "peer-a sets up the Vault" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-a $SSHUB sync-import-kit"
 show "peer-a sync-mode quorum with the paper in force" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
-check "the Quorum switch is not refused for the paper any more" "! printf '%s' '$LAST_OUT' | grep -q '$GATE'"
+check "the Quorum switch is not refused for the paper any more" "! printf '%s' \"\$LAST_OUT\" | grep -q '$GATE'"
 
 finish "$NAME"

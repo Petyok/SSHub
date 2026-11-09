@@ -24,13 +24,20 @@ check "peer-a names both terminals" "test -n '$A_ID' && test -n '$B_ID'"
 
 show "peer-a sync-revoke peer-a (the only terminal)" peer peer-a $SSHUB sync-revoke "$A_ID" --format json
 check "the removal of the last terminal is refused" "[ '$LAST_RC' -ne 0 ]"
-check "the refusal says to add a replacement first" "printf '%s' '$LAST_OUT' | grep -qi 'replacement'"
+check "the refusal says to add a replacement first" "printf '%s' \"\$LAST_OUT\" | grep -qi 'replacement'"
 
 show "peer-a sync-role peer-b holder (the replacement)" peer peer-a $SSHUB sync-role "$B_ID" holder --format json
 check "the promotion is proposed" "[ '$LAST_RC' -eq 0 ]"
 PRO=$(opid "$LAST_OUT")
 step "promotion with phone and paper" red_phone_paper "$PRO"
-expect "the promotion ceremony is complete" "$LAST_OUT" '.ceremony.complete == true'
+# the ring is still in setup (no second terminal yet): the promoted device's own approval stands in for the second device
+spread peer-b peer-a peer-b
+show "peer-b is given the phone's list" sh -c "printf '%s\n' '$PHONE_OPS' | $C exec -T peer-b $SSHUB sync-phone-ops --format json"
+snow peer-b >/dev/null
+show "peer-b sync-approve its own promotion (ring setup)" peer peer-b $SSHUB sync-approve "$PRO" --format json
+spread peer-a peer-b peer-a
+show "peer-a sync-status" peer peer-a $SSHUB sync-status --format json
+st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
 spread peer-b peer-a peer-b
 st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
 expect "peer-b is a full device" "$st" '[.devices[] | select(.name=="peer-b") | .role] == ["holder"]'

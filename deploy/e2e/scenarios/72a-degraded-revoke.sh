@@ -24,7 +24,7 @@ expect "peer-b is removed on peer-a" "$st" '[.devices[] | select(.name=="peer-b"
 expect "the marker lists quorum1 as sharing a key with the removed device" "$st" '[.exposure[] | select(test("removed device"))] | length >= 1'
 expect "the marker names the host" "$st" 'any(.exposure[]; test("quorum1"))'
 show "peer-a sync-status (text)" peer peer-a $SSHUB sync-status
-check "the text status carries the marker line" "printf '%s' '$LAST_OUT' | grep -q 'share a key with a removed device'"
+check "the text status carries the marker line" "printf '%s' \"\$LAST_OUT\" | grep -q 'share a key with a removed device'"
 
 check "peer-a saves a new credential after the removal" "printf '%s\n' 'N3w-Secret-e2e' | peer peer-a $SSHUB host add --name quorum2 --address quorum2.internal --password-stdin"
 check "two credentials are stored" "[ \"$(sq peer-a "SELECT count(*) FROM sync_cred_state")\" -ge 2 ]"
