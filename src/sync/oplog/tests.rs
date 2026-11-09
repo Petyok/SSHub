@@ -2728,6 +2728,24 @@ fn pruning_removes_superseded_wrapped_shares_from_the_database_file() {
     assert_eq!(a.store.sync_share_envelopes(&uid(2)).unwrap().len(), 1);
 }
 
+/// The stale horizon is the constant; only a build with `--features e2e-hooks` reads `SSHUB_E2E_STALE_AFTER_SECS`.
+#[test]
+fn the_stale_horizon_env_hook_exists_only_in_the_e2e_build() {
+    static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    assert_eq!(
+        super::checkpoint::stale_after_secs(),
+        crate::sync::limits::STALE_AFTER_SECS
+    );
+    std::env::set_var("SSHUB_E2E_STALE_AFTER_SECS", "3600");
+    let secs = super::checkpoint::stale_after_secs();
+    std::env::remove_var("SSHUB_E2E_STALE_AFTER_SECS");
+    #[cfg(feature = "e2e-hooks")]
+    assert_eq!(secs, 3600);
+    #[cfg(not(feature = "e2e-hooks"))]
+    assert_eq!(secs, crate::sync::limits::STALE_AFTER_SECS);
+}
+
 #[test]
 fn ops_of_a_device_that_was_stale_at_the_checkpoint_wait_for_review() {
     let ring = live_ring((0..3).map(|_| Peer::new()).collect());

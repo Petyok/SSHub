@@ -16,7 +16,7 @@ use super::pending;
 use crate::store::{now_ts, HostUid, LauncherStore};
 use crate::sync::apply::{self, reproject, validate_body};
 use crate::sync::crypto::{DeviceIdentity, DevicePublic, ALG_CURRENT};
-use crate::sync::limits::{BEHIND_AFTER_SECS, MAX_OPS_PER_TAIL, STALE_AFTER_SECS};
+use crate::sync::limits::{BEHIND_AFTER_SECS, MAX_OPS_PER_TAIL};
 
 #[derive(Debug)]
 pub enum IngestOutcome {
@@ -374,7 +374,7 @@ impl LauncherStore {
                     "compromised" => DeviceStatus::Compromised,
                     "revoked" => DeviceStatus::Revoked,
                     "suspect" => DeviceStatus::Suspect,
-                    _ if now - last_seen >= STALE_AFTER_SECS => DeviceStatus::Stale,
+                    _ if now - last_seen >= checkpoint::stale_after_secs() => DeviceStatus::Stale,
                     _ if now - last_seen >= BEHIND_AFTER_SECS || max_epoch - epoch >= 1 => {
                         DeviceStatus::Behind
                     }
