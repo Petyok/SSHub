@@ -178,7 +178,7 @@ pub(crate) fn rekey_new_key(
         let result = (|| -> Result<String> {
             let uid = find_exposed(&list, host)?;
             let path = dir.path().join(format!("key{i}"));
-            crate::ssh::keyfile::generate_key_pair("ed25519", None, "", "sshub-rekey", &path)?;
+            crate::ssh::generate_key_pair("ed25519", None, "", "sshub-rekey", &path)?;
             let private = std::fs::read_to_string(&path)?;
             let public = crate::ssh::read_public_key(&path, None)?;
             let _ = std::fs::remove_file(&path);
