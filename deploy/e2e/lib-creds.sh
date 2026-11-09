@@ -198,9 +198,9 @@ phone_prep_page() {
 }
 
 # A ring ($1 = ring2 or ring3) whose phone and holders are in force, in the order ring setup allows: the phone enrolls
-# first and signs its own admission (no factor exists yet); then each terminal is promoted with sync-role (the promoted
-# device approves, the phone signs, the factor is waived); then the paper is registered (phone + a second holder) and
-# from then on every Red op wants phone, second holder and paper (red_complete).
+# first and signs its own admission (no factor exists yet); then the paper is registered (the phone signs; a third full
+# device needs it first, design 3.1); then each terminal is promoted with the full ceremony (phone, second holder,
+# paper), as is every later Red op (red_complete).
 ring_with_phone() {
   ${PHONE_PREP:-phone_prep_page}
   "$1"
@@ -221,10 +221,11 @@ ring_with_phone() {
     fi
     spread peer-a "$1" peer-a
   }
-  promote peer-b setup
+  # the paper comes first (design 3.1): peer-b would be the third full device, and sync-role refuses without a paper
   show "peer-a registers the paper factor (Red)" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-a $SSHUB sync-factor-register paper --format json"
   REG=$(opid "$LAST_OUT")
-  red_complete "$REG" nofactor
+  ${PHONE_SIGNS:-phone_signs} peer-a "$REG"
+  promote peer-b full
   [ "$1" = ring3 ] && promote peer-c full
   spread peer-b peer-c peer-a peer-b peer-c peer-a
   ring_view
