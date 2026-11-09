@@ -77,6 +77,11 @@ pub fn handovers(conn: &Connection) -> Result<Vec<HandoverFact>> {
     Ok(facts(&fold_writes(conn, None, None)?))
 }
 
+/// The phone that holds a certificate issued by `issuer` for an op ordered at `(lamport, device, seq)`.
+pub fn cert_holder_at(conn: &Connection, issuer: &str, at: (u64, &str, u64)) -> Result<DeviceId> {
+    Ok(holder_at(issuer, &handovers(conn)?, at))
+}
+
 /// The phone that took over from `phone` (following a chain of handovers to its end), or `None`.
 pub fn successor_of(conn: &Connection, phone: &str) -> Result<Option<DeviceId>> {
     let mut cur = phone.to_string();
