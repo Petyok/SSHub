@@ -37,7 +37,8 @@ const PAGE_DIR = process.env.PHONE_PAGE_DIR || path.join(here, 'phone-page');
 const PROFILE = process.env.PHONE_PROFILE || '/phone/profile';
 const PORT = Number(process.env.PHONE_PORT || 7777);
 const PIN = process.env.PHONE_PIN || 'e2e-phone-pin-0001';
-const SECRET_HEX = '42'.repeat(32); // the fixture phone of the Rust side (its device id is derived below)
+// the fixture phone of the Rust side (its device id is derived below); the second phone (compose service phone2) sets another secret
+const SECRET_HEX = process.env.PHONE_SECRET_HEX || '42'.repeat(32);
 
 const require = createRequire(import.meta.url);
 const lib = (f) => import(pathToFileURL(path.join(COMPANION, 'src', f)).href);
