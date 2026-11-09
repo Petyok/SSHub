@@ -2509,9 +2509,7 @@ fn of_two_handovers_by_one_phone_the_first_to_complete_wins() {
 /// Design 5.4: the unattended jobs of a trust session must not stop at a phone upgrade.
 #[test]
 fn trust_session_survives_a_handover() {
-    use crate::sync::cert::{
-        cert_allows, cert_opened_body, extension_budget, issuer_phones, DelegationCert,
-    };
+    use crate::sync::cert::{cert_allows, extension_budget, issuer_phones, DelegationCert};
     use crate::sync::oplog::CertScope;
     let (d, recover, new) = handover_world();
     let host = [60u8; 16];
@@ -2568,5 +2566,4 @@ fn trust_session_survives_a_handover() {
         3,
         "the new phone is the issuer of record"
     );
-    let _ = cert_opened_body;
 }

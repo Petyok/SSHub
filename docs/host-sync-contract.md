@@ -1723,8 +1723,17 @@ What exists on top of 4j, with the names the screens and the scenarios use:
   `SyncRuntime::mail_owed_codes`; the CLI `sshub sync` path must call `send_renew_mails` too); the sticky notice is a terminal screen.
 * **Phone list:** `hub::phone_chain_wire` fills the kind 5 `terminals` block: the number of non-removed terminals (this one included) and the newest op stamp
   of the list. Unsigned, informational.
-* **Not yet** (wave 3): the `PhoneHandover` rules (Paper-only third factor, the new phone's own proof, the effect lamport, `successor_of` for certificates,
-  `handover::handover_words` over the proto crate's eight word function).
+* **PhoneHandover (wave 3):** `PhoneHandover` is a gated Red op judged in the view just BEFORE it (the old phone is the live one). Proofs: the author (the live
+  phone), the new phone's own `RedPhoneSign` (folded into `RedProof::Phone`; it may still wait as the op of an unknown author), a second attended terminal,
+  and `ThirdFactor::Paper` ONLY (the emailed code never counts; no registered paper blocks the op). The new phone's keys must be new to the ring (else a rule
+  violation). `ceremony::handover_effect(store, op) -> Option<u64>` is the completion lamport: the highest, over the proof kinds, of the lowest counted proof
+  lamport. Among handovers by one phone the lowest `(completion lamport, device, seq)` wins; any other is a rule violation (applied and still pending rivals both
+  count). `effective_devices(upto)` retires the old phone and makes the new phone a holder only from the completion lamport on (it undoes the oplog's row
+  effects for earlier views), so everything written before it is judged under the old phone. `handover::handover_words` is the proto crate's eight word
+  function; `handover::handover_request(new_phone, name, &terminal)` builds the kind 12 request. Certificates (design 5.4): `cert::issuer_phones(store, &current)`
+  lists the phone and the phones it took over from; `trust_grant` honours certificates of all of them (the retired key still verifies the issue op) and
+  `extension_budget` counts extensions by the successor (the oplog's `sync_cert_holder_at`, which orders handovers by their op lamport, not the completion
+  lamport: an old-phone extension written between the op and its completion is not counted, a harmless edge).
 
 ### 4l. Two interface decisions that amend 4j (S, 2026-11-09; announced to every lane)
 
