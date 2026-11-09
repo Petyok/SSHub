@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use rand_core::{OsRng, RngCore};
 use sshub_sync_proto::wire::{
-    PhoneOpsWire, SignedOpBytes, TerminalsBlock, KIND_CERT_EXTEND_REQUEST, KIND_CERT_RENEW_REQUEST, KIND_CERT_REQUEST,
-    KIND_CHALLENGE, KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_OPS,
-    KIND_RECOVERY_NOTICE, WIRE_MAGIC,
+    PhoneOpsWire, SignedOpBytes, TerminalsBlock, KIND_CERT_EXTEND_REQUEST, KIND_CERT_RENEW_REQUEST,
+    KIND_CERT_REQUEST, KIND_CHALLENGE, KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL,
+    KIND_PHONE_OPS, KIND_RECOVERY_NOTICE, WIRE_MAGIC,
 };
 use zeroize::Zeroizing;
 
@@ -1396,7 +1396,10 @@ mod tests {
         bad_kind[6] = 13;
         assert!(!is_sshub_frame(&bad_kind));
         bad_kind[6] = 11;
-        assert!(is_sshub_frame(&bad_kind), "kind 11 and 12 are frames since Phase B");
+        assert!(
+            is_sshub_frame(&bad_kind),
+            "kind 11 and 12 are frames since Phase B"
+        );
     }
 
     #[test]
@@ -1532,8 +1535,14 @@ mod tests {
             .decide(view.token, Decision::Approve { typed_id: None }, now)
             .unwrap();
         let ops = PhoneOpsWire::decode(&out.frame).unwrap().ops;
-        let last = sshub_sync_proto::oplog::canonical::decode_op(&ops.last().unwrap().0, ops.last().unwrap().1).unwrap();
-        assert!(matches!(last.body, sshub_sync_proto::oplog::OpBody::CertRenew { expiry, .. } if expiry == t0 + 2 * 86_400));
+        let last = sshub_sync_proto::oplog::canonical::decode_op(
+            &ops.last().unwrap().0,
+            ops.last().unwrap().1,
+        )
+        .unwrap();
+        assert!(
+            matches!(last.body, sshub_sync_proto::oplog::OpBody::CertRenew { expiry, .. } if expiry == t0 + 2 * 86_400)
+        );
     }
 
     #[test]

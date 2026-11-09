@@ -295,13 +295,7 @@ pub fn cert_renew(
     now: i64,
     seen: Option<Seen>,
 ) -> Result<Authored> {
-    append(
-        state,
-        id,
-        now,
-        seen,
-        OpBody::CertRenew { cert_id, expiry },
-    )
+    append(state, id, now, seen, OpBody::CertRenew { cert_id, expiry })
 }
 
 /// Newest ops of the chain as signed bytes for the courier lists.

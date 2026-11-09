@@ -22,7 +22,9 @@ use sshub_sync_proto::fountain::fountain_encode;
 use sshub_sync_proto::oplog::{CertScope, ConfirmItem, Op};
 use sshub_sync_proto::share_release::open_envelope_share;
 use sshub_sync_proto::uid::uid_from_hex;
-use sshub_sync_proto::wire::{CertRenewRequestWire, CertRequestWire, EnrollFrame, HeadEvidence, SignedOpBytes};
+use sshub_sync_proto::wire::{
+    CertRenewRequestWire, CertRequestWire, EnrollFrame, HeadEvidence, SignedOpBytes,
+};
 
 const FIX: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -681,20 +683,49 @@ fn cert_renew_views_refusals_and_signed_ops_are_the_pages() {
         assert_eq!(v.delegate, s(&w["delegate"]), "{name} delegate");
         assert_eq!(v.scope, s(&w["scope"]), "{name} scope");
         assert_eq!(v.term_secs, w["term_secs"].as_i64().unwrap(), "{name} term");
-        assert_eq!(i64::from(v.budget), w["budget"].as_i64().unwrap(), "{name} budget");
-        assert_eq!(i64::from(v.renewals_left), w["renewals_left"].as_i64().unwrap(), "{name} left");
+        assert_eq!(
+            i64::from(v.budget),
+            w["budget"].as_i64().unwrap(),
+            "{name} budget"
+        );
+        assert_eq!(
+            i64::from(v.renewals_left),
+            w["renewals_left"].as_i64().unwrap(),
+            "{name} left"
+        );
         assert_eq!(v.new_end, w["new_end"].as_i64().unwrap(), "{name} new_end");
         assert!(v.opened.is_empty() && w["opened"].as_array().unwrap().is_empty());
-        assert_eq!(v.evidence_age_secs, w["evidence_age_secs"].as_i64(), "{name} age");
-        assert_eq!(v.refusal.as_deref(), w["refusal"].as_str(), "{name} refusal");
+        assert_eq!(
+            v.evidence_age_secs,
+            w["evidence_age_secs"].as_i64(),
+            "{name} age"
+        );
+        assert_eq!(
+            v.refusal.as_deref(),
+            w["refusal"].as_str(),
+            "{name} refusal"
+        );
     };
     let cases: Vec<(&str, CertRenewRequestWire)> = vec![
         ("ok", mk(cert_id, NOW + 14 * DAY, &[(t, now - 3600)])),
-        ("stale", mk(cert_id, NOW + 14 * DAY, &[(t, now - 6 * 3600 - 1)])),
-        ("six_hours", mk(cert_id, NOW + 14 * DAY, &[(t, now - 6 * 3600)])),
+        (
+            "stale",
+            mk(cert_id, NOW + 14 * DAY, &[(t, now - 6 * 3600 - 1)]),
+        ),
+        (
+            "six_hours",
+            mk(cert_id, NOW + 14 * DAY, &[(t, now - 6 * 3600)]),
+        ),
         ("no_evidence", mk(cert_id, NOW + 14 * DAY, &[])),
         ("only_delegate", mk(cert_id, NOW + 14 * DAY, &[(del, now)])),
-        ("freshest_counts", mk(cert_id, NOW + 14 * DAY, &[(t, now - 30 * DAY), ([0x34; 8], now - 60)])),
+        (
+            "freshest_counts",
+            mk(
+                cert_id,
+                NOW + 14 * DAY,
+                &[(t, now - 30 * DAY), ([0x34; 8], now - 60)],
+            ),
+        ),
         ("too_long", mk(cert_id, NOW + 14 * DAY + 1, &[(t, now)])),
         ("not_later", mk(cert_id, NOW + 7 * DAY, &[(t, now)])),
         ("lifetime", mk(cert_id, NOW + 200 * DAY, &[(t, now)])),
@@ -704,10 +735,32 @@ fn cert_renew_views_refusals_and_signed_ops_are_the_pages() {
     for (i, (name, r)) in cases.iter().enumerate() {
         check(&st, name, r, &want[i]);
     }
-    cert::build_cert_renew(&mut st, &phone, &mk(cert_id, NOW + 14 * DAY, &[(t, now)]), now).unwrap();
-    cert::build_cert_renew(&mut st, &phone, &mk(cert_id, NOW + 21 * DAY, &[(t, now)]), now).unwrap();
-    check(&st, "after_two", &mk(cert_id, NOW + 28 * DAY, &[(t, now)]), &want[cases.len()]);
-    check(&st, "after_two_next_ok", &mk(cert_id, NOW + 22 * DAY, &[(t, now)]), &want[cases.len() + 1]);
+    cert::build_cert_renew(
+        &mut st,
+        &phone,
+        &mk(cert_id, NOW + 14 * DAY, &[(t, now)]),
+        now,
+    )
+    .unwrap();
+    cert::build_cert_renew(
+        &mut st,
+        &phone,
+        &mk(cert_id, NOW + 21 * DAY, &[(t, now)]),
+        now,
+    )
+    .unwrap();
+    check(
+        &st,
+        "after_two",
+        &mk(cert_id, NOW + 28 * DAY, &[(t, now)]),
+        &want[cases.len()],
+    );
+    check(
+        &st,
+        "after_two_next_ok",
+        &mk(cert_id, NOW + 22 * DAY, &[(t, now)]),
+        &want[cases.len() + 1],
+    );
     // the signed ops are byte for byte the page's
     let tail = chain::courier_ops(&st, 8);
     let want_ops = p["cert_renew_ops"].as_array().unwrap();

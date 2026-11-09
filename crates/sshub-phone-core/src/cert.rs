@@ -6,13 +6,14 @@
 use std::collections::BTreeMap;
 
 use sshub_sync_proto::limits::{
-    CERT_LIFETIME_MAX_SECS, CERT_MAX_RENEWALS, CERT_NEW_HOSTS_PER_DAY, CERT_RENEW_EVIDENCE_MAX_AGE_SECS,
-    CERT_TERM_MAX_SECS,
+    CERT_LIFETIME_MAX_SECS, CERT_MAX_RENEWALS, CERT_NEW_HOSTS_PER_DAY,
+    CERT_RENEW_EVIDENCE_MAX_AGE_SECS, CERT_TERM_MAX_SECS,
 };
 use sshub_sync_proto::oplog::{canonical::decode_op, CertScope, OpBody};
 use sshub_sync_proto::uid::uid_hex;
 use sshub_sync_proto::wire::{
-    CertExtendRequestWire, CertRenewRequestWire, CertRequestWire, PhoneOpsWire, MAX_CERT_REQUEST_HOSTS,
+    CertExtendRequestWire, CertRenewRequestWire, CertRequestWire, PhoneOpsWire,
+    MAX_CERT_REQUEST_HOSTS,
 };
 
 use crate::chain;
@@ -23,8 +24,8 @@ use crate::outgoing::ops_out;
 use crate::state::{PhoneState, COURIER_TAIL};
 use crate::text::{iso, safe_text};
 use crate::views::{
-    CertExtendView, CertExtensionView, CertRenewView, CertRequestView, CertStatus, IssuedCertView, Opened,
-    RefusalView, RenewView, Row,
+    CertExtendView, CertExtensionView, CertRenewView, CertRequestView, CertStatus, IssuedCertView,
+    Opened, RefusalView, RenewView, Row,
 };
 
 /// A terminal asks for the phone's current epoch plus this much slack (`src/app/sync_trust.rs` passes 1): a certificate
@@ -578,7 +579,10 @@ fn renew_problems(
         out.push("A renewal is at most as long as the first term.".to_string());
     }
     if req.expiry.saturating_sub(cert.issued_at) > CERT_LIFETIME_MAX_SECS {
-        out.push("A trust session never lives past 180 days from its start, renewals included.".to_string());
+        out.push(
+            "A trust session never lives past 180 days from its start, renewals included."
+                .to_string(),
+        );
     }
     if state.epoch > cert.epoch_hi {
         out.push(format!(
