@@ -748,10 +748,9 @@ fn sync_phone_ops_prints_the_second_kind_12_frame_once_the_handover_op_is_in() {
         0
     );
     let l = lines(&out);
-    let req = PhoneHandoverRequestWire::decode(
-        &B64.decode(value_of(&l, "handover_admission")).unwrap(),
-    )
-    .unwrap();
+    let req =
+        PhoneHandoverRequestWire::decode(&B64.decode(value_of(&l, "handover_admission")).unwrap())
+            .unwrap();
     assert_eq!(req.op, Some((op.hash(), op.lamport)), "{l:?}");
     assert_eq!(req.new_phone, new.public());
     assert_eq!(value_of(&l, "handover_words").split_whitespace().count(), 8);

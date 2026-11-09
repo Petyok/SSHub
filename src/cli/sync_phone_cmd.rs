@@ -916,39 +916,39 @@ fn phone_ops_cmd(
     json: bool,
     out: &mut impl Write,
 ) -> Result<i32> {
-        let (s, ceremony) = phone_ops(store, text)?;
-        let skipped = skipped_ops(store, &s)?;
+    let (s, ceremony) = phone_ops(store, text)?;
+    let skipped = skipped_ops(store, &s)?;
+    emit(
+        out,
+        json,
+        "ops",
+        format!(
+            "{} received, {} applied, {} waiting for approval",
+            s.received, s.applied, s.pending_arrived
+        ),
+        json!({"received": s.received, "applied": s.applied, "pending": s.pending_arrived, "skipped": skipped, "red": ceremony}),
+    );
+    if !json {
+        for k in &skipped {
+            emit(out, false, "skipped", skipped_line(k), json!({}));
+        }
+        for c in &ceremony {
+            emit(out, false, "red", c.clone(), json!({}));
+        }
+    }
+    // Contract 4l (b): the second kind 12 frame, for the NEW phone.
+    for (frame, words) in admission_lines(store, id) {
         emit(
             out,
             json,
-            "ops",
-            format!(
-                "{} received, {} applied, {} waiting for approval",
-                s.received, s.applied, s.pending_arrived
-            ),
-            json!({"received": s.received, "applied": s.applied, "pending": s.pending_arrived, "skipped": skipped, "red": ceremony}),
+            "handover_admission",
+            frame.clone(),
+            json!({"frame": frame, "words": words}),
         );
         if !json {
-            for k in &skipped {
-                emit(out, false, "skipped", skipped_line(k), json!({}));
-            }
-            for c in &ceremony {
-                emit(out, false, "red", c.clone(), json!({}));
-            }
+            emit(out, false, "handover_words", words, json!({}));
         }
-        // Contract 4l (b): the second kind 12 frame, for the NEW phone.
-        for (frame, words) in admission_lines(store, id) {
-            emit(
-                out,
-                json,
-                "handover_admission",
-                frame.clone(),
-                json!({"frame": frame, "words": words}),
-            );
-            if !json {
-                emit(out, false, "handover_words", words, json!({}));
-            }
-        }
+    }
     Ok(0)
 }
 
