@@ -302,7 +302,9 @@ mod tests {
             "a=b@h",
             "a/b@h",
             "ops.dev+x%y@h-1.example:22",
-            "Администратор@10.0.0.245:22",
+            // No non-ASCII login here: the macOS CI runner's ssh refuses
+            // `Администратор@h` in -J, Linux ssh takes it. Which one ssh takes is
+            // the platform's call, not ours.
             "u@é",
         ] {
             let ours = token_issue(token).is_none();
