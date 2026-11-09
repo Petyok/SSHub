@@ -128,11 +128,11 @@ pub fn plain_op(op: &Op, aliases: &BTreeMap<String, String>) -> String {
             if *extra_hosts == 1 { "" } else { "s" }
         )),
         OpBody::CertRenew { expiry, .. } => asked(format!(
-            "Renew a trust session: it will run until {}.",
+            "Keep a trust session going until {}: the same computer keeps opening the same hosts under the same limits.",
             day(*expiry)
         )),
         OpBody::PhoneHandover { name, .. } => asked(format!(
-            "Hand this phone's place over to {}: this phone stops being a device of yours.",
+            "Hand your ring over to a new phone called {}: after the other approvals this phone stops being a device of yours and the new one takes its place.",
             safe_text(name)
         )),
         OpBody::CertHostOpened { .. } => "A trust session opened a host.".to_string(),
@@ -198,6 +198,17 @@ pub fn plain_cert_request(req: &CertRequestWire, aliases: &BTreeMap<String, Stri
 }
 
 /// The sentence for a budget extension (kind 10), with the holder's name when this phone issued the session.
+pub fn plain_cert_renew(v: &crate::views::RenewView) -> String {
+    let left = v.renewals_left.saturating_sub(1);
+    format!(
+        "Keep the trust session of {} going until {}: it opens {} under the same limits, {left} more renewal{} left after this one.",
+        v.delegate,
+        crate::text::iso(v.new_end).chars().take(10).collect::<String>(),
+        v.scope,
+        if left == 1 { "" } else { "s" }
+    )
+}
+
 pub fn plain_cert_extend(
     req: &CertExtendRequestWire,
     holder: Option<&str>,

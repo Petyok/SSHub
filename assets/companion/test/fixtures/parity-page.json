@@ -4692,6 +4692,251 @@
    "delegate_known": false
   }
  ],
+ "cert_renews": [
+  {
+   "name": "ok",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662000,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": 3600,
+    "refusal": null
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "stale",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662000,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": 21601,
+    "refusal": "No other terminal has news fresher than 6 h (the newest is 6 h old): its list of opened hosts may be out of date. Sync the terminals and ask again."
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "six_hours",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662000,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": 21600,
+    "refusal": null
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "no_evidence",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662000,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": null,
+    "refusal": "The list of opened hosts came only through the trusted device itself: no other terminal vouches for it. Ask a terminal that is not that device."
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "only_delegate",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662000,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": null,
+    "refusal": "The list of opened hosts came only through the trusted device itself: no other terminal vouches for it. Ask a terminal that is not that device."
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "freshest_counts",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662000,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": 60,
+    "refusal": null
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "too_long",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604801,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662001,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": 0,
+    "refusal": "A renewal is at most as long as the first term."
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "not_later",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 0,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894057200,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": 0,
+    "refusal": "The new end date is not later than the current one."
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "lifetime",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 16675200,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1910732400,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": 0,
+    "refusal": "A renewal is at most as long as the first term. A trust session never lives past 180 days from its start, renewals included."
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "unknown",
+   "view": {
+    "delegate": "",
+    "scope": "",
+    "term_secs": 0,
+    "budget": 0,
+    "renewals_left": 0,
+    "new_end": 1894662000,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": null,
+    "refusal": "This phone did not issue that certificate (or an earlier phone did). Only the issuing phone renews it."
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "opened_list",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662000,
+    "opened": [
+     "web1",
+     "db1"
+    ],
+    "opened_total": 5,
+    "evidence_age_secs": 0,
+    "refusal": null
+   },
+   "opened_text": "web1, db1 and 3 more (5 in all)"
+  },
+  {
+   "name": "opened_all",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 2,
+    "new_end": 1894662000,
+    "opened": [
+     "web1"
+    ],
+    "opened_total": 1,
+    "evidence_age_secs": 0,
+    "refusal": null
+   },
+   "opened_text": "web1"
+  },
+  {
+   "name": "after_two",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 604800,
+    "budget": 2,
+    "renewals_left": 0,
+    "new_end": 1895871600,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": 0,
+    "refusal": "This trust session was renewed 2 times already: a new one needs the full approval."
+   },
+   "opened_text": "no list sent"
+  },
+  {
+   "name": "after_two_next_ok",
+   "view": {
+    "delegate": "(no name known) [cccccccccccccccc]",
+    "scope": "1 listed host",
+    "term_secs": 86400,
+    "budget": 2,
+    "renewals_left": 0,
+    "new_end": 1895353200,
+    "opened": [],
+    "opened_total": 0,
+    "evidence_age_secs": 0,
+    "refusal": "This trust session was renewed 2 times already: a new one needs the full approval."
+   },
+   "opened_text": "no list sent"
+  }
+ ],
+ "cert_renew_ops": [
+  {
+   "canonical": "7b226465766963655f6964223a2265653861316435636639373031366137222c22736571223a312c226c616d706f7274223a312c22707265765f68617368223a2230303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030303030222c2274696d657374616d70223a313839333435323430302c2265706f6368223a302c22616c67223a5b312c315d2c22626f6479223a7b22436572744973737565223a7b226465766963655f6964223a2263636363636363636363636363636363222c2273636f7065223a7b22486f737473223a5b223061306130613061306130613061306130613061306130613061306130613061225d7d2c22657870697279223a313839343035373230302c226d61785f6e65775f686f7374735f7065725f646179223a322c2265706f63685f6c6f223a302c2265706f63685f6869223a317d7d7d",
+   "signature": "d75a1c5628fe67f1ba22f6bb0b2e250d928c26e6a278e2453a5224151309f610d6da0265ecb97147413d7ff93d0bfd497aba3bd97627760c3c6bc97708744f0d"
+  },
+  {
+   "canonical": "7b226465766963655f6964223a2265653861316435636639373031366137222c22736571223a322c226c616d706f7274223a322c22707265765f68617368223a2235636263393533313864616365613038646638366238636636663435363263633335316465633364613035626462623336346364663762306630383163393735222c2274696d657374616d70223a313839333533383830302c2265706f6368223a302c22616c67223a5b312c315d2c22626f6479223a7b224365727452656e6577223a7b22636572745f6964223a2235636263393533313864616365613038646638366238636636663435363263633335316465633364613035626462623336346364663762306630383163393735222c22657870697279223a313839343636323030307d7d7d",
+   "signature": "5cfe848c1656120e48c0cc028f7aa0398a9357e14581c667a400c2a5f20e385a97b7438763a0e69e09f8e3b07ec6f42cc7f7afed9bdfbe19ba4431c19576be0a"
+  },
+  {
+   "canonical": "7b226465766963655f6964223a2265653861316435636639373031366137222c22736571223a332c226c616d706f7274223a332c22707265765f68617368223a2264623532666665333538326330326366663264663061653038316438326537313235353663313066363561353136626262353064333535636161323038363661222c2274696d657374616d70223a313839333533383830302c2265706f6368223a302c22616c67223a5b312c315d2c22626f6479223a7b224365727452656e6577223a7b22636572745f6964223a2235636263393533313864616365613038646638366238636636663435363263633335316465633364613035626462623336346364663762306630383163393735222c22657870697279223a313839353236363830307d7d7d",
+   "signature": "acb5851c28c008d394d1ed0b74cbf03a0c5058e2adf76deef53195c9fc5cb9e90c969c3d2a2963eda9f811d52ac3fa195a01730840bfc79875f585e996eb5c00"
+  }
+ ],
  "reshare": {
   "ok": true,
   "holders": [

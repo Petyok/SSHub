@@ -22,7 +22,9 @@ use sshub_sync_proto::fountain::fountain_encode;
 use sshub_sync_proto::oplog::{CertScope, ConfirmItem, Op};
 use sshub_sync_proto::share_release::open_envelope_share;
 use sshub_sync_proto::uid::uid_from_hex;
-use sshub_sync_proto::wire::{CertRequestWire, EnrollFrame, SignedOpBytes};
+use sshub_sync_proto::wire::{
+    CertRenewRequestWire, CertRequestWire, EnrollFrame, HeadEvidence, SignedOpBytes,
+};
 
 const FIX: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -635,6 +637,168 @@ fn trust_session_requests_same_problems_and_rows() {
             }
             other => panic!("{name}: not a certificate view: {other:?}"),
         }
+    }
+}
+
+#[test]
+fn cert_renew_views_refusals_and_signed_ops_are_the_pages() {
+    let p = page();
+    const NOW: i64 = 1_893_452_400;
+    const DAY: i64 = 86_400;
+    let phone = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
+    let mut st = PhoneState::default();
+    let cert_id = chain::cert_issue(
+        &mut st,
+        &phone,
+        "cccccccccccccccc".into(),
+        CertScope::Hosts(vec![uid_hex(&"0a".repeat(16))]),
+        NOW + 7 * DAY,
+        2,
+        0,
+        1,
+        NOW,
+        None,
+    )
+    .unwrap()
+    .hash;
+    let now = NOW + DAY;
+    let t = [0x33u8; 8];
+    let mk = |id: [u8; 32], expiry: i64, ev: &[([u8; 8], i64)]| CertRenewRequestWire {
+        opened: Vec::new(),
+        opened_total: 0,
+        cert_id: id,
+        expiry,
+        evidence: ev
+            .iter()
+            .map(|(terminal, ts)| HeadEvidence {
+                terminal: *terminal,
+                head_seq: 5,
+                head_ts: *ts,
+            })
+            .collect(),
+    };
+    let del = [0xccu8; 8];
+    let check = |st: &PhoneState, name: &str, r: &CertRenewRequestWire, w: &Value| {
+        let v = cert::describe_cert_renew(st, r, now).unwrap();
+        assert_eq!(s(&w["name"]), name);
+        let want_text = s(&w["opened_text"]).to_string();
+        let w = &w["view"];
+        assert_eq!(v.delegate, s(&w["delegate"]), "{name} delegate");
+        assert_eq!(v.scope, s(&w["scope"]), "{name} scope");
+        assert_eq!(v.term_secs, w["term_secs"].as_i64().unwrap(), "{name} term");
+        assert_eq!(
+            i64::from(v.budget),
+            w["budget"].as_i64().unwrap(),
+            "{name} budget"
+        );
+        assert_eq!(
+            i64::from(v.renewals_left),
+            w["renewals_left"].as_i64().unwrap(),
+            "{name} left"
+        );
+        assert_eq!(v.new_end, w["new_end"].as_i64().unwrap(), "{name} new_end");
+        let want_opened: Vec<String> = w["opened"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| s(x).to_string())
+            .collect();
+        assert_eq!(v.opened, want_opened, "{name} opened");
+        assert_eq!(
+            i64::from(v.opened_total),
+            w["opened_total"].as_i64().unwrap(),
+            "{name} opened_total"
+        );
+        assert_eq!(cert::opened_text(&v), want_text, "{name} opened text");
+        assert_eq!(
+            v.evidence_age_secs,
+            w["evidence_age_secs"].as_i64(),
+            "{name} age"
+        );
+        assert_eq!(
+            v.refusal.as_deref(),
+            w["refusal"].as_str(),
+            "{name} refusal"
+        );
+    };
+    let cases: Vec<(&str, CertRenewRequestWire)> = vec![
+        ("ok", mk(cert_id, NOW + 14 * DAY, &[(t, now - 3600)])),
+        (
+            "stale",
+            mk(cert_id, NOW + 14 * DAY, &[(t, now - 6 * 3600 - 1)]),
+        ),
+        (
+            "six_hours",
+            mk(cert_id, NOW + 14 * DAY, &[(t, now - 6 * 3600)]),
+        ),
+        ("no_evidence", mk(cert_id, NOW + 14 * DAY, &[])),
+        ("only_delegate", mk(cert_id, NOW + 14 * DAY, &[(del, now)])),
+        (
+            "freshest_counts",
+            mk(
+                cert_id,
+                NOW + 14 * DAY,
+                &[(t, now - 30 * DAY), ([0x34; 8], now - 60)],
+            ),
+        ),
+        ("too_long", mk(cert_id, NOW + 14 * DAY + 1, &[(t, now)])),
+        ("not_later", mk(cert_id, NOW + 7 * DAY, &[(t, now)])),
+        ("lifetime", mk(cert_id, NOW + 200 * DAY, &[(t, now)])),
+        ("unknown", mk([9; 32], NOW + 14 * DAY, &[(t, now)])),
+        (
+            "opened_list",
+            CertRenewRequestWire {
+                opened: vec!["web1".into(), "db1".into()],
+                opened_total: 5,
+                ..mk(cert_id, NOW + 14 * DAY, &[(t, now)])
+            },
+        ),
+        (
+            "opened_all",
+            CertRenewRequestWire {
+                opened: vec!["web1".into()],
+                opened_total: 1,
+                ..mk(cert_id, NOW + 14 * DAY, &[(t, now)])
+            },
+        ),
+    ];
+    let want = p["cert_renews"].as_array().unwrap();
+    for (i, (name, r)) in cases.iter().enumerate() {
+        check(&st, name, r, &want[i]);
+    }
+    cert::build_cert_renew(
+        &mut st,
+        &phone,
+        &mk(cert_id, NOW + 14 * DAY, &[(t, now)]),
+        now,
+    )
+    .unwrap();
+    cert::build_cert_renew(
+        &mut st,
+        &phone,
+        &mk(cert_id, NOW + 21 * DAY, &[(t, now)]),
+        now,
+    )
+    .unwrap();
+    check(
+        &st,
+        "after_two",
+        &mk(cert_id, NOW + 28 * DAY, &[(t, now)]),
+        &want[cases.len()],
+    );
+    check(
+        &st,
+        "after_two_next_ok",
+        &mk(cert_id, NOW + 22 * DAY, &[(t, now)]),
+        &want[cases.len() + 1],
+    );
+    // the signed ops are byte for byte the page's
+    let tail = chain::courier_ops(&st, 8);
+    let want_ops = p["cert_renew_ops"].as_array().unwrap();
+    assert_eq!(tail.len(), want_ops.len());
+    for ((c, sig), w) in tail.iter().zip(want_ops) {
+        assert_eq!(hex::encode(c), s(&w["canonical"]));
+        assert_eq!(hex::encode(sig), s(&w["signature"]));
     }
 }
 

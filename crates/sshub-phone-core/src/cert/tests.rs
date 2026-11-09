@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 use rand_chacha::{rand_core::SeedableRng, ChaCha8Rng};
 use sshub_sync_proto::crypto::chain_hash;
 use sshub_sync_proto::oplog::{canonical::decode_op, CertScope, Op, OpBody};
-use sshub_sync_proto::wire::{CertExtendRequestWire, CertRequestWire, PhoneOpsWire};
+use sshub_sync_proto::wire::{
+    CertExtendRequestWire, CertRenewRequestWire, CertRequestWire, HeadEvidence, PhoneOpsWire,
+};
 
 use super::*;
 use crate::views::Outgoing;
@@ -619,4 +621,268 @@ fn the_issued_list_has_status_and_revoke_only_for_live_certificates() {
     assert_eq!(describe_term(2 * 3600 + 300), "2 h 5 min");
     assert_eq!(describe_term(420), "7 min");
     assert_eq!(describe_term(45), "45 s");
+}
+
+// ---------------------------------------------------------------- CertRenew (Phase B, contract 4j)
+
+fn renew_req(fx: &Fx, expiry: i64, evidence_ts: &[(u8, i64)]) -> CertRenewRequestWire {
+    CertRenewRequestWire {
+        cert_id: hex::decode(first_cert_id(fx)).unwrap().try_into().unwrap(),
+        expiry,
+        evidence: evidence_ts
+            .iter()
+            .map(|(t, ts)| HeadEvidence {
+                terminal: [*t; 8],
+                head_seq: 5,
+                head_ts: *ts,
+            })
+            .collect(),
+        opened: Vec::new(),
+        opened_total: 0,
+    }
+}
+
+fn issued(term_days: i64) -> Fx {
+    let mut fx = Fx::new();
+    let mut r = req();
+    r.expiry = NOW + term_days * DAY;
+    issue(&mut fx, &r, NOW);
+    fx
+}
+
+fn renew(fx: &mut Fx, r: &CertRenewRequestWire, now: i64) -> Result<Vec<u8>> {
+    build_cert_renew(&mut fx.state, &fx.id, r, now)
+}
+
+fn renew_with(fx: &mut Fx, expiry: i64, ev: &[(u8, i64)], now: i64) -> Result<Vec<u8>> {
+    let r = renew_req(fx, expiry, ev);
+    renew(fx, &r, now)
+}
+
+#[test]
+fn a_renewal_with_fresh_evidence_extends_the_end_that_counts() {
+    let mut fx = issued(7);
+    let now = NOW + 6 * DAY;
+    let r = renew_req(&fx, NOW + 14 * DAY, &[(0x33, now - 3_600)]);
+    let v = describe_cert_renew(&fx.state, &r, now).unwrap();
+    assert_eq!(v.refusal, None);
+    assert_eq!(
+        (v.term_secs, v.budget, v.renewals_left, v.new_end),
+        (7 * DAY, 2, 2, NOW + 14 * DAY)
+    );
+    assert_eq!(v.evidence_age_secs, Some(3_600));
+    assert!(v.delegate.contains(&delegate_hex()) && v.scope == "2 listed hosts");
+    let frame = renew(&mut fx, &r, now).unwrap();
+    let ops: Vec<Op> = PhoneOpsWire::decode(&frame)
+        .unwrap()
+        .ops
+        .iter()
+        .map(|o| decode_op(&o.0, o.1).unwrap())
+        .collect();
+    assert!(matches!(
+        ops.last().unwrap().body,
+        OpBody::CertRenew { expiry, .. } if expiry == NOW + 14 * DAY
+    ));
+    let c = &issued_cert_records(&fx.state)[0];
+    assert_eq!(
+        (c.effective_expiry(), c.renewals.len()),
+        (NOW + 14 * DAY, 1)
+    );
+    assert!(c.live(NOW + 10 * DAY), "alive after the first end date");
+    let again = describe_cert_renew(
+        &fx.state,
+        &renew_req(&fx, NOW + 21 * DAY, &[(0x33, now)]),
+        now,
+    )
+    .unwrap();
+    assert_eq!(again.renewals_left, 1);
+}
+
+#[test]
+fn a_renewal_is_refused_for_stale_evidence_or_a_list_that_came_only_through_the_delegate() {
+    let mut fx = issued(7);
+    let now = NOW + 6 * DAY;
+    let end = NOW + 14 * DAY;
+    let stale = renew_req(&fx, end, &[(0x33, now - 6 * 3_600 - 1)]);
+    let e = renew(&mut fx, &stale, now).unwrap_err();
+    assert!(e.reason().contains("fresher than 6 h"), "{}", e.reason());
+    assert!(describe_cert_renew(&fx.state, &stale, now)
+        .unwrap()
+        .refusal
+        .is_some());
+    // at exactly six hours it is still inside
+    assert!(renew_with(&mut fx, end, &[(0x33, now - 6 * 3_600)], now).is_ok());
+    let mut fx = issued(7);
+    let none = renew_req(&fx, end, &[]);
+    assert!(renew(&mut fx, &none, now)
+        .unwrap_err()
+        .reason()
+        .contains("only through the trusted device"));
+    // the delegate's own id is not another terminal, however fresh
+    let me = renew_req(&fx, end, &[(0x00, now)]);
+    let mut me = me;
+    me.evidence[0].terminal = delegate();
+    assert!(renew(&mut fx, &me, now)
+        .unwrap_err()
+        .reason()
+        .contains("only through the trusted device"));
+    // an old terminal next to a fresh one: the freshest counts
+    let mixed = renew_req(&fx, end, &[(0x33, now - 30 * DAY), (0x34, now - 60)]);
+    assert_eq!(
+        describe_cert_renew(&fx.state, &mixed, now)
+            .unwrap()
+            .evidence_age_secs,
+        Some(60)
+    );
+    assert!(fx.state.chain.len() == 1, "refusals sign nothing");
+}
+
+#[test]
+fn the_caps_hold_two_renewals_the_first_term_and_180_days() {
+    let mut fx = issued(7);
+    let now = NOW + DAY;
+    let ev = [(0x33, now)];
+    // longer than the first term, not later than now, in the past
+    for (end, why) in [
+        (NOW + 14 * DAY + 1, "at most as long as the first term"),
+        (NOW + 7 * DAY, "not later than the current one"),
+        (NOW + DAY, "not later than the current one"),
+    ] {
+        let e = renew_with(&mut fx, end, &ev, now).unwrap_err();
+        assert!(e.reason().contains(why), "{end}: {}", e.reason());
+    }
+    renew_with(&mut fx, NOW + 14 * DAY, &ev, now).unwrap();
+    renew_with(&mut fx, NOW + 21 * DAY, &ev, now).unwrap();
+    let e = renew_with(&mut fx, NOW + 28 * DAY, &ev, now).unwrap_err();
+    assert!(
+        e.reason().contains("renewed 2 times already"),
+        "{}",
+        e.reason()
+    );
+    assert_eq!(
+        describe_cert_renew(&fx.state, &renew_req(&fx, NOW + 28 * DAY, &ev), now)
+            .unwrap()
+            .renewals_left,
+        0
+    );
+    // 180 days from the start, renewals included
+    let mut fx = issued(90);
+    renew_with(&mut fx, NOW + 180 * DAY, &ev, now).unwrap();
+    let e = renew_with(&mut fx, NOW + 180 * DAY + 1, &ev, now).unwrap_err();
+    assert!(
+        e.reason().contains("180 days") || e.reason().contains("first term"),
+        "{}",
+        e.reason()
+    );
+}
+
+#[test]
+fn a_renewal_the_host_would_not_count_is_not_counted_by_the_phone_either() {
+    // the chain holds a renewal past the cap (written by a modified phone): it does not move the end date
+    let mut fx = issued(7);
+    let id = hex::decode(first_cert_id(&fx)).unwrap().try_into().unwrap();
+    chain::cert_renew(&mut fx.state, &fx.id, id, NOW + 30 * DAY, NOW, None).unwrap();
+    let c = &issued_cert_records(&fx.state)[0];
+    assert_eq!((c.effective_expiry(), c.renewals.len()), (NOW + 7 * DAY, 0));
+}
+
+#[test]
+fn a_renewal_is_refused_for_a_revoked_unknown_or_unusable_state() {
+    let ev = |now: i64| [(0x33u8, now)];
+    let now = NOW + DAY;
+    // revoked
+    let mut fx = issued(7);
+    let r = renew_req(&fx, NOW + 14 * DAY, &ev(now));
+    revoke_cert(&first_cert_id(&fx), &mut fx.ctx(now)).unwrap();
+    assert!(renew(&mut fx, &r, now)
+        .unwrap_err()
+        .reason()
+        .contains("revoked"));
+    // a certificate this phone did not issue
+    let mut fx = issued(7);
+    let mut r = renew_req(&fx, NOW + 14 * DAY, &ev(now));
+    r.cert_id = [9; 32];
+    let v = describe_cert_renew(&fx.state, &r, now).unwrap();
+    assert!(v.refusal.unwrap().contains("did not issue"));
+    assert!(renew(&mut fx, &r, now).is_err());
+    // a restored phone without its chain head cannot sign
+    let mut fx = issued(7);
+    let r = renew_req(&fx, NOW + 14 * DAY, &ev(now));
+    fx.state.head_pending = true;
+    assert!(renew(&mut fx, &r, now)
+        .unwrap_err()
+        .reason()
+        .contains("chain"));
+    // a certificate whose epochs ended before this phone's epoch: shown refused at use (design L5)
+    let mut fx = issued(7);
+    fx.state.epoch = 5;
+    let r = renew_req(&fx, NOW + 14 * DAY, &ev(now));
+    let v = describe_cert_renew(&fx.state, &r, now).unwrap();
+    assert!(v.refusal.unwrap().contains("refused at use"));
+}
+
+#[test]
+fn a_kind_11_frame_opens_a_card_and_approval_signs_it() {
+    let mut fx = issued(7);
+    let now = NOW + DAY;
+    let r = renew_req(&fx, NOW + 14 * DAY, &[(0x33, now - 600)]);
+    let (o, p) = open_cert_renew(&r.encode(), &fx.ctx(now), 4);
+    let Opened::CertRenew { view } = o else {
+        panic!()
+    };
+    assert_eq!(view.token, 4);
+    assert!(view.renew.refusal.is_none() && !view.note.is_empty());
+    assert!(
+        view.plain.starts_with("Keep the trust session of "),
+        "{}",
+        view.plain
+    );
+    assert!(view
+        .rows
+        .iter()
+        .any(|r| r.label == "Freshest news from another terminal" && r.value == "10 min old"));
+    let out = approve_cert(p.unwrap(), None, &mut fx.ctx(now)).unwrap();
+    assert!(matches!(
+        ops_of(&out).last().unwrap().body,
+        OpBody::CertRenew { .. }
+    ));
+    // a stale card has no pending request: nothing can be approved
+    let stale = renew_req(&fx, NOW + 21 * DAY, &[(0x33, now - 7 * 3_600)]);
+    let (o, p) = open_cert_renew(&stale.encode(), &fx.ctx(now), 5);
+    assert!(p.is_none());
+    let Opened::CertRenew { view } = o else {
+        panic!()
+    };
+    assert!(view.renew.refusal.is_some() && view.note.is_empty());
+    assert!(refusal(open_cert_renew(&[1, 2, 3], &fx.ctx(now), 6).0)
+        .starts_with("Not a renewal request"));
+}
+
+#[test]
+fn the_renewal_card_shows_the_opened_hosts_and_says_so_when_no_list_was_sent() {
+    let fx = issued(7);
+    let now = NOW + DAY;
+    let mut r = renew_req(&fx, NOW + 14 * DAY, &[(0x33, now)]);
+    let none = describe_cert_renew(&fx.state, &r, now).unwrap();
+    assert_eq!((none.opened.len(), none.opened_total), (0, 0));
+    assert_eq!(opened_text(&none), "no list sent");
+    r.opened = vec!["web1".into(), "db\u{1b}[31m1".into()];
+    r.opened_total = 2;
+    let all = describe_cert_renew(&fx.state, &r, now).unwrap();
+    assert_eq!(all.opened_total, 2);
+    assert!(!all.opened[1].contains('\u{1b}'), "{:?}", all.opened);
+    assert!(opened_text(&all).starts_with("web1, db") && !opened_text(&all).contains("more"));
+    r.opened_total = 40;
+    assert!(
+        opened_text(&describe_cert_renew(&fx.state, &r, now).unwrap())
+            .ends_with("and 38 more (40 in all)")
+    );
+    // an unknown certificate carries no opened list at all
+    r.cert_id = [9; 32];
+    assert_eq!(
+        describe_cert_renew(&fx.state, &r, now)
+            .unwrap()
+            .opened_total,
+        0
+    );
 }

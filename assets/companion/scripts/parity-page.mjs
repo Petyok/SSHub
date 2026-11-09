@@ -18,7 +18,7 @@ import {
   appendWrapKeyRotate, courierOps, emptyState,
 } from '../src/state.mjs';
 import { approveRelease, evaluateChallenge } from '../src/release.mjs';
-import { certRequestProblems, describeCertRequest, describeTerm, issuedCerts } from '../src/cert.mjs';
+import { buildCertRenew, certRequestProblems, describeCertRenew, describeCertRequest, openedText, describeTerm, issuedCerts } from '../src/cert.mjs';
 import { envelopeAad, ownStorageKey, planReshare, publishReshare } from '../src/reshare.mjs';
 import { commitOf, confirmMessage, encodeEnrollCommit, encodeEnrollConfirm, encodeEnrollReveal, transcriptHash } from '../src/frames.mjs';
 import { fountainEncode } from '../src/quorum.mjs';
@@ -150,6 +150,39 @@ out.identity = ['42', '0b'].map((s) => Array.from({ length: 3 }, (_, g) => {
     const d = describeCertRequest(req, NOW, { cccccccccccccccc: 'build box' });
     return { name, problems: certRequestProblems(req, NOW, phoneId, '3'), headline: d.headline, rows: rows(d), delegate_known: d.delegateKnown };
   });
+}
+
+// ---------------------------------------------------------------- CertRenew: the view of a kind 11 request, refusals and the cap after two renewals
+{
+  const NOW = 1_893_452_400;
+  const DAY = 86400;
+  const phone = identityOfSecret(h(SECRET));
+  const state = emptyState();
+  appendCertIssue(state, phone, { device_id: 'cccccccccccccccc', scope: { hosts: ['0a'.repeat(16)] }, expiry: BigInt(NOW + 7 * DAY), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 1n }, NOW, null);
+  const certId = issuedCerts(state)[0].id;
+  const now = NOW + DAY;
+  const t = '33'.repeat(8);
+  const mk = (cert_id, expiry, ev) => ({ cert_id, expiry: BigInt(expiry), evidence: ev.map(([terminal, ts]) => ({ terminal, head_seq: 5n, head_ts: BigInt(ts) })) });
+  const cases = [
+    ['ok', mk(certId, NOW + 14 * DAY, [[t, now - 3600]])],
+    ['stale', mk(certId, NOW + 14 * DAY, [[t, now - 6 * 3600 - 1]])],
+    ['six_hours', mk(certId, NOW + 14 * DAY, [[t, now - 6 * 3600]])],
+    ['no_evidence', mk(certId, NOW + 14 * DAY, [])],
+    ['only_delegate', mk(certId, NOW + 14 * DAY, [['cccccccccccccccc', now]])],
+    ['freshest_counts', mk(certId, NOW + 14 * DAY, [[t, now - 30 * DAY], ['34'.repeat(8), now - 60]])],
+    ['too_long', mk(certId, NOW + 14 * DAY + 1, [[t, now]])],
+    ['not_later', mk(certId, NOW + 7 * DAY, [[t, now]])],
+    ['lifetime', mk(certId, NOW + 200 * DAY, [[t, now]])],
+    ['unknown', mk('09'.repeat(32), NOW + 14 * DAY, [[t, now]])],
+    ['opened_list', { ...mk(certId, NOW + 14 * DAY, [[t, now]]), opened: ['web1', 'db1'], opened_total: 5 }],
+    ['opened_all', { ...mk(certId, NOW + 14 * DAY, [[t, now]]), opened: ['web1'], opened_total: 1 }],
+  ];
+  out.cert_renews = cases.map(([name, r]) => { const view = describeCertRenew(state, r, now); return { name, view, opened_text: openedText(view) }; });
+  buildCertRenew(state, phone, mk(certId, NOW + 14 * DAY, [[t, now]]), now);
+  buildCertRenew(state, phone, mk(certId, NOW + 21 * DAY, [[t, now]]), now);
+  out.cert_renews.push({ name: 'after_two', view: describeCertRenew(state, mk(certId, NOW + 28 * DAY, [[t, now]]), now), opened_text: 'no list sent' });
+  out.cert_renews.push({ name: 'after_two_next_ok', view: describeCertRenew(state, mk(certId, NOW + 22 * DAY, [[t, now]]), now), opened_text: 'no list sent' });
+  out.cert_renew_ops = ops(courierOps(state, 8));
 }
 
 // ---------------------------------------------------------------- reshare: the Rust-made fixture adopted by the page

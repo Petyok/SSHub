@@ -215,6 +215,9 @@ export const encodeCertRevoke = (h, certIdHex) => utf8(`${header(h)}{"CertRevoke
 // OpBody::CertExtend { cert_id, extra_hosts }
 export const encodeCertExtend = (h, certIdHex, extraHosts) => utf8(`${header(h)}{"CertExtend":{"cert_id":${str(certIdHex)},"extra_hosts":${asBig(extraHosts)}}}}`);
 
+// OpBody::CertRenew { cert_id, expiry }
+export const encodeCertRenew = (h, certIdHex, expiry) => utf8(`${header(h)}{"CertRenew":{"cert_id":${str(certIdHex)},"expiry":${asBig(expiry)}}}}`);
+
 // Red operations (design "The Red ceremony"): a Red op needs the phone's proof. A mirror
 // DeviceAdd and a DeviceRevoke of a mirror are Yellow in the ring; the phone cannot tell a
 // holder from a mirror in a revoke, so it signs any DeviceRevoke the user approves (the proof is inert).

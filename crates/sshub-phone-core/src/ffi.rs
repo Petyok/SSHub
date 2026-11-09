@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use rand_core::{OsRng, RngCore};
 use sshub_sync_proto::wire::{
-    PhoneOpsWire, SignedOpBytes, TerminalsBlock, KIND_CERT_EXTEND_REQUEST, KIND_CERT_REQUEST,
-    KIND_CHALLENGE, KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL, KIND_PHONE_OPS,
-    KIND_RECOVERY_NOTICE, WIRE_MAGIC,
+    PhoneOpsWire, SignedOpBytes, TerminalsBlock, KIND_CERT_EXTEND_REQUEST, KIND_CERT_RENEW_REQUEST,
+    KIND_CERT_REQUEST, KIND_CHALLENGE, KIND_ENROLL_COMMIT, KIND_ENROLL_CONFIRM, KIND_ENROLL_REVEAL,
+    KIND_PHONE_OPS, KIND_RECOVERY_NOTICE, WIRE_MAGIC,
 };
 use zeroize::Zeroizing;
 
@@ -92,9 +92,9 @@ pub fn is_word(word: String) -> bool {
     sshub_sync_proto::crypto::is_bip39_word(&word)
 }
 
-/// An SSHub frame: the `SWR1` magic and a kind from 1 to 10 (what `PhoneCore::open_frame` can look at).
+/// An SSHub frame: the `SWR1` magic and a kind from 1 to 12 (what `PhoneCore::open_frame` can look at).
 fn is_sshub_frame(b: &[u8]) -> bool {
-    kind_of(b).is_some_and(|k| (1..=10).contains(&k))
+    kind_of(b).is_some_and(|k| (1..=12).contains(&k))
 }
 fn kind_of(frame: &[u8]) -> Option<u8> {
     (frame.len() >= 7 && frame[..4] == WIRE_MAGIC).then(|| frame[6])
@@ -284,10 +284,12 @@ impl Inner {
                 }
                 Ok(o)
             }
-            KIND_CERT_REQUEST | KIND_CERT_EXTEND_REQUEST => {
+            KIND_CERT_REQUEST | KIND_CERT_EXTEND_REQUEST | KIND_CERT_RENEW_REQUEST => {
                 let ctx = self.ctx(now)?;
                 let (o, p) = if kind == KIND_CERT_REQUEST {
                     cert::open_cert_request(frame, &ctx, t)
+                } else if kind == KIND_CERT_RENEW_REQUEST {
+                    cert::open_cert_renew(frame, &ctx, t)
                 } else {
                     cert::open_cert_extend(frame, &ctx, t)
                 };
@@ -1391,8 +1393,13 @@ mod tests {
         );
         assert!(is_sshub_frame(&real) && !is_sshub_frame(&alien));
         let mut bad_kind = real.clone();
-        bad_kind[6] = 11;
+        bad_kind[6] = 13;
         assert!(!is_sshub_frame(&bad_kind));
+        bad_kind[6] = 11;
+        assert!(
+            is_sshub_frame(&bad_kind),
+            "kind 11 and 12 are frames since Phase B"
+        );
     }
 
     #[test]
@@ -1481,6 +1488,71 @@ mod tests {
             "Newest op in this list: seq 3, signed 2029-12-31T23:00Z (3 op(s) read)."
         );
         assert_eq!(agreed.note, "This phone will continue after seq 3. If any terminal holds a higher seq of this phone, do not adopt this: signing on top of an old head forks the chain. Take a newer list instead.");
+    }
+
+    #[test]
+    fn a_renewal_request_opens_and_is_signed_through_open_frame_and_decide() {
+        use sshub_sync_proto::oplog::CertScope;
+        use sshub_sync_proto::wire::{CertRenewRequestWire, HeadEvidence};
+        let c = core();
+        c.unlock(vec![0x42; 32]).unwrap();
+        let t0 = 1_893_452_400;
+        let cert_id = {
+            let mut g = c.lock_inner();
+            let u = g.unlocked.as_mut().unwrap();
+            u.state = PhoneState::default();
+            chain::cert_issue(
+                &mut u.state,
+                &u.id,
+                "0102030405060708".into(),
+                CertScope::Hosts(vec![[1; 16]]),
+                t0 + 86_400,
+                2,
+                0,
+                1,
+                t0,
+                None,
+            )
+            .unwrap()
+            .hash
+        };
+        let now = t0 + 3_600;
+        let req = CertRenewRequestWire {
+            cert_id,
+            expiry: t0 + 2 * 86_400,
+            evidence: vec![HeadEvidence {
+                terminal: [9; 8],
+                head_seq: 3,
+                head_ts: now - 60,
+            }],
+            opened: vec!["web1".into(), "db1".into()],
+            opened_total: 5,
+        };
+        let Opened::CertRenew { view } = c.open_frame(req.encode(), now).unwrap() else {
+            panic!("not a renewal card")
+        };
+        assert_eq!(view.renew.refusal, None);
+        assert_eq!(view.renew.evidence_age_secs, Some(60));
+        assert_eq!(
+            (view.renew.opened.clone(), view.renew.opened_total),
+            (vec!["web1".to_string(), "db1".to_string()], 5)
+        );
+        assert!(view
+            .rows
+            .iter()
+            .any(|r| r.label == "Hosts it opened" && r.value == "web1, db1 and 3 more (5 in all)"));
+        let out = c
+            .decide(view.token, Decision::Approve { typed_id: None }, now)
+            .unwrap();
+        let ops = PhoneOpsWire::decode(&out.frame).unwrap().ops;
+        let last = sshub_sync_proto::oplog::canonical::decode_op(
+            &ops.last().unwrap().0,
+            ops.last().unwrap().1,
+        )
+        .unwrap();
+        assert!(
+            matches!(last.body, sshub_sync_proto::oplog::OpBody::CertRenew { expiry, .. } if expiry == t0 + 2 * 86_400)
+        );
     }
 
     #[test]
