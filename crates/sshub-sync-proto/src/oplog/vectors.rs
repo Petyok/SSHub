@@ -774,6 +774,32 @@ fn cases() -> Vec<(&'static str, Op)> {
             ),
         ),
         (
+            "cert-renew",
+            mk(
+                51,
+                51,
+                1,
+                2,
+                OpBody::CertRenew {
+                    cert_id: [0x66; 32],
+                    expiry: 1_800_000_000,
+                },
+            ),
+        ),
+        (
+            "phone-handover",
+            mk(
+                52,
+                52,
+                1,
+                2,
+                OpBody::PhoneHandover {
+                    new_phone: peer(0x23),
+                    name: "new phone \u{1F4F1}".into(),
+                },
+            ),
+        ),
+        (
             "bulk-export",
             mk(
                 47,
@@ -981,5 +1007,5 @@ fn every_body_variant_has_a_vector() {
         .iter()
         .map(|(_, op)| super::canonical::body_name(&op.body))
         .collect();
-    assert_eq!(names.len(), 35, "{names:?}");
+    assert_eq!(names.len(), 37, "{names:?}");
 }

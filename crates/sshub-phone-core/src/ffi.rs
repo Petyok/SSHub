@@ -581,6 +581,7 @@ impl PhoneCore {
         Ok(to_base64(
             &PhoneOpsWire {
                 sender: None,
+                terminals: None,
                 ops: chain::courier_ops(&u.state, COURIER_TAIL),
             }
             .encode(),
@@ -820,6 +821,7 @@ mod tests {
         let list = |sender: u8| {
             PhoneOpsWire {
                 sender: Some([sender; 8]),
+                terminals: None,
                 ops: chain::courier_ops(&live, 8),
             }
             .encode()
@@ -1430,6 +1432,7 @@ mod tests {
         let wire = |n: usize, sender: Option<u8>| {
             PhoneOpsWire {
                 sender: sender.map(|s| [s; 8]),
+                terminals: None,
                 ops: chain::courier_ops(&live, 8).into_iter().take(n).collect(),
             }
             .encode()

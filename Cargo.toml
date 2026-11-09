@@ -89,6 +89,9 @@ bluetooth = [
     "dep:objc2", "dep:objc2-foundation", "dep:objc2-core-bluetooth", "dep:dispatch2",
 ]
 
+# Test hooks read by the e2e image only (solo recovery lock shortening); never in a release build.
+e2e-hooks = []
+
 [dependencies]
 anyhow = "1"
 # The pure protocol core (crypto, op types, wire frames, decoders); published before `sshub`.

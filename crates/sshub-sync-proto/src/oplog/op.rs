@@ -318,6 +318,17 @@ pub enum OpBody {
         cert_id: [u8; 32],
         extra_hosts: u32,
     },
+    /// Pushes a certificate's end date out (inert; the holders replay it in `(lamport, device, seq)` order).
+    /// The author is the certificate's issuer or its successor phone.
+    CertRenew {
+        cert_id: [u8; 32],
+        expiry: i64,
+    },
+    /// The ring's live phone hands its place to a new phone (Red; design 5).
+    PhoneHandover {
+        new_phone: DevicePublic,
+        name: String,
+    },
     /// Authorises a bulk credential export for `window_secs` (at most 3600).
     BulkExport {
         requester: DeviceId,

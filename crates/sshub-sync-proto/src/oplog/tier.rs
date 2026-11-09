@@ -157,6 +157,7 @@ pub fn body_tier(body: &OpBody) -> OpTier {
         },
         OpBody::DeviceRevoke { .. }
         | OpBody::CertIssue { .. }
+        | OpBody::PhoneHandover { .. }
         | OpBody::PhoneReenroll { .. }
         | OpBody::RecoveryApprove { .. }
         | OpBody::FactorRegister { .. }
@@ -171,6 +172,7 @@ pub fn body_tier(body: &OpBody) -> OpTier {
         | OpBody::HeadAttest { .. }
         | OpBody::ShareGrant { .. }
         | OpBody::CertExtend { .. }
+        | OpBody::CertRenew { .. }
         | OpBody::RedApprove { .. }
         | OpBody::RedPhoneSign { .. }
         | OpBody::RedFactor { .. }
