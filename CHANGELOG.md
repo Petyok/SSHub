@@ -34,6 +34,44 @@ All notable changes to SSHub are documented in this file.
   is not independently audited; a phone page cannot prove it is the page you meant (compare its fingerprint with the
   terminal's); the camera, sound, Bluetooth and phone-loss flows were verified with simulated devices only and not yet
   on a physical phone or on iOS.
+- **Paper phrase first (host sync)** - the paper wizard now asks you to type back three random words of the 24 (no tick
+  box), and a switch to Quorum or a third full device needs a registered paper phrase: the Sync tab starts the wizard
+  instead of the change, `sync-mode quorum` and `sync-role ... holder` refuse until it is registered, and a ring without
+  a paper phrase shows a standing line with one key, `K`, to open the wizard.
+- **Approve back a device that was away (host sync)** - in the review, `A` approves, on this device only, every change
+  of the same device that waits only because it was away and touches no address, jump host, remote command, user or
+  key; `sshub sync-review --approve-all --device <id>` does the same. Everything else stays one by one with its full
+  diff. `sync-review --approve-all` no longer approves changes held as removed-author, not-a-holder, conflicting with a
+  removal or bringing back something deleted.
+- **Saved passwords that need attention (host sync)** - `sync-status` (text and JSON), the removal result and the Sync tab
+  list the saved passwords that share a key with a removed device (change them) or that a current full device does not
+  hold a piece of yet (healed on use), and the hosts list marks those hosts with `!`. Removing a full computer now says
+  before the name is asked whether the others re-share the passwords or only the phone and the paper approve it, and
+  asks whether the device was stolen or lost, or destroyed or wiped. Two computers are enough to remove one.
+- **Recovery alert (host sync)** - a recovery of the phone that another device started shows one full-screen notice
+  on every attended computer, with who started it, how many are open and when the earliest time lock ends; `Esc` only
+  dismisses it, there is no acknowledge key and nothing is written. The status bar keeps showing it, and
+  `sshub sync-status` lists the recoveries and exits with code 3 while one is open, so a script or a login banner can
+  act on it.
+- **Mail when someone tries to replace your phone (host sync)** - after you enroll a phone, SSHub offers to set up the
+  local sendmail: it asks for the addresses, writes `[sync.notify]`, sends a test message and says whether the command
+  accepted it; "Not now" is remembered and the Sync tab keeps a line about it. `sync-phone-enroll` prints a
+  `notify_hint` line, and names a shared mailbox when the alert address is also the sender of the emailed code.
+- **Heal saved passwords after a device was replaced (host sync)** - `sshub sync-heal`, or Passwords, "Heal
+  credentials" in `M`: the paper phrase is typed once and every saved password a current full device does not hold a
+  piece of is re-sealed to all of them, with no phone round trip. Passwords a removed device held a piece of are skipped.
+- **Change passwords a stolen device could read (host sync)** - `sshub sync-rekey` lists them; `--csv FILE` or
+  `--stdin` (lines `host,newpassword`) saves new secrets with a result per host, and `--new-key HOST` generates a key,
+  installs it on the server with the credential the host has now (through `sshub exec`) and only then saves it. SSHub
+  cannot change a password on a server and says so; removing the old key's line from `authorized_keys` stays yours.
+- **Renew a trust session (host sync)** - `M`, Advanced, "Trust session: renew one", or `sshub sync-trust-renew [<id>]
+  [--days N]`: another full computer shows the phone a request that carries what the other terminals saw of the delegate;
+  the request also lists the hosts opened under the session (names and a total, or "no list sent"); one phone confirmation renews it, at most twice and at most 180 days in all. The Sync tab says when a session ends
+  within 3 days, and each renewal is mailed once when mail is set up.
+- **Replace a full computer (host sync)** - `M`, Devices, "Replace a full computer", or
+  `sshub sync-replace-terminal <old> [--new <computer>]`: it says how to enroll the new one, proposes it as a full
+  device and, run again once the phone approved, proposes removing the old one; the paper phrase is typed once and goes
+  to both. Pending big changes now also say who can give each missing approval and since when.
 
 ## [0.21.1] - 2026-11-07
 

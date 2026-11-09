@@ -151,9 +151,9 @@ fn revoke_name_prompt(
                     now(),
                 )?;
                 let mut lines = r.lines;
-                if stolen {
-                    lines.push(admin::STOLEN_NOTE.to_string());
-                }
+                lines.push(
+                    if stolen { admin::STOLEN_NOTE } else { admin::WIPED_NOTE }.to_string(),
+                );
                 Ok(lines.join("\n"))
             });
         },

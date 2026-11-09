@@ -252,6 +252,12 @@ fn mail_owed_codes(
             Err(e) => eprintln!("sshub: could not mail the code: {e:#}"),
         }
     }
+    // Every trust-session renewal that arrived is mailed once.
+    if let Err(e) = crate::sync::cert::send_renew_mails(store, &mut |s, b| {
+        crate::sync::notify::send_notification(cfg, s, b)
+    }) {
+        eprintln!("sshub: could not look for renewal mails: {e:#}");
+    }
 }
 
 /// A string a ring peer wrote, safe to print: control characters shown escaped.
@@ -970,7 +976,7 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
                     "ceremony": v.red.as_ref().map(|r| json!({
                         "have": r.have, "missing": r.missing, "expired": r.expired,
                         "blocked": r.blocked, "rule_violation": r.rule_violation, "note": r.note,
-                        "single_machine": r.single_machine,
+                        "single_machine": r.single_machine, "blockers": r.blockers,
                     })),
                     "changes": v.changes.iter().map(|c| json!({
                         "field": c.field, "from": c.from, "to": c.to, "dangerous": c.dangerous,
@@ -1008,6 +1014,9 @@ fn review(paths: &ProfilePaths, json_out: bool, resolve: Option<&(bool, String)>
             }
             for m in &red.missing {
                 println!("    missing: {m}");
+            }
+            for b in &red.blockers {
+                println!("    {}", plain(b));
             }
             if let Some(why) = &red.blocked {
                 println!("    cannot go through as it stands: {}", plain(why));

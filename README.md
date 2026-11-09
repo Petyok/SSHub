@@ -343,9 +343,10 @@ sshub map --dot | dot -Tsvg -o map.svg
 sshub sync-join laptop                        # enroll with the device at host "laptop": compare the words (or, if it has no screen, approve the admission)
 sshub sync-now                                # sync with every ring device that has a known host
 sshub sync-now laptop --format json           # one device, by name or id prefix
-sshub sync-status                             # ring devices (this one marked), how each was verified, pending changes, credential mode
+sshub sync-status                             # (exit 3 while a recovery of the phone is open) ring devices (this one marked), how each was verified, pending changes, credential mode
 sshub sync-review                             # every change waiting for review (id, author, reason, field diffs, Red ceremony)
 sshub sync-review --approve 3fa9c1            # or --reject; id = unique prefix (6+ hex digits)
+sshub sync-review --approve-all --device <id>   # only that device's changes held for being away that touch no address, jump host, command, user or key
 sshub sync-review --approve-all               # every waiting change without a ceremony, in one pass (Red changes, share releases and doubtful ones stay)
 sshub sync-revoke <device>                    # remove a device (a big change for a full device; needs two computers you control and the paper phrase, see below)
 sshub sync-role <device> holder|mirror        # promote or demote (Red)
@@ -357,6 +358,10 @@ sshub sync-mode vault|quorum [--cosigner <device>]   # two steps: the first call
 sshub sync-exemption on|off <device>          # master-phrase exemption (on needs the TUI)
 sshub sync-export --window <seconds> --out <path> [--wait <seconds>]   # bulk export (Red, window <= 3600 s, 0600 file)
 sshub sync-migrate [--remove-local]           # replicate this profile's saved secrets
+sshub sync-heal                               # after a device was replaced or retired: re-seal saved passwords to every current full device (paper phrase typed once)
+sshub sync-rekey [--csv FILE|--stdin] [--new-key HOST]...   # after a stolen device: list, or save new secrets (lines host,newpassword) / a new key installed with the current login
+sshub sync-replace-terminal <old> [--new <computer>]   # replace a full computer in steps (enroll, promote, remove), the paper typed once
+sshub sync-trust-renew [<id>] [--days N]       # list renewable trust sessions, or print the kind 11 renewal request for the phone
 sshub sync-import-kit                         # second machine: set up the Vault from the kit and the phrase
 sshub sync-phone-enroll [--ble]               # enroll the phone as text: frames (base64) on stdin and stdout, the four words, then y or n (--ble: the frames also over Bluetooth)
 sshub sync-notice <op-id> [--ble]             # the kind 3 notice (base64) of a Red op for the phone (--ble: also handed over Bluetooth)

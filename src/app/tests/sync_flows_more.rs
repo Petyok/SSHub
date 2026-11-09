@@ -350,7 +350,6 @@ fn the_paper_sheet_is_one_private_file_that_is_never_overwritten_and_the_only_co
 /// that fails is said plainly.
 #[test]
 fn the_mail_step_writes_the_config_and_sends_a_test_through_the_command() {
-    use std::os::unix::fs::PermissionsExt;
     let mut r = ring(None);
     mark_this_device(&mut r);
     assert!(
@@ -360,14 +359,19 @@ fn the_mail_step_writes_the_config_and_sends_a_test_through_the_command() {
     let dir = tempfile::tempdir().unwrap();
     let script = dir.path().join("fakemail");
     let sink = dir.path().join("sent.txt");
-    std::fs::write(&script, format!("#!/bin/sh\ncat > {}\n", sink.display())).unwrap();
-    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // The script is run as `sh script` (never exec'd: a freshly written executable can fail with ETXTBSY while another
+    // test thread forks) and renames its output into place, so the sink exists only once the mail is complete.
+    std::fs::write(
+        &script,
+        format!("cat > {0}.part && mv {0}.part {0}\n", sink.display()),
+    )
+    .unwrap();
 
     crate::app::sync_flows_more::mail_setup(&mut r.app);
     assert_eq!(r.app.mode, AppMode::SyncPrompt);
     type_and_enter(&mut r.app, "me@example.com");
     type_and_enter(&mut r.app, "sshub@example.com");
-    type_and_enter(&mut r.app, &format!("{} -t -i", script.display()));
+    type_and_enter(&mut r.app, &format!("sh {} -t -i", script.display()));
     pump(&mut r.app, "the test mail", |a| {
         sink.exists() && a.mode != AppMode::SyncPrompt
     });

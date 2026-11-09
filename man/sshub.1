@@ -601,6 +601,24 @@ Bulk export inside a Red-approved window, as a Termius CSV (mode 0600).
 .B sshub sync\-migrate \fR[\fB\-\-remove\-local\fR]
 Write existing local secrets as replicated credentials.
 .TP
+.B sshub sync\-heal
+Re-seal the saved passwords that a current full device does not hold a piece of yet to every current device. The paper
+phrase is read once without echo. Passwords a removed device held a piece of are skipped (see sync\-rekey).
+.TP
+.B sshub sync\-rekey \fR[\fB\-\-csv\fR \fIFILE\fR|\fB\-\-stdin\fR] [\fB\-\-new\-key\fR \fIHOST\fR]...
+Without options, list the saved passwords that share a key with a removed device. \fB\-\-csv\fR and \fB\-\-stdin\fR read
+lines \fIhost\fR,\fInewpassword\fR and save them; \fB\-\-new\-key\fR generates a key, installs it on the server with the
+credential the host has now (through \fBsshub exec\fR) and only then saves it. Passwords cannot be changed on a server by
+SSHub, and the old key's line in authorized_keys is removed by you.
+.TP
+.B sshub sync\-replace\-terminal \fIOLD\fR [\fB\-\-new\fR \fICOMPUTER\fR]
+Replace a full computer in steps: how to enroll the new one, then its promotion, then the removal of the old one. The
+paper phrase is read once and goes to both.
+.TP
+.B sshub sync\-trust\-renew \fR[\fIID\fR] [\fB\-\-days\fR \fIN\fR] [\fB\-\-ble\fR]
+List the trust sessions that can be renewed, or print the kind 11 renewal request for the phone. Run it on a computer that
+is not the delegate. It first prints an \fBopened:\fR line with the hosts opened under the session (or "no list sent").
+.TP
 .B sshub sync\-import\-kit
 Read the ring kit and the six master words without echo.
 .PP

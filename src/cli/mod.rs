@@ -16,6 +16,7 @@ pub mod sync_admin;
 pub mod sync_cmd;
 pub mod sync_phone_ble;
 pub mod sync_phone_cmd;
+pub mod sync_repair;
 pub mod theme;
 pub mod transfer;
 pub mod tunnel;

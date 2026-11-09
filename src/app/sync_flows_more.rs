@@ -467,3 +467,145 @@ fn mail_write_and_test(app: &mut App, to: &str, from: &str, command: &str) {
         })
     });
 }
+
+// ----------------------------------------------------- heal, rekey, replace
+
+use crate::cli::sync_repair as repair;
+
+/// "Heal credentials": the paper phrase is typed once; each saved password that a current full device does not hold a
+/// piece of yet is re-sealed to all of them.
+pub(crate) fn heal(app: &mut App) {
+    app.sync_prompt(
+        "Heal credentials",
+        "Type the 24 words of the paper phrase (nothing is shown). Passwords a removed device held a piece of are skipped: change those instead.",
+        true,
+        |app, words| {
+            report_job(app, move |env| repair::heal(&env.store, &env.identity, words.trim()));
+        },
+    );
+}
+
+/// "Change exposed credentials": the saved passwords that share a key with a removed device, one at a time.
+pub(crate) fn rekey(app: &mut App) {
+    let list = match repair::rekey_list(&app.store) {
+        Ok(l) => l,
+        Err(e) => {
+            app.host_notice = Some(format!("{e:#}"));
+            return;
+        }
+    };
+    if list.is_empty() {
+        app.host_notice = Some("no saved password shares a key with a removed device".into());
+        return;
+    }
+    let items: Vec<(String, MenuFn)> = list
+        .into_iter()
+        .map(|(_, name, devices)| {
+            let label = format!("{name}  (shares a key with {})", devices.join(", "));
+            (
+                label,
+                Box::new(move |app: &mut App| rekey_host(app, name)) as MenuFn,
+            )
+        })
+        .collect();
+    app.sync_menu("Change which saved password? (SSHub cannot change a password on a server: change it there first)", items);
+}
+
+fn rekey_host(app: &mut App, name: String) {
+    let for_password = name.clone();
+    app.sync_menu(
+        format!("New secret for {name}"),
+        vec![
+            (
+                "I changed the password on the server: save the new one".to_string(),
+                Box::new(move |app: &mut App| {
+                    let host = for_password;
+                    app.sync_prompt(
+                        "Save the new password",
+                        format!("The new password for {host} (nothing is shown)"),
+                        true,
+                        move |app, password| {
+                            report_job(app, move |env| {
+                                repair::rekey_apply(&env.store, &env.identity, &[(host, password)])
+                            });
+                        },
+                    );
+                }) as MenuFn,
+            ),
+            (
+                "Generate a new key, install it on the server with the current login, then save it"
+                    .to_string(),
+                Box::new(move |app: &mut App| {
+                    report_job(app, move |env| {
+                        let mut install = repair::exec_installer(&env.paths);
+                        repair::rekey_new_key(&env.store, &env.identity, &[name], &mut install)
+                    });
+                }),
+            ),
+        ],
+    );
+}
+
+/// "Replace this terminal": enroll the new computer, promote it, remove the old one, the paper typed once.
+pub(crate) fn replace_terminal(app: &mut App) {
+    super::sync_flows::pick_device(
+        app,
+        "Replace which full computer?",
+        |d| {
+            d.role == DeviceRoleView::Holder
+                && !d.phone
+                && d.status != super::sync::DeviceStatusView::Revoked
+        },
+        replace_pick_new,
+    );
+}
+
+fn replace_pick_new(app: &mut App, old: String, old_name: String) {
+    let mut items: Vec<(String, MenuFn)> = vec![(
+        "The new computer is not enrolled yet: show me how".to_string(),
+        {
+            let old = old.clone();
+            Box::new(move |app: &mut App| replace_job(app, old, None, String::new())) as MenuFn
+        },
+    )];
+    for d in app
+        .sync
+        .devices
+        .iter()
+        .filter(|d| !d.this && !d.phone && d.id != old)
+    {
+        let (new, label) = (d.id.clone(), format!("{} (enrolled)", d.name));
+        let old = old.clone();
+        items.push((
+            label,
+            Box::new(move |app: &mut App| replace_with_paper(app, old, new)) as MenuFn,
+        ));
+    }
+    app.sync_menu(format!("The new computer that replaces {old_name}"), items);
+}
+
+fn replace_with_paper(app: &mut App, old: String, new: String) {
+    app.sync_prompt(
+        "Replace a computer",
+        "Type the 24 words of the paper phrase (nothing is shown). They go to both approvals.",
+        true,
+        move |app, words| replace_job(app, old, Some(new), words),
+    );
+}
+
+fn replace_job(app: &mut App, old: String, new: Option<String>, words: String) {
+    report_job(app, move |env| {
+        let secrets = (env.open_secrets)(&env.paths);
+        let mut identity =
+            crate::sync::identity_store::load_or_init_identity(&env.paths, secrets.as_ref())?;
+        repair::replace_terminal(
+            &env.store,
+            &mut identity,
+            &old,
+            new.as_deref(),
+            words.trim(),
+            now(),
+            |id, dev| admin::revoke(&env.paths, &env.store, id, secrets.as_ref(), dev, now()),
+        )
+    });
+}
