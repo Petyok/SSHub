@@ -437,3 +437,60 @@ pub fn cert_renew_request(
         evidence,
     })
 }
+
+fn renew_mailed_key(op: &Op) -> String {
+    format!("renew_mailed:{}", hex::encode(op.hash()))
+}
+
+/// The renewals of trust sessions this device has not mailed yet: `(op hash, subject, body)`. Every `CertRenew` ingested
+/// is mailed, whether or not it counts, so a quiet renewal by a stolen phone is seen (design 6.1).
+pub fn owed_renew_mails(store: &LauncherStore) -> Result<Vec<([u8; 32], String, String)>> {
+    let issues = super::quorum::ops_of(store, "CertIssue", None)?;
+    let devices = store.sync_devices()?;
+    let mut out = Vec::new();
+    for op in super::quorum::ops_of(store, "CertRenew", None)? {
+        let OpBody::CertRenew { cert_id, expiry } = &op.body else {
+            continue;
+        };
+        if super::quorum::meta_get(store, &renew_mailed_key(&op))?.is_some() {
+            continue;
+        }
+        let Some(cert) = issues
+            .iter()
+            .find(|i| i.hash() == *cert_id)
+            .and_then(|i| DelegationCert::from_op(i).ok())
+        else {
+            continue;
+        };
+        let delegate = devices
+            .iter()
+            .find(|d| d.id == cert.device_id)
+            .map_or(cert.device_id.clone(), |d| d.name.clone());
+        out.push((
+            op.hash(),
+            "A trust session was renewed".to_string(),
+            format!(
+                "The phone renewed the trust session of {delegate} until {}. {} of {CERT_MAX_RENEWALS} renewals are counted so far. If this was not you, end the trust session from a computer and look at your phone.",
+                super::hub::utc(*expiry),
+                cert.renewals(store)?,
+            ),
+        ));
+    }
+    Ok(out)
+}
+
+/// Mail what [`owed_renew_mails`] lists through `send`; a renewal is marked mailed only when `send` succeeded. Returns how
+/// many went out.
+pub fn send_renew_mails(
+    store: &LauncherStore,
+    send: &mut dyn FnMut(&str, &str) -> Result<()>,
+) -> Result<usize> {
+    let mut sent = 0;
+    for (hash, subject, body) in owed_renew_mails(store)? {
+        if send(&subject, &body).is_ok() {
+            super::quorum::meta_set(store, &format!("renew_mailed:{}", hex::encode(hash)), b"1")?;
+            sent += 1;
+        }
+    }
+    Ok(sent)
+}
