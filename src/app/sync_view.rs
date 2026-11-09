@@ -547,6 +547,31 @@ pub(crate) fn pending_view(
                 None => format!("register the {kind} as the third approval"),
             }
         }
+        OpBody::PhoneHandover { new_phone, name } => {
+            // The old phone shows the same eight words next to the name: they are the check (design 5.1).
+            let old = crate::sync::quorum::phone_device(store).ok().flatten();
+            let words = old
+                .as_deref()
+                .and_then(|o| hex::decode(o).ok())
+                .and_then(|b| <[u8; 8]>::try_from(b).ok())
+                .map(|o| crate::sync::crypto::handover_words(new_phone, name, &o).join(" "))
+                .unwrap_or_else(|| "(no phone in the ring to compare with)".into());
+            changes = vec![
+                ChangeView {
+                    field: "new phone".into(),
+                    from: old.map_or_else(|| "(none)".into(), |o| short(&o)),
+                    to: name.clone(),
+                    dangerous: true,
+                },
+                ChangeView {
+                    field: "compare these eight words on the old phone".into(),
+                    from: "-".into(),
+                    to: words,
+                    dangerous: true,
+                },
+            ];
+            format!("hand the ring over to the new phone {name}")
+        }
         other => {
             let dbg = format!("{other:?}");
             dbg.split([' ', '{', '('])

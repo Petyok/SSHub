@@ -567,3 +567,191 @@ fn the_chain_text_shows_the_terminal_count_when_the_list_carries_it_and_a_fallba
     assert!(three.contains("3 terminals"), "{three}");
     assert!(terminals_line(None, now).contains("does not say how many"));
 }
+
+#[test]
+fn a_handover_enrollment_prints_the_kind_12_request_and_eight_words_and_adds_no_phone() {
+    use crate::sync::wire::PhoneHandoverRequestWire;
+    let t = Dev::new();
+    t.store
+        .sync_register_device(
+            &t.id.public(),
+            "me",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Terminal,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    let old = crate::sync::crypto::DeviceIdentity::generate();
+    t.store
+        .sync_register_device(
+            &old.public(),
+            "old phone",
+            DeviceRole::Holder,
+            Attendance::Attended,
+            DeviceKind::Phone,
+            VerifiedBy::Sas,
+        )
+        .unwrap();
+    crate::sync::ceremony::test_force(&t.store, false);
+    let phone = crate::sync::crypto::DeviceIdentity::generate();
+    let party = Party::new(&phone, "new phone", true);
+    let mut s = EnrollSession::new(&t.store, &t.id, "terminal", false).with_replace();
+    let mut out = Vec::new();
+    s.start(&mut out);
+    s.feed(
+        &B64.encode(
+            EnrollFrame::Commit {
+                role: INITIATOR,
+                commit: party.commit(INITIATOR),
+            }
+            .encode(),
+        ),
+        &mut out,
+    );
+    let reveal_frame = value_of(&lines(&out), "frame");
+    let EnrollFrame::Reveal { reveal, .. } =
+        EnrollFrame::decode(&B64.decode(reveal_frame).unwrap()).unwrap()
+    else {
+        panic!("reveal expected")
+    };
+    let term_reveal = Reveal::from_bytes(&reveal).unwrap();
+    out.clear();
+    s.feed(
+        &B64.encode(
+            EnrollFrame::Reveal {
+                role: INITIATOR,
+                reveal: party.reveal.bytes(),
+            }
+            .encode(),
+        ),
+        &mut out,
+    );
+    let th = transcript_hash(&party.reveal, &term_reveal);
+    out.clear();
+    s.feed("y", &mut out);
+    out.clear();
+    s.feed(
+        &B64.encode(
+            EnrollFrame::Confirm {
+                role: INITIATOR,
+                ok: true,
+                sig: phone.sign(&confirm_message(INITIATOR, true, &th)),
+            }
+            .encode(),
+        ),
+        &mut out,
+    );
+    let l = lines(&out);
+    assert_eq!(s.done, Some(true), "{l:?}");
+    // The request for the old phone decodes to the new phone, its name and this terminal.
+    let req =
+        PhoneHandoverRequestWire::decode(&B64.decode(value_of(&l, "handover")).unwrap()).unwrap();
+    assert_eq!(req.new_phone, phone.public());
+    assert_eq!(req.name, "new phone");
+    // Eight words, the same the old phone computes from the request and its own id.
+    let words = value_of(&l, "handover_words");
+    let old_id: [u8; 8] = hex::decode(old.public().device_id())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert_eq!(words.split_whitespace().count(), 8, "{words}");
+    assert_eq!(
+        words,
+        crate::sync::crypto::handover_words(&req.new_phone, &req.name, &old_id).join(" ")
+    );
+    assert!(
+        l.iter()
+            .any(|x| x.starts_with("next: ") && x.contains("sync-heal")),
+        "{l:?}"
+    );
+    // The new phone is NOT in the ring yet: the op the old phone signs adds it.
+    assert!(!t
+        .store
+        .sync_devices()
+        .unwrap()
+        .iter()
+        .any(|d| d.id == phone.public().device_id()));
+}
+
+#[test]
+fn a_handover_needs_a_phone_in_the_ring() {
+    let t = Dev::new();
+    let phone = crate::sync::crypto::DeviceIdentity::generate();
+    let v = crate::sync::phone_enroll::Verified {
+        frame: Vec::new(),
+        phone: phone.public(),
+        name: "p".into(),
+    };
+    let err = handover_offer(&t.store, &t.id, &v).err().expect("refused");
+    assert!(format!("{err:#}").contains("no phone"), "{err:#}");
+}
+
+#[test]
+fn the_admission_frame_carries_the_op_hash_and_lamport_and_the_same_eight_words() {
+    use crate::sync::oplog::{Op, OpBody};
+    use crate::sync::wire::PhoneHandoverRequestWire;
+    let new = crate::sync::crypto::DeviceIdentity::generate();
+    let old = crate::sync::crypto::DeviceIdentity::generate()
+        .public()
+        .device_id();
+    let op = Op {
+        device_id: old.clone(),
+        seq: 4,
+        lamport: 77,
+        prev_hash: [3; 32],
+        timestamp: 1,
+        epoch: 0,
+        alg: crate::sync::crypto::ALG_CURRENT,
+        body: OpBody::PhoneHandover {
+            new_phone: new.public(),
+            name: "new phone".into(),
+        },
+        signature: [0; 64],
+    };
+    let o = handover_admission(&op, &old, [9; 8]).unwrap();
+    let req = PhoneHandoverRequestWire::decode(&o.request).unwrap();
+    assert_eq!(req.op, Some((op.hash(), 77)));
+    assert_eq!(req.new_phone, new.public());
+    assert_eq!(o.words.len(), 8);
+    // Not a handover op: refused.
+    let mut other = op.clone();
+    other.body = OpBody::CertRevoke { cert_id: [1; 32] };
+    assert!(handover_admission(&other, &old, [9; 8]).is_err());
+}
+
+#[test]
+fn sync_phone_ops_prints_the_second_kind_12_frame_once_the_handover_op_is_in() {
+    use crate::sync::wire::PhoneHandoverRequestWire;
+    let d = world();
+    let new = crate::sync::crypto::DeviceIdentity::generate();
+    // No handover op yet: no frame.
+    assert!(admission_lines(&d[1].store, &d[1].id).is_empty());
+    let op = append(
+        &d[2],
+        OpBody::PhoneHandover {
+            new_phone: new.public(),
+            name: "new phone".into(),
+        },
+    );
+    let text = B64.encode(
+        crate::sync::wire::PhoneOpsWire {
+            sender: None,
+            terminals: None,
+            ops: vec![(op.canonical_bytes(), op.signature)],
+        }
+        .encode(),
+    );
+    let mut out = Vec::new();
+    assert_eq!(
+        phone_ops_cmd(&d[1].store, &d[1].id, &text, false, &mut out).unwrap(),
+        0
+    );
+    let l = lines(&out);
+    let req =
+        PhoneHandoverRequestWire::decode(&B64.decode(value_of(&l, "handover_admission")).unwrap())
+            .unwrap();
+    assert_eq!(req.op, Some((op.hash(), op.lamport)), "{l:?}");
+    assert_eq!(req.new_phone, new.public());
+    assert_eq!(value_of(&l, "handover_words").split_whitespace().count(), 8);
+}

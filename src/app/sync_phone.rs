@@ -34,6 +34,14 @@ pub(crate) enum FlowOut {
         frame: Vec<u8>,
         lines: Vec<String>,
     },
+    /// The new phone is verified for a handover: its closing frame, the kind 12 request for the old phone and the
+    /// eight words to compare there.
+    Handover {
+        frame: Vec<u8>,
+        request: Vec<u8>,
+        words: Vec<String>,
+        name: String,
+    },
     Stopped {
         why: String,
         frame: Option<Vec<u8>>,
@@ -54,6 +62,8 @@ pub(crate) struct PhoneFlow {
     camera: Option<(ListenHandle, Receiver<MediaEvent>)>,
     /// Frames the camera produced that no step has taken yet.
     inbox: Vec<Vec<u8>>,
+    /// A handover: the verified phone is the NEW phone, shown a request for the old one instead of being added.
+    replace: bool,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -68,9 +78,23 @@ fn is_yes(text: &str) -> bool {
 pub(crate) fn start(app: &mut App) {
     if matches!(crate::sync::quorum::phone_device(&app.store), Ok(Some(_))) {
         app.host_notice =
-            Some("the ring already has a phone: replacing it is a recovery (M, Recovery)".into());
+            Some("the ring already has a phone: to change it use \"Replace the phone\" (the old one still works) or a recovery (the old one is lost)".into());
         return;
     }
+    begin(app, false);
+}
+
+/// Menu entry: hand the ring over to a new phone while the old one still works (design 5).
+pub(crate) fn start_replace(app: &mut App) {
+    if !matches!(crate::sync::quorum::phone_device(&app.store), Ok(Some(_))) {
+        app.host_notice =
+            Some("the ring has no phone to hand over from: use \"Add the phone\"".into());
+        return;
+    }
+    begin(app, true);
+}
+
+fn begin(app: &mut App, replace: bool) {
     let enroll = Arc::new(Mutex::new(None));
     let out = Arc::new(Mutex::new(Vec::new()));
     let running = Arc::new(AtomicUsize::new(1));
@@ -87,6 +111,7 @@ pub(crate) fn start(app: &mut App) {
         running: running.clone(),
         camera: Some((handle, rx)),
         inbox: Vec::new(),
+        replace,
     });
     app.run_sync_job(move |env| {
         let (e, first) = PhoneEnroll::begin(&env.identity, &crate::sync::runtime::device_name());
@@ -120,6 +145,7 @@ fn step_job(
     };
     let (enroll, out) = (flow.enroll.clone(), flow.out.clone());
     let running = flow.running.clone();
+    let replace = flow.replace;
     running.fetch_add(1, Ordering::SeqCst);
     app.run_sync_job(move |env| {
         let mut slot = lock(&enroll);
@@ -129,6 +155,16 @@ fn step_job(
             return Ok(String::new());
         };
         let next = match call(e, &env.identity) {
+            Ok(Step::Verified(v)) if replace => {
+                crate::cli::sync_phone_cmd::handover_offer(&env.store, &env.identity, &v).map(|o| {
+                    FlowOut::Handover {
+                        frame: v.frame,
+                        request: o.request,
+                        words: o.words,
+                        name: v.name,
+                    }
+                })
+            }
             Ok(Step::Verified(v)) => admit_phone(&env.store, &env.identity, &v).and_then(|op| {
                 let report = crate::cli::sync_admin::op_report(
                     &env.store,
@@ -237,6 +273,7 @@ fn present(app: &mut App, out: FlowOut) {
         .and_then(|(h, _)| {
             if let FlowOut::Show(f)
             | FlowOut::Admitted { frame: f, .. }
+            | FlowOut::Handover { frame: f, .. }
             | FlowOut::Stopped { frame: Some(f), .. } = &out
             {
                 h.send_frame(f.clone());
@@ -299,6 +336,36 @@ fn present(app: &mut App, out: FlowOut) {
                 },
             );
         }
+        FlowOut::Handover {
+            frame,
+            request,
+            words,
+            name,
+        } => {
+            let mut lines = vec![format!(
+                "{name} is verified as the new phone. Show this code to it so it can finish."
+            )];
+            lines.extend(ble_line);
+            let request_lines = handover_screen_lines(&name, &words);
+            qr_prompt(
+                app,
+                &frame,
+                lines,
+                "Enter to show the request for the OLD phone",
+                move |app, _| {
+                    qr_prompt(
+                        app,
+                        &request,
+                        request_lines,
+                        "Enter when the old phone has signed",
+                        |app, _| {
+                            app.phone_flow = None;
+                            app.refresh_sync_view();
+                        },
+                    );
+                },
+            );
+        }
         FlowOut::Stopped { why, frame } => {
             app.phone_flow = None;
             match frame {
@@ -335,6 +402,21 @@ fn qr_prompt(
         }
     };
     app.sync_prompt_qr(TITLE, lines, frames, label, on_submit);
+}
+
+/// The screen for the OLD phone: what it must show, the words to compare, and what follows.
+pub(crate) fn handover_screen_lines(name: &str, words: &[String]) -> Vec<String> {
+    let mut lines = vec![
+        format!("Show this code to the OLD phone (it must still work). It shows the new phone's name, {name}, and eight words:"),
+        format!("    {}", words.join(" ")),
+        "The old phone must show the same eight words. Different words mean the request was changed: do not sign.".to_string(),
+    ];
+    lines.extend(
+        crate::cli::sync_phone_cmd::handover_steps()
+            .into_iter()
+            .map(|l| format!("  {l}")),
+    );
+    lines
 }
 
 /// Is a Bluetooth channel running for this enrollment (its tag is on the screen)?

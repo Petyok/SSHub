@@ -72,6 +72,11 @@ All notable changes to SSHub are documented in this file.
   `sshub sync-replace-terminal <old> [--new <computer>]`: it says how to enroll the new one, proposes it as a full
   device and, run again once the phone approved, proposes removing the old one; the paper phrase is typed once and goes
   to both. Pending big changes now also say who can give each missing approval and since when.
+- **Hand the ring over to a new phone (host sync)** - while the old phone still works, `M`, Phone, "Replace the phone"
+  or `sshub sync-phone-enroll --replace` verifies the new phone (the four words), then shows the OLD phone a request
+  with the new phone's name and eight words to compare; it signs the handover, the new phone signs its own admission, and
+  the usual approvals follow (another computer and the paper phrase). The new phone holds your old saved passwords after
+  `sync-heal`. A lost phone is still replaced by a recovery.
 
 ## [0.21.1] - 2026-11-07
 
