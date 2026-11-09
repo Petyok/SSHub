@@ -46,6 +46,8 @@ pub enum ReenrollVerdict {
     Lapsed,
     /// The old phone is revoked and the new one enrolled: the recovery is spent.
     Completed,
+    /// A phone handover came into force after this recovery started: the phone it was started against is gone.
+    Superseded,
 }
 
 /// What the machine is told about the op that proposes the recovery. The caller has already checked
@@ -260,7 +262,7 @@ impl Recovery {
         };
         let ready_at = first
             + if p.solo {
-                RECOVERY_TIMELOCK_SOLO_SECS
+                solo_lock_secs()
             } else {
                 RECOVERY_TIMELOCK_SECS
             };
@@ -510,6 +512,7 @@ pub fn open_for_alert_for(store: &LauncherStore, me: &DeviceId, now: i64) -> Res
             ReenrollVerdict::CancelledByPhone
                 | ReenrollVerdict::CancelledByFactor
                 | ReenrollVerdict::Lapsed
+                | ReenrollVerdict::Superseded
                 | ReenrollVerdict::Completed
         ) {
             out.push(re);
@@ -711,6 +714,23 @@ fn validate_phone_reenroll_upto(
         let _ = m.apply(ev); // an event that does not qualify changes nothing
     }
     let v = m.verdict(now);
+    // A phone handover in force after this recovery started replaced the phone it was started against (H1 rule 4): the
+    // recovery stands for nothing, whatever else holds.
+    if !matches!(
+        v,
+        ReenrollVerdict::CancelledByPhone
+            | ReenrollVerdict::CancelledByFactor
+            | ReenrollVerdict::Completed
+    ) {
+        for h in super::quorum::ops_of(store, "PhoneHandover", None)? {
+            if h.lamport > op.lamport
+                && upto.is_none_or(|u| h.lamport <= u)
+                && super::ceremony::in_force(store, &h)?
+            {
+                return Ok(ReenrollVerdict::Superseded);
+            }
+        }
+    }
     if v == ReenrollVerdict::Ready {
         let voters: Vec<DeviceId> = signed_ops(store, "RecoveryApprove")?
             .into_iter()
@@ -881,3 +901,16 @@ pub fn clear_snapshots(store: &LauncherStore) -> Result<usize> {
 
 #[cfg(test)]
 mod tests;
+
+/// The lock of a one-terminal recovery. The e2e image (built with `--features e2e-hooks`, never a release) may shorten it
+/// with `SSHUB_E2E_SOLO_LOCK_SECS` so a scenario need not wait fourteen days; every other build reads the constant.
+fn solo_lock_secs() -> i64 {
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(secs) = std::env::var("SSHUB_E2E_SOLO_LOCK_SECS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+    {
+        return secs;
+    }
+    RECOVERY_TIMELOCK_SOLO_SECS
+}

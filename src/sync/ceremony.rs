@@ -58,6 +58,7 @@ pub fn is_gated(store: &LauncherStore, op: &Op) -> Result<bool> {
             *role == DeviceRole::Holder || *kind == DeviceKind::Phone
         }
         OpBody::DeviceRoleChange { .. }
+        | OpBody::PhoneHandover { .. }
         | OpBody::CertIssue { .. }
         | OpBody::ModeChange { .. }
         | OpBody::FactorRegister { .. }
