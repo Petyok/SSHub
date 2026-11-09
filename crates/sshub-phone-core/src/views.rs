@@ -265,7 +265,7 @@ pub struct RedNoticeView {
     /// Set for a proposer this phone never met: Approve needs this id typed.
     pub type_to_approve: Option<String>,
     /// Everything below comes from the SIGNED op, never from when the phone read the notice. `proposed_at` is the op's
-    /// own timestamp, `lamport` and `seq` its own counters, `lapses_at` = `proposed_at` + 3 days: a Red ceremony
+    /// own timestamp, `lamport` and `seq` its own counters, `lapses_at` = `proposed_at` + 7 days: a Red ceremony
     /// lapses then (the page refuses the op after that), whatever the phone clock says when it was scanned.
     pub proposed_at: i64,
     pub lamport: u64,

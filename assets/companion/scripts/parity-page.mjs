@@ -88,9 +88,9 @@ out.identity = ['42', '0b'].map((s) => Array.from({ length: 3 }, (_, g) => {
     const d = describeOp(parseOp(h(x.canonical_hex)), aliases);
     return { id: x.id, hash: opHashHex(h(x.canonical_hex)), headline: d.headline, requester: d.requester, rows: rows(d), danger_count: d.dangerCount };
   });
-  // The Red notice window as the page computes it (app.mjs redNotice): the op's own signed time, lapsing after 3 days.
+  // The Red notice window as the page computes it (app.mjs redNotice): the op's own signed time, lapsing after 7 days.
   out.red_window = v.vectors.map((x) => ({ x, op: parseOp(h(x.canonical_hex)) })).filter(({ op }) => isRedOp(op)).map(({ x, op }) => ({
-    id: x.id, timestamp: Number(op.timestamp), lamport: Number(op.lamport), seq: Number(op.seq), lapses_at: Number(op.timestamp) + 3 * 86400,
+    id: x.id, timestamp: Number(op.timestamp), lamport: Number(op.lamport), seq: Number(op.seq), lapses_at: Number(op.timestamp) + 7 * 86400,
   }));
 }
 

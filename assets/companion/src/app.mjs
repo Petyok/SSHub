@@ -22,7 +22,7 @@ import { DocumentCollector, startCamera } from './scan.mjs';
 import { ownStorageKey, planReshare, publishReshare } from './reshare.mjs';
 
 const RECOVERY_TIMELOCK_SECS = 7 * 86400;
-const RED_CEREMONY_TTL_SECS = 3 * 86400; // limits.rs
+const RED_CEREMONY_TTL_SECS = 7 * 86400; // limits.rs
 const MAX_QR_DOC_BYTES = 12000; // beyond this the animation is too long: text only
 
 function h(tag, attrs = {}, ...kids) {
@@ -1018,7 +1018,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     const sigOk = known ? edVerify(bytesOf(known.ed25519_pub), n.op_canonical, n.op_signature) : own ? edVerify(app.identity.edPub, n.op_canonical, n.op_signature) : null;
     if (sigOk === false) return refusalScreen(`The signature of ${op.device_id} does not verify over this operation.`, []);
     const age = app.now() - Number(op.timestamp);
-    if (age > RED_CEREMONY_TTL_SECS) return refusalScreen(`This operation is ${Math.floor(age / 86400)} days old; a big change must be approved within 3 days. Ask the terminal to propose it again.`, []);
+    if (age > RED_CEREMONY_TTL_SECS) return refusalScreen(`This operation is ${Math.floor(age / 86400)} days old; a big change must be approved within 7 days. Ask the terminal to propose it again.`, []);
     if (age < -TIMESTAMP_SKEW_GRACE_SECS) return refusalScreen('This operation is dated in the future.', []);
     // A trust certificate is authored by the phone itself: the phone's own signature is the proof.
     const blocked = op.kind === 'CertIssue' && !own ? 'A trust session must be signed by the phone itself. This one was written by another device: do not approve it.' : null;
