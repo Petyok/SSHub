@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-11-09
+
 ### Fixed
 
 - **Logins with non-ASCII letters connect again** - a host with a user like
