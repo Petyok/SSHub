@@ -18,6 +18,7 @@ import uk.petruha.sshub.phone.core.TrustDevice
 import uk.petruha.sshub.phone.core.TrustEpochView
 import uk.petruha.sshub.phone.core.TrustExtendView
 import uk.petruha.sshub.phone.core.TrustFieldView
+import uk.petruha.sshub.phone.core.PhoneHandoverView
 import uk.petruha.sshub.phone.core.TrustRefusal
 import uk.petruha.sshub.phone.core.TrustRenewView
 import uk.petruha.sshub.phone.core.TrustRequestView
@@ -136,6 +137,17 @@ object TrustSamples {
     val renewNoList = renew(34, 60, opened = emptyList(), openedTotal = 0)
     val renewOverCap = renew(33, 60, TrustRefusal(-1, "Request refused", "This trust session was renewed 2 times already: a new one needs the full approval."), left = 0)
 
+    /** Handover tokens: 40 the old phone's request, 41 the new phone's admission card. */
+    val handoverOld = PhoneHandoverView(
+        token = 40, name = "pixel-9", words = listOf("amber", "basket", "cactus", "dolphin", "ember", "falcon", "garden", "harbor"),
+        certsCarried = listOf("workstation [9C61-E2A8] until 2026-11-03"), opHash = null,
+        note = "Compare these words with the terminal's screen. They must be identical, word for word: if they differ, refuse.",
+    )
+    val handoverNew = PhoneHandoverView(
+        token = 41, name = "pixel-9", words = emptyList(), certsCarried = emptyList(), opHash = ByteArray(32) { (it * 7 + 1).toByte() },
+        note = "This phone is the new phone of the ring. Sign only if you started this replacement.",
+    )
+
     fun certs(): List<IssuedCert> = listOf(
         IssuedCert("3F9A-07C2", "laptop-main", "7B3E-0D15", CertState.Active, UIDS, null, day(2026, 10, 12), day(2026, 11, 11), PHONE_EPOCH, PHONE_EPOCH + 1, "30 days", 10,
             listOf(CertExtensionInfo(day(2026, 10, 26) + 3 * 3600 + 3 * 60, 10)), 42),
@@ -173,6 +185,7 @@ class FakeTrust(var now: Long = TrustSamples.NOW) : TrustApi {
     }
     val extensions = mapOf(20L to TrustSamples.extendOk, 21L to TrustSamples.extendNotMine, 22L to TrustSamples.extendRevoked, 23L to TrustSamples.extendAgain)
     val renewals = mapOf(30L to TrustSamples.renewFresh, 31L to TrustSamples.renewStale, 32L to TrustSamples.renewDelegateOnly, 33L to TrustSamples.renewOverCap, 34L to TrustSamples.renewNoList)
+    val handovers = mapOf(40L to TrustSamples.handoverOld, 41L to TrustSamples.handoverNew)
     val certs = TrustSamples.certs().toMutableList()
     val codes = TrustSamples.codes().toMutableList()
     var pendingCode: CodeIssuedView? = TrustSamples.codeIssued()
@@ -182,6 +195,7 @@ class FakeTrust(var now: Long = TrustSamples.NOW) : TrustApi {
     override suspend fun trustRequest(token: Long) = requests[token]
     override suspend fun trustExtend(token: Long) = extensions[token]
     override suspend fun trustRenew(token: Long) = renewals[token]
+    override suspend fun phoneHandover(token: Long) = handovers[token]
 
     override suspend fun decideTrust(token: Long, decision: TrustDecision, now: Long): Outgoing? {
         decisions += token to decision
@@ -194,6 +208,7 @@ class FakeTrust(var now: Long = TrustSamples.NOW) : TrustApi {
             }
             return TrustSamples.outgoing("trust-$token")
         }
+        if (handovers.containsKey(token)) return TrustSamples.outgoing("handover-$token")
         renewals[token]?.let {
             if (it.red) throw CoreException(CoreException.Code.Refused, it.refusal?.text ?: "The news from the other terminals is too old.")
             return TrustSamples.outgoing("renew-$token")

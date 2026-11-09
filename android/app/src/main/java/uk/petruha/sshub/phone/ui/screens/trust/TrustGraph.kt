@@ -27,6 +27,7 @@ import uk.petruha.sshub.phone.ui.screens.release.ConsumeScannedDeviceId
 fun trustRequestRoute(token: Long) = "${Routes.TrustRequest}/$token"
 fun trustExtendRoute(token: Long) = "${Routes.TrustExtend}/$token"
 fun trustRenewRoute(token: Long) = "${Routes.TrustRenew}/$token"
+fun handoverRoute(token: Long) = "${Routes.Handover}/$token"
 
 fun NavGraphBuilder.trustGraph(env: AppEnv) {
     val handoffs = trustHandoffs(env)
@@ -76,6 +77,20 @@ fun NavGraphBuilder.trustGraph(env: AppEnv) {
             st,
             TrustRenewActions(
                 onApprove = vm::approve, onDecline = vm::decline, onCopy = vm::copy,
+                onDone = { backTo(Routes.Approvals) }, onBack = { backTo(Routes.Approvals) },
+            ),
+        )
+    }
+    composable(Routes.Handover + "/{token}", arguments = longArg) { entry ->
+        val token = entry.arguments?.getLong("token") ?: 0L
+        val vm: HandoverViewModel = viewModel(factory = viewModelFactory { initializer { HandoverViewModel(env.core, env.platform, token) } })
+        val s by vm.state.collectAsStateWithLifecycle()
+        val st = s
+        if (st == null) TrustMissing("Replace this phone", ::back)
+        else HandoverScreen(
+            st,
+            HandoverActions(
+                onWordsMatch = vm::onWordsMatch, onApprove = vm::approve, onDecline = vm::decline, onCopy = vm::copy,
                 onDone = { backTo(Routes.Approvals) }, onBack = { backTo(Routes.Approvals) },
             ),
         )

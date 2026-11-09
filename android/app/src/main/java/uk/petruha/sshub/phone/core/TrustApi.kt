@@ -17,6 +17,9 @@ interface TrustApi {
     /** Same for `Opened.CertRenew` (a renewal request); signed or declined with `decideTrust`. */
     suspend fun trustRenew(token: Long): TrustRenewView?
 
+    /** Same for `Opened.PhoneHandover`: the old phone's request or the new phone's admission; approved or declined with `decideTrust`. */
+    suspend fun phoneHandover(token: Long): PhoneHandoverView?
+
     /**
      * Sign or refuse a trust request, an extension or a renewal. `Approve` returns the signed hand-off; `Decline` signs nothing and returns null.
      * For a requester never met the core checks `Approve.typedId` itself; the UI only gates the button.

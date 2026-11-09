@@ -23,6 +23,7 @@ import uk.petruha.sshub.phone.core.Opened
 import uk.petruha.sshub.phone.core.OpenedRed
 import uk.petruha.sshub.phone.core.OpenedRelease
 import uk.petruha.sshub.phone.core.OpenedTrustExtend
+import uk.petruha.sshub.phone.core.OpenedPhoneHandover
 import uk.petruha.sshub.phone.core.OpenedTrustRenew
 import uk.petruha.sshub.phone.core.OpenedTrustRequest
 import uk.petruha.sshub.phone.core.Outgoing
@@ -53,6 +54,7 @@ import uk.petruha.sshub.phone.ui.screens.release.vaultFailure
 import uk.petruha.sshub.phone.core.ShortCodeRow
 import uk.petruha.sshub.phone.core.TrustDecision
 import uk.petruha.sshub.phone.core.TrustExtendView
+import uk.petruha.sshub.phone.core.PhoneHandoverView
 import uk.petruha.sshub.phone.core.TrustRenewView
 import uk.petruha.sshub.phone.core.TrustRequestView
 import uk.petruha.sshub.phone.core.WordState
@@ -131,6 +133,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
         is OpenedTrustRequest -> o.view.device.id
         is OpenedTrustExtend -> o.view.headline.take(40)
         is OpenedTrustRenew -> o.view.delegate.take(40)
+        is OpenedPhoneHandover -> o.view.name.take(40)
         is ReshareOpened -> "epoch ${o.view.epoch}"
         is RecoveryNoticeOpened -> o.view.phoneName
         else -> ""
@@ -278,6 +281,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
             is RsOpened.CertRequest -> mapTrustRequest(rs.view)
             is RsOpened.CertExtend -> mapTrustExtend(rs.view)
             is RsOpened.CertRenew -> mapTrustRenew(rs.view)
+            is RsOpened.PhoneHandover -> mapHandover(rs.view)
             is RsOpened.Reshare -> ReshareOpened(rs.view.token.toLong(), mapReshare(rs.view))
             is RsOpened.Chain -> mapChain(rs.view)
             is RsOpened.Enroll -> mapEnroll(rs.view)
@@ -392,6 +396,7 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
                 is OpenedTrustRequest -> PendingItem(PendingKind.Trust, o.view.headline, null, Routes.TrustRequest + "/" + token)
                 is OpenedTrustExtend -> PendingItem(PendingKind.Extend, o.view.headline, null, Routes.TrustExtend + "/" + token)
                 is OpenedTrustRenew -> PendingItem(PendingKind.Renew, o.view.headline, null, Routes.TrustRenew + "/" + token)
+                is OpenedPhoneHandover -> PendingItem(PendingKind.Handover, if (o.view.admission) "Admit this phone: ${o.view.name}" else "Replace this phone with ${o.view.name}", null, Routes.Handover + "/" + token)
                 is RecoveryNoticeOpened -> PendingItem(PendingKind.Recovery, o.view.startedBy, null, Routes.RecoveryNotice + "/" + token)
                 is ReshareOpened -> PendingItem(PendingKind.Reshare, "epoch ${o.view.epoch}", null, Routes.Reshare + "/" + token)
                 else -> null
@@ -484,12 +489,14 @@ class UniffiPhoneCore(private val store: SealedStateStore) : PhoneCoreApi {
 
     override suspend fun trustRenew(token: Long): TrustRenewView? = (entry(token)?.opened as? OpenedTrustRenew)?.view
 
+    override suspend fun phoneHandover(token: Long): PhoneHandoverView? = (entry(token)?.opened as? OpenedPhoneHandover)?.view
+
     override suspend fun decideTrust(token: Long, decision: TrustDecision, now: Long): Outgoing? {
         requireOpen()
         val e = entry(token) ?: throw badInput("This request is no longer pending.")
-        if (e.raw !is RsOpened.CertRequest && e.raw !is RsOpened.CertExtend && e.raw !is RsOpened.CertRenew) throw badInput("This is not a trust request.")
+        if (e.raw !is RsOpened.CertRequest && e.raw !is RsOpened.CertExtend && e.raw !is RsOpened.CertRenew && e.raw !is RsOpened.PhoneHandover) throw badInput("This is not a trust request.")
         if (decision is TrustDecision.Approve) confirm(
-            when (e.raw) { is RsOpened.CertRequest -> "Approve trust request"; is RsOpened.CertRenew -> "Approve trust session renewal"; else -> "Approve certificate extension" },
+            when (e.raw) { is RsOpened.CertRequest -> "Approve trust request"; is RsOpened.CertRenew -> "Approve trust session renewal"; is RsOpened.PhoneHandover -> "Approve phone handover"; else -> "Approve certificate extension" },
             subtitleOf(e.opened),
         )
         return withContext(NonCancellable + coreDispatcher) {
