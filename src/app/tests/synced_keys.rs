@@ -127,12 +127,15 @@ fn an_opened_synced_key_goes_to_a_private_agent_and_ssh_is_told_to_use_only_it()
         Some(pem.as_str())
     );
 
-    // No private key byte in any file of the temp or runtime directories.
+    // No private key byte in any file of the agent's own directories (the socket's and the public file's): the shared
+    // temp and runtime directories also hold other tests' files, which this test must not judge.
     let body = pem.lines().nth(1).unwrap().to_string();
     let mut found = Vec::new();
-    files_containing(&std::env::temp_dir(), &body, 3, &mut found);
-    if let Some(rt) = std::env::var_os("XDG_RUNTIME_DIR") {
-        files_containing(std::path::Path::new(&rt), &body, 3, &mut found);
+    for own in [agent.socket.parent(), agent.public_file.parent()]
+        .into_iter()
+        .flatten()
+    {
+        files_containing(own, &body, 3, &mut found);
     }
     assert!(found.is_empty(), "the key is in files: {found:?}");
 
