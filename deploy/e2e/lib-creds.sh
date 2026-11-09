@@ -238,3 +238,180 @@ ring_view() {
     echo "$p ops (kind|state|reason|n): $(sq $p "SELECT kind||'|'||state||'|'||coalesce(reason,'')||'|'||count(*) FROM sync_ops WHERE kind IN ('DeviceAdd','DeviceRoleChange','FactorRegister','RedPhoneSign','RedApprove','RedFactor') GROUP BY kind,state,reason" | tr '\n' ';')"
   done
 }
+
+# ---- Phase B helpers ---------------------------------------------------------------------------------------------
+
+# A Quorum ring with the phone ($1 = ring2 or ring3): the kit on every terminal, host quorum1 saved on peer-a with
+# $SECRET, migrated into the ring, the Red switch to Quorum completed (phone, peer-b, paper) and re-encrypted.
+quorum_ring() {
+  ring_with_phone "$1"
+  for p in peer-a peer-b $( [ "$1" = ring3 ] && echo peer-c ); do
+    check "$p imports the kit" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer $p $SSHUB sync-import-kit"
+  done
+  check "peer-a stores host quorum1 with a password" "printf '%s\n' '$SECRET' | peer peer-a $SSHUB host add --name quorum1 --address quorum1.internal --password-stdin"
+  check "peer-a migrates it into the ring" "peer peer-a $SSHUB sync-migrate"
+  show "peer-a sync-mode quorum (proposes the Red switch)" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
+  expect "the mode change is a Red op with a ceremony" "$LAST_OUT" '.tier == "Red" and (.ceremony != null)'
+  step "mode change ceremony (phone, peer-b, paper)" red_complete "$(opid "$LAST_OUT")"
+  show "peer-a sync-mode quorum again (re-encrypts)" sh -c "printf '%s\n' '$PHRASE' | $C exec -T peer-a $SSHUB sync-mode quorum --format json"
+  spread peer-b peer-c peer-a peer-b peer-c
+  approve_all peer-b >/dev/null 2>&1 || true
+  [ "$1" = ring3 ] && approve_all peer-c >/dev/null 2>&1
+  spread peer-b peer-c peer-a peer-b peer-c
+  st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
+  expect "peer-a reports Quorum mode" "$st" '.credential_mode == "quorum"'
+  return 0
+}
+
+# The Red op $1 of peer-a completed by the phone and the paper alone (the second device is waived for the removal of a
+# holder, design 3.2 rule 1; also what a ring with one other attended terminal can give).
+red_phone_paper() {
+  ${PHONE_SIGNS:-phone_signs} peer-a "$1" || return 1
+  show "peer-a adds the paper factor" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-a $SSHUB sync-factor $1 --paper --format json"
+  echo "ceremony of $1: $(pf "$LAST_OUT" ceremony | tr -d '\n ')"
+}
+
+# Full ids of the devices a Quorum credential is wrapped to, as peer $1 stores them (read only evidence).
+wraps_of() { sq "$1" "SELECT wrapped_shares FROM sync_cred_state"; }
+
+# ---- trust sessions (certificates) -------------------------------------------------------------------------------
+
+# A ring with the phone and three terminals (ring3, paper in force), host certhost on peer-a and applied everywhere
+# (a trust session names hosts the delegate knows).
+trust_ring() {
+  ring_with_phone ring3
+  check "peer-a adds host certhost" "peer peer-a $SSHUB host add --name certhost --address certhost.internal"
+  spread peer-b peer-c peer-a peer-b peer-c
+  approve_all peer-b >/dev/null 2>&1 || true
+  approve_all peer-c >/dev/null 2>&1 || true
+  spread peer-b peer-c peer-a peer-b peer-c
+}
+
+# A trust session ($1 = delegate terminal, $2 = host name, $3 = days): the delegate writes the kind 9 request, the phone
+# signs it, the ops text goes to peer-a, a second device (peer-b) approves and the paper is added. Sets CERT_OP (the
+# CertIssue change id).
+issue_cert() {
+  show "$1 sync-cert-request (the delegate asks)" peer "$1" $SSHUB sync-cert-request --host "$2" --days "${3:-30}" --budget 5 --format json
+  [ "$LAST_RC" -eq 0 ] || return 1
+  CERT_REQ=$(pf "$LAST_OUT" request)
+  show "the phone reads the trust session request" phone cert-open "{\"frame\":\"$CERT_REQ\"}"
+  expect "the page shows the request and an approve button" "$LAST_OUT" '.ok == true and .can_approve == true'
+  show "the phone signs the trust session" phone cert-approve "{\"confirm\":\"$(devid peer-a "$1")\"}"
+  expect "the page gives the ops text" "$LAST_OUT" '.ok == true'
+  PHONE_OPS=$(pf "$LAST_OUT" ops)
+  for p in peer-a peer-b; do
+    show "$p sync-phone-ops takes the phone's list in" sh -c "printf '%s\n' '$PHONE_OPS' | $C exec -T $p $SSHUB sync-phone-ops --format json"
+  done
+  spread peer-a peer-b peer-c peer-a
+  CERT_OP=$(lastop peer-a CertIssue)
+  [ -n "$CERT_OP" ] || { echo "FAIL no CertIssue op on peer-a"; fail=$((fail + 1)); return 1; }
+  snow peer-b >/dev/null
+  show "peer-b sync-approve the trust session" peer peer-b $SSHUB sync-approve "$CERT_OP" --format json
+  spread peer-a peer-b peer-a
+  show "peer-a adds the paper factor" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-a $SSHUB sync-factor $CERT_OP --paper --format json"
+  expect "the trust session ceremony is complete" "$LAST_OUT" '.ceremony.complete == true'
+  spread peer-b peer-c peer-a peer-b peer-c
+}
+
+# The trust sessions peer $1 lists: one JSON object per line (id, delegate, expiry, renewals).
+trust_sessions() { peer "$1" $SSHUB sync-trust-renew --format json 2>/dev/null | pjq -c 'select(.event=="session")'; }
+
+# One renewal of the session $2 on peer-a ($3 = days): the request, the phone signs, the list goes to peer-a. Leaves the
+# phone's open answer in RENEW_OPEN, the terminal's request events in RENEW_REQ_OUT.
+renew_cert() {
+  show "peer-a sync-trust-renew $2 (the request)" peer peer-a $SSHUB sync-trust-renew "$2" --days "${3:-30}" --format json
+  RENEW_REQ_OUT=$LAST_OUT
+  [ "$LAST_RC" -eq 0 ] || return 1
+  show "the phone reads the renewal request" phone renew-open "{\"frame\":\"$(pf "$LAST_OUT" request)\"}"
+  RENEW_OPEN=$LAST_OUT
+  [ "$(pf "$RENEW_OPEN" can_approve)" = true ] || return 1
+  show "the phone signs the renewal" phone renew-approve
+  [ "$LAST_RC" -eq 0 ] || return 1
+  PHONE_OPS=$(pf "$LAST_OUT" ops)
+  show "peer-a sync-phone-ops takes the renewal in" sh -c "printf '%s\n' '$PHONE_OPS' | $C exec -T peer-a $SSHUB sync-phone-ops --format json"
+  spread peer-a peer-b peer-c peer-a
+}
+
+# ---- a restored phone takes its chain (design U13-5, one-list rule) -------------------------------------------------
+
+# A ring of peer-a and the Hub with the phone enrolled and having signed its admission (its chain is in the ring); the
+# phone is then restored from its words WITHOUT the "never signed" shortcut, so its card asks for the chain.
+phone_ring_then_restore() {
+  phone_prep_page
+  reset_peers
+  check "peer-a founds the ring with hub" "enroll_peer peer-a hub || enroll_peer peer-a hub"
+  enroll_phone peer-a
+  phone_signs peer-a "$ADD"
+  check "peer-a syncs to the Hub" "snow peer-a >/dev/null"
+}
+restore_phone() {
+  show "the phone forgets its site data" phone reset
+  show "the phone restores its words and keeps the take-chain card" phone setup '{"never_signed":false}'
+}
+
+# The kind 5 list peer $1 shows for the phone (its own newest ops, the sender and the terminals block): prints the text.
+chain_of() { peer "$1" $SSHUB sync-phone-chain "$(devid "$1" 'my phone')" --format json 2>/dev/null | pjq -r 'select(.event=="chain") | .chain'; }
+# The count the terminal reports (the same unsigned statement the page shows) as peer $1 prints it in JSON.
+chain_terminals() { peer "$1" $SSHUB sync-phone-chain "$(devid "$1" 'my phone')" --format json 2>/dev/null | pjq -r 'select(.event=="chain") | .terminals.count'; }
+
+# ---- PhoneHandover (design 5, contract 4j/4l): the old phone (service phone) hands the ring over to the new phone
+# (service phone2) -------------------------------------------------------------------------------------------------
+
+# The new phone enrolls with `sync-phone-enroll --replace` on terminal $1 (all steps as text). The terminal prints the kind
+# 12 request for the OLD phone and the eight words. Sets HO_REQ and HO_WORDS (one line, lower case).
+enroll_phone_replace() {
+  enr_open "$1" sync-phone-enroll --replace --format json
+  E1=$(enr_get 1)
+  show "phone2 opens the enrollment" phone2 enroll-start "{\"name\":\"${PH2_NAME:-new phone}\"}"
+  show "phone2 reads the terminal commitment" phone2 enroll-commit "{\"frame\":\"$(pf "$E1" frame)\"}"
+  expect "the page gives a commitment" "$LAST_OUT" '.ok == true'
+  enr_send "$(pf "$LAST_OUT" frame)"
+  E2=$(enr_get 2)
+  show "phone2 reads the terminal reveal" phone2 enroll-reveal "{\"frame\":\"$(pf "$E2" frame)\"}"
+  expect "the page shows four words" "$LAST_OUT" '.ok == true and (.words | length) > 3'
+  enr_send "$(pf "$LAST_OUT" frame)"
+  E3=$(enr_get 3); echo "terminal: $E3"
+  show "phone2 taps: words match" phone2 enroll-match
+  enr_send "$(pf "$LAST_OUT" frame)"
+  E4=$(enr_get 4); echo "terminal: $E4"
+  enr_send y
+  E5=$(enr_get 5)
+  show "phone2 reads the terminal confirmation" phone2 enroll-finish "{\"frame\":\"$(pf "$E5" frame)\"}"
+  expect "the page ends the enrollment" "$LAST_OUT" '.ok == true'
+  E6=$(enr_get 6); E7=$(enr_get 7)
+  echo "terminal: $E6" | cut -c1-200; echo "terminal: $E7"
+  HO_REQ=$(pf "$E6" request)
+  HO_WORDS=$(printf '%s' "$E7" | pjq -r '.words | join(" ")' | tr 'A-Z' 'a-z')
+  if enr_close; then echo "ok   sync-phone-enroll --replace exits 0 (the new phone is verified, not yet admitted)"; else echo "FAIL sync-phone-enroll --replace exit status"; fail=$((fail + 1)); fi
+  check "the terminal printed the request and eight words" "test -n '$HO_REQ' && [ \"\$(printf '%s' '$HO_WORDS' | wc -w)\" -eq 8 ]"
+}
+
+# The handover up to the point where both phones signed, through terminal peer-a. Sets HO_OP (the PhoneHandover change id),
+# HO_ADM (the second kind 12 frame for the new phone) and OLD_OPS / NEW_OPS (the phones' ops texts). Leaves the other
+# proofs (a second terminal, the paper) to the caller.
+handover_start() {
+  step "the new phone enrolls with --replace" enroll_phone_replace peer-a
+  show "the OLD phone reads the handover request" phone handover-open "{\"frame\":\"$HO_REQ\"}"
+  expect "the old phone shows eight words and an approve button" "$LAST_OUT" '.ok == true and .can_approve == true and ((.words | split(" ") | length) == 8)'
+  check "the old phone's words equal the terminal's" "[ \"$(pf "$LAST_OUT" words | tr 'A-Z' 'a-z')\" = '$HO_WORDS' ]"
+  show "the old phone signs the handover" phone handover-approve
+  expect "the page gives the ops text" "$LAST_OUT" '.ok == true'
+  OLD_OPS=$(pf "$LAST_OUT" ops)
+  show "peer-a sync-phone-ops takes the old phone's list in" sh -c "printf '%s\n' '$OLD_OPS' | $C exec -T peer-a $SSHUB sync-phone-ops --format json"
+  HO_ADM=$(printf '%s' "$LAST_OUT" | pjq -r 'select(.event=="handover_admission") | .frame')
+  check "peer-a prints the second kind 12 frame (the op hash) for the new phone" "test -n '$HO_ADM'"
+  check "the second frame carries the same eight words" "[ \"$(printf '%s' "$LAST_OUT" | pjq -r 'select(.event=="handover_admission") | .words' | tr 'A-Z' 'a-z')\" = '$HO_WORDS' ]"
+  HO_OP=$(lastop peer-a PhoneHandover)
+  check "the PhoneHandover op exists on peer-a" "test -n '$HO_OP'"
+  show "the NEW phone reads its admission frame" phone2 handover-admit-open "{\"frame\":\"$HO_ADM\"}"
+  expect "the new phone can sign its own admission" "$LAST_OUT" '.ok == true and .can_approve == true'
+  show "the new phone signs its admission" phone2 handover-approve
+  expect "the page gives the ops text" "$LAST_OUT" '.ok == true'
+  NEW_OPS=$(pf "$LAST_OUT" ops)
+  show "peer-a sync-phone-ops takes the new phone's list in" sh -c "printf '%s\n' '$NEW_OPS' | $C exec -T peer-a $SSHUB sync-phone-ops --format json"
+  spread peer-a "${HO_SECOND:-peer-b}" peer-a
+  for t in "$OLD_OPS" "$NEW_OPS"; do
+    show "${HO_SECOND:-peer-b} is given the phone's list too" sh -c "printf '%s\n' '$t' | $C exec -T ${HO_SECOND:-peer-b} $SSHUB sync-phone-ops --format json"
+  done
+  snow "${HO_SECOND:-peer-b}" >/dev/null
+}

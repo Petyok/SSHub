@@ -8,11 +8,12 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY . .
+# --features e2e-hooks: SSHUB_E2E_SOLO_LOCK_SECS shortens the 14 day solo-recovery lock (scenario 73); never in a release build.
 # --no-default-features: links system OpenSSL/libdbus (see Cargo.toml [features]). The e2e profile (Cargo.toml) skips LTO; the
 # BuildKit cache mounts keep the registry and the target directory between runs, so a run rebuilds only what changed.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --profile e2e --locked --no-default-features --bin sshub \
+    cargo build --profile e2e --locked --no-default-features --features e2e-hooks --bin sshub \
  && install -m 0755 target/e2e/sshub /out-sshub
 
 FROM debian:bookworm-slim
