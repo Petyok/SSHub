@@ -1673,7 +1673,12 @@ mod over_the_log {
             .unwrap();
         let op = w.reenroll(false, None, None);
         let now = op.timestamp + 60;
-        assert_eq!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now).unwrap().len(), 1);
+        assert_eq!(
+            open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
+                .unwrap()
+                .len(),
+            1
+        );
         append(
             &w.d[P],
             OpBody::PhoneHandover {
@@ -1683,6 +1688,8 @@ mod over_the_log {
         );
         w.sync();
         assert_eq!(w.verdict(&op, now).unwrap(), ReenrollVerdict::Superseded);
-        assert!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now).unwrap().is_empty());
+        assert!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
+            .unwrap()
+            .is_empty());
     }
 }
