@@ -686,3 +686,34 @@ fn a_handover_needs_a_phone_in_the_ring() {
     let err = handover_offer(&t.store, &t.id, &v).err().expect("refused");
     assert!(format!("{err:#}").contains("no phone"), "{err:#}");
 }
+
+#[test]
+fn the_admission_frame_carries_the_op_hash_and_lamport_and_the_same_eight_words() {
+    use crate::sync::oplog::{Op, OpBody};
+    use crate::sync::wire::PhoneHandoverRequestWire;
+    let new = crate::sync::crypto::DeviceIdentity::generate();
+    let old = crate::sync::crypto::DeviceIdentity::generate().public().device_id();
+    let op = Op {
+        device_id: old.clone(),
+        seq: 4,
+        lamport: 77,
+        prev_hash: [3; 32],
+        timestamp: 1,
+        epoch: 0,
+        alg: crate::sync::crypto::ALG_CURRENT,
+        body: OpBody::PhoneHandover {
+            new_phone: new.public(),
+            name: "new phone".into(),
+        },
+        signature: [0; 64],
+    };
+    let o = handover_admission(&op, &old, [9; 8]).unwrap();
+    let req = PhoneHandoverRequestWire::decode(&o.request).unwrap();
+    assert_eq!(req.op, Some((op.hash(), 77)));
+    assert_eq!(req.new_phone, new.public());
+    assert_eq!(o.words.len(), 8);
+    // Not a handover op: refused.
+    let mut other = op.clone();
+    other.body = OpBody::CertRevoke { cert_id: [1; 32] };
+    assert!(handover_admission(&other, &old, [9; 8]).is_err());
+}

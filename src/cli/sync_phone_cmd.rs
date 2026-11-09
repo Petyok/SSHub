@@ -301,16 +301,64 @@ pub(crate) fn handover_offer(
         new_phone: v.phone.clone(),
         name: v.name.clone(),
         terminal,
+        op: None,
     }
     .encode();
     Ok(HandoverOffer { request, words })
+}
+
+/// Stage 2 of kind 12 (contract 4l b): the frame for the NEW phone once the terminal ingested the `PhoneHandover` op, the
+/// request layout plus the op's hash and lamport, and the same eight words the old phone showed.
+pub(crate) fn handover_admission(
+    op: &crate::sync::oplog::Op,
+    old_phone: &str,
+    terminal: [u8; 8],
+) -> Result<HandoverOffer> {
+    let crate::sync::oplog::OpBody::PhoneHandover { new_phone, name } = &op.body else {
+        bail!("that is not a phone handover");
+    };
+    let old_id: [u8; 8] = hex::decode(old_phone)
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .context("the phone's device id is not 16 hex characters")?;
+    let request = crate::sync::wire::PhoneHandoverRequestWire {
+        new_phone: new_phone.clone(),
+        name: name.clone(),
+        terminal,
+        op: Some((op.hash(), op.lamport)),
+    }
+    .encode();
+    Ok(HandoverOffer {
+        request,
+        words: crate::sync::crypto::handover_words(new_phone, name, &old_id),
+    })
+}
+
+/// One `handover_admission:` frame per handover op still waiting, for the phone it adds; empty when the ring has no phone.
+fn admission_lines(store: &LauncherStore, id: &DeviceIdentity) -> Vec<(String, String)> {
+    let Ok(Some(old)) = crate::sync::quorum::phone_device(store) else {
+        return Vec::new();
+    };
+    let Some(terminal) = hex::decode(id.public().device_id())
+        .ok()
+        .and_then(|b| <[u8; 8]>::try_from(b).ok())
+    else {
+        return Vec::new();
+    };
+    store
+        .sync_pending()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|op| handover_admission(op, &old, terminal).ok())
+        .map(|o| (b64(&o.request), o.words.join(" ")))
+        .collect()
 }
 
 /// What happens after the request is shown (plain steps for the person at the terminal).
 pub(crate) fn handover_steps() -> Vec<String> {
     vec![
         "1. Show the request to the OLD phone (it must still work): it shows the new phone's name and the eight words above; they must match, then it signs the handover.".to_string(),
-        "2. Bring the old phone's answer here with `sshub sync-phone-ops`; show the new phone the change so it signs its own admission, and bring that answer in the same way.".to_string(),
+        "2. Bring the old phone's answer here with `sshub sync-phone-ops`: it then prints `handover_admission:`, a second kind 12 frame for the NEW phone (with the same eight words), which signs its own admission; bring that answer in the same way.".to_string(),
         "3. Approve the handover with `sshub sync-approve <change-id>` on another computer and add the paper phrase with `sshub sync-factor <change-id> --paper`. Nothing changes before all three.".to_string(),
         "4. Then run `sshub sync-heal`: the new phone holds your old saved passwords only after that. Retire the old phone yourself.".to_string(),
     ]
@@ -768,6 +816,19 @@ fn execute(cmd: &str, a: &Args, paths: &ProfilePaths) -> Result<i32> {
                 }
                 for c in &ceremony {
                     emit(&mut out, false, "red", c.clone(), json!({}));
+                }
+            }
+            // Contract 4l (b): the second kind 12 frame, for the NEW phone.
+            for (frame, words) in admission_lines(&store, &id) {
+                emit(
+                    &mut out,
+                    a.json,
+                    "handover_admission",
+                    frame.clone(),
+                    json!({"frame": frame, "words": words}),
+                );
+                if !a.json {
+                    emit(&mut out, false, "handover_words", words, json!({}));
                 }
             }
             Ok(0)
