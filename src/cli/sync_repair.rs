@@ -166,20 +166,25 @@ pub(crate) fn parse_csv(text: &str) -> Result<Vec<(String, String)>> {
 
 /// The argv of the installer: the existing `exec` verb runs the key-install command on the host with the credential the
 /// host has TODAY (the old one), so the new key is saved only after it reached the server.
-pub(crate) fn install_argv(exe: &str, profile: Option<&str>, host: &str, public_key: &str) -> Vec<String> {
+pub(crate) fn install_argv(
+    exe: &str,
+    profile: Option<&str>,
+    host: &str,
+    public_key: &str,
+) -> Vec<String> {
     let mut argv = vec![exe.to_string()];
     if let Some(p) = profile {
         argv.extend(["--profile".into(), p.into()]);
     }
-    argv.extend(
-        ["exec", host, "--timeout", "60", "--"].map(String::from),
-    );
+    argv.extend(["exec", host, "--timeout", "60", "--"].map(String::from));
     argv.push(crate::app::push_key::install_key_command(public_key));
     argv
 }
 
 /// Installs a public key on a host through `sshub exec`; the real installer for [`rekey_new_key`].
-pub(crate) fn exec_installer(paths: &crate::profile::ProfilePaths) -> impl FnMut(&str, &str) -> Result<()> {
+pub(crate) fn exec_installer(
+    paths: &crate::profile::ProfilePaths,
+) -> impl FnMut(&str, &str) -> Result<()> {
     let profile = (!paths.compat).then(|| paths.name.clone());
     move |host, public_key| {
         let exe = crate::session::askpass::helper_exe()?;
@@ -192,7 +197,11 @@ pub(crate) fn exec_installer(paths: &crate::profile::ProfilePaths) -> impl FnMut
         ensure!(
             out.status.success(),
             "the login with the current credential failed: {}",
-            String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("no message").trim()
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .last()
+                .unwrap_or("no message")
+                .trim()
         );
         Ok(())
     }
@@ -218,7 +227,8 @@ pub(crate) fn rekey_new_key(
             let private = std::fs::read_to_string(&path)?;
             let public = crate::ssh::read_public_key(&path, None)?;
             let _ = std::fs::remove_file(&path);
-            install(host, &public).context("not installed, so nothing was saved and the old secret stays")?;
+            install(host, &public)
+                .context("not installed, so nothing was saved and the old secret stays")?;
             cred_put(
                 store,
                 id,
@@ -233,7 +243,10 @@ pub(crate) fn rekey_new_key(
         match result {
             Ok(public) => {
                 saved += 1;
-                lines.push(format!("new key installed on {host} and saved: {}", public.trim()));
+                lines.push(format!(
+                    "new key installed on {host} and saved: {}",
+                    public.trim()
+                ));
                 lines.push("  Remove the OLD key's line from that server's ~/.ssh/authorized_keys yourself: SSHub does not delete keys on servers.".into());
             }
             Err(e) => lines.push(format!("no new key: {host}: {e:#}")),
@@ -412,7 +425,12 @@ mod tests {
     fn a_new_key_is_installed_with_the_current_login_before_it_is_saved() {
         let phrase = bip39_encode(&[0x75; 32]);
         let (d, _) = world(4, &phrase);
-        append(&d[0], OpBody::DeviceRevoke { device_id: d[3].did.clone() });
+        append(
+            &d[0],
+            OpBody::DeviceRevoke {
+                device_id: d[3].did.clone(),
+            },
+        );
         let name = rekey_list(&d[0].store).unwrap()[0].1.clone();
         let (store, id) = (&d[0].store, &d[0].id);
         // The install fails: nothing is saved, the credential stays on the list, the old secret stays.
@@ -422,9 +440,17 @@ mod tests {
             bail!("permission denied")
         };
         let r = rekey_new_key(store, id, &[name.clone()], &mut failing).unwrap();
-        assert!(r.lines.iter().any(|l| l.starts_with("no new key") && l.contains("nothing was saved")), "{r:?}");
+        assert!(
+            r.lines
+                .iter()
+                .any(|l| l.starts_with("no new key") && l.contains("nothing was saved")),
+            "{r:?}"
+        );
         assert_eq!(rekey_list(store).unwrap().len(), 1);
-        assert!(tried[0].1.starts_with("ssh-ed25519 "), "the public key reaches the installer: {tried:?}");
+        assert!(
+            tried[0].1.starts_with("ssh-ed25519 "),
+            "the public key reaches the installer: {tried:?}"
+        );
         // The install works: saved, and the user is told to remove the old line.
         let mut seen = Vec::new();
         let mut ok = |host: &str, key: &str| -> Result<()> {
@@ -432,21 +458,41 @@ mod tests {
             Ok(())
         };
         let r = rekey_new_key(store, id, &[name.clone()], &mut ok).unwrap();
-        assert!(r.lines.iter().any(|l| l.starts_with("new key installed on")), "{r:?}");
-        assert!(r.lines.iter().any(|l| l.contains("Remove the OLD key's line")), "{r:?}");
+        assert!(
+            r.lines
+                .iter()
+                .any(|l| l.starts_with("new key installed on")),
+            "{r:?}"
+        );
+        assert!(
+            r.lines
+                .iter()
+                .any(|l| l.contains("Remove the OLD key's line")),
+            "{r:?}"
+        );
         assert_eq!(seen.len(), 1);
         assert!(rekey_list(store).unwrap().is_empty());
     }
 
     #[test]
     fn the_installer_runs_the_existing_exec_verb_with_the_push_key_command() {
-        let argv = install_argv("/usr/bin/sshub", Some("work"), "web", "ssh-ed25519 AAAA test");
+        let argv = install_argv(
+            "/usr/bin/sshub",
+            Some("work"),
+            "web",
+            "ssh-ed25519 AAAA test",
+        );
         assert_eq!(&argv[..4], ["/usr/bin/sshub", "--profile", "work", "exec"]);
         assert_eq!(argv[4], "web");
         assert!(argv.contains(&"--timeout".to_string()));
         let dashes = argv.iter().position(|a| a == "--").unwrap();
         let cmd = &argv[dashes + 1];
-        assert!(cmd.contains("grep -qxF") && cmd.contains("authorized_keys") && cmd.contains("ssh-ed25519 AAAA test"), "{cmd}");
+        assert!(
+            cmd.contains("grep -qxF")
+                && cmd.contains("authorized_keys")
+                && cmd.contains("ssh-ed25519 AAAA test"),
+            "{cmd}"
+        );
         // A quote in the key text cannot end the shell string early.
         let evil = crate::app::push_key::install_key_command("a'b");
         assert!(evil.contains("'a'\\''b'"), "{evil}");
