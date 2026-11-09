@@ -164,6 +164,18 @@ export const sasWords = (transcriptHash32) => {
   return [0, 1, 2, 3].map((i) => bip39Wordlist[parseInt(bits.slice(i * 11, i * 11 + 11), 2)]).join('-');
 };
 
+// Handover words (design 5, contract 4j; Rust crypto/sas.rs handover_words): the first 88 bits of BLAKE3 over
+// "sshub/handover/v1" || ed25519 || x25519 || mlkem || name_len u8 || name || old_phone_id(8), 11 bits per word.
+export const HANDOVER_WORDS = 8;
+export const handoverWords = (ed25519Pub, x25519Pub, mlkemPub, name, oldPhoneId) => {
+  const nm = utf8(name);
+  if (nm.length > 255) throw new Error('a handover name is at most 255 bytes');
+  const d = blake3(concat(utf8('sshub/handover/v1'), ed25519Pub, x25519Pub, mlkemPub, Uint8Array.of(nm.length), nm, oldPhoneId));
+  let bits = '';
+  for (const b of d.slice(0, 11)) bits += b.toString(2).padStart(8, '0');
+  return Array.from({ length: HANDOVER_WORDS }, (_, i) => bip39Wordlist[parseInt(bits.slice(i * 11, i * 11 + 11), 2)]);
+};
+
 // ---------------------------------------------------------------- EFF-7776 (Rust: stage-0 Task 12, u128 arithmetic)
 
 // words: string[7776]. Both sides use crates/sshub-sync-proto/assets/wordlists/eff_large.txt.

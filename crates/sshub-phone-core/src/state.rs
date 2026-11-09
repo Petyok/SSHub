@@ -97,12 +97,15 @@ pub struct HeadCandidate {
     pub sender: Option<String>,
 }
 
-/// A head two lists agreed on, waiting for the user's acceptance.
+/// A head two lists agreed on (or one list, see `single_source`), waiting for the user's acceptance.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeadProposal {
     pub chain: Vec<ChainEntry>,
     pub epoch: u64,
     pub wrap_epoch: u32,
+    /// Proposed from ONE list (the sender reported its ring's terminal count): `accept_head` needs the explicit tick.
+    #[serde(default)]
+    pub single_source: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

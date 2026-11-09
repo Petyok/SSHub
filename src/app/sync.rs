@@ -140,15 +140,15 @@ impl DeviceView {
         let days = self.last_seen.map(|t| ((now - t).max(0)) / 86_400);
         match (self.status, days) {
             (DeviceStatusView::Behind | DeviceStatusView::Stale, Some(d)) if !self.this => Some(format!(
-                "{} missed {d} days: approve it back from the phone or another laptop. Press Enter to sync it first.",
+                "{} was away {d} days; nothing is blocked. If a round reports 'behind', press Enter to re-enroll it.",
                 self.name
             )),
             (DeviceStatusView::Behind | DeviceStatusView::Stale, None) if !self.this => Some(format!(
-                "{} has not synced yet: approve it back from the phone or another laptop. Press Enter to sync it first.",
+                "{} has not synced yet; nothing is blocked. Press Enter to sync it first.",
                 self.name
             )),
             (DeviceStatusView::Behind | DeviceStatusView::Stale, _) => Some(
-                "This device missed some changes: approve it back from the phone or another laptop."
+                "This device was away or missed some changes; nothing is blocked."
                     .into(),
             ),
             (DeviceStatusView::Suspect, _) => Some(format!(
@@ -269,6 +269,8 @@ pub struct RedView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PendingOpView {
     pub device: String,
+    /// Id of the device that wrote the op (the name in `device` is not unique).
+    pub author: String,
     pub summary: String,
     pub changes: Vec<ChangeView>,
     /// Hash of the op, for approving or rejecting it in the store.
@@ -605,6 +607,14 @@ pub struct SyncView {
     pub health: crate::sync::health::Health,
     /// `None` when a stolen full computer can be cut off, else how many more computers are needed.
     pub cut_off_missing: Option<usize>,
+    /// A ring is set up but no paper phrase is registered (design 3.1): a standing line offers the wizard.
+    pub no_paper: bool,
+    /// A ring is set up but no mail command and recipient are configured: a standing line says what that means.
+    pub no_mail: bool,
+    /// Plain lines about saved passwords that are exposed or not yet shared with a current full device (design 4.3).
+    pub exposure: Vec<String>,
+    /// Names of the hosts whose saved password is on either list: the host row carries a marker.
+    pub exposed_hosts: Vec<String>,
     /// The Vault's ring secret is not in this profile's credential store (checked once, again after a job).
     pub ring_secret_missing: Option<bool>,
     /// A persistent row for a switch or export that was approved and waits to be finished.
@@ -617,9 +627,28 @@ pub struct SyncView {
     pub answered_releases: Vec<[u8; 32]>,
     /// Mode the fork alert interrupted, restored on dismissal.
     fork_return: Option<AppMode>,
+    /// The one alert for recoveries open on this terminal (lines already worded), and the ones Esc dismissed.
+    pub alert: Option<RecoveryAlert>,
+    pub alert_dismissed: Vec<[u8; 32]>,
+    alert_return: Option<AppMode>,
+}
+
+/// What the recovery alert shows: plain lines, and the recoveries behind them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryAlert {
+    pub lines: Vec<String>,
+    pub hashes: Vec<[u8; 32]>,
 }
 
 impl SyncView {
+    pub(crate) fn alert_return_set(&mut self, mode: AppMode) {
+        self.alert_return = Some(mode);
+    }
+
+    pub(crate) fn alert_return_take(&mut self) -> AppMode {
+        self.alert_return.take().unwrap_or(AppMode::Normal)
+    }
+
     /// A fork proof, or any device marked compromised.
     pub fn compromised(&self) -> bool {
         self.fork.is_some()
@@ -656,6 +685,9 @@ impl App {
             return None;
         }
         let mut text = format!("\u{21c5}{}", sync.reachable());
+        if sync.alert.is_some() {
+            text.push_str(" recovery open");
+        }
         if sync.pending > 0 {
             text.push_str(&format!(" \u{23f3}{}", sync.pending));
         }
@@ -663,8 +695,9 @@ impl App {
         if let Some(line) = &line {
             text.push_str(&format!("  {line}"));
         }
-        let urgent =
-            sync.health.red_expires_in.is_some_and(|l| l <= 86_400) || sync.health.phone_expired;
+        let urgent = sync.health.red_expires_in.is_some_and(|l| l <= 86_400)
+            || sync.health.phone_expired
+            || sync.alert.is_some();
         let role = if sync.compromised() || urgent {
             ColorRole::StatusError
         } else if sync.pending > 0 || line.is_some() {
@@ -702,6 +735,9 @@ impl App {
             _ if self.is_action(KeyAction::SyncReview, &key) => self.sync_open_review(),
             _ if self.is_action(KeyAction::SyncTrust, &key) => self.sync_open_trust(),
             _ if self.is_action(KeyAction::SyncAdmin, &key) => self.open_sync_admin(),
+            _ if self.is_action(KeyAction::SyncPaper, &key) => {
+                super::sync_flows::paper_wizard(self)
+            }
             _ if self.is_action(KeyAction::Connect, &key) => self.sync_open_selected(),
             _ => {}
         }
@@ -1462,6 +1498,18 @@ impl App {
         let up = self.is_action(KeyAction::MoveUp, &key);
         let plain = |c: char| key.code == KeyCode::Char(c) && key.modifiers.is_empty();
         match self.mode {
+            AppMode::SyncRecoveryAlert => {
+                // Esc (or Enter) only closes the notice for the recoveries it names; a new one raises it again.
+                if self.is_action(KeyAction::ForceQuit, &key) {
+                    self.should_quit = true;
+                } else if cancel || confirm {
+                    if let Some(a) = &self.sync.alert {
+                        let hashes = a.hashes.clone();
+                        self.sync.alert_dismissed.extend(hashes);
+                    }
+                    self.mode = self.sync.alert_return.take().unwrap_or(AppMode::Normal);
+                }
+            }
             AppMode::SyncForkAlert => {
                 if self.is_action(KeyAction::ForceQuit, &key) {
                     self.should_quit = true;
@@ -1477,6 +1525,8 @@ impl App {
                     self.sync.review_selected = (self.sync.review_selected + 1).min(last);
                 } else if up {
                     self.sync.review_selected = self.sync.review_selected.saturating_sub(1);
+                } else if key.code == KeyCode::Char('A') {
+                    self.sync_approve_group();
                 } else if let KeyCode::Char(c @ ('a' | 'r' | 'p' | 'e')) = key.code {
                     if key.modifiers.is_empty() {
                         self.sync_review_key(c);
@@ -1621,6 +1671,7 @@ pub(crate) fn sample_sync_view() -> SyncView {
             hash: [0; 32],
             reason: None,
             red: None,
+            author: String::new(),
             device: "server".into(),
             summary: "edit host web-1".into(),
             changes: vec![ChangeView {

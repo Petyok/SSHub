@@ -93,6 +93,10 @@ fn phone(app: &mut App) {
                 super::sync_phone::start,
                 has_phone.then_some("the ring already has a phone; replacing it is a recovery"),
             ),
+            go(
+                "Mail: be told when someone tries to replace the phone",
+                super::sync_flows_more::mail_setup,
+            ),
             unless(
                 "Take in what the phone signed (paste its text)",
                 super::sync_phone::paste_ops,

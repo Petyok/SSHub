@@ -61,6 +61,8 @@ done
 echo "mailpit ready"
 
 fail=0
+skipped=0
+RCF=$(mktemp); OUTF=$(mktemp)
 # SCENARIOS: space separated name prefixes (default: all), e.g. "60 65" or "66-app". The runner passes no environment
 # (gpu-verify/e2e.sh), so the file deploy/e2e/scenarios.filter works as well. SCENARIO_TIMEOUT (seconds, default 900) caps each scenario.
 FILTER=${SCENARIOS:-$(cat "$HERE/scenarios.filter" 2>/dev/null || true)}
@@ -76,8 +78,10 @@ for s in "$HERE"/scenarios/*.sh; do
   cap=${cap:-900}
   t0=$(date +%s)
   echo "$(date -u +%H:%M:%S) scenario $name start (cap $cap s)"
-  timeout "$cap" sh "$s"
-  rc=$?
+  # tee keeps the log live; the scenario's status travels in a file because a pipe hides it
+  { timeout "$cap" sh "$s"; echo $? > "$RCF"; } | tee "$OUTF"
+  rc=$(cat "$RCF")
+  grep -q "^@@@SCENARIO $name SKIP" "$OUTF" && skipped=$((skipped + 1))
   if [ "$rc" -eq 124 ]; then echo "@@@SCENARIO $name FAIL timeout after $cap s"; fi
   [ "$rc" -eq 0 ] || fail=$((fail + 1))
   echo "$(date -u +%H:%M:%S) scenario $name end rc=$rc ($(( $(date +%s) - t0 )) s)"
@@ -85,5 +89,6 @@ done
 
 echo "$(date -u +%H:%M:%S) compose logs"
 $C logs --no-color --timestamps
+echo "skipped scenarios: $skipped (a SKIP tested nothing)"
 echo "failed scenarios: $fail"
 exit "$fail"

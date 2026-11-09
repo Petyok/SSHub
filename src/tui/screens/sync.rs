@@ -102,6 +102,27 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             color(app, ColorRole::StatusWarning),
         ),
     });
+    if sync.no_mail {
+        lines.push(Line::styled(
+            "No mail configured: a hostile recovery would only show on terminal screens (M, Phone, Mail)",
+            color(app, ColorRole::StatusWarning),
+        ));
+    }
+    if sync.no_paper {
+        lines.push(Line::styled(
+            format!(
+                "No paper phrase: you cannot cut off a lost device or recover a lost phone. Register it (press {})",
+                key_of(app, KeyAction::SyncPaper)
+            ),
+            color(app, ColorRole::StatusWarning),
+        ));
+    }
+    for l in &sync.exposure {
+        lines.push(Line::styled(
+            l.clone(),
+            color(app, ColorRole::StatusWarning),
+        ));
+    }
     if let Some(error) = &sync.last_error {
         lines.push(Line::styled(
             format!("Last sync failed: {error}"),
@@ -293,6 +314,16 @@ pub fn render_review(frame: &mut Frame, app: &App) {
             app.theme().style(StyleRole::TextMuted),
         ));
     }
+    let group = crate::app::sync_view::stale_group(&sync.review, selected).len();
+    if group > 0 {
+        body.push(Line::styled(
+            format!(
+                "  {group} change(s) from {} are held for being away; none touches an address, jump host or command. {} approves them all on this device.",
+                op.device, "A"
+            ),
+            app.theme().style(StyleRole::TextMuted),
+        ));
+    }
     if let Some(red) = &op.red {
         body.push(Line::raw(""));
         body.push(Line::styled(
@@ -344,6 +375,8 @@ pub fn render_review(frame: &mut Frame, app: &App) {
     }
     let hint = if op.red.is_some() {
         "\u{2191}\u{2193} select  a add my approval  p paper phrase  e emailed code  r reject  Esc close"
+    } else if group > 0 {
+        "\u{2191}\u{2193} select  a approve  A approve all from this device  r reject  Esc close"
     } else {
         "\u{2191}\u{2193} select  a approve  r reject  Esc close"
     };
@@ -608,6 +641,40 @@ pub fn render_fork_alert(frame: &mut Frame, app: &App) {
         ),
     ];
     body.extend(body_rest);
+    frame.render_widget(
+        Paragraph::new(body).wrap(Wrap { trim: false }),
+        area.inner(Margin::new(3, 2)),
+    );
+}
+
+/// Full-screen notice for recoveries of the phone that were not started here (design 7b): who, how many, when the
+/// earliest lock ends, what to do. Esc only closes it; there is no acknowledge and nothing is written.
+pub fn render_recovery_alert(frame: &mut Frame, app: &App) {
+    let Some(a) = app.sync.alert.as_ref() else {
+        return;
+    };
+    let area = frame.area();
+    let theme = app.theme();
+    let warn = color(app, ColorRole::StatusError);
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(warn)
+            .title(Span::styled(" RECOVERY OF THE PHONE ", warn)),
+        area,
+    );
+    let text = theme.style(StyleRole::TextPrimary);
+    let mut body: Vec<Line> = a
+        .lines
+        .iter()
+        .map(|l| Line::styled(l.clone(), text))
+        .collect();
+    body.push(Line::raw(""));
+    body.push(Line::styled(
+        "Esc closes this notice. It comes back for a new recovery, and the Sync tab and `sshub sync-status` keep showing it.",
+        theme.style(StyleRole::PopupHint),
+    ));
     frame.render_widget(
         Paragraph::new(body).wrap(Wrap { trim: false }),
         area.inner(Margin::new(3, 2)),

@@ -134,7 +134,7 @@ fn age(now: i64, op_timestamp: i64) -> i128 {
 }
 
 fn lapsed(age: i128) -> String {
-    format!("This operation is {} days old; a Red ceremony lapses after 3 days. Ask the terminal to propose it again.", age.div_euclid(86_400))
+    format!("This operation is {} days old; a Red ceremony lapses after 7 days. Ask the terminal to propose it again.", age.div_euclid(86_400))
 }
 
 fn open_red(
@@ -530,18 +530,18 @@ mod tests {
     }
 
     #[test]
-    fn red_ops_lapse_after_three_days_and_a_future_date_is_refused() {
+    fn red_ops_lapse_after_seven_days_and_a_future_date_is_refused() {
         let mut w = World::new(true);
         let v = w.vector("device-revoke"); // timestamp 1
         let frame = notice(&v);
         let ttl = RED_CEREMONY_TTL_SECS;
         assert!(
             matches!(w.open(&frame, 1 + ttl).0, Opened::RedNotice { .. }),
-            "exactly 3 days is still inside"
+            "exactly 7 days is still inside"
         );
         let (o, p) = w.open(&frame, 2 + ttl);
         assert!(
-            reason(&o).contains("3 days") && reason(&o).contains("3 days old"),
+            reason(&o).contains("7 days") && reason(&o).contains("7 days old"),
             "{}",
             reason(&o)
         );
