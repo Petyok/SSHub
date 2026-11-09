@@ -23,12 +23,31 @@ pub struct Policy {
 
 impl Default for Policy {
     fn default() -> Self {
-        Self {
+        #[allow(unused_mut)]
+        let mut p = Self {
             ops: CHECKPOINT_OPS,
             bytes: CHECKPOINT_BYTES,
             min_interval_secs: CHECKPOINT_MIN_INTERVAL_SECS,
             after_reshare_secs: CHECKPOINT_AFTER_RESHARE_SECS,
+        };
+        // The e2e image (built with `--features e2e-hooks`, never a release) may shrink the thresholds so a scenario
+        // need not write 5000 ops or wait a day: SSHUB_E2E_CHECKPOINT_OPS and SSHUB_E2E_CHECKPOINT_MIN_INTERVAL_SECS.
+        #[cfg(feature = "e2e-hooks")]
+        {
+            if let Some(v) = std::env::var("SSHUB_E2E_CHECKPOINT_OPS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+            {
+                p.ops = v;
+            }
+            if let Some(v) = std::env::var("SSHUB_E2E_CHECKPOINT_MIN_INTERVAL_SECS")
+                .ok()
+                .and_then(|v| v.parse::<i64>().ok())
+            {
+                p.min_interval_secs = v;
+            }
         }
+        p
     }
 }
 
@@ -295,5 +314,24 @@ mod tests {
         }
         let report = after_round(&store, &id, 100_000, &Policy::default()).unwrap();
         assert!(report.proposed.is_some(), "{report:?}");
+    }
+
+    /// The thresholds shrink through the environment only in a build with `--features e2e-hooks` (the e2e image).
+    #[test]
+    fn the_checkpoint_env_hooks_exist_only_in_the_e2e_build() {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::set_var("SSHUB_E2E_CHECKPOINT_OPS", "20");
+        std::env::set_var("SSHUB_E2E_CHECKPOINT_MIN_INTERVAL_SECS", "5");
+        let p = Policy::default();
+        std::env::remove_var("SSHUB_E2E_CHECKPOINT_OPS");
+        std::env::remove_var("SSHUB_E2E_CHECKPOINT_MIN_INTERVAL_SECS");
+        #[cfg(feature = "e2e-hooks")]
+        assert_eq!((p.ops, p.min_interval_secs), (20, 5));
+        #[cfg(not(feature = "e2e-hooks"))]
+        assert_eq!(
+            (p.ops, p.min_interval_secs),
+            (CHECKPOINT_OPS, CHECKPOINT_MIN_INTERVAL_SECS)
+        );
     }
 }
