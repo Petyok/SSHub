@@ -12,6 +12,7 @@ pub mod enroll;
 pub mod entity_capture;
 pub mod exemption;
 pub mod export;
+pub mod handover;
 pub mod health;
 pub mod hub;
 pub mod identity_store;

@@ -708,6 +708,31 @@ mod in_force {
             cert_renew_request(store, cert.id, 11 * day, now).is_err(),
             "longer than the first term"
         );
+        assert!(req.opened.is_empty() && req.opened_total == 0);
+        // Two hosts opened by the enforcing holders (not the delegate): the next request names them, newest first.
+        let web = store
+            .create_host(&crate::store::NewHost::launcher("web", "10.0.0.1"))
+            .unwrap();
+        let web_uid = store.host_uid(web.id).unwrap().unwrap();
+        append(&d[0], crate::sync::cert::cert_opened_body(&cert, &web_uid));
+        append(
+            &d[2],
+            crate::sync::cert::cert_opened_body(&cert, &[77u8; 16]),
+        );
+        all_to_all_pull(&d);
+        let req = cert_renew_request(&d[0].store, cert.id, 5 * day, now).unwrap();
+        assert_eq!(req.opened_total, 2);
+        assert_eq!(req.opened.len(), 2);
+        assert!(req.opened.contains(&"web".to_string()), "{:?}", req.opened);
+        assert!(
+            req.opened.contains(&"4d4d4d4d".to_string()),
+            "a host with no name here is its first hex digits"
+        );
+        // It survives the wire.
+        assert_eq!(
+            crate::sync::wire::CertRenewRequestWire::decode(&req.encode()).unwrap(),
+            req
+        );
 
         // After the original end the session is dead; a renewal revives it, within the caps.
         let late = now + 12 * day;
@@ -2275,5 +2300,270 @@ fn third_holder_needs_a_registered_paper() {
     assert!(
         st.blocked.as_deref().is_some_and(|b| b.contains("paper")),
         "{st:?}"
+    );
+}
+
+// ---------------------------------------------------------------- Phase B wave 3: the phone handover
+
+/// The ring of `world([R, A, B])` with its paper registered, and a fresh replacement phone.
+fn handover_world() -> (Vec<Dev>, DeviceIdentity, Dev) {
+    let d = world(&[R, A, B]);
+    let recover = paper_ready(&d);
+    let new = Dev::new();
+    crate::sync::ceremony::test_force(&new.store, false);
+    (d, recover, new)
+}
+
+fn hand_over(d: &[Dev], new: &Dev, name: &str) -> Op {
+    propose(
+        d,
+        P,
+        OpBody::PhoneHandover {
+            new_phone: new.id.public(),
+            name: name.into(),
+        },
+    )
+}
+
+/// The new phone signs its own admission; its op reaches every ring device as the op of an unknown author.
+fn new_phone_signs(d: &[Dev], new: &Dev, h: &Op) {
+    // Its proof must come after the op (a higher lamport): the new phone has seen the op before it signs.
+    pull(&d[P], new);
+    append(new, red_phone_sign_body(h));
+    for x in d {
+        pull(new, x);
+    }
+}
+
+#[test]
+fn a_handover_needs_the_new_phone_a_second_terminal_and_the_paper() {
+    let (d, recover, new) = handover_world();
+    let h = hand_over(&d, &new, "next phone");
+    let st = status(&d, &h, h.timestamp + 30);
+    assert!(st.blocked.is_none(), "{st:?}");
+    assert_eq!(
+        st.missing,
+        vec![
+            RedProof::Phone,
+            RedProof::SecondDevice,
+            RedProof::Factor(Some(ThirdFactor::Paper))
+        ],
+        "the author is the old phone; the new phone, a second terminal and the paper are missing"
+    );
+    assert_eq!(handover_effect(&d[OBS].store, &h).unwrap(), None);
+    new_phone_signs(&d, &new, &h);
+    append(&d[A], red_approve_body(&h));
+    sync(&d);
+    assert_eq!(
+        status(&d, &h, h.timestamp + 30).missing,
+        vec![RedProof::Factor(Some(ThirdFactor::Paper))]
+    );
+    append(&d[B], red_factor_paper(&recover, &h));
+    sync(&d);
+    let st = status(&d, &h, h.timestamp + 30);
+    assert!(st.complete && st.rule_violation.is_none(), "{st:?}");
+    assert!(handover_effect(&d[OBS].store, &h).unwrap().is_some());
+}
+
+#[test]
+fn the_effect_lamport_is_the_highest_counted_proof_and_the_phone_changes_only_from_it() {
+    use crate::sync::quorum::phone_device_in;
+    let (d, recover, new) = handover_world();
+    let h = hand_over(&d, &new, "next phone");
+    append(&d[A], red_approve_body(&h));
+    sync(&d);
+    append(&d[B], red_factor_paper(&recover, &h));
+    sync(&d);
+    // The new phone signs LAST: its proof completes the ceremony.
+    new_phone_signs(&d, &new, &h);
+    for x in &d {
+        settle_red_ops(&x.store, h.timestamp + 60).unwrap();
+    }
+    let sign_lamport = ops_of(&d[OBS].store, "RedPhoneSign", None)
+        .unwrap()
+        .iter()
+        .chain(d[OBS].store.sync_chain_tail(&new.did, 0).unwrap().iter())
+        .map(|o| o.lamport)
+        .max()
+        .unwrap();
+    let effect = handover_effect(&d[OBS].store, &h).unwrap().unwrap();
+    assert_eq!(
+        effect, sign_lamport,
+        "the last proof is the completion point"
+    );
+    let phone_at = |upto: Option<u64>| {
+        phone_device_in(&effective_devices(&d[OBS].store, upto).unwrap()).unwrap()
+    };
+    assert_eq!(
+        phone_at(Some(effect - 1)),
+        Some(d[P].did.clone()),
+        "under the old phone"
+    );
+    assert_eq!(phone_at(Some(h.lamport)), Some(d[P].did.clone()));
+    assert_eq!(phone_at(Some(effect)), Some(new.did.clone()));
+    assert_eq!(phone_at(None), Some(new.did.clone()));
+}
+
+#[test]
+fn the_emailed_code_never_counts_for_a_handover_and_it_needs_a_registered_paper() {
+    // No paper at all: blocked, whatever else is there.
+    let d = world(&[R, A, B]);
+    let new = Dev::new();
+    let h = hand_over(&d, &new, "next phone");
+    let st = status(&d, &h, h.timestamp + 30);
+    assert!(
+        st.blocked.as_deref().is_some_and(|b| b.contains("paper")),
+        "{st:?}"
+    );
+
+    // The paper and an email factor: only the paper counts.
+    let (d, recover, new) = handover_world();
+    let (body, code) = factor_register_email(&d[B].did).unwrap();
+    let ereg = propose(&d, R, body);
+    append(&d[P], red_phone_sign_body(&ereg));
+    append(&d[A], red_approve_body(&ereg));
+    append(&d[R], red_factor_paper(&recover, &ereg));
+    sync(&d);
+    for x in &d {
+        settle_red_ops(&x.store, ereg.timestamp + 5).unwrap();
+    }
+    remember_email_code(&d[B].store, &d[B].id, &code).unwrap();
+    let h = hand_over(&d, &new, "next phone");
+    new_phone_signs(&d, &new, &h);
+    append(&d[A], red_approve_body(&h));
+    append(&d[B], red_factor_email(&d[B].store, &code, &h).unwrap());
+    sync(&d);
+    let st = status(&d, &h, h.timestamp + 30);
+    assert!(
+        !st.complete,
+        "the emailed code completed a handover: {st:?}"
+    );
+    assert_eq!(st.missing, vec![RedProof::Factor(Some(ThirdFactor::Paper))]);
+}
+
+#[test]
+fn a_handover_to_a_key_the_ring_knows_is_a_rule_violation() {
+    let (d, _recover, _new) = handover_world();
+    let h = propose(
+        &d,
+        P,
+        OpBody::PhoneHandover {
+            new_phone: d[A].id.public(),
+            name: "a terminal key".into(),
+        },
+    );
+    let st = status(&d, &h, h.timestamp + 30);
+    assert!(
+        st.rule_violation.is_some() && st.blocked.is_some(),
+        "{st:?}"
+    );
+}
+
+#[test]
+fn a_handover_not_written_by_the_live_phone_is_refused() {
+    let (d, _recover, new) = handover_world();
+    let h = propose(
+        &d,
+        R,
+        OpBody::PhoneHandover {
+            new_phone: new.id.public(),
+            name: "by a terminal".into(),
+        },
+    );
+    let st = status(&d, &h, h.timestamp + 30);
+    assert!(
+        st.rule_violation
+            .as_deref()
+            .is_some_and(|v| v.contains("live phone")),
+        "{st:?}"
+    );
+}
+
+/// crypto M7: two handovers by one phone can both collect their proofs; the one that completed first wins.
+#[test]
+fn of_two_handovers_by_one_phone_the_first_to_complete_wins() {
+    let (d, recover, new1) = handover_world();
+    let new2 = Dev::new();
+    crate::sync::ceremony::test_force(&new2.store, false);
+    let h1 = hand_over(&d, &new1, "first");
+    let h2 = hand_over(&d, &new2, "second");
+    for (h, new) in [(&h1, &new1), (&h2, &new2)] {
+        append(&d[A], red_approve_body(h));
+        append(&d[B], red_factor_paper(&recover, h));
+        sync(&d);
+        new_phone_signs(&d, new, h);
+    }
+    let e1 = handover_effect(&d[OBS].store, &h1).unwrap();
+    let e2 = handover_effect(&d[OBS].store, &h2).unwrap();
+    assert!(e1.is_some(), "the first completed");
+    assert!(
+        e2.is_none(),
+        "the second lost: {:?}",
+        status(&d, &h2, h2.timestamp + 30)
+    );
+    assert!(status(&d, &h2, h2.timestamp + 30)
+        .rule_violation
+        .is_some_and(|v| v.contains("completed first")));
+}
+
+/// Design 5.4: the unattended jobs of a trust session must not stop at a phone upgrade.
+#[test]
+fn trust_session_survives_a_handover() {
+    use crate::sync::cert::{cert_allows, extension_budget, issuer_phones, DelegationCert};
+    use crate::sync::oplog::CertScope;
+    let (d, recover, new) = handover_world();
+    let host = [60u8; 16];
+    let now = crate::store::now_ts();
+    let cert_op = propose(
+        &d,
+        P,
+        OpBody::CertIssue {
+            device_id: d[R].did.clone(),
+            scope: CertScope::Hosts(vec![host]),
+            expiry: now + 10 * 86_400,
+            max_new_hosts_per_day: 2,
+            epoch_lo: 0,
+            epoch_hi: 10,
+        },
+    );
+    append(&d[A], red_approve_body(&cert_op));
+    append(&d[B], red_factor_paper(&recover, &cert_op));
+    sync(&d);
+    for x in &d {
+        settle_red_ops(&x.store, cert_op.timestamp + 5).unwrap();
+    }
+    let cert = DelegationCert::from_op(&cert_op).unwrap();
+    let old_key = d[P].id.public().ed25519_pub;
+    let at = cert_op.timestamp + 60;
+    cert_allows(&cert, &old_key, &d[OBS].store, &d[R].did, &host, at, at).unwrap();
+
+    // The ring hands over to a new phone.
+    let h = hand_over(&d, &new, "next phone");
+    append(&d[A], red_approve_body(&h));
+    append(&d[B], red_factor_paper(&recover, &h));
+    sync(&d);
+    new_phone_signs(&d, &new, &h);
+    for x in &d {
+        settle_red_ops(&x.store, h.timestamp + 60).unwrap();
+    }
+    let store = &d[OBS].store;
+    assert_eq!(
+        issuer_phones(store, &new.did).unwrap(),
+        vec![new.did.clone(), d[P].did.clone()]
+    );
+    // The session still verifies against the RETIRED phone's key and is honoured; extensions by the new phone count.
+    cert_allows(&cert, &old_key, store, &d[R].did, &host, at, at).unwrap();
+    let ext = append(
+        &new,
+        OpBody::CertExtend {
+            cert_id: cert.id,
+            extra_hosts: 3,
+        },
+    );
+    pull(&new, &d[OBS]);
+    assert_eq!(
+        extension_budget(store, &cert, ext.timestamp + 10).unwrap(),
+        3,
+        "the new phone is the issuer of record"
     );
 }

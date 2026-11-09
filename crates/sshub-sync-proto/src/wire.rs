@@ -670,21 +670,31 @@ pub struct HeadEvidence {
     pub head_ts: i64,
 }
 
-/// Kind 11 (contract 4j), type only: `cert_id(32) || expiry i64 BE || n u8 || n x (terminal(8) || head_seq u64 BE || head_ts i64 BE)`,
-/// `n <= MAX_RENEW_EVIDENCE`.
+/// Most host names the opened-hosts block of a renew request carries, and the bytes of one name (contract 4l).
+pub const MAX_RENEW_OPENED: usize = 8;
+pub const MAX_RENEW_OPENED_NAME_BYTES: usize = 48;
+
+/// Kind 11 (contract 4j, 4l): `cert_id(32) || expiry i64 BE || n u8 || n x (terminal(8) || head_seq u64 BE || head_ts i64 BE)`,
+/// `n <= MAX_RENEW_EVIDENCE`, then the optional opened-hosts block `m u8 (<= 8) || m x (len u8 || name utf8, 1..=48 bytes) || total u16 BE`.
+/// The block is absent (an old frame) when `opened` is empty and `opened_total` is 0, and is never written empty;
+/// `opened_total >= opened.len()` is the number of hosts the certificate has opened in all.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CertRenewRequestWire {
     pub cert_id: [u8; 32],
     pub expiry: i64,
     pub evidence: Vec<HeadEvidence>,
+    pub opened: Vec<String>,
+    pub opened_total: u16,
 }
 
-/// Kind 12 (contract 4j): `ed25519(32) || x25519(32) || mlkem_len u16 BE || mlkem || name_len u8 || name utf8 || terminal(8)`.
+/// Kind 12 (contract 4j, 4l b): `ed25519(32) || x25519(32) || mlkem_len u16 BE || mlkem || name_len u8 || name utf8 || terminal(8)`,
+/// then for the admission frame shown to the NEW phone `0x01 || op_hash(32) || op_lamport u64 BE` (the ingested `PhoneHandover` op). `op` is `None` for the request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhoneHandoverRequestWire {
     pub new_phone: super::crypto::DevicePublic,
     pub name: String,
     pub terminal: [u8; 8],
+    pub op: Option<([u8; 32], u64)>,
 }
 
 impl CertRenewRequestWire {
@@ -702,6 +712,23 @@ impl CertRenewRequestWire {
             out.extend_from_slice(&e.head_seq.to_be_bytes());
             out.extend_from_slice(&e.head_ts.to_be_bytes());
         }
+        if !self.opened.is_empty() || self.opened_total != 0 {
+            assert!(
+                self.opened.len() <= MAX_RENEW_OPENED
+                    && usize::from(self.opened_total) >= self.opened.len(),
+                "bad opened-hosts block"
+            );
+            out.push(self.opened.len() as u8);
+            for name in &self.opened {
+                assert!(
+                    (1..=MAX_RENEW_OPENED_NAME_BYTES).contains(&name.len()),
+                    "bad opened-host name"
+                );
+                out.push(name.len() as u8);
+                out.extend_from_slice(name.as_bytes());
+            }
+            out.extend_from_slice(&self.opened_total.to_be_bytes());
+        }
         out
     }
 
@@ -714,10 +741,12 @@ impl CertRenewRequestWire {
         if n > MAX_RENEW_EVIDENCE {
             bail!("a renewal request carries at most {MAX_RENEW_EVIDENCE} evidence entries");
         }
-        if body.len() != 41 + n * 24 {
+        let ev_end = 41 + n * 24;
+        if body.len() < ev_end {
             bail!("a certificate renewal request does not match its evidence count");
         }
-        let evidence = body[41..]
+        let (opened, opened_total) = decode_opened_block(&body[ev_end..])?;
+        let evidence = body[41..ev_end]
             .as_chunks::<24>()
             .0
             .iter()
@@ -731,6 +760,8 @@ impl CertRenewRequestWire {
             cert_id: body[..32].try_into().unwrap(),
             expiry: i64::from_be_bytes(body[32..40].try_into().unwrap()),
             evidence,
+            opened,
+            opened_total,
         })
     }
 
@@ -740,6 +771,36 @@ impl CertRenewRequestWire {
             expiry: self.expiry,
         }
     }
+}
+
+/// The optional opened-hosts block of a kind 11 frame (what is left after the evidence).
+fn decode_opened_block(rest: &[u8]) -> Result<(Vec<String>, u16)> {
+    let Some((&m, mut at)) = rest.split_first() else {
+        return Ok((Vec::new(), 0));
+    };
+    let m = m as usize;
+    if m > MAX_RENEW_OPENED {
+        bail!("a renewal request names at most {MAX_RENEW_OPENED} opened hosts");
+    }
+    let bad = || anyhow::anyhow!("the opened-hosts block of a renewal request is malformed");
+    let mut opened = Vec::with_capacity(m);
+    for _ in 0..m {
+        let (&len, tail) = at.split_first().ok_or_else(bad)?;
+        let len = len as usize;
+        if !(1..=MAX_RENEW_OPENED_NAME_BYTES).contains(&len) || tail.len() < len {
+            return Err(bad());
+        }
+        opened.push(String::from_utf8(tail[..len].to_vec()).map_err(|_| bad())?);
+        at = &tail[len..];
+    }
+    let [hi, lo] = at else {
+        return Err(bad());
+    };
+    let total = u16::from_be_bytes([*hi, *lo]);
+    if usize::from(total) < m || (m == 0 && total == 0) {
+        return Err(bad());
+    }
+    Ok((opened, total))
 }
 
 impl PhoneHandoverRequestWire {
@@ -756,6 +817,11 @@ impl PhoneHandoverRequestWire {
         out.push(u8::try_from(self.name.len()).expect("name fits u8"));
         out.extend_from_slice(self.name.as_bytes());
         out.extend_from_slice(&self.terminal);
+        if let Some((hash, lamport)) = &self.op {
+            out.push(1);
+            out.extend_from_slice(hash);
+            out.extend_from_slice(&lamport.to_be_bytes());
+        }
         out
     }
 
@@ -769,9 +835,15 @@ impl PhoneHandoverRequestWire {
         let name_at = 66 + mlkem_len;
         let name_len = *body.get(name_at).ok_or_else(short)? as usize;
         let term_at = name_at + 1 + name_len;
-        if body.len() != term_at + 8 {
-            bail!("a phone handover request does not match its lengths");
-        }
+        let rest = body.get(term_at + 8..).ok_or_else(short)?;
+        let op = match rest {
+            [] => None,
+            [1, t @ ..] if t.len() == 40 => Some((
+                t[..32].try_into().unwrap(),
+                u64::from_be_bytes(t[32..].try_into().unwrap()),
+            )),
+            _ => bail!("a phone handover request does not match its lengths"),
+        };
         Ok(Self {
             new_phone: super::crypto::DevicePublic {
                 ed25519_pub: body[..32].try_into().unwrap(),
@@ -780,7 +852,8 @@ impl PhoneHandoverRequestWire {
             },
             name: String::from_utf8(body[name_at + 1..term_at].to_vec())
                 .map_err(|_| anyhow::anyhow!("a handover name is not UTF-8"))?,
-            terminal: body[term_at..].try_into().unwrap(),
+            terminal: body[term_at..term_at + 8].try_into().unwrap(),
+            op,
         })
     }
 }
@@ -960,6 +1033,8 @@ mod tests {
                 cert_id: [5; 32],
                 expiry: 1_800_000_000,
                 evidence: (0..n).map(evidence).collect(),
+                opened: vec![],
+                opened_total: 0,
             };
             let bytes = req.encode();
             assert_eq!(bytes.len(), HEADER + 41 + 24 * n as usize);
@@ -982,6 +1057,8 @@ mod tests {
             cert_id: [5; 32],
             expiry: 1,
             evidence: (0..32).map(evidence).collect(),
+            opened: vec![],
+            opened_total: 0,
         }
         .encode();
         over[HEADER + 40] = 33;
@@ -989,6 +1066,117 @@ mod tests {
         assert!(CertRenewRequestWire::decode(&over).is_err());
         assert!(CertRenewRequestWire::decode(&frame_header(KIND_CERT_RENEW_REQUEST)).is_err());
         assert!(CertRenewRequestWire::decode(&frame_header(KIND_CERT_EXTEND_REQUEST)).is_err());
+    }
+
+    #[test]
+    fn kind_11_matches_the_python_oracle_vectors() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/vectors/wire/cert_renew_request.json"
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let hx = |v: &serde_json::Value| hex::decode(v.as_str().unwrap()).unwrap();
+        for v in doc["vectors"].as_array().unwrap() {
+            let i = &v["inputs"];
+            let req = CertRenewRequestWire {
+                cert_id: hx(&i["cert_id"]).try_into().unwrap(),
+                expiry: i["expiry"].as_i64().unwrap(),
+                evidence: i["evidence"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|e| HeadEvidence {
+                        terminal: hx(&e["terminal"]).try_into().unwrap(),
+                        head_seq: e["head_seq"].as_u64().unwrap(),
+                        head_ts: e["head_ts"].as_i64().unwrap(),
+                    })
+                    .collect(),
+                opened: i["opened"]
+                    .as_array()
+                    .map(|a| a.iter().map(|n| n.as_str().unwrap().to_string()).collect())
+                    .unwrap_or_default(),
+                opened_total: i["opened_total"].as_u64().unwrap_or(0) as u16,
+            };
+            let frame = hx(&v["outputs"]["frame"]);
+            assert_eq!(req.encode(), frame, "{}", v["id"]);
+            assert_eq!(
+                CertRenewRequestWire::decode(&frame).unwrap(),
+                req,
+                "{}",
+                v["id"]
+            );
+        }
+    }
+
+    #[test]
+    fn kind_11_opened_hosts_block_is_optional_bounded_and_strict() {
+        let base = CertRenewRequestWire {
+            cert_id: [5; 32],
+            expiry: 1_800_000_000,
+            evidence: (0..2).map(evidence).collect(),
+            opened: vec![],
+            opened_total: 0,
+        };
+        let old = base.encode();
+        // no block: an old frame, decodes with no names
+        assert_eq!(CertRenewRequestWire::decode(&old).unwrap(), base);
+        let with = |opened: Vec<&str>, total: u16| CertRenewRequestWire {
+            opened: opened.into_iter().map(String::from).collect(),
+            opened_total: total,
+            ..base.clone()
+        };
+        let longest = "h".repeat(MAX_RENEW_OPENED_NAME_BYTES);
+        for req in [
+            with(vec!["web1"], 1),
+            with(vec!["web1", "d\u{e9}p\u{f4}t"], 40),
+            with(vec![], 9),
+            with(vec![&longest; MAX_RENEW_OPENED], u16::MAX),
+        ] {
+            let bytes = req.encode();
+            assert_eq!(CertRenewRequestWire::decode(&bytes).unwrap(), req);
+            assert_eq!(
+                bytes[..old.len()],
+                old[..],
+                "the evidence part is unchanged"
+            );
+            // every truncation inside the block is refused, a trailing byte too
+            for cut in 1..bytes.len() - old.len() + 1 {
+                let short = &bytes[..bytes.len() - cut];
+                // cutting the whole block leaves a valid old frame
+                if short.len() == old.len() {
+                    continue;
+                }
+                assert!(CertRenewRequestWire::decode(short).is_err(), "cut {cut}");
+            }
+            let mut long = bytes.clone();
+            long.push(0);
+            assert!(CertRenewRequestWire::decode(&long).is_err());
+        }
+        // hand-built bad blocks
+        let block = |b: &[u8]| {
+            let mut f = old.clone();
+            f.extend_from_slice(b);
+            f
+        };
+        let nine: Vec<u8> = std::iter::once(9u8)
+            .chain((0..9).flat_map(|_| [1u8, b'a']))
+            .chain([0, 9])
+            .collect();
+        for (why, bad) in [
+            ("nine names", nine),
+            ("an empty name", vec![1, 0, 0, 1]),
+            (
+                "a 49 byte name",
+                [vec![1, 49], vec![b'a'; 49], vec![0, 1]].concat(),
+            ),
+            ("a total below the count", vec![2, 1, b'a', 1, b'b', 0, 1]),
+            ("an empty block", vec![0, 0, 0]),
+            ("a name that is not UTF-8", vec![1, 1, 0xff, 0, 1]),
+            ("a count with no names", vec![1]),
+        ] {
+            assert!(CertRenewRequestWire::decode(&block(&bad)).is_err(), "{why}");
+        }
     }
 
     #[test]
@@ -1002,6 +1190,7 @@ mod tests {
                 },
                 name: name.into(),
                 terminal: [9; 8],
+                op: None,
             };
             let bytes = req.encode();
             assert_eq!(PhoneHandoverRequestWire::decode(&bytes).unwrap(), req);
@@ -1022,6 +1211,88 @@ mod tests {
         assert!(
             PhoneHandoverRequestWire::decode(&frame_header(KIND_PHONE_HANDOVER_REQUEST)).is_err()
         );
+    }
+
+    #[test]
+    fn kind_12_matches_the_python_oracle_vectors() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/vectors/wire/phone_handover_request.json"
+        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let hx = |v: &serde_json::Value| hex::decode(v.as_str().unwrap()).unwrap();
+        for v in doc["vectors"].as_array().unwrap() {
+            let i = &v["inputs"];
+            let req = PhoneHandoverRequestWire {
+                new_phone: crate::crypto::DevicePublic {
+                    ed25519_pub: hx(&i["ed"]).try_into().unwrap(),
+                    x25519_pub: hx(&i["x"]).try_into().unwrap(),
+                    mlkem_pub: hx(&i["mlkem"]),
+                },
+                name: i["name"].as_str().unwrap().into(),
+                terminal: hx(&i["terminal"]).try_into().unwrap(),
+                op: i["op_hash"].as_str().map(|h| {
+                    (
+                        hex::decode(h).unwrap().try_into().unwrap(),
+                        i["op_lamport"].as_u64().unwrap(),
+                    )
+                }),
+            };
+            let frame = hx(&v["outputs"]["frame"]);
+            assert_eq!(req.encode(), frame, "{}", v["id"]);
+            assert_eq!(
+                PhoneHandoverRequestWire::decode(&frame).unwrap(),
+                req,
+                "{}",
+                v["id"]
+            );
+        }
+    }
+
+    #[test]
+    fn kind_12_admission_frame_carries_the_op_hash_and_nothing_else_is_accepted() {
+        let req = PhoneHandoverRequestWire {
+            new_phone: crate::crypto::DevicePublic {
+                ed25519_pub: [1; 32],
+                x25519_pub: [2; 32],
+                mlkem_pub: vec![3; 1184],
+            },
+            name: "new phone".into(),
+            terminal: [9; 8],
+            op: None,
+        };
+        let plain = req.encode();
+        let stage2 = PhoneHandoverRequestWire {
+            op: Some(([0xAB; 32], 0x0102_0304_0506_0708)),
+            ..req.clone()
+        };
+        let bytes = stage2.encode();
+        assert_eq!(
+            bytes[..plain.len()],
+            plain[..],
+            "the 4j layout is unchanged"
+        );
+        assert_eq!(
+            bytes[plain.len()..],
+            [&[1u8][..], &[0xAB; 32], &[1, 2, 3, 4, 5, 6, 7, 8]].concat()
+        );
+        assert_eq!(PhoneHandoverRequestWire::decode(&bytes).unwrap(), stage2);
+        assert_eq!(PhoneHandoverRequestWire::decode(&plain).unwrap(), req);
+        // a trailer that is not exactly 0x01 and 40 bytes is an error
+        for cut in 1..=41 {
+            assert!(
+                PhoneHandoverRequestWire::decode(&bytes[..bytes.len() - cut]).is_err()
+                    == (cut < 41),
+                "cut {cut}"
+            );
+        }
+        let mut long = bytes.clone();
+        long.push(0);
+        assert!(PhoneHandoverRequestWire::decode(&long).is_err());
+        let mut tag = bytes.clone();
+        tag[plain.len()] = 2;
+        assert!(PhoneHandoverRequestWire::decode(&tag).is_err());
     }
 
     #[test]

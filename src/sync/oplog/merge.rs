@@ -720,6 +720,16 @@ impl<'a> Settler<'a> {
                 OpBody::DeviceAdd { device, .. } => {
                     self.queue.push_back(Work::Author(device.device_id()));
                 }
+                // The old phone is retired from here on (what it signs next waits as `revoked-author`);
+                // what the new phone already wrote is judged now that it is a device.
+                OpBody::PhoneHandover { new_phone, .. } => {
+                    self.conn.execute(
+                        "UPDATE sync_devices SET status = 'revoked' WHERE device_id = ?1 AND status != 'compromised'",
+                        params![row.op.device_id],
+                    )?;
+                    self.queue.push_back(Work::Author(row.op.device_id.clone()));
+                    self.queue.push_back(Work::Author(new_phone.device_id()));
+                }
                 // The delegate's own CertHostOpened ops are judged against the certificate.
                 OpBody::CertIssue { device_id, .. } => {
                     self.queue.push_back(Work::Author(device_id.clone()));
@@ -789,32 +799,18 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
             kind,
             verified_by,
         } => {
-            if device.validate().is_ok()
-                && device.device_id() == device_id_of_pub(&device.ed25519_pub)
-            {
-                conn.execute(
-                    "INSERT OR IGNORE INTO sync_devices
-                       (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, verified_by, last_seen, added_by)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)",
-                    params![
-                        device.device_id(),
-                        &device.ed25519_pub[..],
-                        &device.x25519_pub[..],
-                        device.mlkem_pub,
-                        name,
-                        role_db(*role),
-                        attendance_db(*attendance),
-                        kind_db(*kind),
-                        verified_db(*verified_by),
-                        &hash[..],
-                    ],
-                )?;
-                // The row may exist from an anchor, labelled with its id: the op names it.
-                conn.execute(
-                    "UPDATE sync_devices SET name = ?2 WHERE device_id = ?1 AND name = device_id",
-                    params![device.device_id(), name],
-                )?;
-            }
+            add_device(
+                conn,
+                device,
+                name,
+                (*role, *attendance, *kind, *verified_by),
+                hash,
+            )?;
+        }
+        // The new phone becomes a live holder phone. The old phone is retired by the state hook of
+        // `set_state` (status `revoked`); its device row stays, it still verifies what it signed.
+        OpBody::PhoneHandover { new_phone, name } => {
+            add_device(conn, new_phone, name, HANDOVER_PHONE, hash)?;
         }
         OpBody::ExemptionSet { device_id, slot } => {
             // Newest write per device wins, whatever order ops became effective.
@@ -997,6 +993,48 @@ fn effects(conn: &Connection, op: &Op, hash: &[u8; 32]) -> Result<()> {
             )?;
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// What a handover makes of the new phone: a holder phone that is attended, introduced by the compare words.
+pub(crate) const HANDOVER_PHONE: (DeviceRole, Attendance, DeviceKind, VerifiedBy) = (
+    DeviceRole::Holder,
+    Attendance::Attended,
+    DeviceKind::Phone,
+    VerifiedBy::Sas,
+);
+
+fn add_device(
+    conn: &Connection,
+    device: &crate::sync::crypto::DevicePublic,
+    name: &str,
+    (role, attendance, kind, verified_by): (DeviceRole, Attendance, DeviceKind, VerifiedBy),
+    hash: &[u8; 32],
+) -> Result<()> {
+    if device.validate().is_ok() && device.device_id() == device_id_of_pub(&device.ed25519_pub) {
+        conn.execute(
+            "INSERT OR IGNORE INTO sync_devices
+               (device_id, ed25519, x25519, mlkem, name, role, attendance, kind, verified_by, last_seen, added_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)",
+            params![
+                device.device_id(),
+                &device.ed25519_pub[..],
+                &device.x25519_pub[..],
+                device.mlkem_pub,
+                name,
+                role_db(role),
+                attendance_db(attendance),
+                kind_db(kind),
+                verified_db(verified_by),
+                &hash[..],
+            ],
+        )?;
+        // The row may exist from an anchor, labelled with its id: the op names it.
+        conn.execute(
+            "UPDATE sync_devices SET name = ?2 WHERE device_id = ?1 AND name = device_id",
+            params![device.device_id(), name],
+        )?;
     }
     Ok(())
 }

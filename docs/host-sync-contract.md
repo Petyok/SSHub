@@ -1723,5 +1723,43 @@ What exists on top of 4j, with the names the screens and the scenarios use:
   `SyncRuntime::mail_owed_codes`; the CLI `sshub sync` path must call `send_renew_mails` too); the sticky notice is a terminal screen.
 * **Phone list:** `hub::phone_chain_wire` fills the kind 5 `terminals` block: the number of non-removed terminals (this one included) and the newest op stamp
   of the list. Unsigned, informational.
-* **Not yet** (wave 3): the `PhoneHandover` rules (Paper-only third factor, the new phone's own proof, the effect lamport, `successor_of` for certificates,
-  `handover::handover_words` over the proto crate's eight word function).
+* **PhoneHandover (wave 3):** `PhoneHandover` is a gated Red op judged in the view just BEFORE it (the old phone is the live one). Proofs: the author (the live
+  phone), the new phone's own `RedPhoneSign` (folded into `RedProof::Phone`; it may still wait as the op of an unknown author), a second attended terminal,
+  and `ThirdFactor::Paper` ONLY (the emailed code never counts; no registered paper blocks the op). The new phone's keys must be new to the ring (else a rule
+  violation). `ceremony::handover_effect(store, op) -> Option<u64>` is the completion lamport: the highest, over the proof kinds, of the lowest counted proof
+  lamport. Among handovers by one phone the lowest `(completion lamport, device, seq)` wins; any other is a rule violation (applied and still pending rivals both
+  count). `effective_devices(upto)` retires the old phone and makes the new phone a holder only from the completion lamport on (it undoes the oplog's row
+  effects for earlier views), so everything written before it is judged under the old phone. `handover::handover_words` is the proto crate's eight word
+  function; `handover::handover_request(new_phone, name, &terminal)` builds the kind 12 request. Certificates (design 5.4): `cert::issuer_phones(store, &current)`
+  lists the phone and the phones it took over from; `trust_grant` honours certificates of all of them (the retired key still verifies the issue op) and
+  `extension_budget` counts extensions by the successor (the oplog's `sync_cert_holder_at`, which orders handovers by their op lamport, not the completion
+  lamport: an old-phone extension written between the op and its completion is not counted, a harmless edge).
+
+### 4l. Two interface decisions that amend 4j (S, 2026-11-09; announced to every lane)
+
+**(a) The renewal card shows the hosts the delegate opened: DECIDED, kind 11 carries them.** The phone keeps no host list and the renewal screen exists to show
+what the delegate did, so the host, which reads it from the log, supplies it. Kind 11 gets a trailing block after the evidence entries:
+`m u8 (m <= 8) || m x (len u8 || host name utf8, 1 to 48 bytes) || total u16 BE`: the `m` most recently opened hosts of the certificate (newest first) and the total
+number opened under it. Hosts come from `cert::recorded_openings` (what the holders recorded, never the delegate's own claim), names from the host table (a host
+with no name here is listed as its first 8 hex digits); `RenewView.opened` is the name list and `RenewView` gains `opened_total: u32`. A frame without the block
+decodes as before and reads as "the terminal sent no list": the phone says so and shows the evidence age only (the card never claims an empty list means nothing
+was opened). Owners and cost (hours come out of the lane's slack, not new budget): P wire encode/decode, vectors, oracle 3 h; C `cert_renew_request` fills it 1 h;
+PH-core `describe_cert_renew`, page parity 3 h; PH-android card 1 h; T the terminal view 1 h; E scenario 75a asserts the list 1 h. About 10 h in all.
+Rejected: dropping the list from the design. The mail and the sticky notice come after the fact; this is the only moment before the signature, and 10 h is
+small next to a card that cannot show what it exists to show.
+
+**(b) The new phone receives the handover op hash inside kind 12 itself.** Two stages of one frame, nothing new on the wire:
+1. *Request (old phone).* The terminal shows `PhoneHandoverRequestWire` as in 4j; the old phone compares the 8 words, signs and builds the `PhoneHandover` op.
+2. *Admission (new phone).* After the terminal ingested that op it shows the NEW phone a second kind 12 frame whose layout is the 4j layout followed by
+   `0x01 || op_hash(32) || op_lamport u64 BE` (the hash and the lamport of the `PhoneHandover` op just ingested). Without the trailing block the frame is a request; a
+   trailing block that is not exactly `0x01` and 40 bytes is an error. The new phone's proof only counts when its lamport is HIGHER than the op's (a proof must come
+   after what it names), so `sign_handover_admission` writes its `RedPhoneSign` with `lamport = max(own next, op_lamport + 1)`. The new phone's `describe_phone_handover` returns `HandoverView.op_hash: Option<[u8; 32]>` and `op_lamport: Option<u64>` (present in stage 2 only) and shows the
+   same 8 words so the new owner can compare them with the old phone; `sign_handover_admission(state, id, op_hash, now)` takes the hash from the view, never from a typed
+   argument. A new phone refuses to sign unless the frame's `new_phone` is its own public key. Its `RedPhoneSign` returns to the terminal as ordinary phone ops (kind 5)
+   and counts only for the op that names its key (a wrong hash signs nothing that can be used).
+   The trailer is unsigned, so the new phone refuses a frame whose `op_lamport` is above `u32::MAX` (a forged huge value would push its counters out of range). The host
+   needs no matching cap of its own: it never issues such a lamport (a device's lamport is at most the ring's maximum plus one), ingest rejects any op more than
+   `LAMPORT_JUMP_CAP` (100 000) above the highest lamport it holds, and `red_status` counts a proof only when its lamport is higher than its op's (`valid_proof`), so
+   a `RedPhoneSign` written before its op never counts.
+Owners and cost: P kind 12 optional trailer, vectors 2 h; PH-core view and refusal, page parity 2 h; PH-android new-phone screen (inside the 12 h handover line);
+T `sync-phone-enroll --replace` shows the second frame (inside its 10 h line); E `phone2` scans stage 2 (inside 78a); about 4 h extra in all.

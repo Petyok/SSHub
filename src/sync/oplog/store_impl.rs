@@ -466,6 +466,22 @@ impl LauncherStore {
         self.with_conn(|conn| super::cert_record(conn, &super::merge::hex(cert_id)))
     }
 
+    /// The effective phone handovers, oldest first (see `oplog::handover`).
+    pub fn sync_handovers(&self) -> Result<Vec<super::HandoverFact>> {
+        self.with_conn(super::handover::handovers)
+    }
+
+    /// The phone that holds a certificate issued by `issuer` at the order key `(lamport, device, seq)`: the issuer
+    /// itself or the end of the chain of handovers ordered before that key.
+    pub fn sync_cert_holder_at(&self, issuer: &str, at: (u64, &str, u64)) -> Result<DeviceId> {
+        self.with_conn(|conn| super::handover::cert_holder_at(conn, issuer, at))
+    }
+
+    /// The phone that took over from `phone`, following a chain of handovers.
+    pub fn sync_successor_of(&self, phone: &str) -> Result<Option<DeviceId>> {
+        self.with_conn(|conn| super::handover::successor_of(conn, phone))
+    }
+
     pub fn sync_cert_revoked(&self, cert_id: &[u8; 32]) -> Result<bool> {
         self.with_conn(|conn| {
             Ok(conn.query_row(
