@@ -47,6 +47,27 @@ data class TrustRenewView(
     val red: Boolean get() = refusal != null || evidenceStale
 }
 
+/** `Opened.PhoneHandover`: kind 12, the old phone's request (compare the words) or the new phone's admission frame (contract 4l b). */
+data class OpenedPhoneHandover(val view: PhoneHandoverView) : Opened
+
+data class PhoneHandoverView(
+    val token: Long,
+    /** The new phone's name, as the terminal shows it. */
+    val name: String,
+    /** The 8 words to compare with the terminal's screen; empty on the new phone's admission card. */
+    val words: List<String>,
+    /** Trust sessions that stay valid for the successor; empty on the admission card. */
+    val certsCarried: List<String>,
+    /** The hash of the handover operation the new phone signs over; null on the old phone's card. */
+    val opHash: ByteArray?,
+    val note: String,
+) {
+    /** True on the NEW phone: the frame carries the handover operation. */
+    val admission: Boolean get() = opHash != null
+    /** First 8 hex digits of the operation hash in two groups, so the owner can match it with the terminal. */
+    val opHashShort: String get() = opHash?.take(4)?.joinToString("") { "%02X".format(it) }?.chunked(4)?.joinToString(" ").orEmpty()
+}
+
 sealed interface TrustDecision {
     /** `typedId` is what the user typed for a requester never met, else null. */
     data class Approve(val typedId: String?) : TrustDecision
@@ -160,5 +181,5 @@ sealed interface CodeIssuedView {
 }
 
 /** What a hand-off screen shows: the signed reply of a certificate, a revocation or an extension. */
-enum class HandoffKind { Certificate, Revocation, Extension, Renewal }
+enum class HandoffKind { Certificate, Revocation, Extension, Renewal, Handover, Admission }
 class TrustHandoff(val kind: HandoffKind, val summary: String, val outgoing: Outgoing)

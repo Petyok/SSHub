@@ -18,7 +18,9 @@ import uk.petruha.sshub.phone.core.OpenedRed
 import uk.petruha.sshub.phone.core.OpenedRefused
 import uk.petruha.sshub.phone.core.OpenedRelease
 import uk.petruha.sshub.phone.core.OpenedTrustExtend
+import uk.petruha.sshub.phone.core.OpenedPhoneHandover
 import uk.petruha.sshub.phone.core.OpenedTrustRenew
+import uk.petruha.sshub.phone.core.PhoneHandoverView
 import uk.petruha.sshub.phone.core.OpenedTrustRequest
 import uk.petruha.sshub.phone.core.Outgoing
 import uk.petruha.sshub.phone.core.ProofState
@@ -47,6 +49,7 @@ import uk.petruha.sshub.phone.ui.components.QrMatrix
 import java.time.Instant
 import uniffi.sshub_phone_core.CertExtendView as RsCertExtendView
 import uniffi.sshub_phone_core.CertRenewView as RsCertRenewView
+import uniffi.sshub_phone_core.PhoneHandoverView as RsPhoneHandoverView
 import uniffi.sshub_phone_core.ChainAdopted as RsChainAdopted
 import uniffi.sshub_phone_core.CertRequestView as RsCertRequestView
 import uniffi.sshub_phone_core.CertStatus as RsCertStatus
@@ -287,6 +290,13 @@ internal fun mapTrustRenew(v: RsCertRenewView): OpenedTrustRenew {
     )
 }
 
+internal fun mapHandover(v: RsPhoneHandoverView) = OpenedPhoneHandover(
+    PhoneHandoverView(
+        token = v.token.toLong(), name = v.handover.name, words = v.handover.words, certsCarried = v.handover.certsCarried,
+        opHash = v.handover.opHash, note = v.note,
+    ),
+)
+
 internal fun mapReshare(v: RsReshareView): ReshareView {
     val verified = v.contributors.count { it.verified }
     val note = "$verified of ${v.contributors.size} contributors have a verified signature." +
@@ -332,6 +342,7 @@ internal fun tokenOf(o: RsOpened): Long? = when (o) {
     is RsOpened.CertRequest -> o.view.token.toLong()
     is RsOpened.CertExtend -> o.view.token.toLong()
     is RsOpened.CertRenew -> o.view.token.toLong()
+    is RsOpened.PhoneHandover -> o.view.token.toLong()
     is RsOpened.Reshare -> o.view.token.toLong()
     is RsOpened.Chain -> o.view.token.toLong()
     is RsOpened.Refused, is RsOpened.Enroll, is RsOpened.Enrolled -> null

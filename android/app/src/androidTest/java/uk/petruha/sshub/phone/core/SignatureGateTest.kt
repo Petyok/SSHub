@@ -87,7 +87,7 @@ class SignatureGateTest {
             // reads
             "backupWords", "enrollTextKind", "exportOps", "frameFromText", "issuedCerts", "lastOutcome", "nameProblem", "openFrame", "pending", "pendingView",
             "recoveryNotice", "recoveryNotices", "resetScan", "reshareCandidate", "ring", "scanGray", "shortCodes", "stateLost", "status", "takeIssuedShortCode",
-            "thisPhone", "trustExtend", "trustRenew", "trustRequest", "validateWord", "wrapKeyState",
+            "thisPhone", "phoneHandover", "trustExtend", "trustRenew", "trustRequest", "validateWord", "wrapKeyState",
             // state changes that sign nothing: the phone key itself, the lock, the stop screen, the local short-code list
             "createSecret", "restoreFromWords", "unlock", "lock", "confirmStateLost", "declareShortCodeDead",
         )
