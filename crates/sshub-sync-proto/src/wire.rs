@@ -680,13 +680,13 @@ pub struct CertRenewRequestWire {
 }
 
 /// Kind 12 (contract 4j, 4l b): `ed25519(32) || x25519(32) || mlkem_len u16 BE || mlkem || name_len u8 || name utf8 || terminal(8)`,
-/// then for the admission frame shown to the NEW phone `0x01 || op_hash(32)` (the ingested `PhoneHandover` op). `op_hash` is `None` for the request.
+/// then for the admission frame shown to the NEW phone `0x01 || op_hash(32) || op_lamport u64 BE` (the ingested `PhoneHandover` op). `op` is `None` for the request.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PhoneHandoverRequestWire {
     pub new_phone: super::crypto::DevicePublic,
     pub name: String,
     pub terminal: [u8; 8],
-    pub op_hash: Option<[u8; 32]>,
+    pub op: Option<([u8; 32], u64)>,
 }
 
 impl CertRenewRequestWire {
@@ -758,9 +758,10 @@ impl PhoneHandoverRequestWire {
         out.push(u8::try_from(self.name.len()).expect("name fits u8"));
         out.extend_from_slice(self.name.as_bytes());
         out.extend_from_slice(&self.terminal);
-        if let Some(h) = &self.op_hash {
+        if let Some((hash, lamport)) = &self.op {
             out.push(1);
-            out.extend_from_slice(h);
+            out.extend_from_slice(hash);
+            out.extend_from_slice(&lamport.to_be_bytes());
         }
         out
     }
@@ -776,9 +777,12 @@ impl PhoneHandoverRequestWire {
         let name_len = *body.get(name_at).ok_or_else(short)? as usize;
         let term_at = name_at + 1 + name_len;
         let rest = body.get(term_at + 8..).ok_or_else(short)?;
-        let op_hash = match rest {
+        let op = match rest {
             [] => None,
-            [1, h @ ..] if h.len() == 32 => Some(h.try_into().unwrap()),
+            [1, t @ ..] if t.len() == 40 => Some((
+                t[..32].try_into().unwrap(),
+                u64::from_be_bytes(t[32..].try_into().unwrap()),
+            )),
             _ => bail!("a phone handover request does not match its lengths"),
         };
         Ok(Self {
@@ -790,7 +794,7 @@ impl PhoneHandoverRequestWire {
             name: String::from_utf8(body[name_at + 1..term_at].to_vec())
                 .map_err(|_| anyhow::anyhow!("a handover name is not UTF-8"))?,
             terminal: body[term_at..term_at + 8].try_into().unwrap(),
-            op_hash,
+            op,
         })
     }
 }
@@ -1012,7 +1016,7 @@ mod tests {
                 },
                 name: name.into(),
                 terminal: [9; 8],
-                op_hash: None,
+                op: None,
             };
             let bytes = req.encode();
             assert_eq!(PhoneHandoverRequestWire::decode(&bytes).unwrap(), req);
@@ -1054,9 +1058,12 @@ mod tests {
                 },
                 name: i["name"].as_str().unwrap().into(),
                 terminal: hx(&i["terminal"]).try_into().unwrap(),
-                op_hash: i["op_hash"]
-                    .as_str()
-                    .map(|h| hex::decode(h).unwrap().try_into().unwrap()),
+                op: i["op_hash"].as_str().map(|h| {
+                    (
+                        hex::decode(h).unwrap().try_into().unwrap(),
+                        i["op_lamport"].as_u64().unwrap(),
+                    )
+                }),
             };
             let frame = hx(&v["outputs"]["frame"]);
             assert_eq!(req.encode(), frame, "{}", v["id"]);
@@ -1079,11 +1086,11 @@ mod tests {
             },
             name: "new phone".into(),
             terminal: [9; 8],
-            op_hash: None,
+            op: None,
         };
         let plain = req.encode();
         let stage2 = PhoneHandoverRequestWire {
-            op_hash: Some([0xAB; 32]),
+            op: Some(([0xAB; 32], 0x0102_0304_0506_0708)),
             ..req.clone()
         };
         let bytes = stage2.encode();
@@ -1092,14 +1099,17 @@ mod tests {
             plain[..],
             "the 4j layout is unchanged"
         );
-        assert_eq!(bytes[plain.len()..], [&[1u8][..], &[0xAB; 32]].concat());
+        assert_eq!(
+            bytes[plain.len()..],
+            [&[1u8][..], &[0xAB; 32], &[1, 2, 3, 4, 5, 6, 7, 8]].concat()
+        );
         assert_eq!(PhoneHandoverRequestWire::decode(&bytes).unwrap(), stage2);
         assert_eq!(PhoneHandoverRequestWire::decode(&plain).unwrap(), req);
-        // a trailer that is not exactly 0x01 and 32 bytes is an error
-        for cut in 1..=33 {
+        // a trailer that is not exactly 0x01 and 40 bytes is an error
+        for cut in 1..=41 {
             assert!(
                 PhoneHandoverRequestWire::decode(&bytes[..bytes.len() - cut]).is_err()
-                    == (cut < 33),
+                    == (cut < 41),
                 "cut {cut}"
             );
         }
