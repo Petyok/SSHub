@@ -1053,7 +1053,17 @@ fn red_eval(
         .unwrap_or(op.lamport);
     let done = missing.is_empty() && blocked.is_none();
     if is_handover && check_winner && done && rule_violation.is_none() {
-        for other in ops_of(store, "PhoneHandover", Some(proposer))? {
+        // Applied ones and those still waiting for their approval here: the verdict must not depend on which this device settled first.
+        let mut rivals = ops_of(store, "PhoneHandover", Some(proposer))?;
+        for p in store.sync_pending()? {
+            if matches!(p.body, OpBody::PhoneHandover { .. })
+                && p.device_id == *proposer
+                && !rivals.iter().any(|r| r.hash() == p.hash())
+            {
+                rivals.push(p);
+            }
+        }
+        for other in rivals {
             if other.hash() == hash {
                 continue;
             }
