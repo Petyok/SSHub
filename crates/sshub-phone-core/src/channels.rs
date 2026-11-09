@@ -1,4 +1,4 @@
-//! Channels: the same frames (kinds 1 to 10) over a looping QR animation, a camera, a sound and Bluetooth LE. Port of
+//! Channels: the same frames (kinds 1 to 12) over a looping QR animation, a camera, a sound and Bluetooth LE. Port of
 //! `assets/companion/src/channels.mjs` and `scan.mjs`. Rust never touches the camera, the screen or the speaker: it
 //! turns bytes into module matrices and PCM, and gray camera frames into documents.
 

@@ -432,7 +432,9 @@ offline or failed, 2 on usage error, 3 when a fork is proven
 .TP
 .B sshub sync\-status \fR[\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
 Read-only: your devices (name, short id, role, status, last in sync, last change number,
-host), pending change count and credential mode. Never creates a device key.
+host), pending change count and credential mode, then the saved passwords that are exposed or not yet shared with a
+current full device. Never creates a device key on a profile without a ring. Exits 3 while a recovery of the phone is
+open and was not started on this terminal; the recoveries are listed.
 .TP
 .B sshub sync\-review \fR[\fB\-\-approve\fR \fIID\fR | \fB\-\-reject\fR \fIID\fR] [\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
 List the changes waiting for review: an id (the first 8 hex digits are shown), the author device, a
@@ -448,6 +450,11 @@ or
 the change whose id starts with
 .I ID
 (at least 6 hex digits, unique) is resolved in the store like in the TUI.
+.B \-\-approve\-all
+resolves every waiting change that has no ceremony and no doubtful reason; with
+.BI \-\-device \ DEVICE
+it approves, on this device only, just the changes of that device that wait only because it was away and touch
+no address, jump host, remote command, user or key.
 Never creates a device key. Exit 0 on success or empty queue, 1 on a store
 error, 2 on an unknown or ambiguous id or bad options.
 .TP
@@ -536,7 +543,7 @@ Leaves
 untouched.
 .TP
 .B sshub sync\-revoke \fIDEVICE\fR
-Remove a device: needs one approval for a view-only copy, and is a big change for a full device. Removing a full device needs three computers or servers you control, the one you remove included, together with the phone; with fewer, change the passwords of the hosts and remove the device's key from every host's authorized_keys by hand. Prints the approval status.
+Remove a device: needs one approval for a view-only copy, and is a big change for a full device. Removing a full device needs two computers or servers you control, the one you remove included, together with the phone and the paper phrase (with three or more, the other computers also re-share your passwords; with two, the passwords the removed device held a piece of stay on an exposure list until you change them); with fewer, change the passwords of the hosts and remove the device's key from every host's authorized_keys by hand. Prints the approval status.
 .TP
 .B sshub sync\-role \fIDEVICE\fR \fBholder\fR|\fBmirror\fR
 Make a device a full device or a view-only copy (a big change).
@@ -550,6 +557,9 @@ Add the paper phrase or the emailed code to a big change; the secret is read wit
 .B sshub sync\-factor\-register \fBpaper\fR|\fBemail\fR \fR[\fB\-\-sender\fR \fIDEVICE\fR]
 Register the paper phrase or the emailed code. The emailed code is kept, sealed, only on its sender: register it on
 the device that will mail it (\fB\-\-sender\fR may only name this device).
+The paper phrase must be registered before a switch to Quorum and before a change that leaves three or more full
+devices: \fBsync\-mode quorum\fR and \fBsync\-role \fIDEVICE\fR \fBholder\fR refuse without it. In the terminal screen the key
+\fBK\fR on the Sync tab opens the wizard (24 words shown, three random ones typed back).
 .TP
 .B sshub sync\-phone\-enroll
 Add the phone from this terminal as text. Prints the terminal's frames; read the phone's frames

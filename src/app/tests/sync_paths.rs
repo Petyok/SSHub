@@ -770,6 +770,8 @@ fn revoking_needs_the_devices_name_typed_back() {
         r.app.handle_key(key(KeyCode::Down)).unwrap();
     }
     enter(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncMenu, "stolen or wiped first");
+    enter(&mut r.app);
     assert_eq!(r.app.mode, AppMode::SyncPrompt);
     type_and_enter(&mut r.app, "not the name");
     assert!(r
@@ -784,18 +786,51 @@ fn revoking_needs_the_devices_name_typed_back() {
     );
 }
 
+/// The three word numbers the type-back prompt asks for.
+fn asked_words(app: &App) -> Vec<usize> {
+    let Some(crate::app::sync_ui::SyncUi::Prompt { label, .. }) = &app.sync_ui else {
+        panic!("no prompt is open");
+    };
+    let text = label.clone();
+    let rest = text
+        .split("Type words ")
+        .nth(1)
+        .expect("the prompt names the words");
+    rest.split(" from")
+        .next()
+        .unwrap()
+        .replace(" and", ",")
+        .split(',')
+        .map(|n| n.trim().parse().unwrap())
+        .collect()
+}
+
 #[test]
-fn the_paper_phrase_is_shown_once_and_registered_only_when_typed_back_exactly() {
+fn paper_wizard_requires_three_correct_words() {
     let mut r = ring(None);
     crate::app::sync_flows::paper_wizard(&mut r.app);
     assert_eq!(r.app.mode, AppMode::SyncInfo);
     let words = r.app.sync_paper.clone().expect("held in memory");
-    assert_eq!(words.split_whitespace().count(), 24);
+    let all: Vec<&str> = words.split_whitespace().collect();
+    assert_eq!(all.len(), 24);
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
 
-    // A wrong copy registers nothing and drops the phrase.
+    // The whole phrase, or the wrong words, register nothing and drop the phrase.
     crate::app::sync_flows::paper_register(&mut r.app);
-    type_and_enter(&mut r.app, "wrong words");
+    let at = asked_words(&r.app);
+    assert_eq!(at.len(), 3);
+    assert!(at.windows(2).all(|w| w[0] < w[1]) && at.iter().all(|n| (1..=24).contains(n)));
+    type_and_enter(&mut r.app, &words);
+    assert!(r.app.sync_paper.is_none());
+    assert!(
+        crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None)
+            .unwrap()
+            .is_empty()
+    );
+    crate::app::sync_flows::paper_wizard(&mut r.app);
+    r.app.handle_key(key(KeyCode::Esc)).unwrap();
+    crate::app::sync_flows::paper_register(&mut r.app);
+    type_and_enter(&mut r.app, "wrong words here");
     assert!(r.app.sync_paper.is_none());
     assert!(
         crate::sync::quorum::ops_of(&r.app.store, "FactorRegister", None)
@@ -803,12 +838,14 @@ fn the_paper_phrase_is_shown_once_and_registered_only_when_typed_back_exactly() 
             .is_empty()
     );
 
-    // The right copy registers it as the third factor.
+    // The three asked words, in order, register it as the third factor.
     crate::app::sync_flows::paper_wizard(&mut r.app);
     let words = r.app.sync_paper.clone().unwrap();
+    let all: Vec<&str> = words.split_whitespace().collect();
     r.app.handle_key(key(KeyCode::Esc)).unwrap();
     crate::app::sync_flows::paper_register(&mut r.app);
-    type_and_enter(&mut r.app, &words);
+    let typed: Vec<&str> = asked_words(&r.app).iter().map(|n| all[n - 1]).collect();
+    type_and_enter(&mut r.app, &typed.join(" "));
     pump(&mut r.app, "the registration", |a| {
         a.mode == AppMode::SyncInfo
     });
@@ -1196,11 +1233,22 @@ fn revoking_a_full_device_says_at_once_when_the_ring_has_too_few_computers() {
         Some(crate::app::sync_ui::SyncUi::Info { lines, .. }) => lines.join(" "),
         _ => panic!("the info panel is not open"),
     };
-    assert!(
-        text.contains("3 computers or servers you control"),
-        "{text}"
-    );
-    assert!(text.contains("You have 2"), "{text}");
+    // The sentence is the core's own (no paper phrase is registered yet), not a copy of it here.
+    let target = r
+        .app
+        .sync
+        .devices
+        .iter()
+        .find(|d| !d.this && !d.phone)
+        .unwrap()
+        .id
+        .clone();
+    let crate::sync::revocation::RevokeMode::Refused(why) =
+        crate::sync::revocation::revoke_mode(&r.app.store, &target).unwrap()
+    else {
+        panic!("a ring of two computers without paper refuses");
+    };
+    assert!(text.contains(&why), "{text}");
     assert!(
         crate::sync::quorum::ops_of(&r.app.store, "DeviceRevoke", None)
             .unwrap()
@@ -1213,11 +1261,90 @@ fn revoking_a_full_device_says_at_once_when_the_ring_has_too_few_computers() {
 fn the_sync_view_says_how_many_more_computers_are_needed_to_cut_one_off() {
     let mut r = ring(None);
     mark_this_device(&mut r);
-    // Two computers and the phone: one more computer is needed.
-    assert_eq!(r.app.sync.cut_off_missing, Some(1));
+    // Two computers and the phone: enough since the degraded removal (the phone and the paper approve it).
+    assert_eq!(r.app.sync.cut_off_missing, None);
     r.app.active_tab = 6;
     let tab = crate::tui::screens::sync::tests_screen(&r.app, 120, 30);
-    assert!(tab.contains("no, add 1 more computer"), "{tab}");
+    assert!(tab.contains("Can cut off a stolen device: yes"), "{tab}");
+}
+
+/// Design 3.2: with the paper registered a two-computer ring removes one in degraded mode; the dialog asks stolen or
+/// destroyed first and says the mode before the name is asked.
+#[test]
+fn removing_a_computer_asks_stolen_or_wiped_and_prints_the_mode_before_the_name() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    crate::sync::quorum::paper_setup(&r.app.store, &crate::sync::crypto::bip39_encode(&[9u8; 32]))
+        .unwrap();
+    crate::app::sync_flows::revoke(&mut r.app);
+    let at = r
+        .app
+        .sync
+        .devices
+        .iter()
+        .filter(|d| !d.this)
+        .position(|d| !d.phone)
+        .unwrap();
+    for _ in 0..at {
+        r.app.handle_key(key(KeyCode::Down)).unwrap();
+    }
+    enter(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncMenu, "stolen or wiped first");
+    enter(&mut r.app); // stolen or lost
+    assert_eq!(r.app.mode, AppMode::SyncPrompt);
+    let Some(crate::app::sync_ui::SyncUi::Prompt { label, .. }) = &r.app.sync_ui else {
+        panic!("no prompt");
+    };
+    assert!(label.contains("Only one other computer remains"), "{label}");
+    assert!(
+        crate::sync::quorum::ops_of(&r.app.store, "DeviceRevoke", None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// Design 3.1: a ring without a registered paper phrase shows a standing line, and one key opens the wizard.
+#[test]
+fn a_ring_without_paper_shows_the_standing_line_and_one_key_opens_the_wizard() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    assert!(r.app.sync.no_paper);
+    r.app.active_tab = 6;
+    let tab = crate::tui::screens::sync::tests_screen(&r.app, 160, 30);
+    assert!(
+        tab.contains("No paper phrase: you cannot cut off a lost device or recover a lost phone. Register it (press K)"),
+        "{tab}"
+    );
+    r.app
+        .handle_key(KeyEvent::new(KeyCode::Char('K'), KeyModifiers::SHIFT))
+        .unwrap();
+    assert_eq!(r.app.mode, AppMode::SyncInfo);
+    assert!(r.app.sync_paper.is_some());
+}
+
+/// Design 3.1: the switch to Quorum starts the paper wizard first when no paper is registered.
+#[test]
+fn switching_to_quorum_without_paper_starts_the_wizard_not_the_ceremony() {
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    r.app.sync.cred_mode = Some(crate::app::sync::CredModeView::Vault);
+    let before = crate::sync::quorum::ops_of(&r.app.store, "ModeChange", None)
+        .unwrap()
+        .len();
+    crate::app::sync_flows::mode(&mut r.app);
+    assert_eq!(r.app.mode, AppMode::SyncInfo);
+    assert!(r.app.sync_paper.is_some());
+    assert!(r
+        .app
+        .host_notice
+        .as_deref()
+        .is_some_and(|n| n.contains("register the paper phrase first")));
+    assert_eq!(
+        crate::sync::quorum::ops_of(&r.app.store, "ModeChange", None)
+            .unwrap()
+            .len(),
+        before
+    );
 }
 
 /// U13-9: the status bar names the most urgent fact on every tab, from the store.
@@ -1373,4 +1500,60 @@ fn the_phones_answer_to_a_trust_request_is_taken_from_the_camera() {
         r.app.answer_listener.is_none(),
         "the listener ends with the answer"
     );
+}
+
+/// Design 7b: a recovery another device started raises ONE full-screen alert; Esc only dismisses it (nothing is
+/// written), and it comes back for a new recovery.
+#[test]
+fn a_recovery_started_elsewhere_raises_one_alert_that_esc_only_dismisses() {
+    use crate::sync::oplog::ThirdFactor;
+    use crate::sync::quorum::tests::append;
+    let mut r = ring(None);
+    mark_this_device(&mut r);
+    assert!(r.app.sync.alert.is_none());
+    let now = crate::store::now_ts();
+    for _ in 0..2 {
+        let body = crate::sync::recovery::start_body(
+            &r.d[2].store,
+            &r.d[2].id,
+            now,
+            None,
+            ThirdFactor::Paper,
+        )
+        .unwrap();
+        append(&r.d[2], body);
+    }
+    ingest_from(&r.d[2], &r.d[1]);
+    let before = r.app.store.sync_pending().unwrap().len()
+        + crate::sync::quorum::ops_of(&r.app.store, "PhoneReenroll", None)
+            .unwrap()
+            .len();
+    r.app.refresh_sync_view();
+    assert_eq!(r.app.mode, AppMode::SyncRecoveryAlert);
+    let alert = r.app.sync.alert.clone().expect("one alert");
+    let text = alert.lines.join(" ");
+    assert!(text.contains("2 open"), "{text}");
+    assert_eq!(alert.hashes.len(), 2);
+    // Any key but Esc/Enter changes nothing; Esc dismisses and writes no op.
+    r.app.handle_key(key_char('a')).unwrap();
+    assert_eq!(r.app.mode, AppMode::SyncRecoveryAlert);
+    r.app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(r.app.mode, AppMode::Normal);
+    let after = r.app.store.sync_pending().unwrap().len()
+        + crate::sync::quorum::ops_of(&r.app.store, "PhoneReenroll", None)
+            .unwrap()
+            .len();
+    assert_eq!(before, after);
+    r.app.refresh_sync_view();
+    assert_eq!(
+        r.app.mode,
+        AppMode::Normal,
+        "dismissed ones do not raise it again"
+    );
+    assert!(
+        r.app.sync.alert.is_some(),
+        "the badge and the Sync tab still show it"
+    );
+    let (badge, _) = r.app.sync_badge().unwrap();
+    assert!(badge.contains("recovery open"), "{badge}");
 }

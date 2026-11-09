@@ -16,7 +16,7 @@ import {
   KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeCertExtendRequest, decodeCertRenewRequest, decodeCertRequest, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
   encodeEnrollConfirm, encodeEnrollReveal, encodePhoneOps, transcriptHash,
 } from './frames.mjs';
-import { CERT_RENEW_EVIDENCE_MAX_AGE_SECS, buildCertRenew, certRequestProblems, describeCert, describeCertRenew, describeCertRequest, describeTerm, extendCert, extendProblems, issueCert, issuedCerts, revokeCert } from './cert.mjs';
+import { CERT_RENEW_EVIDENCE_MAX_AGE_SECS, buildCertRenew, certRequestProblems, describeCert, describeCertRenew, describeCertRequest, openedText, describeTerm, extendCert, extendProblems, issueCert, issuedCerts, revokeCert } from './cert.mjs';
 import { AUDIO_PROFILES, loopQr, playSamples, responseBurst, reverseQrFrames, toBase64 } from './channels.mjs';
 import { DocumentCollector, startCamera } from './scan.mjs';
 import { ownStorageKey, planReshare, publishReshare } from './reshare.mjs';
@@ -1028,6 +1028,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
       { label: 'New end', value: `${iso(v.new_end)} (adds ${describeTerm(v.term_secs)})`, danger: true },
       { label: 'New hosts per day', value: String(v.budget), danger: false },
       { label: 'Renewals left after this', value: String(Math.max(0, v.renewals_left - 1)), danger: false },
+      { label: 'Hosts it opened', value: openedText(v), danger: false },
       { label: 'Freshest news from another terminal', value: v.evidence_age_secs === null ? 'none' : `${describeTerm(v.evidence_age_secs)} old`, danger: v.evidence_age_secs === null || v.evidence_age_secs > CERT_RENEW_EVIDENCE_MAX_AGE_SECS },
     ];
     show(

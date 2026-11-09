@@ -637,6 +637,8 @@ fn renew_req(fx: &Fx, expiry: i64, evidence_ts: &[(u8, i64)]) -> CertRenewReques
                 head_ts: *ts,
             })
             .collect(),
+        opened: Vec::new(),
+        opened_total: 0,
     }
 }
 
@@ -854,4 +856,33 @@ fn a_kind_11_frame_opens_a_card_and_approval_signs_it() {
     assert!(view.renew.refusal.is_some() && view.note.is_empty());
     assert!(refusal(open_cert_renew(&[1, 2, 3], &fx.ctx(now), 6).0)
         .starts_with("Not a renewal request"));
+}
+
+#[test]
+fn the_renewal_card_shows_the_opened_hosts_and_says_so_when_no_list_was_sent() {
+    let fx = issued(7);
+    let now = NOW + DAY;
+    let mut r = renew_req(&fx, NOW + 14 * DAY, &[(0x33, now)]);
+    let none = describe_cert_renew(&fx.state, &r, now).unwrap();
+    assert_eq!((none.opened.len(), none.opened_total), (0, 0));
+    assert_eq!(opened_text(&none), "no list sent");
+    r.opened = vec!["web1".into(), "db\u{1b}[31m1".into()];
+    r.opened_total = 2;
+    let all = describe_cert_renew(&fx.state, &r, now).unwrap();
+    assert_eq!(all.opened_total, 2);
+    assert!(!all.opened[1].contains('\u{1b}'), "{:?}", all.opened);
+    assert!(opened_text(&all).starts_with("web1, db") && !opened_text(&all).contains("more"));
+    r.opened_total = 40;
+    assert!(
+        opened_text(&describe_cert_renew(&fx.state, &r, now).unwrap())
+            .ends_with("and 38 more (40 in all)")
+    );
+    // an unknown certificate carries no opened list at all
+    r.cert_id = [9; 32];
+    assert_eq!(
+        describe_cert_renew(&fx.state, &r, now)
+            .unwrap()
+            .opened_total,
+        0
+    );
 }

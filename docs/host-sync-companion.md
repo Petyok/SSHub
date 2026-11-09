@@ -245,8 +245,9 @@ phone is the author and signer of the certificate, so a stolen terminal cannot i
   than 6 hours). It refuses, with the reason and no Approve button: a certificate this phone did not issue or that was
   revoked, a third renewal, an end date that is not later or is longer than the first term or past 180 days from the
   start, news only from the trusted device itself or older than 6 hours, a phone that has not taken its chain, and a
-  certificate whose epochs ended before this phone's epoch (the renewal would be refused at use). The card cannot list
-  the hosts the device opened: the request carries no such list.
+  certificate whose epochs ended before this phone's epoch (the renewal would be refused at use). The card lists the
+  hosts the trusted device opened as far as the terminal named them (up to 8 names and the total); a request without that
+  block reads "no list sent", which is not the same as "nothing opened".
 
 The same menu lists the certificates this phone issued (active, expired or revoked, with extensions) and a **Revoke
 this trust session** button for each active one. Carry the signed revocation to any terminal; peers stop honouring the

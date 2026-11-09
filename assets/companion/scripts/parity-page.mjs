@@ -18,7 +18,7 @@ import {
   appendWrapKeyRotate, courierOps, emptyState,
 } from '../src/state.mjs';
 import { approveRelease, evaluateChallenge } from '../src/release.mjs';
-import { buildCertRenew, certRequestProblems, describeCertRenew, describeCertRequest, describeTerm, issuedCerts } from '../src/cert.mjs';
+import { buildCertRenew, certRequestProblems, describeCertRenew, describeCertRequest, openedText, describeTerm, issuedCerts } from '../src/cert.mjs';
 import { envelopeAad, ownStorageKey, planReshare, publishReshare } from '../src/reshare.mjs';
 import { commitOf, confirmMessage, encodeEnrollCommit, encodeEnrollConfirm, encodeEnrollReveal, transcriptHash } from '../src/frames.mjs';
 import { fountainEncode } from '../src/quorum.mjs';
@@ -174,12 +174,14 @@ out.identity = ['42', '0b'].map((s) => Array.from({ length: 3 }, (_, g) => {
     ['not_later', mk(certId, NOW + 7 * DAY, [[t, now]])],
     ['lifetime', mk(certId, NOW + 200 * DAY, [[t, now]])],
     ['unknown', mk('09'.repeat(32), NOW + 14 * DAY, [[t, now]])],
+    ['opened_list', { ...mk(certId, NOW + 14 * DAY, [[t, now]]), opened: ['web1', 'db1'], opened_total: 5 }],
+    ['opened_all', { ...mk(certId, NOW + 14 * DAY, [[t, now]]), opened: ['web1'], opened_total: 1 }],
   ];
-  out.cert_renews = cases.map(([name, r]) => ({ name, view: describeCertRenew(state, r, now) }));
+  out.cert_renews = cases.map(([name, r]) => { const view = describeCertRenew(state, r, now); return { name, view, opened_text: openedText(view) }; });
   buildCertRenew(state, phone, mk(certId, NOW + 14 * DAY, [[t, now]]), now);
   buildCertRenew(state, phone, mk(certId, NOW + 21 * DAY, [[t, now]]), now);
-  out.cert_renews.push({ name: 'after_two', view: describeCertRenew(state, mk(certId, NOW + 28 * DAY, [[t, now]]), now) });
-  out.cert_renews.push({ name: 'after_two_next_ok', view: describeCertRenew(state, mk(certId, NOW + 22 * DAY, [[t, now]]), now) });
+  out.cert_renews.push({ name: 'after_two', view: describeCertRenew(state, mk(certId, NOW + 28 * DAY, [[t, now]]), now), opened_text: 'no list sent' });
+  out.cert_renews.push({ name: 'after_two_next_ok', view: describeCertRenew(state, mk(certId, NOW + 22 * DAY, [[t, now]]), now), opened_text: 'no list sent' });
   out.cert_renew_ops = ops(courierOps(state, 8));
 }
 

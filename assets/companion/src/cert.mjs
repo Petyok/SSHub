@@ -146,13 +146,21 @@ export function renewProblems(state, req, now) {
   return { problems: out, cert, age };
 }
 
+// The opened-hosts row: the names the terminal listed and how many more there were; "no list sent" when the request carried
+// no block (an empty list with a zero total).
+export function openedText(v) {
+  if (!v.opened.length && v.opened_total === 0) return 'no list sent';
+  const more = v.opened_total - v.opened.length;
+  return `${v.opened.join(', ')}${more > 0 ? ` and ${more} more (${v.opened_total} in all)` : ''}`;
+}
+
 // RenewView (contract 4j): what the screen shows for a kind 11 request. A certificate this phone does not know does not
-// throw: the view carries the refusal. `opened` stays empty: kind 11 carries no list of opened hosts and the phone keeps none.
+// throw: the view carries the refusal. `opened` are the names the terminal listed (contract 4l), `opened_total` how many in all.
 export function describeCertRenew(state, req, now) {
   const aliases = { ...Object.fromEntries(Object.entries(state.ring).map(([id, d]) => [id, d.name])), ...state.aliases };
   const { problems, cert, age } = renewProblems(state, req, now);
   const refusal = problems.length ? problems.join(' ') : null;
-  if (!cert) return { delegate: '', scope: '', term_secs: 0, budget: 0, renewals_left: 0, new_end: Number(req.expiry), opened: [], evidence_age_secs: age, refusal };
+  if (!cert) return { delegate: '', scope: '', term_secs: 0, budget: 0, renewals_left: 0, new_end: Number(req.expiry), opened: [], opened_total: 0, evidence_age_secs: age, refusal };
   const who = aliases[cert.device_id] ? `${safeText(aliases[cert.device_id])} [${cert.device_id}]` : `(no name known) [${cert.device_id}]`;
   const n = cert.scope.Group ? 0 : cert.scope.Hosts.length;
   return {
@@ -162,7 +170,8 @@ export function describeCertRenew(state, req, now) {
     budget: cert.max_new_hosts_per_day,
     renewals_left: Math.max(0, CERT_MAX_RENEWALS - cert.renewals.length),
     new_end: Number(req.expiry),
-    opened: [],
+    opened: (req.opened || []).map(safeText),
+    opened_total: req.opened_total || 0,
     evidence_age_secs: age,
     refusal,
   };

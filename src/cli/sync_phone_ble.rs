@@ -117,10 +117,12 @@ pub fn enroll(
     id: &DeviceIdentity,
     out: &mut impl Write,
     json: bool,
+    notify: Option<crate::config::NotifyConfig>,
 ) -> Result<i32> {
     let ble = BleLink::new(json, ListenOpts::ENROLL_FRAMES)?;
-    let mut s =
-        EnrollSession::new(store, id, &crate::sync::runtime::device_name(), json).with_ble(&ble);
+    let mut s = EnrollSession::new(store, id, &crate::sync::runtime::device_name(), json)
+        .with_ble(&ble)
+        .with_notify(notify);
     s.start(out);
     ble.announce(out);
     let stdin = stdin_lines();

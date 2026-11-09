@@ -9,8 +9,9 @@ import { encodeCertRenew, parseOp } from '../src/ops.mjs';
 import { identityOfSecret } from '../src/keys.mjs';
 import { appendCertRenew, courierOps, emptyState, restoredState } from '../src/state.mjs';
 import { decodeCertRenewRequest, encodeCertRenewRequest } from '../src/frames.mjs';
-import { buildCertRenew, describeCert, describeCertRenew, extendProblems, issueCert, issuedCerts, revokeCert } from '../src/cert.mjs';
+import { buildCertRenew, describeCert, describeCertRenew, openedText, extendProblems, issueCert, issuedCerts, revokeCert } from '../src/cert.mjs';
 
+const renewVectors = JSON.parse(readFileSync(new URL('../../../tests/vectors/wire/cert_renew_request.json', import.meta.url), 'utf8'));
 const finalVectors = JSON.parse(readFileSync(new URL('../../../tests/vectors/op/ops.json', import.meta.url), 'utf8'));
 const h = (x) => bytesOf(x);
 const phone = identityOfSecret(h('42'.repeat(32)));
@@ -29,7 +30,7 @@ const renew = (s, expiry, ev, now) => buildCertRenew(s, phone, req(s, expiry, ev
 const lastKind = (s) => parseOp(h(s.chain[s.chain.length - 1].canonical)).kind;
 
 test('kind 11 frame round trip and refusals; the CertRenew encoder reproduces the final vector byte for byte', () => {
-  const r = { cert_id: 'ab'.repeat(32), expiry: 1800000000n, evidence: [{ terminal: TERM, head_seq: 7n, head_ts: 1799999000n }] };
+  const r = { cert_id: 'ab'.repeat(32), expiry: 1800000000n, evidence: [{ terminal: TERM, head_seq: 7n, head_ts: 1799999000n }], opened: [], opened_total: 0 };
   assert.deepEqual(decodeCertRenewRequest(encodeCertRenewRequest(r)), r);
   const bytes = encodeCertRenewRequest(r);
   assert.throws(() => decodeCertRenewRequest(bytes.slice(0, bytes.length - 1)));
@@ -119,4 +120,37 @@ test('a revoked, unknown or unusable state is refused; a past epoch_hi is shown 
   s.epoch = '5';
   assert.match(describeCertRenew(s, req(s, NOW + 14 * DAY, ev), now).refusal, /refused at use/);
   assert.ok(courierOps(restoredState()).length === 0);
+});
+
+test('kind 11 wire vectors: decode and encode reproduce every frame, malformed opened blocks are refused (contract 4l)', () => {
+  for (const v of renewVectors.vectors) {
+    const i = v.inputs;
+    const r = { cert_id: i.cert_id, expiry: BigInt(i.expiry), evidence: i.evidence.map((e) => ({ terminal: e.terminal, head_seq: BigInt(e.head_seq), head_ts: BigInt(e.head_ts) })), opened: i.opened || [], opened_total: i.opened_total || 0 };
+    const frame = h(v.outputs.frame);
+    assert.deepEqual(decodeCertRenewRequest(frame), r, v.id);
+    assert.equal(Buffer.from(encodeCertRenewRequest(r)).toString('hex'), v.outputs.frame, v.id);
+  }
+  const base = { cert_id: 'ab'.repeat(32), expiry: 1n, evidence: [], opened: ['web1'], opened_total: 1 };
+  const good = encodeCertRenewRequest(base);
+  assert.throws(() => decodeCertRenewRequest(good.slice(0, good.length - 1)), /malformed/);
+  assert.throws(() => decodeCertRenewRequest(Uint8Array.of(...good, 0)), /malformed/);
+  assert.throws(() => decodeCertRenewRequest(encodeCertRenewRequest({ ...base, opened_total: 0 })), /malformed/, 'total below the names');
+  const nine = { ...base, opened: Array.from({ length: 9 }, (_, i) => `h${i}`), opened_total: 9 };
+  assert.throws(() => decodeCertRenewRequest(encodeCertRenewRequest(nine)), /at most 8/);
+  // a block with no names and a zero total is never written
+  assert.throws(() => decodeCertRenewRequest(Uint8Array.of(...encodeCertRenewRequest({ ...base, opened: [], opened_total: 0 }), 0, 0, 0)), /malformed/);
+});
+
+test('the renewal card lists the opened hosts, and says "no list sent" when the block is absent', () => {
+  const s = issued(7);
+  const now = NOW + DAY;
+  const r = req(s, NOW + 14 * DAY, [[TERM, now]]);
+  const none = describeCertRenew(s, r, now);
+  assert.deepEqual([none.opened, none.opened_total, openedText(none)], [[], 0, 'no list sent']);
+  const some = describeCertRenew(s, { ...r, opened: ['web1', 'db\u001b[31m1'], opened_total: 2 }, now);
+  assert.equal(some.opened_total, 2);
+  assert.ok(!some.opened[1].includes('\u001b'));
+  assert.match(openedText(some), /^web1, db/);
+  assert.ok(!/more/.test(openedText(some)));
+  assert.ok(openedText(describeCertRenew(s, { ...r, opened: ['web1'], opened_total: 40 }, now)).endsWith('and 39 more (40 in all)'));
 });

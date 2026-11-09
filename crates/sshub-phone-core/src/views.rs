@@ -323,8 +323,9 @@ pub struct CertExtendView {
     pub note: String,
 }
 
-/// What the phone shows for a renewal request (contract 4j `RenewView`). `opened` stays empty: kind 11 carries no list of
-/// opened hosts and the phone keeps none.
+/// What the phone shows for a renewal request (contract 4j `RenewView`, 4l). `opened` are the names of the hosts the delegate
+/// opened that the terminal listed (at most 8) and `opened_total` how many it opened in all; both empty/0 means the request
+/// carried no list at all ("no list sent"), never "nothing opened".
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct RenewView {
     pub delegate: String,
@@ -335,6 +336,7 @@ pub struct RenewView {
     pub renewals_left: u32,
     pub new_end: i64,
     pub opened: Vec<String>,
+    pub opened_total: u32,
     /// Age of the freshest evidence of a terminal other than the delegate; `None` when none came.
     pub evidence_age_secs: Option<i64>,
     /// When set the phone refuses to sign.
@@ -499,7 +501,7 @@ pub enum ScanEvent {
         total: u32,
         damaged: u32,
     },
-    /// A completed document (a whole frame of kinds 1 to 10): hand it to `open_frame`.
+    /// A completed document (a whole frame of kinds 1 to 12): hand it to `open_frame`.
     Document {
         bytes: Vec<u8>,
     },

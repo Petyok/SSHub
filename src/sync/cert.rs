@@ -435,6 +435,8 @@ pub fn cert_renew_request(
         cert_id,
         expiry,
         evidence,
+        opened: Vec::new(),
+        opened_total: 0,
     })
 }
 

@@ -664,6 +664,8 @@ fn cert_renew_views_refusals_and_signed_ops_are_the_pages() {
     let now = NOW + DAY;
     let t = [0x33u8; 8];
     let mk = |id: [u8; 32], expiry: i64, ev: &[([u8; 8], i64)]| CertRenewRequestWire {
+        opened: Vec::new(),
+        opened_total: 0,
         cert_id: id,
         expiry,
         evidence: ev
@@ -679,6 +681,7 @@ fn cert_renew_views_refusals_and_signed_ops_are_the_pages() {
     let check = |st: &PhoneState, name: &str, r: &CertRenewRequestWire, w: &Value| {
         let v = cert::describe_cert_renew(st, r, now).unwrap();
         assert_eq!(s(&w["name"]), name);
+        let want_text = s(&w["opened_text"]).to_string();
         let w = &w["view"];
         assert_eq!(v.delegate, s(&w["delegate"]), "{name} delegate");
         assert_eq!(v.scope, s(&w["scope"]), "{name} scope");
@@ -694,7 +697,19 @@ fn cert_renew_views_refusals_and_signed_ops_are_the_pages() {
             "{name} left"
         );
         assert_eq!(v.new_end, w["new_end"].as_i64().unwrap(), "{name} new_end");
-        assert!(v.opened.is_empty() && w["opened"].as_array().unwrap().is_empty());
+        let want_opened: Vec<String> = w["opened"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| s(x).to_string())
+            .collect();
+        assert_eq!(v.opened, want_opened, "{name} opened");
+        assert_eq!(
+            i64::from(v.opened_total),
+            w["opened_total"].as_i64().unwrap(),
+            "{name} opened_total"
+        );
+        assert_eq!(cert::opened_text(&v), want_text, "{name} opened text");
         assert_eq!(
             v.evidence_age_secs,
             w["evidence_age_secs"].as_i64(),
@@ -730,6 +745,22 @@ fn cert_renew_views_refusals_and_signed_ops_are_the_pages() {
         ("not_later", mk(cert_id, NOW + 7 * DAY, &[(t, now)])),
         ("lifetime", mk(cert_id, NOW + 200 * DAY, &[(t, now)])),
         ("unknown", mk([9; 32], NOW + 14 * DAY, &[(t, now)])),
+        (
+            "opened_list",
+            CertRenewRequestWire {
+                opened: vec!["web1".into(), "db1".into()],
+                opened_total: 5,
+                ..mk(cert_id, NOW + 14 * DAY, &[(t, now)])
+            },
+        ),
+        (
+            "opened_all",
+            CertRenewRequestWire {
+                opened: vec!["web1".into()],
+                opened_total: 1,
+                ..mk(cert_id, NOW + 14 * DAY, &[(t, now)])
+            },
+        ),
     ];
     let want = p["cert_renews"].as_array().unwrap();
     for (i, (name, r)) in cases.iter().enumerate() {
