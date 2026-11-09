@@ -1,7 +1,8 @@
 // The e2e phone: the committed sshub-companion.html in headless Chromium, driven only through what a person
 // has in front of them: buttons, the paste box of a scan screen, the text the page shows and copies (ops text,
-// clipboard) and the QR code it draws (read back from the screen like a camera would). No hook of any kind is
-// added to the page: no init script, no clock shift, no fake camera, no evaluation of page internals.
+// clipboard) and the QR code it draws (read back from the screen like a camera would). No hook is
+// added to the page: no fake camera, no evaluation of page internals; the only init script is the optional test clock of
+// `clock-set` (scenario 75d), a stand-in for the user changing the phone's date, off unless a scenario sets it.
 //
 //   node phone-driver.mjs serve            long-lived daemon (compose service `phone`), one Chromium, one page
 //   node phone-driver.mjs <command> [json] one command against the daemon; prints one JSON line, exit 1 on error
@@ -26,6 +27,7 @@
 //   handover-admit-open {frame}                     the second kind 12 frame: the new phone's own admission (then handover-approve)
 //   chain-take {frame} / chain-adopt {tick?}        a restored key takes its chain from a terminal's list (kind 5); one list needs the tick
 //   recovery-open {frame} / recovery-cancel          a kind 3 notice of a phone recovery: the live phone cancels it
+//   clock-set {offset_secs}                move the page's date (negative: backdate) from the next load; 0 restores (scenario 75d)
 //   ops-text                               the ops list the current screen shows as text (base64 of a kind 5 frame)
 //   verify-ops {ops, kind?, opHash?}       check a kind 5 list: every op by this phone, signature valid, chain from
 //                                          seq 1 continuous, last op of `kind` (RedPhoneSign naming `opHash`)
@@ -176,6 +178,24 @@ async function boot() {
   if (!targets[kind]) throw new Error(`unknown PHONE_TARGET ${kind} (have: ${Object.keys(targets).join(', ')})`);
   target = await targets[kind](pageHtml);
   page = target.page;
+  // The test clock of scenario 75d: a person changing the date of the phone. The page reads Date; when the origin's local
+  // storage holds an offset (set by `clock-set`, wiped by `reset`) every later page load sees that much earlier or later time.
+  // The page itself carries no hook: the script is added by the browser driver, as the system clock would be.
+  await page.addInitScript(() => {
+    const off = Number(localStorage.getItem('__e2e_clock_offset_ms') || 0);
+    if (!off) return;
+    const D = Date;
+    const now = () => D.now() + off;
+    globalThis.Date = class extends D {
+      constructor(...a) {
+        if (a.length === 0) super(now());
+        else super(...a);
+      }
+      static now() {
+        return now();
+      }
+    };
+  });
 }
 
 // ------------------------------------------------------------------ small helpers on the page
@@ -381,6 +401,15 @@ const commands = {
     const ops = await page.locator('#ops-b64').inputValue();
     const qr = b64(await readQr('#reverse-qr'));
     return { ok: true, ops, qr_equals_text: qr === ops };
+  },
+
+  // clock-set {offset_secs}: the phone's date moves by this many seconds (negative: into the past) from the next page load on;
+  // 0 puts it back. Reset also puts it back.
+  async 'clock-set'({ offset_secs = 0 }) {
+    await page.evaluate((ms) => localStorage.setItem('__e2e_clock_offset_ms', String(ms)), Number(offset_secs) * 1000);
+    await page.reload();
+    await home();
+    return { offset_secs, page_now: await page.evaluate(() => Math.floor(Date.now() / 1000)) };
   },
 
   // ---- a restored key takes its chain from a terminal (kind 5 list with the terminals block)
