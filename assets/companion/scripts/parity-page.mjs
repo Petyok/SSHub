@@ -19,7 +19,7 @@ import {
 } from '../src/state.mjs';
 import { approveRelease, evaluateChallenge } from '../src/release.mjs';
 import { buildCertRenew, certRequestProblems, describeCertRenew, describeCertRequest, openedText, describeTerm, issuedCerts } from '../src/cert.mjs';
-import { buildPhoneHandover, describePhoneHandover, signHandoverAdmission } from '../src/handover.mjs';
+import { buildPhoneHandover, describeHandoverAdmission, describePhoneHandover, signHandoverAdmission } from '../src/handover.mjs';
 import { envelopeAad, ownStorageKey, planReshare, publishReshare } from '../src/reshare.mjs';
 import { commitOf, confirmMessage, encodeEnrollCommit, encodeEnrollConfirm, encodeEnrollReveal, transcriptHash } from '../src/frames.mjs';
 import { fountainEncode } from '../src/quorum.mjs';
@@ -197,8 +197,10 @@ out.identity = ['42', '0b'].map((s) => Array.from({ length: 3 }, (_, g) => {
   const view = describePhoneHandover(state, req);
   buildPhoneHandover(state, oldId, req, NOW + 1);
   const fresh = emptyState();
-  signHandoverAdmission(fresh, newId, '09'.repeat(32), NOW + 2);
-  out.phone_handover = { view, old_ops: ops(courierOps(state, 8)), new_ops: ops(courierOps(fresh, 8)) };
+  const admission = { ...req, op: { hash: '09'.repeat(32), lamport: 700n } };
+  const admissionView = describeHandoverAdmission(newId, admission);
+  signHandoverAdmission(fresh, newId, admission, NOW + 2);
+  out.phone_handover = { view, admission_view: admissionView, old_ops: ops(courierOps(state, 8)), new_ops: ops(courierOps(fresh, 8)) };
 }
 
 // ---------------------------------------------------------------- reshare: the Rust-made fixture adopted by the page

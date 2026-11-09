@@ -57,6 +57,11 @@ pub fn describe_phone_handover(
     state: &PhoneState,
     req: &PhoneHandoverRequestWire,
 ) -> Result<HandoverView> {
+    if req.op.is_some() {
+        return Err(CoreError::refused(
+            "This is the admission frame for the new phone, not a request to the old one.",
+        ));
+    }
     let old = own_id8(state)?;
     check_request(state, req)?;
     let certs_carried = issued_cert_records(state)
@@ -74,8 +79,52 @@ pub fn describe_phone_handover(
         name: safe_text(&req.name),
         words: handover_words(&req.new_phone, &req.name, &old),
         certs_carried,
+        op_hash: None,
+        op_lamport: None,
     })
 }
+
+/// The admission frame the NEW phone scans (contract 4l b): the same request plus the hash and lamport of the ingested
+/// `PhoneHandover` op. It is refused unless it names THIS phone's own keys, so a frame meant for another phone never
+/// gets this phone's signature.
+fn check_admission(id: &PhoneIdentity, req: &PhoneHandoverRequestWire) -> Result<([u8; 32], u64)> {
+    let Some((hash, lamport)) = req.op else {
+        return Err(CoreError::refused(
+            "This request carries no handover operation: it is for the old phone.",
+        ));
+    };
+    if req.new_phone != id.public() {
+        return Err(CoreError::refused(
+            "This handover names another phone, not this one. Do not sign it.",
+        ));
+    }
+    check_name(&req.name).map_err(|e| CoreError::refused(e.reason().to_string()))?;
+    if lamport > MAX_ADMISSION_OP_LAMPORT {
+        return Err(CoreError::refused(
+            "The handover operation names an impossible counter: ask the terminal to show it again.",
+        ));
+    }
+    Ok((hash, lamport))
+}
+
+/// What the new phone shows before it signs its admission: the name and the operation it will sign over.
+pub fn describe_handover_admission(
+    id: &PhoneIdentity,
+    req: &PhoneHandoverRequestWire,
+) -> Result<HandoverView> {
+    let (hash, lamport) = check_admission(id, req)?;
+    Ok(HandoverView {
+        name: safe_text(&req.name),
+        words: Vec::new(),
+        certs_carried: Vec::new(),
+        op_hash: Some(hash.to_vec()),
+        op_lamport: Some(lamport),
+    })
+}
+
+/// The lamport the terminal reports is unsigned: a forged huge one would push this phone's counters out of range, so
+/// anything a ring could not have reached is refused (2^32 ops).
+pub const MAX_ADMISSION_OP_LAMPORT: u64 = u32::MAX as u64;
 
 fn handover_in_chain(state: &PhoneState) -> bool {
     state.chain.iter().any(|e| {
@@ -101,6 +150,11 @@ pub fn build_phone_handover(
     req: &PhoneHandoverRequestWire,
     now: i64,
 ) -> Result<Vec<u8>> {
+    if req.op.is_some() {
+        return Err(CoreError::refused(
+            "This is the admission frame for the new phone: only the new phone signs it.",
+        ));
+    }
     own_id8(state)?;
     check_request(state, req)?;
     if handover_in_chain(state) {
@@ -119,15 +173,23 @@ pub fn build_phone_handover(
     Ok(ops_frame(state))
 }
 
-/// The NEW phone's own `RedPhoneSign` over the handover op (one of the proofs the ring counts). Returns the kind 5 list
-/// to carry to a terminal.
+/// The NEW phone's own `RedPhoneSign` over the handover op (one of the proofs the ring counts), from the admission frame
+/// (contract 4l b). Its lamport is `max(own next, op_lamport + 1)`: a proof written before the op it names would not
+/// count on the host. Returns the kind 5 list to carry to a terminal.
 pub fn sign_handover_admission(
     state: &mut PhoneState,
     id: &PhoneIdentity,
-    handover_op_hash: [u8; 32],
+    req: &PhoneHandoverRequestWire,
     now: i64,
 ) -> Result<Vec<u8>> {
-    chain::red_phone_sign(state, id, handover_op_hash, now, None)?;
+    let (hash, lamport) = check_admission(id, req)?;
+    chain::red_phone_sign(
+        state,
+        id,
+        hash,
+        now,
+        Some(chain::Seen { lamport, epoch: 0 }),
+    )?;
     Ok(ops_frame(state))
 }
 
@@ -160,6 +222,7 @@ mod tests {
             new_phone: new_phone(),
             name: name.into(),
             terminal: [7; 8],
+            op: None,
         }
     }
 
@@ -264,16 +327,73 @@ mod tests {
         assert_eq!(s.chain.len(), 1);
     }
 
+    fn admission(op: Option<([u8; 32], u64)>) -> PhoneHandoverRequestWire {
+        PhoneHandoverRequestWire {
+            op,
+            ..req("new phone")
+        }
+    }
+
     #[test]
-    fn the_new_phone_signs_its_own_admission_over_the_op_hash() {
+    fn the_new_phone_signs_its_own_admission_after_the_op_it_names() {
         let nid = PhoneIdentity::new(&[0x55; 32], 0).unwrap();
         let mut s = PhoneState::default();
-        let frame = sign_handover_admission(&mut s, &nid, [9; 32], NOW).unwrap();
+        let r = admission(Some(([9; 32], 700)));
+        let v = describe_handover_admission(&nid, &r).unwrap();
+        assert_eq!(
+            (v.op_hash.clone(), v.op_lamport),
+            (Some(vec![9; 32]), Some(700))
+        );
+        assert!(v.words.is_empty() && v.certs_carried.is_empty());
+        let frame = sign_handover_admission(&mut s, &nid, &r, NOW).unwrap();
         let ops = PhoneOpsWire::decode(&frame).unwrap().ops;
         let op = decode_op(&ops.last().unwrap().0, ops.last().unwrap().1).unwrap();
         assert!(op.verify(&nid.public().ed25519_pub));
         assert!(matches!(op.body, OpBody::RedPhoneSign { op_hash } if op_hash == [9; 32]));
+        assert_eq!(op.lamport, 701, "after the op it names");
+        // a phone that is already far ahead keeps its own next lamport
+        let r2 = admission(Some(([8; 32], 3)));
+        let frame = sign_handover_admission(&mut s, &nid, &r2, NOW + 1).unwrap();
+        let ops = PhoneOpsWire::decode(&frame).unwrap().ops;
+        let op = decode_op(&ops.last().unwrap().0, ops.last().unwrap().1).unwrap();
+        assert_eq!(op.lamport, 702);
+    }
+
+    #[test]
+    fn an_admission_for_another_phone_or_without_an_op_is_refused() {
+        let nid = PhoneIdentity::new(&[0x55; 32], 0).unwrap();
+        let mut s = PhoneState::default();
+        // names another phone's keys
+        let other = PhoneIdentity::new(&[0x66; 32], 0).unwrap();
+        let mut r = admission(Some(([9; 32], 1)));
+        r.new_phone = other.public();
+        assert!(reason(describe_handover_admission(&nid, &r)).contains("another phone"));
+        assert!(reason(sign_handover_admission(&mut s, &nid, &r, NOW)).contains("another phone"));
+        // one key of three differs
+        let mut r = admission(Some(([9; 32], 1)));
+        r.new_phone.x25519_pub[0] ^= 1;
+        assert!(sign_handover_admission(&mut s, &nid, &r, NOW).is_err());
+        // the old phone's request carries no op
+        assert!(
+            reason(sign_handover_admission(&mut s, &nid, &admission(None), NOW))
+                .contains("no handover operation")
+        );
+        // the old phone refuses the admission frame, the new phone's checks do not apply to it
+        let (_, old_state) = old();
+        assert!(reason(describe_phone_handover(
+            &old_state,
+            &admission(Some(([9; 32], 1)))
+        ))
+        .contains("admission frame"));
+        // a forged huge lamport
+        assert!(
+            sign_handover_admission(&mut s, &nid, &admission(Some(([9; 32], u64::MAX))), NOW)
+                .is_err()
+        );
+        assert!(sign_handover_admission(&mut s, &nid, &admission(Some(([9; 32], 1))), NOW).is_ok());
         s.head_pending = true;
-        assert!(sign_handover_admission(&mut s, &nid, [9; 32], NOW + 1).is_err());
+        assert!(
+            sign_handover_admission(&mut s, &nid, &admission(Some(([9; 32], 1))), NOW + 1).is_err()
+        );
     }
 }

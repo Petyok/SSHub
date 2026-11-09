@@ -16,7 +16,7 @@ import {
   KIND, ROLE_EXISTING, ROLE_JOINING, commitOf, confirmMessage, decodeCertExtendRequest, decodeCertRenewRequest, decodeCertRequest, decodePhoneHandoverRequest, decodeEnroll, decodeFrame, decodePhoneOps, decodeRecoveryNotice, encodeEnrollCommit,
   encodeEnrollConfirm, encodeEnrollReveal, encodePhoneOps, transcriptHash,
 } from './frames.mjs';
-import { buildPhoneHandover, describePhoneHandover } from './handover.mjs';
+import { buildPhoneHandover, describeHandoverAdmission, describePhoneHandover, signHandoverAdmission } from './handover.mjs';
 import { CERT_RENEW_EVIDENCE_MAX_AGE_SECS, buildCertRenew, certRequestProblems, describeCert, describeCertRenew, describeCertRequest, openedText, describeTerm, extendCert, extendProblems, issueCert, issuedCerts, revokeCert } from './cert.mjs';
 import { AUDIO_PROFILES, loopQr, playSamples, responseBurst, reverseQrFrames, toBase64 } from './channels.mjs';
 import { DocumentCollector, startCamera } from './scan.mjs';
@@ -1057,22 +1057,23 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     let v;
     try {
       req = decodePhoneHandoverRequest(bytes);
-      v = describePhoneHandover(app.state, req);
+      v = req.op ? describeHandoverAdmission(app.identity, req) : describePhoneHandover(app.state, req);
     } catch (e) {
       return refusalScreen(`Not a handover request: ${e.message}`, []);
     }
     const msg = h('p', { class: 'err', id: 'handover-error' });
     show(
-      title('Hand the ring over to a new phone', `New phone: ${v.name}`),
-      h('div', { class: 'headline', id: 'handover-words' }, v.words.join(' ')),
-      h('div', { class: 'refusal', id: 'handover-note' }, "Compare these words with the terminal's screen. They must be identical, word for word: if they differ, refuse. Approving also needs a second terminal and the paper phrase; this phone stops being a device of yours when it completes."),
+      title(req.op ? 'This phone is the new phone of the ring' : 'Hand the ring over to a new phone', `New phone: ${v.name}`),
+      req.op ? null : h('div', { class: 'headline', id: 'handover-words' }, v.words.join(' ')),
+      h('div', { class: 'refusal', id: 'handover-note' }, req.op ? "Signing is this phone's own approval of the handover; the ring counts it with the others. Sign only if you started this replacement." : "Compare these words with the terminal's screen. They must be identical, word for word: if they differ, refuse. Approving also needs a second terminal and the paper phrase; this phone stops being a device of yours when it completes."),
       v.certs_carried.length ? h('div', { class: 'mut', id: 'handover-certs' }, `Trust sessions that stay valid for the new phone: ${v.certs_carried.join('; ')}`) : null,
       msg,
-      btn('The words are identical: sign the handover', async () => {
+      btn(req.op ? 'Sign this phone\'s admission' : 'The words are identical: sign the handover', async () => {
         try {
-          buildPhoneHandover(app.state, app.identity, req, app.now());
+          if (req.op) signHandoverAdmission(app.state, app.identity, req, app.now());
+          else buildPhoneHandover(app.state, app.identity, req, app.now());
           await save();
-          opsOut({ heading: 'Handover signed', hint: "Carry this to the terminal that asked: it holds this phone's part of the handover.", ops: courierOps(app.state) });
+          opsOut({ heading: req.op ? 'Admission signed' : 'Handover signed', hint: req.op ? "Carry this to a terminal: it holds this phone's own approval of the handover." : "Carry this to the terminal that asked: it holds this phone's part of the handover.", ops: courierOps(app.state) });
         } catch (e) {
           msg.textContent = e.message;
         }

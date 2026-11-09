@@ -351,6 +351,11 @@ pub struct HandoverView {
     pub words: Vec<String>,
     /// The trust sessions this phone issued that still count and stay valid for the successor.
     pub certs_carried: Vec<String>,
+    /// Set on the admission frame shown to the NEW phone (contract 4l b): the hash (32 bytes) and the lamport of the
+    /// `PhoneHandover` op it signs its admission over. `words` and `certs_carried` are empty there: the compare happened
+    /// on the old phone, and the new phone does not know the old phone's id.
+    pub op_hash: Option<Vec<u8>>,
+    pub op_lamport: Option<u64>,
 }
 
 /// Kind 12: a terminal shows the OLD phone a request to hand the ring over to a new phone.

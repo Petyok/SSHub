@@ -307,15 +307,26 @@ impl Inner {
                     Err(e) => return Ok(refused(format!("Not a handover request: {e:#}"))),
                 };
                 let u = self.unlocked.as_ref().ok_or(CoreError::Locked)?;
-                match crate::handover::describe_phone_handover(&u.state, &req) {
+                // the admission frame (it carries the op) is for the NEW phone, the plain request for the old one
+                let described = if req.op.is_some() {
+                    crate::handover::describe_handover_admission(&u.id, &req)
+                } else {
+                    crate::handover::describe_phone_handover(&u.state, &req)
+                };
+                match described {
                     Ok(handover) => {
+                        let admission = req.op.is_some();
                         self.pending.clear();
                         self.pending.insert(t, Pending::Handover(req));
                         Ok(Opened::PhoneHandover {
                             view: PhoneHandoverView {
                                 token: t,
                                 handover,
-                                note: "Compare these words with the terminal's screen. They must be identical, word for word: if they differ, refuse. Approving also needs a second terminal and the paper phrase; this phone stops being a device of yours when it completes.".to_string(),
+                                note: if admission {
+                                    "This phone is the new phone of the ring. Signing is this phone's own approval of the handover; the ring counts it with the others. Sign only if you started this replacement.".to_string()
+                                } else {
+                                    "Compare these words with the terminal's screen. They must be identical, word for word: if they differ, refuse. Approving also needs a second terminal and the paper phrase; this phone stops being a device of yours when it completes.".to_string()
+                                },
                             },
                         })
                     }
@@ -559,11 +570,14 @@ impl PhoneCore {
             }
             (Pending::Reshare(p), Decision::Approve { .. }) => reshare::publish_reshare(p, ctx),
             (Pending::Handover(r), Decision::Approve { .. }) => {
-                crate::handover::build_phone_handover(ctx.state, ctx.id, &r, ctx.now)?;
-                crate::outgoing::ops_out(
-                    &chain::courier_ops(ctx.state, COURIER_TAIL),
-                    "Carry this to the terminal that asked: it holds this phone's part of the handover. It completes after a second terminal and the paper phrase approve it.",
-                )
+                let note = if r.op.is_some() {
+                    crate::handover::sign_handover_admission(ctx.state, ctx.id, &r, ctx.now)?;
+                    "Carry this to a terminal: it holds this phone's own approval of the handover."
+                } else {
+                    crate::handover::build_phone_handover(ctx.state, ctx.id, &r, ctx.now)?;
+                    "Carry this to the terminal that asked: it holds this phone's part of the handover. It completes after a second terminal and the paper phrase approve it."
+                };
+                crate::outgoing::ops_out(&chain::courier_ops(ctx.state, COURIER_TAIL), note)
             }
             (
                 Pending::Chain { seq: shown, hash },
@@ -595,22 +609,6 @@ impl PhoneCore {
             Opened::Refused { view } => Err(CoreError::bad(view.reason)),
             _ => Err(CoreError::internal("unexpected view")),
         }
-    }
-
-    /// The NEW phone's own admission to the ring: signs a `RedPhoneSign` over the handover op the old phone made
-    /// (`op_hash_hex`, 64 hex characters, shown by the terminal) and returns the list to carry to a terminal.
-    pub fn sign_handover_admission(&self, op_hash_hex: String, now: i64) -> Result<Outgoing> {
-        let hash: [u8; 32] = hex::decode(op_hash_hex.trim())
-            .ok()
-            .and_then(|b| b.try_into().ok())
-            .ok_or_else(|| CoreError::bad("An operation hash is 64 hex characters."))?;
-        let mut g = self.lock_inner();
-        let u = g.unlocked.as_mut().ok_or(CoreError::Locked)?;
-        crate::handover::sign_handover_admission(&mut u.state, &u.id, hash, now)?;
-        crate::outgoing::ops_out(
-            &chain::courier_ops(&u.state, COURIER_TAIL),
-            "Carry this to a terminal: it holds this phone's own approval of the handover.",
-        )
     }
 
     /// "This key never signed anything": only with this phone's device id typed.
@@ -1622,6 +1620,7 @@ mod tests {
             new_phone: new.clone(),
             name: "new phone".into(),
             terminal: [3; 8],
+            op: None,
         };
         let now = 1_893_452_400;
         let Opened::PhoneHandover { view } = c.open_frame(req.encode(), now).unwrap() else {
@@ -1639,15 +1638,40 @@ mod tests {
         let ops = PhoneOpsWire::decode(&out.frame).unwrap().ops;
         let last = decode_op(&ops.last().unwrap().0, ops.last().unwrap().1).unwrap();
         assert!(matches!(last.body, OpBody::PhoneHandover { .. }));
-        // the new phone (another core) signs its admission over that op's hash
+        // the terminal ingests the op and shows the admission frame (op hash and lamport) to the new phone
         let n = core();
         n.unlock(vec![0x55; 32]).unwrap();
-        let hash = hex::encode(sshub_sync_proto::crypto::chain_hash(&ops.last().unwrap().0));
-        let out = n.sign_handover_admission(hash, now).unwrap();
+        let hash: [u8; 32] = sshub_sync_proto::crypto::chain_hash(&ops.last().unwrap().0);
+        let frame = PhoneHandoverRequestWire {
+            op: Some((hash, last.lamport)),
+            ..req.clone()
+        };
+        let Opened::PhoneHandover { view } = n.open_frame(frame.encode(), now).unwrap() else {
+            panic!("not an admission card")
+        };
+        assert_eq!(view.handover.op_hash, Some(hash.to_vec()));
+        assert_eq!(view.handover.op_lamport, Some(last.lamport));
+        let out = n
+            .decide(view.token, Decision::Approve { typed_id: None }, now)
+            .unwrap();
         let ops = PhoneOpsWire::decode(&out.frame).unwrap().ops;
         let sign = decode_op(&ops.last().unwrap().0, ops.last().unwrap().1).unwrap();
-        assert!(matches!(sign.body, OpBody::RedPhoneSign { .. }));
-        assert!(n.sign_handover_admission("zz".into(), now).is_err());
+        assert!(matches!(sign.body, OpBody::RedPhoneSign { op_hash } if op_hash == hash));
+        assert!(
+            sign.lamport > last.lamport,
+            "the proof comes after the op it names"
+        );
+        // the old phone's core refuses the admission frame, and another phone's core refuses a frame for this one
+        assert!(matches!(
+            c.open_frame(frame.encode(), now).unwrap(),
+            Opened::Refused { .. }
+        ));
+        let stranger = core();
+        stranger.unlock(vec![0x77; 32]).unwrap();
+        assert!(matches!(
+            stranger.open_frame(frame.encode(), now).unwrap(),
+            Opened::Refused { .. }
+        ));
     }
 
     #[test]

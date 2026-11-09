@@ -834,6 +834,7 @@ fn phone_handover_view_and_signed_ops_are_the_pages() {
         new_phone: new.public(),
         name: "new phone".into(),
         terminal: [7; 8],
+        op: None,
     };
     let w = &p["phone_handover"];
     let strings = |v: &Value| -> Vec<String> {
@@ -849,7 +850,17 @@ fn phone_handover_view_and_signed_ops_are_the_pages() {
     assert_eq!(v.certs_carried, strings(&w["view"]["certs_carried"]));
     handover::build_phone_handover(&mut st, &old, &req, NOW + 1).unwrap();
     let mut fresh = PhoneState::default();
-    handover::sign_handover_admission(&mut fresh, &new, [9; 32], NOW + 2).unwrap();
+    let admission = PhoneHandoverRequestWire {
+        op: Some(([9; 32], 700)),
+        ..req.clone()
+    };
+    let av = handover::describe_handover_admission(&new, &admission).unwrap();
+    assert_eq!(
+        hex::encode(av.op_hash.unwrap()),
+        s(&w["admission_view"]["op_hash"])
+    );
+    assert_eq!(av.op_lamport, w["admission_view"]["op_lamport"].as_u64());
+    handover::sign_handover_admission(&mut fresh, &new, &admission, NOW + 2).unwrap();
     for (state, key) in [(&st, "old_ops"), (&fresh, "new_ops")] {
         let tail = chain::courier_ops(state, 8);
         let want = w[key].as_array().unwrap();
