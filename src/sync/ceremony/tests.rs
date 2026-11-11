@@ -525,6 +525,51 @@ mod in_force {
         (d, phrase)
     }
 
+    /// The paper's `factor` write in the checkpoint state `store` builds now, as the registered unwrap key bytes.
+    fn state_paper(store: &LauncherStore) -> Option<Vec<u8>> {
+        let (_, state, _) = store.sync_checkpoint_build(None, 1_000).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&state).unwrap();
+        v["writes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["section"] == "factor" && w["key"] == "paper")
+            .map(|w| {
+                use base64::Engine;
+                base64::engine::general_purpose::STANDARD
+                    .decode(w["value"]["sealed"].as_str().unwrap())
+                    .unwrap()
+            })
+    }
+
+    /// A registration that is pending (its ceremony is not complete) must not reach a checkpoint state, or a device
+    /// adopting it would trust a paper nobody approved; a later in-force one replaces an earlier one.
+    #[test]
+    fn a_checkpoint_state_carries_only_the_paper_in_force() {
+        let d = ring_phone(3);
+        let first = bip39_encode(&[0x77; 32]);
+        let reg = append(&d[0], paper_registration(&first).unwrap());
+        assert!(
+            state_paper(&d[0].store).is_none(),
+            "a pending registration is not state"
+        );
+        complete(&d, &reg, 1, None);
+        let want = |phrase: &str| match paper_registration(phrase).unwrap() {
+            OpBody::FactorRegister { sealed, .. } => sealed,
+            _ => unreachable!(),
+        };
+        assert_eq!(state_paper(&d[0].store), Some(want(&first)));
+        let second = bip39_encode(&[0x78; 32]);
+        let reg2 = append(&d[0], paper_registration(&second).unwrap());
+        assert_eq!(
+            state_paper(&d[0].store),
+            Some(want(&first)),
+            "a pending newer registration does not mask the one in force"
+        );
+        complete(&d, &reg2, 1, Some(&first));
+        assert_eq!(state_paper(&d[0].store), Some(want(&second)));
+    }
+
     #[test]
     fn a_paper_registration_changes_who_is_wrapped_to_only_when_complete() {
         let d = ring_phone(3);
