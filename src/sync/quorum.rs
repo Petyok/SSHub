@@ -376,6 +376,13 @@ pub fn paper_pub(store: &LauncherStore) -> Result<Option<DevicePublic>> {
             }
         }
     }
+    if let Some((_, sealed, _)) =
+        store.sync_state_factor(&super::oplog::ThirdFactor::Paper, None)?
+    {
+        if !sealed.is_empty() {
+            return pub_from_bytes(&sealed).map(Some);
+        }
+    }
     meta_get(store, "paper_pub")?
         .map(|b| pub_from_bytes(&b))
         .transpose()

@@ -218,6 +218,19 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
                 "added_by": hex(hash),
             }),
         )],
+        // The registered third factor, so a device that joined by a checkpoint (its op rows are pruned) still knows it.
+        OpBody::FactorRegister {
+            factor,
+            public,
+            sealed,
+            sender,
+            ..
+        } => vec![(
+            "factor",
+            factor_key(factor).into(),
+            0,
+            json!({ "public": hex(public), "sealed": b64_encode(sealed), "sender": sender }),
+        )],
         OpBody::ExemptionSet { device_id, slot } => vec![(
             "exempt",
             device_id.clone(),
@@ -343,6 +356,77 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
         )],
         _ => Vec::new(),
     }
+}
+
+fn factor_key(f: &ThirdFactor) -> &'static str {
+    match f {
+        ThirdFactor::Paper => "paper",
+        ThirdFactor::EmailCode => "email",
+    }
+}
+
+/// A registered third factor: `(public, sealed, sender)`.
+pub(crate) type FactorRegistration = ([u8; 32], Vec<u8>, Option<DeviceId>);
+
+/// The registration of `factor` carried by an adopted checkpoint or join anchor (a base write, no op row behind it):
+/// `(public, sealed, sender)`, only when older than lamport `before`.
+/// ponytail: the state carries the newest registration as the proposer saw it, in force or not.
+/// The base write of `factor` (adopted state), as a fold winner.
+fn base_factor(conn: &Connection, factor: &ThirdFactor) -> Result<Option<Win>> {
+    Ok(conn
+        .query_row(
+            "SELECT ord, lamport, device_id, seq, value FROM sync_writes
+             WHERE section = 'factor' AND key = ?1 AND op_hash = zeroblob(32)",
+            params![factor_key(factor)],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .optional()?
+        .map(|(ord, lamport, device, seq, value)| Win {
+            ord: ord as u64,
+            lamport: lamport as u64,
+            device,
+            seq: seq as u64,
+            value: serde_json::from_str(&value).unwrap_or(Value::Null),
+        }))
+}
+
+pub(crate) fn state_factor(
+    conn: &Connection,
+    factor: &ThirdFactor,
+    before: Option<u64>,
+) -> Result<Option<FactorRegistration>> {
+    let row: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT lamport, value FROM sync_writes WHERE section = 'factor' AND key = ?1 AND op_hash = zeroblob(32)",
+            params![factor_key(factor)],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((lamport, value)) = row else {
+        return Ok(None);
+    };
+    if before.is_some_and(|b| lamport as u64 >= b) {
+        return Ok(None);
+    }
+    let v: Value = serde_json::from_str(&value)?;
+    let public = hex::decode(v["public"].as_str().unwrap_or(""))
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .context("state factor key")?;
+    let sealed = b64_decode(v["sealed"].as_str().unwrap_or("")).context("state factor sealed")?;
+    Ok(Some((
+        public,
+        sealed,
+        v["sender"].as_str().map(String::from),
+    )))
 }
 
 /// Record the per-key writes of `op` (state independent; effectiveness is the
@@ -678,9 +762,42 @@ fn fork_set(conn: &Connection) -> Result<BTreeSet<DeviceId>> {
 }
 
 /// The state blob as of `cut`, with the tombstone horizon measured at `ts`.
-fn fold_state(conn: &Connection, cut_entries: &[CutEntry], ts: i64) -> Result<Vec<u8>> {
+/// `factors`: the `FactorRegister` ops this device holds IN FORCE (decided by the caller, outside the connection lock). Only
+/// those reach the state: a registration that is pending, rejected or superseded must never become a trusted paper on a
+/// device that adopts the state.
+fn fold_state(
+    conn: &Connection,
+    cut_entries: &[CutEntry],
+    ts: i64,
+    factors: &[Op],
+) -> Result<Vec<u8>> {
     let cut = cut_of(cut_entries);
-    let wins = fold_writes(conn, Some(&cut), None)?;
+    let mut wins = fold_writes(conn, Some(&cut), None)?;
+    for f in [ThirdFactor::Paper, ThirdFactor::EmailCode] {
+        let key = ("factor".to_string(), factor_key(&f).to_string());
+        wins.remove(&key);
+        let newest = factors
+            .iter()
+            .filter(|o| matches!(&o.body, OpBody::FactorRegister { factor, .. } if *factor == f))
+            .filter(|o| in_cut(Some(&cut), &o.device_id, o.seq))
+            .max_by_key(|o| (o.lamport, o.device_id.clone(), o.seq));
+        if let Some(o) = newest {
+            if let Some((_, _, ord, value)) = writes_of(o, &o.hash()).into_iter().next() {
+                wins.insert(
+                    key,
+                    Win {
+                        ord,
+                        lamport: o.lamport,
+                        device: o.device_id.clone(),
+                        seq: o.seq,
+                        value,
+                    },
+                );
+            }
+        } else if let Some(w) = base_factor(conn, &f)? {
+            wins.insert(key, w);
+        }
+    }
     let heads = head_facts(conn, cut_entries)?;
     let forks = fork_set(conn)?;
     let devices = device_section(&wins, &heads, &forks);
@@ -853,6 +970,7 @@ pub(crate) fn build(
     conn: &Connection,
     cut: Option<Vec<CutEntry>>,
     ts: i64,
+    factors: &[Op],
 ) -> Result<(Vec<CutEntry>, Vec<u8>, [u8; 32])> {
     let mut cut = match cut {
         Some(c) => c,
@@ -868,13 +986,13 @@ pub(crate) fn build(
         !recovery_in_flight(conn)?,
         "a phone re-enrollment is running"
     );
-    let state = fold_state(conn, &cut, ts)?;
+    let state = fold_state(conn, &cut, ts, factors)?;
     let hash = chain_hash(&state);
     Ok((cut, state, hash))
 }
 
 pub(crate) fn required_for(conn: &Connection, cut: &[CutEntry], ts: i64) -> Result<Vec<DeviceId>> {
-    let state: Value = serde_json::from_slice(&fold_state(conn, cut, ts)?)?;
+    let state: Value = serde_json::from_slice(&fold_state(conn, cut, ts, &[])?)?;
     Ok(required_of(
         state["devices"].as_array().unwrap_or(&Vec::new()),
         ts,
@@ -966,7 +1084,12 @@ fn propose_parts(op: &Op) -> Result<ProposalParts<'_>> {
     }
 }
 
-pub(crate) fn verify(conn: &Connection, proposal: &Op, state: &[u8]) -> Result<CheckpointVerdict> {
+pub(crate) fn verify(
+    conn: &Connection,
+    proposal: &Op,
+    state: &[u8],
+    factors: &[Op],
+) -> Result<CheckpointVerdict> {
     let (cut, state_hash, state_len, prev, required) = propose_parts(proposal)?;
     if chain_hash(state) != *state_hash || state.len() as u64 != state_len {
         return Ok(CheckpointVerdict::Differs {
@@ -1022,7 +1145,7 @@ pub(crate) fn verify(conn: &Connection, proposal: &Op, state: &[u8]) -> Result<C
             "a phone re-enrollment is running".into(),
         ));
     }
-    let mine = fold_state(conn, cut, proposal.timestamp)?;
+    let mine = fold_state(conn, cut, proposal.timestamp, factors)?;
     if mine != state {
         let (a, b): (Value, Value) = (
             serde_json::from_slice(&mine)?,
@@ -1155,6 +1278,7 @@ pub(crate) fn record(
     conn: &Connection,
     bundle: &CheckpointBundle,
     now: i64,
+    factors: &[Op],
 ) -> Result<CheckpointStatus> {
     let proposal = &bundle.proposal;
     let (cut, state_hash, state_len, prev, required) = propose_parts(proposal)?;
@@ -1219,7 +1343,7 @@ pub(crate) fn record(
         )?;
     }
 
-    let verdict = verify(conn, proposal, &bundle.state)?;
+    let verdict = verify(conn, proposal, &bundle.state, factors)?;
     let status = match verdict {
         CheckpointVerdict::Differs { .. } => {
             fork::mark_suspect(conn, &proposal.device_id)?;
@@ -1755,6 +1879,7 @@ pub(crate) fn build_join_anchor(
     conn: &Connection,
     id: &crate::sync::crypto::DeviceIdentity,
     now: i64,
+    factors: &[Op],
 ) -> Result<CheckpointBundle> {
     let me = id.public().device_id();
     let cut = local_heads(conn)?;
@@ -1795,7 +1920,7 @@ pub(crate) fn build_join_anchor(
     let mut cut = trimmed;
     cut.sort_by(|a, b| a.device_id.cmp(&b.device_id));
     ensure!(!cut.is_empty(), "this device has nothing to hand over yet");
-    let state = fold_state(conn, &cut, now)?;
+    let state = fold_state(conn, &cut, now, factors)?;
     let doc: Value = serde_json::from_slice(&state)?;
     ensure!(
         doc["devices"]
@@ -2681,13 +2806,14 @@ pub(crate) fn accept_bundle(
     peer: &DeviceId,
     adopt_it: bool,
     now: i64,
+    factors: &[Op],
 ) -> Result<[u8; 32]> {
     let bundle = &bundle;
     let hash = bundle.proposal.hash();
     if adopt_it {
         adopt(conn, bundle, &BootstrapTrust::Anchor(peer.clone()), now)?;
     } else {
-        record(conn, bundle, now)?;
+        record(conn, bundle, now, factors)?;
     }
     Ok(hash)
 }

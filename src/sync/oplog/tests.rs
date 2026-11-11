@@ -2163,6 +2163,30 @@ fn prune_then_bootstrap_reaches_the_same_state_as_full_history() {
     }
 }
 
+/// Scenario 72b: a device that joined by a checkpoint holds the paper's FactorRegister only as state (its op row is
+/// a void anchor or pruned), and `paper_pub` must still see it.
+#[test]
+fn a_device_adopting_a_checkpoint_still_knows_the_registered_paper() {
+    let ring = live_ring(vec![Peer::new(), Peer::new(), Peer::new()]);
+    let phrase = crate::sync::crypto::bip39_encode(&[0x77; 32]);
+    ring[0].append(crate::sync::quorum::paper_registration(&phrase).unwrap());
+    settle(&ring);
+    for p in &ring {
+        crate::sync::ceremony::test_force(&p.store, true);
+    }
+    let want = crate::sync::quorum::paper_pub(&ring[1].store).unwrap();
+    assert!(want.is_some());
+    let (_, h) = checkpoint_round(&ring, 0, crate::store::now_ts());
+    let bundle = ring[1].store.sync_checkpoint_bundle(&h).unwrap().unwrap();
+    let fresh = Peer::new();
+    let words = ring_fingerprint(&bundle.state).unwrap();
+    fresh
+        .store
+        .sync_bootstrap(&bundle, &BootstrapTrust::RingFingerprint(words))
+        .unwrap();
+    assert_eq!(crate::sync::quorum::paper_pub(&fresh.store).unwrap(), want);
+}
+
 fn prune_bootstrap_case(base: u64) {
     let dir = tempfile::tempdir().unwrap();
     let ring = live_ring(vec![file_peer(dir.path()), Peer::new(), Peer::new()]);

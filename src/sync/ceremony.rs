@@ -407,7 +407,8 @@ fn registered_before(
             }
         }
     }
-    Ok(None)
+    // A device that joined by a checkpoint holds no op row of it: the adopted state does.
+    store.sync_state_factor(&factor, before)
 }
 
 fn terminal_holder(d: &DeviceRow) -> bool {

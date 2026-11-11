@@ -609,22 +609,37 @@ impl LauncherStore {
 
     // --- checkpoints and pruning (C15) ---
 
+    /// The `FactorRegister` ops that are in force here: the only registrations a checkpoint state may carry. Decided
+    /// before the connection lock is taken (the ceremony reads the store itself).
+    fn factors_in_force(&self) -> Result<Vec<Op>> {
+        let mut out = Vec::new();
+        for op in crate::sync::quorum::ops_of(self, "FactorRegister", None)? {
+            if crate::sync::ceremony::in_force(self, &op)? {
+                out.push(op);
+            }
+        }
+        Ok(out)
+    }
+
     pub fn sync_checkpoint_build(
         &self,
         cut: Option<Vec<CutEntry>>,
         now: i64,
     ) -> Result<(Vec<CutEntry>, Vec<u8>, [u8; 32])> {
-        self.with_conn(|conn| checkpoint::build(conn, cut, now))
+        let factors = self.factors_in_force()?;
+        self.with_conn(|conn| checkpoint::build(conn, cut, now, &factors))
     }
 
     pub fn sync_checkpoint_verify(&self, proposal: &Op, state: &[u8]) -> Result<CheckpointVerdict> {
-        self.with_conn(|conn| checkpoint::verify(conn, proposal, state))
+        let factors = self.factors_in_force()?;
+        self.with_conn(|conn| checkpoint::verify(conn, proposal, state, &factors))
     }
 
     pub fn sync_checkpoint_record(&self, bundle: &CheckpointBundle) -> Result<CheckpointStatus> {
+        let factors = self.factors_in_force()?;
         self.with_conn(|conn| {
             let tx = tx(conn)?;
-            let st = checkpoint::record(&tx, bundle, now_ts())?;
+            let st = checkpoint::record(&tx, bundle, now_ts(), &factors)?;
             tx.commit()?;
             Ok(st)
         })
@@ -652,6 +667,7 @@ impl LauncherStore {
         now: i64,
     ) -> Result<(Op, Vec<u8>)> {
         let me = id.public().device_id();
+        let factors = self.factors_in_force()?;
         let (cut, state, hash, required, prev) = self.with_conn(|conn| {
             let ok: bool = conn.query_row(
                 "SELECT EXISTS(SELECT 1 FROM sync_devices WHERE device_id = ?1 AND kind = 'terminal'
@@ -660,7 +676,7 @@ impl LauncherStore {
                 |r| r.get(0),
             )?;
             anyhow::ensure!(ok, "only an attended terminal proposes checkpoints");
-            let (cut, state, hash) = checkpoint::build(conn, cut, now)?;
+            let (cut, state, hash) = checkpoint::build(conn, cut, now, &factors)?;
             let required = checkpoint::required_for(conn, &cut, now)?;
             let prev = checkpoint::latest_accepted_hash(conn)?;
             Ok((cut, state, hash, required, prev))
@@ -746,7 +762,8 @@ impl LauncherStore {
     /// The join anchor an inviter hands to a device it enrolls: its resolved state at its chain
     /// heads, signed by the inviter alone. It is not a checkpoint and prunes nothing.
     pub fn sync_join_anchor_build(&self, id: &DeviceIdentity) -> Result<CheckpointBundle> {
-        self.with_conn(|conn| checkpoint::build_join_anchor(conn, id, now_ts()))
+        let factors = self.factors_in_force()?;
+        self.with_conn(|conn| checkpoint::build_join_anchor(conn, id, now_ts(), &factors))
     }
 
     /// The joiner adopts the anchor as its starting state (only
@@ -790,9 +807,10 @@ impl LauncherStore {
     ) -> Result<[u8; 32]> {
         // Remote bytes are parsed before the connection is taken: a parser bug must not poison it.
         let bundle = checkpoint::bundle_from_bytes(bytes)?;
+        let factors = self.factors_in_force()?;
         self.with_conn(|conn| {
             let tx = tx(conn)?;
-            let h = checkpoint::accept_bundle(&tx, bundle, peer, adopt, now_ts())?;
+            let h = checkpoint::accept_bundle(&tx, bundle, peer, adopt, now_ts(), &factors)?;
             tx.commit()?;
             Ok(h)
         })
@@ -803,13 +821,14 @@ impl LauncherStore {
         &self,
         proposal_hash: &[u8; 32],
     ) -> Result<Option<CheckpointStatus>> {
+        let factors = self.factors_in_force()?;
         self.with_conn(|conn| {
             let tx = tx(conn)?;
             let Some(mut bundle) = checkpoint::bundle_of(&tx, proposal_hash)? else {
                 return Ok(None);
             };
             bundle.signs = checkpoint::known_signs(&tx, proposal_hash)?;
-            let st = checkpoint::record(&tx, &bundle, now_ts())?;
+            let st = checkpoint::record(&tx, &bundle, now_ts(), &factors)?;
             tx.commit()?;
             Ok(Some(st))
         })
@@ -856,6 +875,15 @@ impl LauncherStore {
     }
 
     /// The current storage-key envelope of a holder: `(epoch, sealed)`.
+    /// The factor registration an adopted checkpoint carries (see `checkpoint::state_factor`).
+    pub fn sync_state_factor(
+        &self,
+        factor: &ThirdFactor,
+        before: Option<u64>,
+    ) -> Result<Option<checkpoint::FactorRegistration>> {
+        self.with_conn(|conn| checkpoint::state_factor(conn, factor, before))
+    }
+
     pub fn sync_storage_key(&self, device: &DeviceId) -> Result<Option<(u64, Vec<u8>)>> {
         self.with_conn(|conn| checkpoint::storage_key(conn, device))
     }
