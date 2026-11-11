@@ -1000,8 +1000,8 @@ new bodies canonical bytes, vectors and oracle checks; `apply` does nothing for 
 
 Rules, evaluated by `ceremony::red_status(store, op, now)` over the log (core, not op-log):
 
-* Proofs count only if they name `op.hash()`, were written after the op (a higher lamport) and within `RED_CEREMONY_TTL_SECS` of
-  its timestamp (the AUTHORS' stamps; never the local receipt time and never `now`: D0b, a verdict is a pure function of the
+* Proofs count only if they name `op.hash()`, and were written within `RED_CEREMONY_TTL_SECS` of
+  its timestamp (no lamport order: naming `op.hash()` already puts a proof after the op, and a phone enrolled on another terminal cannot adopt the lamport of an author it never met; a completion lamport is clamped to the op's lamport + 1) (the AUTHORS' stamps; never the local receipt time and never `now`: D0b, a verdict is a pure function of the
   log, so a device that was away longer than the window reaches the verdict of the others), and their author is valid: `RedApprove` by an attended `Holder` `Terminal` that is not the proposer
   (and, for `ModeChange` to Vault, is the named `cosigner`); `RedPhoneSign` by the device with `kind == Phone`
   (not needed for `CertIssue`, whose author is the phone); `RedFactor` whose `sig` verifies under the registered

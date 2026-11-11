@@ -570,6 +570,46 @@ mod in_force {
         assert_eq!(state_paper(&d[0].store), Some(want(&second)));
     }
 
+    /// A paper registration authored on terminal 0 well ahead of the phone's clock (the phone never met terminal 0, so it
+    /// cannot adopt its lamport), the phone signing `bound` (the op's hash) or another hash before it has seen the op.
+    /// Returns whether the registration is in force on terminal 1 once the second device approved.
+    fn lagging_phone_proof_in_force(bound: bool) -> bool {
+        use crate::sync::quorum::tests::all_to_all;
+        let d = ring_phone(3);
+        let phone = d.len() - 1;
+        for b in 1..4u8 {
+            append(&d[0], paper_registration(&bip39_encode(&[b; 32])).unwrap());
+        }
+        let op = append(
+            &d[0],
+            paper_registration(&bip39_encode(&[0x77; 32])).unwrap(),
+        );
+        let target = if bound {
+            op.clone()
+        } else {
+            append(&d[0], paper_registration(&bip39_encode(&[9; 32])).unwrap())
+        };
+        let sign = append(
+            &d[phone],
+            crate::sync::ceremony::red_phone_sign_body(&target),
+        );
+        assert!(sign.lamport < op.lamport, "the phone lags the author");
+        all_to_all(&d);
+        append(&d[1], crate::sync::ceremony::red_approve_body(&op));
+        all_to_all(&d);
+        crate::sync::ceremony::in_force(&d[1].store, &op).unwrap()
+    }
+
+    #[test]
+    fn a_phone_proof_bound_to_the_op_counts_whatever_its_lamport() {
+        assert!(lagging_phone_proof_in_force(true));
+    }
+
+    #[test]
+    fn a_phone_proof_for_another_op_never_counts_whatever_its_lamport() {
+        assert!(!lagging_phone_proof_in_force(false));
+    }
+
     #[test]
     fn a_paper_registration_changes_who_is_wrapped_to_only_when_complete() {
         let d = ring_phone(3);
