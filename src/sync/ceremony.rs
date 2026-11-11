@@ -560,10 +560,11 @@ fn red_eval(
     };
     // Display and hygiene only: the clock of THIS device. It never decides a verdict (D0b).
     let past_window = now - base_time(store, op) > RED_CEREMONY_TTL_SECS;
-    // A proof counts when it comes after the op and inside the window measured on the AUTHORS' stamps. Never the local
-    // receipt time and never `now`: a device that was away for longer than the window must reach the verdict of the others.
-    let valid_proof =
-        |p: &Op| p.lamport > op.lamport && p.timestamp - op.timestamp <= RED_CEREMONY_TTL_SECS;
+    // A proof counts inside the window measured on the AUTHORS' stamps. Never the local receipt time and never `now`: a
+    // device that was away for longer than the window must reach the verdict of the others. No lamport order is demanded:
+    // every caller also demands that the proof name `hash` (an op_hash a proof cannot know before the op exists), and a
+    // device that has never met the author (a phone enrolled elsewhere) cannot adopt its lamport, so its clock may lag.
+    let valid_proof = |p: &Op| p.timestamp - op.timestamp <= RED_CEREMONY_TTL_SECS;
     let mut have = Vec::new();
     let mut missing = Vec::new();
     let mut blocked = phone_verdict;
@@ -1045,11 +1046,12 @@ fn red_eval(
     }
     // Among the handovers one phone wrote, the one that completed first wins (lowest `(completion lamport, device, seq)`);
     // any other is a rule violation, whoever completed its proofs (crypto M7).
+    // A proof written on a lagging clock is placed just after the op: a completion never precedes what it completes.
     let completion_lamport = [lam_phone, lam_second, lam_factor]
         .into_iter()
         .flatten()
         .max()
-        .unwrap_or(op.lamport);
+        .map_or(op.lamport, |l| l.max(op.lamport + 1));
     let done = missing.is_empty() && blocked.is_none();
     if is_handover && check_winner && done && rule_violation.is_none() {
         // Applied ones and those still waiting for their approval here: the verdict must not depend on which this device settled first.
