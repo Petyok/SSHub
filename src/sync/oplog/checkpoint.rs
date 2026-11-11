@@ -218,6 +218,19 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
                 "added_by": hex(hash),
             }),
         )],
+        // The registered third factor, so a device that joined by a checkpoint (its op rows are pruned) still knows it.
+        OpBody::FactorRegister {
+            factor,
+            public,
+            sealed,
+            sender,
+            ..
+        } => vec![(
+            "factor",
+            factor_key(factor).into(),
+            0,
+            json!({ "public": hex(public), "sealed": b64_encode(sealed), "sender": sender }),
+        )],
         OpBody::ExemptionSet { device_id, slot } => vec![(
             "exempt",
             device_id.clone(),
@@ -343,6 +356,47 @@ fn writes_of(op: &Op, hash: &[u8; 32]) -> Vec<RawWrite> {
         )],
         _ => Vec::new(),
     }
+}
+
+fn factor_key(f: &ThirdFactor) -> &'static str {
+    match f {
+        ThirdFactor::Paper => "paper",
+        ThirdFactor::EmailCode => "email",
+    }
+}
+
+/// The registration of `factor` carried by an adopted checkpoint or join anchor (a base write, no op row behind it):
+/// `(public, sealed, sender)`, only when older than lamport `before`.
+/// ponytail: the state carries the newest registration as the proposer saw it, in force or not.
+pub(crate) fn state_factor(
+    conn: &Connection,
+    factor: &ThirdFactor,
+    before: Option<u64>,
+) -> Result<Option<([u8; 32], Vec<u8>, Option<DeviceId>)>> {
+    let row: Option<(i64, String)> = conn
+        .query_row(
+            "SELECT lamport, value FROM sync_writes WHERE section = 'factor' AND key = ?1 AND op_hash = zeroblob(32)",
+            params![factor_key(factor)],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    let Some((lamport, value)) = row else {
+        return Ok(None);
+    };
+    if before.is_some_and(|b| lamport as u64 >= b) {
+        return Ok(None);
+    }
+    let v: Value = serde_json::from_str(&value)?;
+    let public = hex::decode(v["public"].as_str().unwrap_or(""))
+        .ok()
+        .and_then(|b| b.try_into().ok())
+        .context("state factor key")?;
+    let sealed = b64_decode(v["sealed"].as_str().unwrap_or("")).context("state factor sealed")?;
+    Ok(Some((
+        public,
+        sealed,
+        v["sender"].as_str().map(String::from),
+    )))
 }
 
 /// Record the per-key writes of `op` (state independent; effectiveness is the

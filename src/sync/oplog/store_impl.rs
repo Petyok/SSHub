@@ -856,6 +856,15 @@ impl LauncherStore {
     }
 
     /// The current storage-key envelope of a holder: `(epoch, sealed)`.
+    /// The factor registration an adopted checkpoint carries (see `checkpoint::state_factor`).
+    pub fn sync_state_factor(
+        &self,
+        factor: &ThirdFactor,
+        before: Option<u64>,
+    ) -> Result<Option<([u8; 32], Vec<u8>, Option<DeviceId>)>> {
+        self.with_conn(|conn| checkpoint::state_factor(conn, factor, before))
+    }
+
     pub fn sync_storage_key(&self, device: &DeviceId) -> Result<Option<(u64, Vec<u8>)>> {
         self.with_conn(|conn| checkpoint::storage_key(conn, device))
     }
