@@ -20,7 +20,7 @@ spread peer-b peer-c peer-a peer-b peer-c
 for p in peer-b peer-c; do
   show "$p sync-status (plain) with the recovery open" peer "$p" $SSHUB sync-status
   check "$p exits 3 while a recovery started elsewhere is open" "[ '$LAST_RC' -eq 3 ]"
-  check "$p prints RECOVERY STARTED first" "[ \"\$(printf '%s' \"\$LAST_OUT\" | sed -n 1p | cut -c1-17)\" = 'RECOVERY STARTED' ]"
+  check "$p prints RECOVERY STARTED first" "case \"\$(printf '%s' \"\$LAST_OUT\" | sed -n 1p)\" in 'RECOVERY STARTED'*) true ;; *) false ;; esac"
   show "$p sync-status (json)" peer "$p" $SSHUB sync-status --format json
   check "$p json exits 3 too" "[ '$LAST_RC' -eq 3 ]"
   expect "$p lists the open recovery" "$LAST_OUT" '(.recovery_alerts | length) >= 1 and .alert.open >= 1'

@@ -212,10 +212,12 @@ async function home() {
     if (await has('#device-id')) return;
     if (await has('#unlock')) {
       await page.waitForTimeout(500); // the unlock screen settles after a reload
-      await page.fill('#pin', PIN);
-      await tap('#unlock', { force: true });
-      await waitAny(['#device-id', '#unlock-error']);
-      continue;
+      if (await has('#pin')) {
+        await page.fill('#pin', PIN);
+        await tap('#unlock', { force: true });
+        await waitAny(['#device-id', '#unlock-error']);
+      }
+      continue; // the screen may have moved on by itself (a shifted clock settles the lock late): look again
     }
     let tapped = false;
     for (const id of ['#send-done', '#enroll-done', '#head-done', '#refuse', '#back']) {
