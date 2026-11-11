@@ -10,7 +10,7 @@ use anyhow::{bail, ensure, Context, Result};
 use super::codes::gen_email_code;
 use super::crypto::{dek_open, dek_seal, derive_key, verify, DeviceIdentity};
 use super::email::{email_fragment_open, email_fragment_seal};
-use super::limits::{LIVE_DEVICE_WINDOW_SECS, RED_CEREMONY_TTL_SECS};
+use super::limits::RED_CEREMONY_TTL_SECS;
 use super::oplog::{
     Attendance, CredMode, DeviceId, DeviceKind, DeviceRole, DeviceRow, DeviceStatus, Op, OpBody,
     ThirdFactor,
@@ -444,7 +444,7 @@ pub(crate) fn log_live(
             !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
                 && wrote
                     .get(&d.id)
-                    .is_some_and(|w| t - *w <= LIVE_DEVICE_WINDOW_SECS)
+                    .is_some_and(|w| t - *w <= super::oplog::checkpoint::live_device_window_secs())
         })
         .collect())
 }

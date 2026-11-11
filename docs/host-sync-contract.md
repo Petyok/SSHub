@@ -1714,7 +1714,7 @@ What exists on top of 4j, with the names the screens and the scenarios use:
   `QuorumUnlocker::unlock` calls it after a successful open (best effort, no extra prompt).
 * **Recovery:** `recovery::open_for_alert(store, &DeviceIdentity, now)` and `open_for_alert_for(store, &DeviceId, now)`; `ReenrollVerdict::Superseded` for a
   recovery that a later in-force `PhoneHandover` replaced (`PhoneHandover` is a gated Red op: three proofs until the handover rules land);
-  `recovery::is_solo`. A build with the cargo feature `e2e-hooks` (the e2e image only) reads `SSHUB_E2E_SOLO_LOCK_SECS` to shorten the 14 day solo lock.
+  `recovery::is_solo`. A build with the cargo feature `e2e-hooks` (the e2e image only) reads `SSHUB_E2E_SOLO_LOCK_SECS` to shorten the 14 day solo lock, `SSHUB_E2E_STALE_AFTER_SECS` the stale horizon, `SSHUB_E2E_LIVE_WINDOW_SECS` the 14 day live-device window (required checkpoint signers, ceremony voters), and `SSHUB_E2E_CHECKPOINT_OPS` / `SSHUB_E2E_CHECKPOINT_MIN_INTERVAL_SECS` the checkpoint triggers.
 * **Certificates:** `DelegationCert::effective_expiry(store)` and `renewals(store)` read the folded record of the log (`oplog::cert_record`): renewals count
   clock-free, in `(lamport, device, seq)` order, and only while the delegate is a holder in force; `cert_allows` and `extension_budget` use the effective end;
   `cert::cert_renew_request(store, cert_id, term_secs, now)` builds the kind 11 request (new end = effective end + term, at most the first term, at most

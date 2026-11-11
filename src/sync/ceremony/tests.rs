@@ -2072,7 +2072,7 @@ fn log_live_counts_only_devices_with_an_op_before_the_instant_and_inside_the_win
     );
     // Before any op was written nobody is live; a window later nobody is.
     assert!(ids(0).is_empty());
-    assert!(ids(now + LIVE_DEVICE_WINDOW_SECS + 3600).is_empty());
+    assert!(ids(now + crate::sync::limits::LIVE_DEVICE_WINDOW_SECS + 3600).is_empty());
 }
 
 #[test]
