@@ -662,7 +662,7 @@ fn required_of(devices: &[Value], ts: i64) -> Vec<DeviceId> {
                 && d["status"] == "operational"
                 && d["head_ts"]
                     .as_i64()
-                    .is_some_and(|t| t >= ts - LIVE_DEVICE_WINDOW_SECS)
+                    .is_some_and(|t| t >= ts - live_device_window_secs())
         })
         .filter_map(|d| d["id"].as_str().map(String::from))
         .collect();
@@ -1318,6 +1318,19 @@ pub(crate) fn stale_after_secs() -> i64 {
         return secs;
     }
     STALE_AFTER_SECS
+}
+
+/// How recently a device must have written to count as live. The e2e image (`--features e2e-hooks`, never a release) may shorten it
+/// with `SSHUB_E2E_LIVE_WINDOW_SECS` so a silent peer stops being a required signer without a fourteen day wait.
+pub(crate) fn live_device_window_secs() -> i64 {
+    #[cfg(feature = "e2e-hooks")]
+    if let Some(secs) = std::env::var("SSHUB_E2E_LIVE_WINDOW_SECS")
+        .ok()
+        .and_then(|v| v.parse::<i64>().ok())
+    {
+        return secs;
+    }
+    LIVE_DEVICE_WINDOW_SECS
 }
 
 fn flag_stale_devices(conn: &Connection, cut: &[CutEntry], ts: i64) -> Result<()> {

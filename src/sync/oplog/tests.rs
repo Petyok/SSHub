@@ -4210,3 +4210,21 @@ fn a_join_anchor_stops_before_what_the_inviter_holds_pending_so_the_joiner_still
     joiner.approve_all();
     assert_eq!(joiner.store.list_hosts().unwrap().len(), 2);
 }
+
+/// The live window is the constant; only a build with `--features e2e-hooks` reads `SSHUB_E2E_LIVE_WINDOW_SECS`.
+#[test]
+fn the_live_window_env_hook_exists_only_in_the_e2e_build() {
+    static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _env = ENV.lock().unwrap_or_else(|e| e.into_inner());
+    assert_eq!(
+        super::checkpoint::live_device_window_secs(),
+        crate::sync::limits::LIVE_DEVICE_WINDOW_SECS
+    );
+    std::env::set_var("SSHUB_E2E_LIVE_WINDOW_SECS", "3600");
+    let secs = super::checkpoint::live_device_window_secs();
+    std::env::remove_var("SSHUB_E2E_LIVE_WINDOW_SECS");
+    #[cfg(feature = "e2e-hooks")]
+    assert_eq!(secs, 3600);
+    #[cfg(not(feature = "e2e-hooks"))]
+    assert_eq!(secs, crate::sync::limits::LIVE_DEVICE_WINDOW_SECS);
+}
