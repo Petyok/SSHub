@@ -236,6 +236,7 @@ ring_view() {
   for p in peer-a peer-b peer-c hub; do
     echo "$p sees: $(peer $p $SSHUB sync-status --format json 2>&1 | pjq -c '[.devices[] | {name, role, status}]')"
     echo "$p ops (kind|state|reason|n): $(sq $p "SELECT kind||'|'||state||'|'||coalesce(reason,'')||'|'||count(*) FROM sync_ops WHERE kind IN ('DeviceAdd','DeviceRoleChange','FactorRegister','RedPhoneSign','RedApprove','RedFactor') GROUP BY kind,state,reason" | tr '\n' ';')"
+    echo "$p odd ops (lamport|author|kind|state|reason|local): $(sq $p "SELECT lamport||'|'||substr(device_id,1,6)||'|'||kind||'|'||state||'|'||coalesce(reason,'')||'|'||local FROM sync_ops WHERE state IN ('rejected','pending','void') ORDER BY lamport" | tr '\n' ';')"
   done
 }
 
