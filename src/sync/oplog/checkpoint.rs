@@ -365,6 +365,9 @@ fn factor_key(f: &ThirdFactor) -> &'static str {
     }
 }
 
+/// A registered third factor: `(public, sealed, sender)`.
+pub(crate) type FactorRegistration = ([u8; 32], Vec<u8>, Option<DeviceId>);
+
 /// The registration of `factor` carried by an adopted checkpoint or join anchor (a base write, no op row behind it):
 /// `(public, sealed, sender)`, only when older than lamport `before`.
 /// ponytail: the state carries the newest registration as the proposer saw it, in force or not.
@@ -372,7 +375,7 @@ pub(crate) fn state_factor(
     conn: &Connection,
     factor: &ThirdFactor,
     before: Option<u64>,
-) -> Result<Option<([u8; 32], Vec<u8>, Option<DeviceId>)>> {
+) -> Result<Option<FactorRegistration>> {
     let row: Option<(i64, String)> = conn
         .query_row(
             "SELECT lamport, value FROM sync_writes WHERE section = 'factor' AND key = ?1 AND op_hash = zeroblob(32)",

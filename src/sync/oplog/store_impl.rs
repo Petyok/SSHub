@@ -861,7 +861,7 @@ impl LauncherStore {
         &self,
         factor: &ThirdFactor,
         before: Option<u64>,
-    ) -> Result<Option<([u8; 32], Vec<u8>, Option<DeviceId>)>> {
+    ) -> Result<Option<checkpoint::FactorRegistration>> {
         self.with_conn(|conn| checkpoint::state_factor(conn, factor, before))
     }
 
