@@ -34,6 +34,7 @@ expect "the exposure list is empty on peer-a" "$st" '(.exposure | length) == 0'
 st=$(peer peer-c $SSHUB sync-status --format json 2>/dev/null || true)
 expect "the exposure list is empty on peer-c" "$st" '(.exposure | length) == 0'
 
+show "peer-c sync-review (what peer-c still holds for review before it opens the credential)" peer peer-c $SSHUB sync-review --format json
 # ---- peer-c opens the credential: it asks peer-a for its share, peer-a approves on the command line
 psh peer-c 'rm -f /tmp/e2e-resolve.out'
 $C exec -T peer-c env SSHUB_UNLOCK_WAIT=150 $SSHUB host resolve quorum1 --format json > /tmp/e2e-resolve-c.out 2>&1 &
