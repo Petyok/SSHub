@@ -7,9 +7,10 @@ import { safeText } from './ops.mjs';
 import { appendPhoneHandover, appendRedPhoneSign } from './state.mjs';
 
 const MAX_NAME_BYTES = 64;
-const oldId8 = (state) => {
+// This phone's OWN id (the OLD phone the words bind). state.enrolled only says "in a ring": it names the terminal.
+const oldId8 = (state, identity) => {
   if (!state.enrolled) throw new Error('This phone is not part of a ring yet: there is nothing to hand over.');
-  return bytesOf(state.enrolled.device_id);
+  return bytesOf(identity.deviceId);
 };
 
 // The name rules of the enrollment (not empty, at most 64 bytes, no control characters) and no padding.
@@ -21,7 +22,7 @@ function checkName(name) {
   if (t !== name) throw new Error("The new phone's name has spaces around it: ask the terminal to show it again.");
 }
 
-function checkRequest(state, req) {
+function checkRequest(state, identity, req) {
   checkName(req.name);
   const p = req.new_phone;
   try {
@@ -31,14 +32,14 @@ function checkRequest(state, req) {
   } catch (e) {
     throw new Error(`The new phone's keys are not valid: ${e.message}`);
   }
-  if (state.enrolled && state.enrolled.device_id === deviceIdOf(p.ed25519_pub)) throw new Error('The request names this phone as its own successor.');
+  if (state.enrolled && identity.deviceId === deviceIdOf(p.ed25519_pub)) throw new Error('The request names this phone as its own successor.');
 }
 
 // HandoverView: what the old phone shows. { name, words, certs_carried }.
-export function describePhoneHandover(state, req) {
+export function describePhoneHandover(state, identity, req) {
   if (req.op) throw new Error('This is the admission frame for the new phone, not a request to the old one.');
-  const old = oldId8(state);
-  checkRequest(state, req);
+  const old = oldId8(state, identity);
+  checkRequest(state, identity, req);
   const aliases = { ...Object.fromEntries(Object.entries(state.ring).map(([id, d]) => [id, d.name])), ...state.aliases };
   return {
     name: safeText(req.name),
@@ -52,8 +53,8 @@ const hasHandover = (state) => state.chain.some((e) => /"body":\{"PhoneHandover"
 // Signs the PhoneHandover op naming the new phone (the author proof). One handover per phone.
 export function buildPhoneHandover(state, identity, req, now) {
   if (req.op) throw new Error('This is the admission frame for the new phone: only the new phone signs it.');
-  oldId8(state);
-  checkRequest(state, req);
+  oldId8(state, identity);
+  checkRequest(state, identity, req);
   if (hasHandover(state)) throw new Error('This phone already signed a handover. Only one counts; ask the terminal to finish it or cancel it.');
   return appendPhoneHandover(state, identity, req.new_phone, req.name, now, null);
 }

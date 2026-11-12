@@ -217,7 +217,7 @@ impl EnrollFlow {
                             },
                         );
                         ctx.state.enrolled = Some(Enrolled {
-                            device_id: id.clone(),
+                            terminal_id: id.clone(),
                             name: me.name.clone(),
                             at: ctx.now,
                         });
@@ -551,7 +551,7 @@ mod tests {
             hex::encode(&hx(&f["existing"]["reveal_hex"])[..32])
         );
         assert_eq!(&hex::encode(&hx(&f["existing"]["reveal_hex"])[..8]), id);
-        assert_eq!(rig.state.enrolled.as_ref().unwrap().device_id, *id);
+        assert_eq!(rig.state.enrolled.as_ref().unwrap().terminal_id, *id);
         assert_eq!(rig.state.enrolled.as_ref().unwrap().name, joining.name);
         // finished: a second confirm is out of order
         assert_eq!(

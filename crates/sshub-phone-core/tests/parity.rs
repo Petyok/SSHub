@@ -813,7 +813,7 @@ fn phone_handover_view_and_signed_ops_are_the_pages() {
     let new = PhoneIdentity::new(&[0x55; 32], 0).unwrap();
     let mut st = PhoneState::default();
     st.enrolled = Some(Enrolled {
-        device_id: old.device_id().to_string(),
+        terminal_id: "0707070707070707".into(),
         name: "old phone".into(),
         at: NOW,
     });
@@ -844,7 +844,7 @@ fn phone_handover_view_and_signed_ops_are_the_pages() {
             .map(|x| s(x).to_string())
             .collect()
     };
-    let v = handover::describe_phone_handover(&st, &req).unwrap();
+    let v = handover::describe_phone_handover(&st, &old, &req).unwrap();
     assert_eq!(v.words, strings(&w["view"]["words"]));
     assert_eq!(v.name, s(&w["view"]["name"]));
     assert_eq!(v.certs_carried, strings(&w["view"]["certs_carried"]));

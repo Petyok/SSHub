@@ -22,7 +22,9 @@ const oldId = identityOfSecret(h('42'.repeat(32)));
 const newId = identityOfSecret(h('55'.repeat(32)));
 const newPhone = { ed25519_pub: newId.edPub, x25519_pub: newId.xPub, mlkem_pub: newId.mlkemPub };
 const req = (name, over = {}) => ({ new_phone: newPhone, name, terminal: '07'.repeat(8), op: null, ...over });
-const enrolledState = () => ({ ...emptyState(), enrolled: { device_id: oldId.deviceId, name: 'old phone', at: NOW } });
+const termId = identityOfSecret(h('66'.repeat(32))); // the terminal the old phone enrolled with, NOT the phone's own id
+const TERMINAL_ID = termId.deviceId;
+const enrolledState = () => ({ ...emptyState(), enrolled: { terminal_id: TERMINAL_ID, name: 'old phone', at: NOW } });
 const kindOf = (s) => parseOp(h(s.chain.at(-1).canonical)).kind;
 
 test('kind 12 round trip, truncation and the PhoneHandover encoder reproduces the final vector byte for byte', () => {
@@ -43,23 +45,23 @@ test('kind 12 round trip, truncation and the PhoneHandover encoder reproduces th
 test('the view shows the shared words, the name and the certificates that stay valid', () => {
   const s = enrolledState();
   issueCert(s, oldId, { device_id: 'cccccccccccccccc', scope: { hosts: ['01'.repeat(16)] }, expiry: BigInt(NOW + 86400), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 1n }, NOW);
-  const v = describePhoneHandover(s, req('new phone'));
+  const v = describePhoneHandover(s, oldId, req('new phone'));
   assert.deepEqual(v.words, handoverWords(newId.edPub, newId.xPub, newId.mlkemPub, 'new phone', h(oldId.deviceId)));
   assert.equal(v.words.length, 8);
   assert.equal(v.name, 'new phone');
   assert.equal(v.certs_carried.length, 1);
   assert.match(v.certs_carried[0], /cccccccccccccccc/);
-  assert.notDeepEqual(describePhoneHandover(s, req('new phonf')).words, v.words);
+  assert.notDeepEqual(describePhoneHandover(s, oldId, req('new phonf')).words, v.words);
 });
 
 test('a request that is not right is refused before anything is shown or signed', () => {
   const s = enrolledState();
   for (const bad of ['', '  ', ' padded ', 'tab\there', 'x'.repeat(65)]) {
-    assert.throws(() => describePhoneHandover(s, req(bad)), undefined, JSON.stringify(bad));
+    assert.throws(() => describePhoneHandover(s, oldId, req(bad)), undefined, JSON.stringify(bad));
     assert.throws(() => buildPhoneHandover(s, oldId, req(bad), NOW), undefined, JSON.stringify(bad));
   }
   const broken = req('new phone', { new_phone: { ...newPhone, mlkem_pub: newPhone.mlkem_pub.slice(1) } });
-  assert.throws(() => describePhoneHandover(s, broken), /keys are not valid/);
+  assert.throws(() => describePhoneHandover(s, oldId, broken), /keys are not valid/);
   assert.throws(() => buildPhoneHandover(s, oldId, req('new phone', { new_phone: { ed25519_pub: oldId.edPub, x25519_pub: oldId.xPub, mlkem_pub: oldId.mlkemPub } }), NOW), /its own successor/);
   assert.throws(() => buildPhoneHandover(emptyState(), oldId, req('new phone'), NOW), /not part of a ring/);
   const r = restoredState();
@@ -112,6 +114,20 @@ test('the new phone signs its admission after the op it names, and only for its 
   assert.throws(() => signHandoverAdmission(emptyState(), newId, req('new phone', { op: { hash: '09'.repeat(32), lamport: 2n ** 64n - 1n } }), NOW), /impossible counter/);
   assert.throws(() => signHandoverAdmission(restoredState(), newId, r, NOW), /must not sign/);
   // the old phone refuses the admission frame
-  assert.throws(() => describePhoneHandover(enrolledState(), r), /admission frame/);
+  assert.throws(() => describePhoneHandover(enrolledState(), oldId, r), /admission frame/);
   assert.throws(() => buildPhoneHandover(enrolledState(), oldId, r, NOW), /admission frame/);
+});
+
+test('the words bind the phone\'s own id, not the terminal it enrolled with', () => {
+  const s = enrolledState();
+  const v = describePhoneHandover(s, oldId, req('new phone'));
+  assert.deepEqual(v.words, handoverWords(newId.edPub, newId.xPub, newId.mlkemPub, 'new phone', h(oldId.deviceId)));
+  assert.notDeepEqual(v.words, handoverWords(newId.edPub, newId.xPub, newId.mlkemPub, 'new phone', h(TERMINAL_ID)));
+});
+
+test('the own-successor check fires for the phone\'s own key and not for the terminal\'s', () => {
+  const s = enrolledState();
+  const naming = (id) => req('new phone', { new_phone: { ed25519_pub: id.edPub, x25519_pub: id.xPub, mlkem_pub: id.mlkemPub } });
+  assert.throws(() => describePhoneHandover(s, oldId, naming(oldId)), /its own successor/);
+  assert.doesNotThrow(() => describePhoneHandover(s, oldId, naming(termId)));
 });

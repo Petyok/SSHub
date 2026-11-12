@@ -191,10 +191,11 @@ out.identity = ['42', '0b'].map((s) => Array.from({ length: 3 }, (_, g) => {
   const NOW = 1_893_452_400;
   const oldId = identityOfSecret(h(SECRET));
   const newId = identityOfSecret(h('55'.repeat(32)));
-  const state = { ...emptyState(), enrolled: { device_id: oldId.deviceId, name: 'old phone', at: NOW } };
+  const TERMINAL_ID = '07'.repeat(8);
+  const state = { ...emptyState(), enrolled: { terminal_id: TERMINAL_ID, name: 'old phone', at: NOW } };
   appendCertIssue(state, oldId, { device_id: 'cccccccccccccccc', scope: { hosts: ['01'.repeat(16)] }, expiry: BigInt(NOW + 86400), max_new_hosts_per_day: 2, epoch_lo: 0n, epoch_hi: 1n }, NOW, null);
   const req = { new_phone: { ed25519_pub: newId.edPub, x25519_pub: newId.xPub, mlkem_pub: newId.mlkemPub }, name: 'new phone', terminal: '07'.repeat(8) };
-  const view = describePhoneHandover(state, req);
+  const view = describePhoneHandover(state, oldId, req);
   buildPhoneHandover(state, oldId, req, NOW + 1);
   const fresh = emptyState();
   const admission = { ...req, op: { hash: '09'.repeat(32), lamport: 700n } };

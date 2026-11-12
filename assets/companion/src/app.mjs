@@ -763,7 +763,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
           }
           const id = deviceIdOf(r.ed25519_pub);
           app.state.ring[id] = { name: r.name, ed25519_pub: hexOf(r.ed25519_pub), enrolled_at: Math.floor(app.now()) };
-          app.state.enrolled = { device_id: id, name: me.name, at: Math.floor(app.now()) };
+          app.state.enrolled = { terminal_id: id, name: me.name, at: Math.floor(app.now()) };
           await save();
           show(title('Enrolled', `This phone is now known to ${safeText(r.name)} [${id}] as ${safeText(me.name)}.`), btn('Done', home, 'primary', 'enroll-done'));
         },
@@ -1057,7 +1057,7 @@ export async function startApp(root, { kv = indexedDbBackend(), now = () => Date
     let v;
     try {
       req = decodePhoneHandoverRequest(bytes);
-      v = req.op ? describeHandoverAdmission(app.identity, req) : describePhoneHandover(app.state, req);
+      v = req.op ? describeHandoverAdmission(app.identity, req) : describePhoneHandover(app.state, app.identity, req);
     } catch (e) {
       return refusalScreen(`Not a handover request: ${e.message}`, []);
     }

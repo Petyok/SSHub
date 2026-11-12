@@ -311,7 +311,7 @@ impl Inner {
                 let described = if req.op.is_some() {
                     crate::handover::describe_handover_admission(&u.id, &req)
                 } else {
-                    crate::handover::describe_phone_handover(&u.state, &req)
+                    crate::handover::describe_phone_handover(&u.state, &u.id, &req)
                 };
                 match described {
                     Ok(handover) => {
@@ -1373,7 +1373,7 @@ mod tests {
             let mut g = c.lock_inner();
             let u = g.unlocked.as_mut().unwrap();
             u.state.enrolled = Some(crate::state::Enrolled {
-                device_id: "aaaaaaaaaaaaaaaa".into(),
+                terminal_id: "aaaaaaaaaaaaaaaa".into(),
                 name: "my\u{202e}phone".into(),
                 at: 1,
             });
@@ -1609,7 +1609,7 @@ mod tests {
         let old = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
         c.lock_inner().unlocked.as_mut().unwrap().state = PhoneState {
             enrolled: Some(crate::state::Enrolled {
-                device_id: old.device_id().to_string(),
+                terminal_id: "aaaaaaaaaaaaaaaa".into(),
                 name: "old phone".into(),
                 at: 1,
             }),
