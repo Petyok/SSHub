@@ -118,7 +118,7 @@ enroll_app() {
   enr_open "$1" sync-phone-enroll --format json
   E1=$(enr_get 1)
   must "the Enroll tab" appclick "Enroll"
-  must "the phone name" apptype "Name this phone will have in the ring" "my phone"
+  must "the phone name" apptype "Name this phone will have among your devices" "my phone"
   must "the channel is Paste text" appclick "Paste text"
   must "open the paste step" appclick "Paste the text"
   must "step 1: the terminal commitment is pasted" apptype "Text from the terminal" "$(pf "$E1" frame)"
