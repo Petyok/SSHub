@@ -3,8 +3,8 @@
 # 88: group approval (design 7c, W-APPROVE). `sync-review --approve-all --device <id>` approves ONLY the changes of that
 # device that are held as `stale` and touch no dangerous field; everything else stays in the queue.
 # A `stale` hold needs a device whose head was older than STALE_AFTER_SECS at an ACCEPTED checkpoint. The e2e image
-# (--features e2e-hooks) shortens that: SSHUB_E2E_STALE_AFTER_SECS, SSHUB_E2E_CHECKPOINT_OPS and
-# SSHUB_E2E_CHECKPOINT_MIN_INTERVAL_SECS (set on every call below, nowhere else). peer-b goes silent, peer-a and peer-c
+# (--features e2e-hooks) shortens that: SSHUB_E2E_STALE_AFTER_SECS, SSHUB_E2E_LIVE_WINDOW_SECS (a silent peer stops being a
+# required signer), SSHUB_E2E_CHECKPOINT_OPS and SSHUB_E2E_CHECKPOINT_MIN_INTERVAL_SECS (set on every call below, nowhere else). peer-b goes silent, peer-a and peer-c
 # grow the log and accept a checkpoint; peer-b's later edits then arrive held as `stale`:
 #   b1: a label (safe, stale)           -> approved by the group verb
 #   b2: an address (dangerous, stale)   -> stays
@@ -12,7 +12,7 @@
 . "$E2E_DIR/lib.sh"
 . "$E2E_DIR/lib-creds.sh"
 NAME=88-review-grouping
-HOOKS='SSHUB_E2E_STALE_AFTER_SECS=30 SSHUB_E2E_CHECKPOINT_OPS=20 SSHUB_E2E_CHECKPOINT_MIN_INTERVAL_SECS=5'
+HOOKS='SSHUB_E2E_STALE_AFTER_SECS=30 SSHUB_E2E_LIVE_WINDOW_SECS=30 SSHUB_E2E_CHECKPOINT_OPS=20 SSHUB_E2E_CHECKPOINT_MIN_INTERVAL_SECS=5'
 # every sshub call of this scenario: peer P, then the sshub arguments
 hp() { p=$1; shift; peer "$p" env $HOOKS $SSHUB "$@"; }
 hround() { for p in "$@"; do hp "$p" sync-now --format json >/dev/null 2>&1 || true; done; }
