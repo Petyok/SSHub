@@ -567,7 +567,7 @@ fn validate_phone_reenroll_upto(
 
     // Authorization and the third factor.
     let paper_ok = match (via_paper, paper_sig) {
-        (true, Some(sig)) => paper_recover_pub(store)?
+        (true, Some(sig)) => paper_recover_pub(store, Some(op.lamport))?
             .is_some_and(|k| verify(&k, &paper_reenroll_preimage(&op.device_id, &op.body), sig)),
         (true, None) => false,
         (false, None) => true,

@@ -385,7 +385,7 @@ fn registered(store: &LauncherStore, factor: ThirdFactor) -> Result<Option<Regis
 /// The newest registration of `factor` that is IN FORCE and older than `before` (a lamport bound; a
 /// factor signs only what was proposed after it was registered). Bounded so that evaluating one
 /// registration only looks at older ones.
-fn registered_before(
+pub(crate) fn registered_before(
     store: &LauncherStore,
     factor: ThirdFactor,
     before: Option<u64>,
@@ -883,7 +883,20 @@ fn red_eval(
         approvers.push(p.device_id.clone());
     }
     if setup_promotion {
-        // Other holders' votes do not replace the promoted device's own signature at setup.
+        // Other holders' votes do not replace the promoted device's own signature at setup. A device promoting ITSELF
+        // has signed that very op as its proposer: the proposal is its signature (nobody else's vote is invented, and
+        // outside setup `setup_promotion` is false, so no self-approval opens there).
+        if promoted.as_ref() == Some(proposer)
+            && devices.iter().any(|d| {
+                d.id == *proposer
+                    && d.attendance == Attendance::Attended
+                    && !matches!(d.status, DeviceStatus::Revoked | DeviceStatus::Compromised)
+            })
+        {
+            approved_own = true;
+            lam_second = Some(lam_second.map_or(op.lamport, |l: u64| l.min(op.lamport)));
+            second_at = Some(second_at.map_or(heard(op), |t: i64| t.min(heard(op))));
+        }
         approved = approved_own;
     }
     if approved {
