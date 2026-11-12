@@ -31,6 +31,7 @@ show "peer-a adds the paper factor" sh -c "printf '%s\n' '$PAPER' | $C exec -T p
 expect "the handover ceremony is complete" "$LAST_OUT" '.ceremony.complete == true'
 spread peer-b peer-c peer-a peer-b peer-c
 
+for p in peer-a peer-b; do show "$p lamport of the recovery and the handover (kind|lamport|state)" sq $p "SELECT kind||'|'||lamport||'|'||state FROM sync_ops WHERE kind IN ('PhoneReenroll','PhoneHandover')"; done
 for p in peer-a peer-b peer-c; do
   show "$p sync-recovery status" peer $p $SSHUB sync-recovery status --format json
   expect "$p: the hostile recovery is superseded by the handover" "$LAST_OUT" "any(.recoveries[]; (.op | startswith(\"$(printf '%s' "$RHOST" | cut -c1-8)\")) and (.verdict | test(\"Superseded\")))"

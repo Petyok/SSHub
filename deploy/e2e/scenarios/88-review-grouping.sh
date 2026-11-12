@@ -54,7 +54,8 @@ q=$(hp peer-a sync-review --format json 2>/dev/null || true)
 echo "$q" | head -n 60
 B_ID=$(devid peer-a peer-b)
 expect "peer-b's label change is held as stale" "$q" 'any(.[]; .reason != null and (.reason | test("away too long|stale")) and any(.changes[]?; .field == "label" and .dangerous == false))'
-expect "peer-b's address change is held as stale and dangerous" "$q" 'any(.[]; (.reason | test("away too long|stale")) and any(.changes[]?; .field == "address" and .dangerous == true))'
+# a dangerous field is held for its tier before staleness is looked at (merge.rs desired_state), so the reason is "needs your approval"
+expect "peer-b's address change is held for review as dangerous (never in the stale group)" "$q" 'any(.[]; .author == "peer-b" and any(.changes[]?; .field == "address" and .dangerous == true))'
 expect "peer-c's address change is held, not as stale" "$q" 'any(.[]; (.reason | test("away too long|stale") | not) and any(.changes[]?; .field == "address" and .to == "c1.changed.internal"))'
 BEFORE=$(printf '%s' "$q" | pjq 'length')
 
