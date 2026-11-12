@@ -18,19 +18,26 @@ use crate::state::{PhoneState, COURIER_TAIL};
 use crate::text::safe_text;
 use crate::views::HandoverView;
 
-/// This phone's device id as the 8 bytes the compare words bind (it is the OLD phone: the one being handed over).
-fn own_id8(state: &PhoneState) -> Result<[u8; 8]> {
-    let e = state.enrolled.as_ref().ok_or_else(|| {
-        CoreError::refused("This phone is not part of a ring yet: there is nothing to hand over.")
-    })?;
-    hex::decode(&e.device_id)
+/// This phone's OWN device id as the 8 bytes the compare words bind (it is the OLD phone: the one being handed over).
+/// `state.enrolled` only says the phone is in a ring: it names the terminal, not this phone.
+fn own_id8(state: &PhoneState, id: &PhoneIdentity) -> Result<[u8; 8]> {
+    if state.enrolled.is_none() {
+        return Err(CoreError::refused(
+            "This phone is not part of a ring yet: there is nothing to hand over.",
+        ));
+    }
+    hex::decode(id.device_id())
         .ok()
         .and_then(|b| b.try_into().ok())
-        .ok_or_else(|| CoreError::internal("the stored device id is not 8 bytes"))
+        .ok_or_else(|| CoreError::internal("this phone's device id is not 8 bytes"))
 }
 
 /// Everything about a request that makes the phone refuse before it shows or signs anything.
-fn check_request(state: &PhoneState, req: &PhoneHandoverRequestWire) -> Result<()> {
+fn check_request(
+    state: &PhoneState,
+    id: &PhoneIdentity,
+    req: &PhoneHandoverRequestWire,
+) -> Result<()> {
     if check_name(&req.name)? != req.name {
         return Err(CoreError::refused(
             "The new phone's name has spaces around it: ask the terminal to show it again.",
@@ -39,11 +46,7 @@ fn check_request(state: &PhoneState, req: &PhoneHandoverRequestWire) -> Result<(
     req.new_phone
         .validate()
         .map_err(|e| CoreError::refused(format!("The new phone's keys are not valid: {e:#}")))?;
-    if state
-        .enrolled
-        .as_ref()
-        .is_some_and(|e| e.device_id == req.new_phone.device_id())
-    {
+    if state.enrolled.is_some() && id.device_id() == req.new_phone.device_id() {
         return Err(CoreError::refused(
             "The request names this phone as its own successor.",
         ));
@@ -55,6 +58,7 @@ fn check_request(state: &PhoneState, req: &PhoneHandoverRequestWire) -> Result<(
 /// sessions that stay valid for the successor (design 5.4).
 pub fn describe_phone_handover(
     state: &PhoneState,
+    id: &PhoneIdentity,
     req: &PhoneHandoverRequestWire,
 ) -> Result<HandoverView> {
     if req.op.is_some() {
@@ -62,8 +66,8 @@ pub fn describe_phone_handover(
             "This is the admission frame for the new phone, not a request to the old one.",
         ));
     }
-    let old = own_id8(state)?;
-    check_request(state, req)?;
+    let old = own_id8(state, id)?;
+    check_request(state, id, req)?;
     let certs_carried = issued_cert_records(state)
         .iter()
         .filter(|c| !c.revoked)
@@ -155,8 +159,8 @@ pub fn build_phone_handover(
             "This is the admission frame for the new phone: only the new phone signs it.",
         ));
     }
-    own_id8(state)?;
-    check_request(state, req)?;
+    own_id8(state, id)?;
+    check_request(state, id, req)?;
     if handover_in_chain(state) {
         return Err(CoreError::refused(
             "This phone already signed a handover. Only one counts; ask the terminal to finish it or cancel it.",
@@ -206,7 +210,7 @@ mod tests {
         let id = PhoneIdentity::new(&[0x42; 32], 0).unwrap();
         let s = PhoneState {
             enrolled: Some(Enrolled {
-                device_id: id.device_id().to_string(),
+                terminal_id: "aaaaaaaaaaaaaaaa".into(),
                 name: "old phone".into(),
                 at: NOW,
             }),
@@ -248,7 +252,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let v = describe_phone_handover(&s, &req("new phone")).unwrap();
+        let v = describe_phone_handover(&s, &id, &req("new phone")).unwrap();
         let want = handover_words(
             &new_phone(),
             "new phone",
@@ -260,17 +264,16 @@ mod tests {
         assert_eq!(v.certs_carried.len(), 1);
         assert!(v.certs_carried[0].contains("cccccccccccccccc"));
         // the words bind the old phone: another old phone shows other words
-        let (_, mut other) = old();
-        other.enrolled.as_mut().unwrap().device_id = "0102030405060708".into();
+        let other_id = PhoneIdentity::new(&[0x43; 32], 0).unwrap();
         assert_ne!(
-            describe_phone_handover(&other, &req("new phone"))
+            describe_phone_handover(&s, &other_id, &req("new phone"))
                 .unwrap()
                 .words,
             v.words
         );
         // and the name
         assert_ne!(
-            describe_phone_handover(&s, &req("new phonf"))
+            describe_phone_handover(&s, &id, &req("new phonf"))
                 .unwrap()
                 .words,
             v.words
@@ -281,7 +284,10 @@ mod tests {
     fn a_request_that_is_not_right_is_refused_before_anything_is_shown_or_signed() {
         let (id, mut s) = old();
         for bad in ["", "  ", " padded ", "tab\there", &"x".repeat(65)] {
-            assert!(describe_phone_handover(&s, &req(bad)).is_err(), "{bad:?}");
+            assert!(
+                describe_phone_handover(&s, &id, &req(bad)).is_err(),
+                "{bad:?}"
+            );
             assert!(
                 build_phone_handover(&mut s, &id, &req(bad), NOW).is_err(),
                 "{bad:?}"
@@ -289,7 +295,7 @@ mod tests {
         }
         let mut broken = req("new phone");
         broken.new_phone.mlkem_pub.pop();
-        assert!(reason(describe_phone_handover(&s, &broken)).contains("keys are not valid"));
+        assert!(reason(describe_phone_handover(&s, &id, &broken)).contains("keys are not valid"));
         let mut me = req("new phone");
         me.new_phone = id.public();
         assert!(reason(build_phone_handover(&mut s, &id, &me, NOW)).contains("its own successor"));
@@ -384,6 +390,7 @@ mod tests {
         let (_, old_state) = old();
         assert!(reason(describe_phone_handover(
             &old_state,
+            &PhoneIdentity::new(&[0x42; 32], 0).unwrap(),
             &admission(Some(([9; 32], 1)))
         ))
         .contains("admission frame"));

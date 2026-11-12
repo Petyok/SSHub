@@ -65,7 +65,9 @@ impl ChainEntry {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Enrolled {
-    pub device_id: String,
+    /// The TERMINAL this phone enrolled with (not this phone's own id: that is `PhoneIdentity::device_id`).
+    #[serde(alias = "device_id")]
+    pub terminal_id: String,
     pub name: String,
     pub at: i64,
 }
