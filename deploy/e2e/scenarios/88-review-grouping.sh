@@ -13,6 +13,11 @@
 . "$E2E_DIR/lib-creds.sh"
 NAME=88-review-grouping
 HOOKS='SSHUB_E2E_STALE_AFTER_SECS=30 SSHUB_E2E_LIVE_WINDOW_SECS=30 SSHUB_E2E_CHECKPOINT_OPS=20 SSHUB_E2E_CHECKPOINT_MIN_INTERVAL_SECS=5'
+# sync-serve runs through sshd on the other side of every round: the same hooks go into each peer's ~/.ssh/environment
+# (sshd PermitUserEnvironment, e2e image only) and are removed again at the end
+HOOKFILE() { for p in peer-a peer-b peer-c hub; do psh "$p" "$1"; done; }
+HOOKFILE "printf '%s\\n' $(for h in $HOOKS; do printf "'%s' " "$h"; done) > \$HOME/.ssh/environment"
+trap 'HOOKFILE "rm -f \$HOME/.ssh/environment"' EXIT
 # every sshub call of this scenario: peer P, then the sshub arguments
 hp() { p=$1; shift; peer "$p" env $HOOKS $SSHUB "$@"; }
 hround() { for p in "$@"; do hp "$p" sync-now --format json >/dev/null 2>&1 || true; done; }
