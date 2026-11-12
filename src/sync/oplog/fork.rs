@@ -260,10 +260,12 @@ pub(crate) fn record_head(conn: &Connection, head: &SignedHead) -> Result<HeadVe
 }
 
 /// A rumour that disagrees is a reason to ask the device directly, not to
-/// accuse it: `suspect`, never `compromised`.
+/// accuse it: `suspect`, never `compromised`. A device that authored ops here (`local`) is this device: it never flags
+/// itself, whatever disagreed (a proposer that cannot re-derive its own proposal has a local fault, not a forked peer).
 pub(crate) fn mark_suspect(conn: &Connection, device: &str) -> Result<()> {
     conn.execute(
-        "UPDATE sync_devices SET status = 'suspect' WHERE device_id = ?1 AND status = 'operational'",
+        "UPDATE sync_devices SET status = 'suspect' WHERE device_id = ?1 AND status = 'operational'
+           AND NOT EXISTS (SELECT 1 FROM sync_ops WHERE device_id = ?1 AND local = 1)",
         params![device],
     )?;
     Ok(())

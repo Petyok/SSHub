@@ -4262,3 +4262,141 @@ fn the_live_window_env_hook_exists_only_in_the_e2e_build() {
     #[cfg(not(feature = "e2e-hooks"))]
     assert_eq!(secs, crate::sync::limits::LIVE_DEVICE_WINDOW_SECS);
 }
+
+/// A silent peer, a log that grows, a proposal: the proposer must verify its own proposal (before and after it
+/// writes on), and a second store holding the same ops must compute the same state. A device never disputes itself.
+#[test]
+fn a_proposer_verifies_its_own_proposal_and_never_marks_itself_suspect() {
+    let ring = live_ring((0..3).map(|_| Peer::new()).collect());
+    let (a, b, c) = (&ring[0], &ring[1], &ring[2]);
+    let now = crate::store::now_ts();
+    b.store
+        .sync_append_local_at(&b.id, upsert(9, hf("old", "10.0.0.9")), now - 40 * 86_400)
+        .unwrap();
+    for n in 1..=4u8 {
+        a.append(upsert(n, hf(&format!("g{n}"), "10.0.0.1")));
+    }
+    settle(&ring);
+    for n in 20..45u8 {
+        a.append(upsert(n, hf(&format!("bulk{n}"), "10.0.0.2")));
+    }
+    settle(&ring);
+    let (proposal, state) = a.store.sync_checkpoint_propose(&a.id, None, now).unwrap();
+    let status_of = |p: &Peer| {
+        p.store
+            .sync_checkpoints()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.proposal_hash == proposal.hash())
+            .map(|r| r.status)
+    };
+    assert_ne!(status_of(a), Some(CheckpointStatus::Disputed));
+    assert!(matches!(
+        a.store.sync_checkpoint_verify(&proposal, &state).unwrap(),
+        CheckpointVerdict::Matches
+    ));
+    // the proposer writes on, and a peer writes too
+    a.append(upsert(70, hf("after", "10.0.0.7")));
+    c.append(upsert(71, hf("after-c", "10.0.0.8")));
+    sync_all(&ring);
+    for p in [a, c] {
+        p.approve_all();
+        match p.store.sync_checkpoint_verify(&proposal, &state).unwrap() {
+            CheckpointVerdict::Matches => {}
+            other => panic!("{}: {other:?}", p.dev()),
+        }
+    }
+    sync_all(&ring);
+    let csign = c
+        .store
+        .sync_checkpoint_sign(&c.id, &proposal, &state)
+        .unwrap();
+    assert!(csign.is_some());
+    sync_all(&ring);
+    let sign = a
+        .store
+        .sync_checkpoint_sign(&a.id, &proposal, &state)
+        .unwrap();
+    assert!(sign.is_some(), "the proposer signs its own proposal");
+    assert_ne!(status_of(a), Some(CheckpointStatus::Disputed));
+    assert!(a
+        .store
+        .sync_devices()
+        .unwrap()
+        .iter()
+        .all(|d| d.status != DeviceStatus::Suspect));
+}
+
+/// A device never flags itself: a proposal of its own that it cannot verify (here a wrong blob) is disputed, but the
+/// proposer, which is this device, stays operational. Only a device that wrote nothing here can be suspected.
+#[test]
+fn a_device_never_marks_itself_suspect() {
+    let ring = live_ring((0..2).map(|_| Peer::new()).collect());
+    let (a, b) = (&ring[0], &ring[1]);
+    touch(&ring);
+    settle(&ring);
+    let now = crate::store::now_ts();
+    let (proposal, state) = a.store.sync_checkpoint_propose(&a.id, None, now).unwrap();
+    let mut bad = state.clone();
+    bad.push(b' ');
+    assert!(a
+        .store
+        .sync_checkpoint_sign(&a.id, &proposal, &bad)
+        .unwrap()
+        .is_none());
+    let status = |p: &Peer, d: &DeviceId| {
+        p.store
+            .sync_devices()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.id == *d)
+            .unwrap()
+            .status
+    };
+    assert_eq!(status(a, &a.dev()), DeviceStatus::Operational);
+    // another device's bad blob is still a reason to ask it directly
+    sync_all(&ring);
+    assert!(b
+        .store
+        .sync_checkpoint_sign(&b.id, &proposal, &bad)
+        .unwrap()
+        .is_none());
+    assert_eq!(status(b, &a.dev()), DeviceStatus::Suspect);
+    assert_eq!(status(b, &b.dev()), DeviceStatus::Operational);
+}
+
+/// The required-signer list is judged at the proposal's own signed timestamp, never the wall clock: a proposal made 13
+/// or 15 days after the heads is verified (long after, on another store) with the verdict it was built under.
+#[test]
+fn the_required_list_is_judged_at_the_proposal_time_not_now() {
+    for (days, live) in [(13i64, true), (15, false)] {
+        let ring = live_ring((0..2).map(|_| Peer::new()).collect());
+        let (a, c) = (&ring[0], &ring[1]);
+        let t0 = crate::store::now_ts() - 40 * 86_400;
+        for (i, p) in ring.iter().enumerate() {
+            p.store
+                .sync_append_local_at(&p.id, upsert(i as u8 + 1, hf("h", "10.0.0.1")), t0)
+                .unwrap();
+        }
+        settle(&ring);
+        let (proposal, state) = a
+            .store
+            .sync_checkpoint_propose(&a.id, None, t0 + days * 86_400)
+            .unwrap();
+        let OpBody::CheckpointPropose { required, .. } = &proposal.body else {
+            unreachable!()
+        };
+        assert_eq!(!required.is_empty(), live, "{days} d");
+        sync_all(&ring);
+        for p in [a, c] {
+            assert!(
+                matches!(
+                    p.store.sync_checkpoint_verify(&proposal, &state).unwrap(),
+                    CheckpointVerdict::Matches
+                ),
+                "{days} d, {}",
+                p.dev()
+            );
+        }
+    }
+}
