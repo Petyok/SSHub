@@ -77,6 +77,8 @@ for s in "$HERE"/scenarios/*.sh; do
   cap=${SCENARIO_TIMEOUT:-$(sed -n 's/^# timeout: *\([0-9][0-9]*\).*/\1/p' "$s" | sed -n 1p)}
   cap=${cap:-900}
   t0=$(date +%s)
+  # a scenario may leave e2e hooks in ~/.ssh/environment (88); a timeout kill skips its own cleanup, so every scenario starts without
+  for p in $PEERS; do $C exec -T "$p" rm -f /home/ci/.ssh/environment >/dev/null 2>&1 || true; done
   echo "$(date -u +%H:%M:%S) scenario $name start (cap $cap s)"
   # tee keeps the log live; the scenario's status travels in a file because a pipe hides it
   { timeout "$cap" sh "$s"; echo $? > "$RCF"; } | tee "$OUTF"

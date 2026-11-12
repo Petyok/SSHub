@@ -65,6 +65,9 @@ UsePAM no
 StrictModes no
 LogLevel VERBOSE
 SetEnv DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/bus
+# e2e only: a scenario may write ~/.ssh/environment so the hooks of the e2e image (SSHUB_E2E_*) also reach `sshub sync-serve`,
+# which a peer starts through this sshd (a hook set in the caller's shell never crosses ssh)
+PermitUserEnvironment yes
 EOF
 
 echo "peer-entrypoint: $PEER_NAME ready, sshd on $SSH_PORT"

@@ -1,14 +1,16 @@
 // The e2e phone: the committed sshub-companion.html in headless Chromium, driven only through what a person
 // has in front of them: buttons, the paste box of a scan screen, the text the page shows and copies (ops text,
-// clipboard) and the QR code it draws (read back from the screen like a camera would). No hook of any kind is
-// added to the page: no init script, no clock shift, no fake camera, no evaluation of page internals.
+// clipboard) and the QR code it draws (read back from the screen like a camera would). No hook is
+// added to the page: no fake camera, no evaluation of page internals; the only init script is the optional test clock of
+// `clock-set` (scenario 75d), a stand-in for the user changing the phone's date, off unless a scenario sets it.
 //
 //   node phone-driver.mjs serve            long-lived daemon (compose service `phone`), one Chromium, one page
 //   node phone-driver.mjs <command> [json] one command against the daemon; prints one JSON line, exit 1 on error
 //
 // Commands (all arguments in one JSON object):
 //   info                                   page fingerprint check, current heading, device id when on home
-//   setup {words?, pin?}                   restore the fixed test identity (first run) or unlock it, land on home
+//   setup {words?, pin?, never_signed?}    restore the fixed test identity (first run) or unlock it, land on home; never_signed:false
+//                                          leaves the "take my chain from a terminal" card of a restored key that did sign
 //   home                                   back to the home screen from wherever a flow ended
 //   red-open {frame}                       scan (paste) a kind 3 notice; returns banner, description rows, op hash
 //   red-approve                            tap Approve; returns the ops text (kind 5, base64) the page shows
@@ -19,6 +21,13 @@
 //   enroll-reveal {frame}                  paste the terminal reveal; returns SAS words and the phone's reveal (kind 7)
 //   enroll-match {ok?}                     tap "words match" (or "differ"); returns the phone's confirmation (kind 8)
 //   enroll-finish {frame}                  paste the terminal confirmation; returns the final screen text
+//   cert-open {frame} / cert-approve {confirm?}     a kind 9 trust session request; sign it (types the delegate id when asked)
+//   renew-open {frame} / renew-approve              a kind 11 renewal request (rows list the hosts it opened); sign it
+//   handover-open {frame} / handover-approve        a kind 12 handover request (the eight words); sign it
+//   handover-admit-open {frame}                     the second kind 12 frame: the new phone's own admission (then handover-approve)
+//   chain-take {frame} / chain-adopt {tick?}        a restored key takes its chain from a terminal's list (kind 5); one list needs the tick
+//   recovery-open {frame} / recovery-cancel          a kind 3 notice of a phone recovery: the live phone cancels it
+//   clock-set {offset_secs}                move the page's date (negative: backdate) from the next load; 0 restores (scenario 75d)
 //   ops-text                               the ops list the current screen shows as text (base64 of a kind 5 frame)
 //   verify-ops {ops, kind?, opHash?}       check a kind 5 list: every op by this phone, signature valid, chain from
 //                                          seq 1 continuous, last op of `kind` (RedPhoneSign naming `opHash`)
@@ -169,6 +178,24 @@ async function boot() {
   if (!targets[kind]) throw new Error(`unknown PHONE_TARGET ${kind} (have: ${Object.keys(targets).join(', ')})`);
   target = await targets[kind](pageHtml);
   page = target.page;
+  // The test clock of scenario 75d: a person changing the date of the phone. The page reads Date; when the origin's local
+  // storage holds an offset (set by `clock-set`, wiped by `reset`) every later page load sees that much earlier or later time.
+  // The page itself carries no hook: the script is added by the browser driver, as the system clock would be.
+  await page.addInitScript(() => {
+    const off = Number(localStorage.getItem('__e2e_clock_offset_ms') || 0);
+    if (!off) return;
+    const D = Date;
+    const now = () => D.now() + off;
+    globalThis.Date = class extends D {
+      constructor(...a) {
+        if (a.length === 0) super(now());
+        else super(...a);
+      }
+      static now() {
+        return now();
+      }
+    };
+  });
 }
 
 // ------------------------------------------------------------------ small helpers on the page
@@ -185,10 +212,12 @@ async function home() {
     if (await has('#device-id')) return;
     if (await has('#unlock')) {
       await page.waitForTimeout(500); // the unlock screen settles after a reload
-      await page.fill('#pin', PIN);
-      await tap('#unlock', { force: true });
-      await waitAny(['#device-id', '#unlock-error']);
-      continue;
+      if (await has('#pin')) {
+        await page.fill('#pin', PIN);
+        await tap('#unlock', { force: true });
+        await waitAny(['#device-id', '#unlock-error']);
+      }
+      continue; // the screen may have moved on by itself (a shifted clock settles the lock late): look again
     }
     let tapped = false;
     for (const id of ['#send-done', '#enroll-done', '#head-done', '#refuse', '#back']) {
@@ -204,7 +233,7 @@ async function home() {
   if (!(await has('#device-id'))) throw new Error(`could not reach the home screen, page shows: ${(await heading()) || '(nothing)'}`);
 }
 
-async function setup({ words = S.words, pin = PIN } = {}) {
+async function setup({ words = S.words, pin = PIN, never_signed = true } = {}) {
   // The page draws its first screen asynchronously (it reads its storage first). A flow that ended on a screen
   // without a way back (a refusal) is left by reloading the page, as a person would reopen it.
   await page.reload(); // whatever the last flow left on screen, a person reopening the page starts from its lock screen
@@ -222,7 +251,7 @@ async function setup({ words = S.words, pin = PIN } = {}) {
     }, null, { timeout: 60000 });
     if (!(await has('#device-id'))) throw new Error(`restore refused: ${await text('#setup-error')}`);
     // A restored key does not author until it knows where its chain ended; this key has never signed.
-    if (await has('#head-new')) {
+    if (never_signed && (await has('#head-new'))) {
       await page.fill('#head-confirm', S.identity.deviceId); // the page asks for the device id before it trusts a fresh chain
       await tap('#head-new');
     }
@@ -296,6 +325,33 @@ async function enrollFrame() {
 
 const rowsOf = () => page.evaluate(() => Array.from(document.querySelectorAll('#desc .k')).map((k) => [k.textContent, k.nextElementSibling && k.nextElementSibling.textContent, k.nextElementSibling && k.nextElementSibling.dataset.danger === '1']));
 
+// Scan (paste) a frame on the home screen's scan screen and read the screen that follows: the page's own refusal (a whole
+// refusal screen, or the in-screen refusal element `refusalSel`), the headline, the description rows and whether the
+// approve button `approveSel` is there.
+async function openScreen(frame, refusalSel, approveSel) {
+  await home();
+  await tap('#scan-release');
+  await paste(frame);
+  await waitAny(['#headline', '#refusal', '#handover-note']);
+  if (await has('#refusal')) return { ok: false, refusal: await text('#refusal') };
+  return {
+    ok: true,
+    headline: (await has('#headline')) ? await text('#headline') : null,
+    rows: await rowsOf(),
+    refusal: refusalSel && (await has(refusalSel)) ? await text(refusalSel) : null,
+    can_approve: await has(approveSel),
+  };
+}
+// Tap the approve button and return the ops text the page then shows (the same result as red-approve).
+async function approveOps(approveSel, errSel, textSel = '#ops-b64') {
+  await tap(approveSel);
+  await waitAny([textSel, errSel]);
+  if (await has(errSel) && (await text(errSel))) return { ok: false, error: await text(errSel) };
+  const ops = await page.locator(textSel).inputValue();
+  const qr = b64(await readQr('#reverse-qr'));
+  return { ok: true, ops, qr_equals_text: qr === ops };
+}
+
 // ------------------------------------------------------------------ commands
 const commands = {
   async info() {
@@ -347,6 +403,82 @@ const commands = {
     const ops = await page.locator('#ops-b64').inputValue();
     const qr = b64(await readQr('#reverse-qr'));
     return { ok: true, ops, qr_equals_text: qr === ops };
+  },
+
+  // clock-set {offset_secs}: the phone's date moves by this many seconds (negative: into the past) from the next page load on;
+  // 0 puts it back. Reset also puts it back.
+  async 'clock-set'({ offset_secs = 0 }) {
+    await page.evaluate((ms) => localStorage.setItem('__e2e_clock_offset_ms', String(ms)), Number(offset_secs) * 1000);
+    await page.reload();
+    await home();
+    return { offset_secs, page_now: await page.evaluate(() => Math.floor(Date.now() / 1000)) };
+  },
+
+  // ---- a restored key takes its chain from a terminal (kind 5 list with the terminals block)
+  // chain-take: paste one list; returns whether it agrees at once, whether the page asks for the one-list tick, and the
+  // card text (the terminal count the list reported, the risk) or the need for a second list.
+  async 'chain-take'({ frame }) {
+    await home();
+    await tap('#head-scan');
+    await paste(frame);
+    await waitAny(['#head-agreed', '#head-need', '#head-same', '#refusal', '.err']);
+    if (await has('#refusal')) return { ok: false, refusal: await text('#refusal') };
+    return {
+      ok: true,
+      agreed: await has('#head-agreed'),
+      needs_tick: await has('#head-tick'),
+      card: (await has('#head-agreed')) ? await text('#head-agreed') : null,
+      need: (await has('#head-need')) ? await text('#head-need') : null,
+      same_terminal: await has('#head-same'),
+      screen: await text('body'),
+    };
+  },
+  // chain-adopt {tick?}: tick the one-list risk when asked (tick:true), then adopt; the page's refusal comes back as error.
+  async 'chain-adopt'({ tick = false } = {}) {
+    if (tick && (await has('#head-tick'))) await tap('#head-tick');
+    await page.evaluate(() => { const e = document.querySelector('#head-error'); if (e) e.textContent = ''; }); // a refusal of an earlier try must not answer this one
+    await tap('#head-adopt');
+    // #head-error is always in the page: only a done screen or a non-empty text is the answer
+    await page.waitForFunction(() => document.querySelector('#head-done') || (document.querySelector('#head-error')?.textContent ?? '') !== '', null, { timeout: 60000 });
+    if (await has('#head-error') && (await text('#head-error'))) return { ok: false, error: await text('#head-error') };
+    return { ok: true, screen: await text('body') };
+  },
+
+  // ---- a phone recovery started by a terminal (kind 3 notice of a PhoneReenroll): the live phone cancels it
+  async 'recovery-open'({ frame }) {
+    const r = await openScreen(frame, null, '#cancel-recovery');
+    return { ...r, timelock: (await has('#timelock')) ? await text('#timelock') : null };
+  },
+  async 'recovery-cancel'() {
+    return approveOps('#cancel-recovery', '#cancel-error', '#cancel-b64');
+  },
+
+  // ---- trust sessions (kinds 9 and 11) and the handover (kind 12): the same scan screen, other screens after the scan.
+  // Each open returns what the person reads (headline, rows, the page's own refusal) and whether an approve button is there.
+  async 'cert-open'({ frame }) {
+    return openScreen(frame, '#cert-refusal', '#cert-approve');
+  },
+  async 'cert-approve'({ confirm = null } = {}) {
+    if (confirm && (await has('#confirm-delegate'))) await page.fill('#confirm-delegate', confirm);
+    return approveOps('#cert-approve', '#cert-error');
+  },
+  async 'renew-open'({ frame }) {
+    return openScreen(frame, '#cert-refusal', '#renew-approve');
+  },
+  async 'renew-approve'() {
+    return approveOps('#renew-approve', '#cert-error');
+  },
+  // Handover, the old phone's screen (kind 12, no op): the eight words and what carries over.
+  async 'handover-open'({ frame }) {
+    const r = await openScreen(frame, null, '#handover-approve');
+    return { ...r, words: (await has('#handover-words')) ? await text('#handover-words') : null, certs: (await has('#handover-certs')) ? await text('#handover-certs') : null };
+  },
+  // The same page, the second kind 12 frame (with the op hash): the NEW phone signs its own admission.
+  async 'handover-admit-open'({ frame }) {
+    return openScreen(frame, null, '#handover-approve');
+  },
+  async 'handover-approve'() {
+    return approveOps('#handover-approve', '#handover-error');
   },
 
   // ---- share release (kind 1)
