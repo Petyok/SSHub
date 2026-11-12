@@ -33,7 +33,8 @@ while [ "$(ckpts_accepted peer-a)" -lt 1 ] && [ "$n" -lt 12 ]; do
   for p in peer-a peer-c; do for id in $(hp $p sync-review --format json 2>/dev/null | pjq -r '.[].id'); do hp $p sync-review --approve "$id" >/dev/null 2>&1 || true; done; done
   sleep 6
 done
-show "peer-a checkpoints" sq peer-a 'SELECT status, state_len FROM sync_checkpoints'
+show "peer-a checkpoints" sq peer-a "SELECT substr(device_id,1,6)||'|'||status||'|'||state_len||'|'||lamport||'|'||required||'|'||(SELECT count(*) FROM sync_checkpoint_signs s WHERE s.proposal_hash = c.proposal_hash) FROM sync_checkpoints c ORDER BY lamport"
+show "peer-c checkpoints" sq peer-c "SELECT substr(device_id,1,6)||'|'||status||'|'||state_len||'|'||lamport||'|'||required||'|'||(SELECT count(*) FROM sync_checkpoint_signs s WHERE s.proposal_hash = c.proposal_hash) FROM sync_checkpoints c ORDER BY lamport"
 show "peer-a stale markers" sq peer-a "SELECT key FROM sync_meta WHERE key LIKE 'stale:%'"
 check "peer-a accepted a checkpoint" "[ \"$(ckpts_accepted peer-a)\" -ge 1 ]"
 check "peer-b is marked stale at the cut" "[ \"$(sq peer-a "SELECT count(*) FROM sync_meta WHERE key = 'stale:$(devid peer-a peer-b)'")\" = 1 ]"

@@ -23,6 +23,7 @@ spread peer-c peer-a peer-b peer-c
 st=$(peer peer-a $SSHUB sync-status --format json 2>/dev/null || true)
 expect "peer-c is a full device" "$st" '[.devices[] | select(.name=="peer-c") | .role] == ["holder"]'
 expect "quorum1 is not shared with peer-c (healing on use)" "$st" 'any(.exposure[]; test("not shared with") and test("quorum1"))'
+check "peer-c imports the kit (a new holder has no ring secret yet)" "printf '%s\n%s\n' '$KIT' '$PHRASE' | peer peer-c $SSHUB sync-import-kit"
 show "peer-a sync-heal (paper phrase on stdin)" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-a $SSHUB sync-heal --format json"
 check "sync-heal succeeds" "[ '$LAST_RC' -eq 0 ]"
 expect "it healed quorum1" "$LAST_OUT" '(.healed | length) >= 1 and (.planned | length) >= 1'
