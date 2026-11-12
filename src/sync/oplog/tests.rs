@@ -4354,3 +4354,39 @@ fn a_device_never_marks_itself_suspect() {
     assert_eq!(status(b, &a.dev()), DeviceStatus::Suspect);
     assert_eq!(status(b, &b.dev()), DeviceStatus::Operational);
 }
+
+/// The required-signer list is judged at the proposal's own signed timestamp, never the wall clock: a proposal made 13
+/// or 15 days after the heads is verified (long after, on another store) with the verdict it was built under.
+#[test]
+fn the_required_list_is_judged_at_the_proposal_time_not_now() {
+    for (days, live) in [(13i64, true), (15, false)] {
+        let ring = live_ring((0..2).map(|_| Peer::new()).collect());
+        let (a, c) = (&ring[0], &ring[1]);
+        let t0 = crate::store::now_ts() - 40 * 86_400;
+        for (i, p) in ring.iter().enumerate() {
+            p.store
+                .sync_append_local_at(&p.id, upsert(i as u8 + 1, hf("h", "10.0.0.1")), t0)
+                .unwrap();
+        }
+        settle(&ring);
+        let (proposal, state) = a
+            .store
+            .sync_checkpoint_propose(&a.id, None, t0 + days * 86_400)
+            .unwrap();
+        let OpBody::CheckpointPropose { required, .. } = &proposal.body else {
+            unreachable!()
+        };
+        assert_eq!(!required.is_empty(), live, "{days} d");
+        sync_all(&ring);
+        for p in [a, c] {
+            assert!(
+                matches!(
+                    p.store.sync_checkpoint_verify(&proposal, &state).unwrap(),
+                    CheckpointVerdict::Matches
+                ),
+                "{days} d, {}",
+                p.dev()
+            );
+        }
+    }
+}
