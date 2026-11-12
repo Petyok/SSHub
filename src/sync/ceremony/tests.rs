@@ -610,6 +610,86 @@ mod in_force {
         assert!(!lagging_phone_proof_in_force(false));
     }
 
+    /// Scenario 84: a device that joined by an anchor holds the proofs of a Red op written before it only as the
+    /// anchor's chain heads (`void|checkpoint-anchor` rows). It must still count them, and an op whose proofs are
+    /// not there (pruned, or never given) stays pending: no completion is invented.
+    #[test]
+    fn a_device_joined_by_an_anchor_counts_the_proofs_that_are_its_chain_heads() {
+        use crate::sync::oplog::{Attendance, BootstrapTrust, DeviceKind, DeviceRole, VerifiedBy};
+        use crate::sync::quorum::tests::deliver;
+        // The paper is registered, so the change below needs it as its third factor and cannot complete without it.
+        let (d, _) = ring_with_paper();
+        let (author, inviter, phone) = (&d[0], &d[1], &d[3]);
+        // A membership change waits for review on the inviter (it is above the anchor's cut); its proofs are the heads
+        // of the inviter's and the phone's chains.
+        let newcomer = Dev::new();
+        let x = append(
+            author,
+            OpBody::DeviceAdd {
+                device: newcomer.id.public(),
+                name: "third terminal".into(),
+                role: DeviceRole::Holder,
+                attendance: Attendance::Attended,
+                kind: DeviceKind::Terminal,
+                verified_by: VerifiedBy::Sas,
+            },
+        );
+        // Another terminal approved and the phone signed; the inviter only received them, so it holds `x` pending.
+        let approver = &d[2];
+        deliver(author, approver);
+        deliver(author, phone);
+        append(phone, crate::sync::ceremony::red_phone_sign_body(&x));
+        append(approver, crate::sync::ceremony::red_approve_body(&x));
+        for from in [author, phone, approver] {
+            deliver(from, inviter);
+        }
+        let joiner = Dev::new();
+        crate::sync::ceremony::test_force(&joiner.store, false);
+        inviter
+            .store
+            .sync_register_device(
+                &joiner.id.public(),
+                "joiner",
+                DeviceRole::Mirror,
+                Attendance::Attended,
+                DeviceKind::Terminal,
+                VerifiedBy::Sas,
+            )
+            .unwrap();
+        // The inviter holds `x` unreviewed (an unattended hub holds every such change): its row says pending.
+        inviter
+            .store
+            .with_conn(|c| {
+                c.execute(
+                    "UPDATE sync_ops SET state = 'pending', reason = 'tier' WHERE op_hash = ?1",
+                    rusqlite::params![&x.hash()[..]],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        let anchor = inviter.store.sync_join_anchor_build(&inviter.id).unwrap();
+        joiner
+            .store
+            .sync_join_adopt(
+                &anchor,
+                &BootstrapTrust::Enrollment {
+                    inviter: inviter.did.clone(),
+                },
+            )
+            .unwrap();
+        deliver(author, &joiner);
+        let st = red_status(&joiner.store, &x, x.timestamp + 60).unwrap();
+        assert!(
+            st.have.contains(&RedProof::Phone) && st.have.contains(&RedProof::SecondDevice),
+            "the anchor's head proofs count: {st:?}"
+        );
+        // The third factor was never given: no completion is invented from the proofs that are there.
+        assert!(
+            !st.complete && st.missing.contains(&RedProof::Factor(None)),
+            "{st:?}"
+        );
+    }
+
     #[test]
     fn a_paper_registration_changes_who_is_wrapped_to_only_when_complete() {
         let d = ring_phone(3);
@@ -1802,6 +1882,44 @@ fn setup_register(on: &Dev, who: &Dev, role: DeviceRole, kind: DeviceKind) {
             VerifiedBy::Sas,
         )
         .unwrap();
+}
+
+/// A device promoting ITSELF at ring setup has signed that op as its proposer: the proposal is the promoted device's own
+/// signature (no second approval op can exist, `sync-approve` refuses self-approval). Outside setup it is no vote.
+fn self_promotion_status(setup_over: bool) -> RedStatus {
+    let (a, b) = (Dev::new(), Dev::new());
+    crate::sync::ceremony::test_force(&b.store, false);
+    setup_register(&b, &a, DeviceRole::Holder, DeviceKind::Terminal);
+    setup_register(&b, &b, DeviceRole::Mirror, DeviceKind::Terminal);
+    if setup_over {
+        // A phone and two other attended terminal holders: setup has ended for good.
+        for who in [&Dev::new(), &Dev::new()] {
+            setup_register(&b, who, DeviceRole::Holder, DeviceKind::Terminal);
+        }
+        setup_register(&b, &Dev::new(), DeviceRole::Holder, DeviceKind::Phone);
+    }
+    let op = append(
+        &b,
+        OpBody::DeviceRoleChange {
+            device_id: b.did.clone(),
+            to: DeviceRole::Holder,
+        },
+    );
+    red_status(&b.store, &op, op.timestamp + 60).unwrap()
+}
+
+#[test]
+fn a_device_promoting_itself_at_ring_setup_counts_its_own_proposal_as_the_vote() {
+    let st = self_promotion_status(false);
+    assert!(st.have.contains(&RedProof::SecondDevice), "{st:?}");
+    assert!(!st.missing.contains(&RedProof::SecondDevice), "{st:?}");
+}
+
+#[test]
+fn a_device_promoting_itself_outside_ring_setup_has_no_second_device() {
+    let st = self_promotion_status(true);
+    assert!(!st.have.contains(&RedProof::SecondDevice), "{st:?}");
+    assert!(st.missing.contains(&RedProof::SecondDevice), "{st:?}");
 }
 
 /// A ring from a fresh install, step by step as the CLI builds it: one founder holder, joiners that are

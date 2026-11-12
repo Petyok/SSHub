@@ -2185,6 +2185,16 @@ fn a_device_adopting_a_checkpoint_still_knows_the_registered_paper() {
         .sync_bootstrap(&bundle, &BootstrapTrust::RingFingerprint(words))
         .unwrap();
     assert_eq!(crate::sync::quorum::paper_pub(&fresh.store).unwrap(), want);
+    // The recovery key is the registration's `public`: a checkpoint-joined device verifies a paper recovery too.
+    let recover =
+        crate::sync::crypto::paper_derive(&phrase, crate::sync::crypto::PaperDomain::Recover)
+            .unwrap()
+            .public()
+            .ed25519_pub;
+    assert_eq!(
+        crate::sync::quorum::paper_recover_pub(&fresh.store, None).unwrap(),
+        Some(recover)
+    );
 }
 
 fn prune_bootstrap_case(base: u64) {

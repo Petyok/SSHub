@@ -717,15 +717,47 @@ mod over_the_log {
             .contains("liveness"));
     }
 
+    /// The paper was registered by the ceremony (`FactorRegister`), nobody ran `paper_setup`: the registered key
+    /// verifies the paper signature (scenarios 73 and 78d).
+    #[test]
+    fn a_paper_registered_by_the_ceremony_authorizes_a_recovery() {
+        let w = world();
+        for x in &w.d {
+            assert!(
+                crate::sync::quorum::paper_recover_pub(&x.store, None)
+                    .unwrap()
+                    .is_some(),
+                "the replicated registration is the source"
+            );
+        }
+        let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
+        let now = crate::store::now_ts();
+        let unsigned = OpBody::PhoneReenroll {
+            initiated_at: now,
+            signers: vec![],
+            via_paper: true,
+            third_factor: ThirdFactor::EmailCode,
+            liveness: crate::sync::recovery::liveness_set(&w.d[R].store, &w.d[R].did, now).unwrap(),
+            paper_sig: None,
+        };
+        let sig = paper_reenroll_sign(&recover, &w.d[R].did, &unsigned);
+        let mut signed = unsigned;
+        if let OpBody::PhoneReenroll { paper_sig, .. } = &mut signed {
+            *paper_sig = Some(sig);
+        }
+        let op = append(&w.d[R], signed);
+        w.sync();
+        assert_eq!(
+            w.verdict(&op, op.timestamp).unwrap(),
+            ReenrollVerdict::AwaitingAck
+        );
+    }
+
     #[test]
     fn paper_authorizes_alone_with_a_signature_over_the_body_and_never_with_the_same_factor_twice()
     {
         let w = world();
-        let phrase = bip39_encode(&[0x5a; 32]);
-        for x in &w.d {
-            paper_setup(&x.store, &phrase).unwrap();
-        }
-        let recover = paper_derive(&phrase, PaperDomain::Recover).unwrap();
+        let recover = paper_derive(&w.phrase, PaperDomain::Recover).unwrap();
         let now = crate::store::now_ts();
         let liveness: Vec<HeadAttest> =
             crate::sync::recovery::liveness_set(&w.d[R].store, &w.d[R].did, now).unwrap();

@@ -165,7 +165,11 @@ pub(crate) fn reshare_ops(store: &LauncherStore, kind: &str) -> Result<Vec<Op>> 
         .collect())
 }
 
-/// Applied or approved ops of one kind, oldest first, optionally by one author.
+/// Applied or approved ops of one kind, oldest first, optionally by one author. A ceremony proof (`Red*`) that is the
+/// chain head of an adopted checkpoint or join anchor is read too, though its row is a `void` anchor: the head is signed
+/// by its device and matches the cut (checked at adoption), and a proof names the op it proves, so a device that joined by
+/// an anchor can still judge a Red op written before it (it never invents a completion: only the proofs that really exist
+/// are there, the others were pruned).
 pub(crate) fn ops_of(
     store: &LauncherStore,
     kind: &str,
@@ -174,7 +178,9 @@ pub(crate) fn ops_of(
     store.with_conn(|c| {
         let mut st = c.prepare(
             "SELECT canonical, signature FROM sync_ops
-             WHERE kind = ?1 AND (?2 IS NULL OR device_id = ?2) AND state IN ('applied','approved')
+             WHERE kind = ?1 AND (?2 IS NULL OR device_id = ?2)
+               AND (state IN ('applied','approved')
+                    OR (kind LIKE 'Red%' AND state = 'void' AND reason = 'checkpoint-anchor'))
              ORDER BY lamport, device_id, seq",
         )?;
         let rows = st
@@ -336,7 +342,16 @@ pub fn paper_setup(store: &LauncherStore, phrase: &str) -> Result<DevicePublic> 
 }
 
 /// The paper phrase's recovery verification key (ed25519), as registered by [`paper_setup`].
-pub fn paper_recover_pub(store: &LauncherStore) -> Result<Option<[u8; 32]>> {
+///
+/// The replicated registration is the source (`FactorRegister { Paper }` carries the recovery key as its `public`, in force
+/// before lamport `before`, from the op rows or from an adopted checkpoint state); the local record is only the fallback of
+/// the device that ran [`paper_setup`].
+pub fn paper_recover_pub(store: &LauncherStore, before: Option<u64>) -> Result<Option<[u8; 32]>> {
+    if let Some((key, _, _)) =
+        super::ceremony::registered_before(store, super::oplog::ThirdFactor::Paper, before)?
+    {
+        return Ok(Some(key));
+    }
     Ok(meta_get(store, "paper_recover_pub")?.and_then(|b| b.try_into().ok()))
 }
 
