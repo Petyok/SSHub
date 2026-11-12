@@ -714,20 +714,29 @@ fn validate_phone_reenroll_upto(
         let _ = m.apply(ev); // an event that does not qualify changes nothing
     }
     let v = m.verdict(now);
-    // A phone handover in force after this recovery started replaced the phone it was started against (H1 rule 4): the
-    // recovery stands for nothing, whatever else holds.
+    // A phone handover in force that was written by the phone this recovery was started AGAINST (the live phone in the
+    // view at the recovery's own position) proves that phone is not lost and replaced it (H1 rule 4): the recovery stands
+    // for nothing, whatever else holds. No lamport order between the two: a phone never met by the recovery's author lags
+    // that author's clock (72d), so a handover signed at a lower lamport is still the live phone's. A recovery that
+    // already took effect is `Completed` above and is never superseded; a handover by a phone retired before the
+    // recovery started was written by a phone that is not its target.
     if !matches!(
         v,
         ReenrollVerdict::CancelledByPhone
             | ReenrollVerdict::CancelledByFactor
             | ReenrollVerdict::Completed
     ) {
-        for h in super::quorum::ops_of(store, "PhoneHandover", None)? {
-            if h.lamport > op.lamport
-                && upto.is_none_or(|u| h.lamport <= u)
-                && super::ceremony::in_force(store, &h)?
-            {
-                return Ok(ReenrollVerdict::Superseded);
+        let target = super::quorum::phone_device_in(&super::ceremony::effective_devices(
+            store,
+            Some(op.lamport),
+        )?)
+        .ok()
+        .flatten();
+        if let Some(target) = target {
+            for h in super::quorum::ops_of(store, "PhoneHandover", Some(&target))? {
+                if upto.is_none_or(|u| h.lamport <= u) && super::ceremony::in_force(store, &h)? {
+                    return Ok(ReenrollVerdict::Superseded);
+                }
             }
         }
     }

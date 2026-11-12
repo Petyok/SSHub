@@ -1631,7 +1631,7 @@ PhoneHandover { new_phone: DevicePublic, name: String }         // Red; author: 
 * Validity of `PhoneHandover`: author, replay and known-key rules in `effective_devices(store, Some(op.lamport - 1))`; proofs: the author
   (the op itself), the new phone's own `RedPhoneSign`, a second attended holder terminal, and `ThirdFactor::Paper` only; the effect lamport is
   the highest lamport among the counted proofs; among handovers by one author the lowest `(completion lamport, device, seq)` wins.
-* `PhoneReenroll` verdict gains `Superseded` (design 5.3): an in-force `PhoneHandover` supersedes every `PhoneReenroll` with a lower lamport.
+* `PhoneReenroll` verdict gains `Superseded` (design 5.3): an in-force `PhoneHandover` written by the phone that recovery was started against (the live phone in the view at the recovery's own lamport) supersedes it, whatever the two lamports (a phone never met by the recovery's author lags its clock, 78d); a recovery that already took effect (`Completed`) is never superseded and the replaced phone's later handover is void. `sync-notice` serves a `PhoneReenroll` as the kind 3 recovery notice, so the live phone can cancel it.
 
 **Wire** (crate `sshub-sync-proto`, `wire.rs`; the types and constants exist already, encode and decode are the proto lane's first delivery):
 
