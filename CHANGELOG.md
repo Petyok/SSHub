@@ -4,6 +4,13 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Host = name` and `Include = file` in ssh config** (PR #181 by @56steve) -
+  OpenSSH accepts spaces around the `=` separator, but SSHub read the `=` as
+  part of the arguments: `Host = web` listed a host named `=` next to `web`,
+  and `Include =file` looked for a file called `=file`.
+
 ## [0.22.1] - 2026-11-09
 
 ### Fixed
