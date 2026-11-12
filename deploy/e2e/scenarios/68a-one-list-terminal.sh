@@ -24,7 +24,7 @@ show "the phone takes the list" phone chain-take "{\"frame\":\"$CH\"}"
 expect "one list agrees at once and the page asks for the tick" "$LAST_OUT" '.ok == true and .agreed == true and .needs_tick == true'
 expect "the card says the ring has one terminal and states the risk" "$LAST_OUT" '(.card | test("one terminal")) and (.card | test("Risk"))'
 show "the phone adopts without the tick" phone chain-adopt '{"tick":false}'
-check "without the tick the page refuses" "[ \"$(pf "$LAST_OUT" ok)\" = false ]"
+expect "without the tick the page refuses" "$LAST_OUT" '.ok == false and (.error | test("one list"))'
 show "the phone adopts with the tick" phone chain-adopt '{"tick":true}'
 expect "with the tick the chain is taken" "$LAST_OUT" '.ok == true'
 

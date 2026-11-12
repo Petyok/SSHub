@@ -8,6 +8,7 @@
 NAME=68c-one-list-hub
 
 step "ring of peer-a, the Hub and the phone; the phone restored" phone_ring_then_restore
+restore_phone
 snow peer-a >/dev/null
 snow hub >/dev/null
 check "peer-a reports two terminals (the Hub counts)" "[ \"$(chain_terminals peer-a)\" = 2 ]"

@@ -436,8 +436,10 @@ const commands = {
   // chain-adopt {tick?}: tick the one-list risk when asked (tick:true), then adopt; the page's refusal comes back as error.
   async 'chain-adopt'({ tick = false } = {}) {
     if (tick && (await has('#head-tick'))) await tap('#head-tick');
+    await page.evaluate(() => { const e = document.querySelector('#head-error'); if (e) e.textContent = ''; }); // a refusal of an earlier try must not answer this one
     await tap('#head-adopt');
-    await waitAny(['#head-done', '#head-error']);
+    // #head-error is always in the page: only a done screen or a non-empty text is the answer
+    await page.waitForFunction(() => document.querySelector('#head-done') || (document.querySelector('#head-error')?.textContent ?? '') !== '', null, { timeout: 60000 });
     if (await has('#head-error') && (await text('#head-error'))) return { ok: false, error: await text('#head-error') };
     return { ok: true, screen: await text('body') };
   },
