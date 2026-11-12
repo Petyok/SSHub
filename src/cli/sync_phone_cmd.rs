@@ -407,11 +407,17 @@ fn phone_enroll(
 /// The kind 3 text for the Red op whose id starts with `prefix`.
 pub fn notice_text(store: &LauncherStore, prefix: &str) -> Result<(String, String)> {
     let op = crate::sync::hub::op_by_hash_prefix(store, prefix)?;
+    let hash: String = op.hash().iter().map(|b| format!("{b:02x}")).collect();
+    // A phone recovery is not gated (its own rules judge it) but the live phone must see it to cancel it: the recovery
+    // notice, the op as stored, is the same wire as a Red notice.
+    if matches!(op.body, crate::sync::oplog::OpBody::PhoneReenroll { .. }) {
+        let notice = crate::sync::hub::recovery_notice(store, &op.hash())?;
+        return Ok((hash, b64(&notice.encode())));
+    }
     ensure!(
         crate::sync::ceremony::is_gated(store, &op)?,
         "that change is not a big change: the phone has nothing to approve"
     );
-    let hash: String = op.hash().iter().map(|b| format!("{b:02x}")).collect();
     Ok((hash, b64(&crate::sync::hub::op_notice(&op).encode())))
 }
 

@@ -73,6 +73,39 @@ fn ingest_all(from: &Dev, to: &Dev) {
     }
 }
 
+/// Scenario 73: the live phone cancels a recovery, so `sync-notice` must serve the PhoneReenroll (not a gated op).
+#[test]
+fn sync_notice_serves_a_phone_recovery_for_the_phone_to_cancel() {
+    let d = world();
+    let op = append(
+        &d[0],
+        OpBody::PhoneReenroll {
+            initiated_at: crate::store::now_ts(),
+            signers: vec![],
+            via_paper: false,
+            third_factor: crate::sync::oplog::ThirdFactor::Paper,
+            liveness: vec![],
+            paper_sig: None,
+        },
+    );
+    let prefix: String = op
+        .hash()
+        .iter()
+        .take(4)
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let (hash, text) = notice_text(&d[0].store, &prefix).unwrap();
+    assert_eq!(
+        hash,
+        op.hash()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    let wire = RecoveryNoticeWire::decode(&B64.decode(text).unwrap()).unwrap();
+    assert_eq!(wire.op_canonical, op.canonical_bytes());
+}
+
 #[test]
 fn sync_notice_decodes_to_the_op_and_refuses_what_is_not_red() {
     let d = world();

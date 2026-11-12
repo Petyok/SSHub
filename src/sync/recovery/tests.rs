@@ -986,6 +986,21 @@ mod over_the_log {
         deliver(&new, &w.d[A]);
         let st = red_status(&w.d[OBS].store, &reg, now + 3).unwrap();
         assert!(st.complete, "{st:?}");
+        // The lost phone, replaced already, signs a handover afterwards: it changes nothing, the recovery stands.
+        let late = at(
+            &w.d[P],
+            OpBody::PhoneHandover {
+                new_phone: Dev::new().id.public(),
+                name: "too late".into(),
+            },
+            now + 3,
+        );
+        w.sync();
+        assert!(!in_force(&w.d[OBS].store, &late).unwrap());
+        assert_ne!(
+            w.verdict(&op, now + 3).unwrap(),
+            ReenrollVerdict::Superseded
+        );
     }
 
     // e2e scenario 80: a device learned from an op has last_seen 0 until its first round. A recovery started before
@@ -1723,5 +1738,37 @@ mod over_the_log {
         assert!(open_for_alert_for(&w.d[A].store, &w.d[A].did, now)
             .unwrap()
             .is_empty());
+    }
+
+    /// Scenario 78d: the live phone's handover wins over a recovery that has not taken effect, whatever the lamports:
+    /// the phone never met the recovery's author, so its chain lags (the handover's lamport is below the recovery's).
+    #[test]
+    fn a_low_lamport_handover_by_the_live_phone_supersedes_a_pending_recovery() {
+        let w = world();
+        let handover = append(
+            &w.d[P],
+            OpBody::PhoneHandover {
+                new_phone: Dev::new().id.public(),
+                name: "next phone".into(),
+            },
+        );
+        // The requester's clock runs ahead of the phone's.
+        for n in 1..=6u8 {
+            append(
+                &w.d[R],
+                OpBody::HostUpsert {
+                    host_uid: [n; 16],
+                    fields: Default::default(),
+                },
+            );
+        }
+        let op = w.reenroll(false, None, None);
+        let now = op.timestamp + 60;
+        assert!(
+            handover.lamport < op.lamport,
+            "the phone lags the requester"
+        );
+        w.sync();
+        assert_eq!(w.verdict(&op, now).unwrap(), ReenrollVerdict::Superseded);
     }
 }
