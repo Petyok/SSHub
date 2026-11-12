@@ -33,8 +33,7 @@ show "peer-b sync-replace-terminal peer-a --new peer-b (step 2: promote)" sh -c 
 expect "the second step proposes the promotion" "$LAST_OUT" '.step == "promote" and (.op | length) > 0'
 PRO=$(opid "$LAST_OUT")
 phone_signs peer-b "$PRO"
-# the ring is still in setup (no second terminal yet): the promoted device's own approval stands in for the second device
-show "peer-b sync-approve its own promotion (ring setup)" peer peer-b $SSHUB sync-approve "$PRO" --format json
+show "peer-b adds the paper to the promotion again (evidence: what the ceremony has and what is missing)" sh -c "printf '%s\n' '$PAPER' | $C exec -T peer-b $SSHUB sync-factor $PRO --paper --format json"
 snow peer-b >/dev/null
 st=$(peer peer-b $SSHUB sync-status --format json 2>/dev/null || true)
 expect "peer-b is a full device now" "$st" '[.devices[] | select(.name=="peer-b") | .role] == ["holder"]'
