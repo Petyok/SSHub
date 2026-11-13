@@ -11,6 +11,11 @@ All notable changes to SSHub are documented in this file.
   part of the arguments: `Host = web` listed a host named `=` next to `web`,
   and `Include =file` looked for a file called `=file`.
 
+- **`Include` globs follow OpenSSH** (PR #182 by @56steve) - a glob in a
+  directory part such as `Include conf.d/*/hosts.conf` now finds its files, and
+  `*` no longer matches dotfiles like `.old.conf`, which listed hosts ssh
+  never reads.
+
 ## [0.22.1] - 2026-11-09
 
 ### Fixed
