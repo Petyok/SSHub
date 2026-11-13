@@ -100,6 +100,20 @@ pub fn ssh_config_path() -> Result<PathBuf> {
     Ok(expand_tilde("~/.ssh/config"))
 }
 
+/// Split a config line into its keyword and arguments the way OpenSSH does:
+/// the keyword is case-insensitive and ends at whitespace or `=`, and the
+/// arguments start after whitespace with at most one `=` among it, so
+/// `Host web`, `Host=web`, `Host = web` and `Host =web` all give `web`.
+fn split_keyword(line: &str) -> (&str, &str) {
+    let end = line
+        .find(|c: char| c.is_whitespace() || c == '=')
+        .unwrap_or(line.len());
+    let (keyword, rest) = line.split_at(end);
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix('=').unwrap_or(rest);
+    (keyword, rest.trim_start())
+}
+
 /// Parse `Host` aliases from ssh config content.
 ///
 /// Excludes `Host *`, `Host !*`, negated patterns, and wildcard aliases.
@@ -110,16 +124,10 @@ pub fn parse_host_aliases(config: &str) -> Vec<String> {
         if line.is_empty() {
             continue;
         }
-        // ssh_config keywords are case-insensitive and may be separated by
-        // any whitespace (spaces or tabs), or '='.
-        let mut it = line.splitn(2, |c: char| c.is_whitespace() || c == '=');
-        let keyword = it.next().unwrap_or("");
+        let (keyword, rest) = split_keyword(line);
         if !keyword.eq_ignore_ascii_case("host") {
             continue;
         }
-        let Some(rest) = it.next() else {
-            continue;
-        };
         hosts.extend(rest.split_whitespace().filter_map(listable_host_alias));
     }
     hosts
@@ -142,11 +150,7 @@ fn collect_host_aliases(path: &Path, out: &mut Vec<String>, depth: u8) {
         if line.is_empty() {
             continue;
         }
-        let mut it = line.splitn(2, |c: char| c.is_whitespace() || c == '=');
-        let keyword = it.next().unwrap_or("");
-        let Some(rest) = it.next() else {
-            continue;
-        };
+        let (keyword, rest) = split_keyword(line);
         if keyword.eq_ignore_ascii_case("host") {
             out.extend(rest.split_whitespace().filter_map(listable_host_alias));
         } else if keyword.eq_ignore_ascii_case("include") {
@@ -160,8 +164,9 @@ fn collect_host_aliases(path: &Path, out: &mut Vec<String>, depth: u8) {
 }
 
 /// Resolve one `Include` token to concrete file paths: expand `~`, resolve a
-/// relative path against `base_dir`, and expand a `*`/`?` glob in the final
-/// path component (the common `Include config.d/*.conf` shape).
+/// relative path against `base_dir`, and expand `*`/`?` globs in any path
+/// component (`config.d/*.conf`, `conf.d/*/hosts.conf`). Like glob(3), which
+/// OpenSSH uses, a wildcard never matches a leading dot.
 fn expand_include_token(token: &str, base_dir: &Path) -> Vec<PathBuf> {
     let expanded = expand_tilde(token);
     let path = if expanded.is_absolute() {
@@ -170,32 +175,47 @@ fn expand_include_token(token: &str, base_dir: &Path) -> Vec<PathBuf> {
         base_dir.join(expanded)
     };
 
+    let is_glob = |name: &str| name.contains('*') || name.contains('?');
     let has_glob = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .is_some_and(|n| n.contains('*') || n.contains('?'));
+        .components()
+        .any(|c| c.as_os_str().to_str().is_some_and(is_glob));
     if !has_glob {
         return vec![path];
     }
 
-    let (Some(parent), Some(pattern)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
-    else {
-        return Vec::new();
-    };
-    let Ok(entries) = fs::read_dir(parent) else {
-        return Vec::new();
-    };
-    let mut out: Vec<PathBuf> = entries
-        .flatten()
-        .filter(|e| {
-            e.file_name()
-                .to_str()
-                .is_some_and(|n| wildcard_match(pattern, n))
-        })
-        .map(|e| e.path())
-        .collect();
-    out.sort();
-    out
+    let mut matches = vec![PathBuf::new()];
+    for component in path.components() {
+        match component.as_os_str().to_str() {
+            Some(pattern) if is_glob(pattern) => {
+                let mut next = Vec::new();
+                for dir in &matches {
+                    let Ok(entries) = fs::read_dir(dir) else {
+                        continue;
+                    };
+                    next.extend(
+                        entries
+                            .flatten()
+                            .filter(|e| {
+                                e.file_name().to_str().is_some_and(|n| {
+                                    (!n.starts_with('.') || pattern.starts_with('.'))
+                                        && wildcard_match(pattern, n)
+                                })
+                            })
+                            .map(|e| e.path()),
+                    );
+                }
+                matches = next;
+            }
+            _ => {
+                for m in &mut matches {
+                    m.push(component);
+                }
+            }
+        }
+    }
+    // glob(3) sorts whole path strings: `team-a/x` before `team/x`.
+    matches.sort_by(|a, b| a.as_os_str().cmp(b.as_os_str()));
+    matches
 }
 
 /// Minimal shell-style wildcard match supporting `*` (any run) and `?` (one).
@@ -347,6 +367,66 @@ mod tests {
         let mut hosts = resolver.list_hosts().unwrap();
         hosts.sort();
         assert_eq!(hosts, vec!["direct", "extra", "work"]);
+    }
+
+    #[test]
+    fn host_lines_with_spaced_equals_list_only_the_aliases() {
+        // OpenSSH accepts `keyword = value` and `keyword =value`; the `=` is a
+        // separator, not part of the first alias.
+        let config = "Host = spaced\nHost =glued\nhost\t=\ttabbed\nHost= tight\n";
+        assert_eq!(
+            parse_host_aliases(config),
+            vec!["spaced", "glued", "tabbed", "tight"]
+        );
+    }
+
+    #[test]
+    fn include_glob_matches_in_directory_components() {
+        // OpenSSH expands a glob in any component: `conf.d/*/hosts.conf`.
+        let dir = tempfile::tempdir().unwrap();
+        for team in ["alpha", "beta"] {
+            let sub = dir.path().join("conf.d").join(team);
+            fs::create_dir_all(&sub).unwrap();
+            fs::write(sub.join("hosts.conf"), format!("Host {team}-box\n")).unwrap();
+        }
+        let top = dir.path().join("config");
+        fs::write(&top, "Include conf.d/*/hosts.conf\n").unwrap();
+
+        let resolver = SshConfigResolver::with_config_path(top);
+        assert_eq!(
+            resolver.list_hosts().unwrap(),
+            vec!["alpha-box", "beta-box"]
+        );
+    }
+
+    #[test]
+    fn include_with_spaced_equals_is_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let top = dir.path().join("config");
+        fs::write(&top, "Host top\nInclude = extra.conf\nInclude =more.conf\n").unwrap();
+        fs::write(dir.path().join("extra.conf"), "Host extra\n").unwrap();
+        fs::write(dir.path().join("more.conf"), "Host more\n").unwrap();
+
+        let resolver = SshConfigResolver::with_config_path(top);
+        assert_eq!(resolver.list_hosts().unwrap(), vec!["top", "extra", "more"]);
+    }
+
+    #[test]
+    fn include_glob_skips_dotfiles_unless_the_pattern_starts_with_a_dot() {
+        // glob(3), which OpenSSH uses, never lets `*` match a leading dot.
+        let dir = tempfile::tempdir().unwrap();
+        let inc = dir.path().join("config.d");
+        fs::create_dir(&inc).unwrap();
+        fs::write(inc.join("real.conf"), "Host real\n").unwrap();
+        fs::write(inc.join(".old.conf"), "Host stale\n").unwrap();
+
+        let top = dir.path().join("config");
+        fs::write(&top, "Include config.d/*\n").unwrap();
+        let resolver = SshConfigResolver::with_config_path(&top);
+        assert_eq!(resolver.list_hosts().unwrap(), vec!["real"]);
+
+        fs::write(&top, "Include config.d/.*.conf\n").unwrap();
+        assert_eq!(resolver.list_hosts().unwrap(), vec!["stale"]);
     }
 
     #[test]
@@ -517,6 +597,94 @@ remotecommand tmux attach
                 "alias {alias:?} resolved to the wrong block"
             );
         }
+    }
+
+    /// Every listed alias must resolve, through real `ssh -G`, to the HostName
+    /// of a block OpenSSH actually read; `expected` is alias -> HostName.
+    fn assert_aliases_resolve_via_ssh(config: &Path, expected: &[(&str, &str)]) {
+        let resolver = SshConfigResolver::with_config_path(config);
+        let listed = resolver.list_hosts().unwrap();
+        for alias in &listed {
+            let host = resolver
+                .resolve_host(alias)
+                .unwrap_or_else(|e| panic!("ssh -G rejected listed alias {alias:?}: {e}"));
+            let want = expected.iter().find(|(a, _)| a == alias).map(|(_, h)| *h);
+            assert_eq!(
+                host.hostname.as_deref(),
+                want.or(Some("<not declared>")),
+                "listed alias {alias:?}: ssh resolves it to a different block"
+            );
+        }
+        assert_eq!(listed.len(), expected.len(), "listed aliases: {listed:?}");
+    }
+
+    /// `keyword = value` forms checked against real `ssh -G`. The Include path
+    /// is absolute and comes first: ssh resolves a relative one against
+    /// `~/.ssh`, and an Include after a `Host` line only applies to that block.
+    #[test]
+    fn spaced_equals_round_trip_through_real_ssh() {
+        if Command::new("ssh").arg("-V").output().is_err() {
+            crate::test_support::tool_missing("ssh");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let extra = dir.path().join("extra.conf");
+        fs::write(&extra, "Host extra\n    HostName 10.0.1.3\n").unwrap();
+        let top = dir.path().join("config");
+        let cfg = format!(
+            "Include ={}\nHost = spaced\n    HostName 10.0.1.1\nHost =glued\n    HostName 10.0.1.2\n",
+            extra.display()
+        );
+        fs::write(&top, cfg).unwrap();
+        assert_aliases_resolve_via_ssh(
+            &top,
+            &[
+                ("spaced", "10.0.1.1"),
+                ("glued", "10.0.1.2"),
+                ("extra", "10.0.1.3"),
+            ],
+        );
+    }
+
+    /// Include globs checked against real `ssh -G`: a glob in a directory
+    /// component is followed, and `*` skips dotfiles and dot-directories.
+    #[test]
+    fn include_globs_round_trip_through_real_ssh() {
+        if Command::new("ssh").arg("-V").output().is_err() {
+            crate::test_support::tool_missing("ssh");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        for (sub, host, ip) in [
+            ("conf.d/alpha", "alpha-box", "10.0.2.1"),
+            ("conf.d/.hidden", "hidden-box", "10.0.2.9"),
+        ] {
+            fs::create_dir_all(d.join(sub)).unwrap();
+            fs::write(
+                d.join(sub).join("hosts.conf"),
+                format!("Host {host}\n    HostName {ip}\n"),
+            )
+            .unwrap();
+        }
+        fs::create_dir(d.join("inc")).unwrap();
+        fs::write(
+            d.join("inc/real.conf"),
+            "Host real\n    HostName 10.0.2.3\n",
+        )
+        .unwrap();
+        fs::write(
+            d.join("inc/.old.conf"),
+            "Host stale\n    HostName 10.0.2.4\n",
+        )
+        .unwrap();
+        let top = d.join("config");
+        let cfg = format!(
+            "Include {0}/conf.d/*/hosts.conf\nInclude {0}/inc/*\n",
+            d.display()
+        );
+        fs::write(&top, cfg).unwrap();
+        assert_aliases_resolve_via_ssh(&top, &[("alpha-box", "10.0.2.1"), ("real", "10.0.2.3")]);
     }
 
     #[test]
