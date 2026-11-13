@@ -100,6 +100,20 @@ pub fn ssh_config_path() -> Result<PathBuf> {
     Ok(expand_tilde("~/.ssh/config"))
 }
 
+/// Split a config line into its keyword and arguments the way OpenSSH does:
+/// the keyword is case-insensitive and ends at whitespace or `=`, and the
+/// arguments start after whitespace with at most one `=` among it, so
+/// `Host web`, `Host=web`, `Host = web` and `Host =web` all give `web`.
+fn split_keyword(line: &str) -> (&str, &str) {
+    let end = line
+        .find(|c: char| c.is_whitespace() || c == '=')
+        .unwrap_or(line.len());
+    let (keyword, rest) = line.split_at(end);
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix('=').unwrap_or(rest);
+    (keyword, rest.trim_start())
+}
+
 /// Parse `Host` aliases from ssh config content.
 ///
 /// Excludes `Host *`, `Host !*`, negated patterns, and wildcard aliases.
@@ -110,16 +124,10 @@ pub fn parse_host_aliases(config: &str) -> Vec<String> {
         if line.is_empty() {
             continue;
         }
-        // ssh_config keywords are case-insensitive and may be separated by
-        // any whitespace (spaces or tabs), or '='.
-        let mut it = line.splitn(2, |c: char| c.is_whitespace() || c == '=');
-        let keyword = it.next().unwrap_or("");
+        let (keyword, rest) = split_keyword(line);
         if !keyword.eq_ignore_ascii_case("host") {
             continue;
         }
-        let Some(rest) = it.next() else {
-            continue;
-        };
         hosts.extend(rest.split_whitespace().filter_map(listable_host_alias));
     }
     hosts
@@ -142,11 +150,7 @@ fn collect_host_aliases(path: &Path, out: &mut Vec<String>, depth: u8) {
         if line.is_empty() {
             continue;
         }
-        let mut it = line.splitn(2, |c: char| c.is_whitespace() || c == '=');
-        let keyword = it.next().unwrap_or("");
-        let Some(rest) = it.next() else {
-            continue;
-        };
+        let (keyword, rest) = split_keyword(line);
         if keyword.eq_ignore_ascii_case("host") {
             out.extend(rest.split_whitespace().filter_map(listable_host_alias));
         } else if keyword.eq_ignore_ascii_case("include") {
@@ -350,6 +354,29 @@ mod tests {
     }
 
     #[test]
+    fn host_lines_with_spaced_equals_list_only_the_aliases() {
+        // OpenSSH accepts `keyword = value` and `keyword =value`; the `=` is a
+        // separator, not part of the first alias.
+        let config = "Host = spaced\nHost =glued\nhost\t=\ttabbed\nHost= tight\n";
+        assert_eq!(
+            parse_host_aliases(config),
+            vec!["spaced", "glued", "tabbed", "tight"]
+        );
+    }
+
+    #[test]
+    fn include_with_spaced_equals_is_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let top = dir.path().join("config");
+        fs::write(&top, "Host top\nInclude = extra.conf\nInclude =more.conf\n").unwrap();
+        fs::write(dir.path().join("extra.conf"), "Host extra\n").unwrap();
+        fs::write(dir.path().join("more.conf"), "Host more\n").unwrap();
+
+        let resolver = SshConfigResolver::with_config_path(top);
+        assert_eq!(resolver.list_hosts().unwrap(), vec!["top", "extra", "more"]);
+    }
+
+    #[test]
     fn parse_host_aliases_skips_wildcards_and_negation() {
         let config = r#"
 Host *
@@ -517,6 +544,53 @@ remotecommand tmux attach
                 "alias {alias:?} resolved to the wrong block"
             );
         }
+    }
+
+    /// Every listed alias must resolve, through real `ssh -G`, to the HostName
+    /// of a block OpenSSH actually read; `expected` is alias -> HostName.
+    fn assert_aliases_resolve_via_ssh(config: &Path, expected: &[(&str, &str)]) {
+        let resolver = SshConfigResolver::with_config_path(config);
+        let listed = resolver.list_hosts().unwrap();
+        for alias in &listed {
+            let host = resolver
+                .resolve_host(alias)
+                .unwrap_or_else(|e| panic!("ssh -G rejected listed alias {alias:?}: {e}"));
+            let want = expected.iter().find(|(a, _)| a == alias).map(|(_, h)| *h);
+            assert_eq!(
+                host.hostname.as_deref(),
+                want.or(Some("<not declared>")),
+                "listed alias {alias:?}: ssh resolves it to a different block"
+            );
+        }
+        assert_eq!(listed.len(), expected.len(), "listed aliases: {listed:?}");
+    }
+
+    /// `keyword = value` forms checked against real `ssh -G`. The Include path
+    /// is absolute and comes first: ssh resolves a relative one against
+    /// `~/.ssh`, and an Include after a `Host` line only applies to that block.
+    #[test]
+    fn spaced_equals_round_trip_through_real_ssh() {
+        if Command::new("ssh").arg("-V").output().is_err() {
+            crate::test_support::tool_missing("ssh");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let extra = dir.path().join("extra.conf");
+        fs::write(&extra, "Host extra\n    HostName 10.0.1.3\n").unwrap();
+        let top = dir.path().join("config");
+        let cfg = format!(
+            "Include ={}\nHost = spaced\n    HostName 10.0.1.1\nHost =glued\n    HostName 10.0.1.2\n",
+            extra.display()
+        );
+        fs::write(&top, cfg).unwrap();
+        assert_aliases_resolve_via_ssh(
+            &top,
+            &[
+                ("spaced", "10.0.1.1"),
+                ("glued", "10.0.1.2"),
+                ("extra", "10.0.1.3"),
+            ],
+        );
     }
 
     #[test]
