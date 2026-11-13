@@ -213,7 +213,8 @@ fn expand_include_token(token: &str, base_dir: &Path) -> Vec<PathBuf> {
             }
         }
     }
-    matches.sort();
+    // glob(3) sorts whole path strings: `team-a/x` before `team/x`.
+    matches.sort_by(|a, b| a.as_os_str().cmp(b.as_os_str()));
     matches
 }
 
