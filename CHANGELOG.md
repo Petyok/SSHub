@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.22.2] - 2026-11-14
+
 ### Fixed
 
 - **`Host = name` and `Include = file` in ssh config** (PR #181 by @56steve) -
