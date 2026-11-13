@@ -165,12 +165,14 @@ fn agent_add_warns_when_cert_does_not_match_key() {
 fn agent_add_feeds_the_stored_passphrase_to_ssh_add() {
     // Oracle: a real ssh-agent and a real passphrase-protected key; the
     // agent must end up holding the key without any prompt.
+    // Lock before probing: a sibling test holding it puts a fake `ssh-add`
+    // first on PATH, and the probe would land in that fake's argv record.
+    let _lock = crate::test_env::lock_home();
     let have = |tool: &str| Command::new(tool).arg("-h").output().is_ok();
     if !have("ssh-keygen") || !have("ssh-agent") || !have("ssh-add") {
         eprintln!("skipping: ssh-keygen/ssh-agent/ssh-add missing");
         return;
     }
-    let _lock = crate::test_env::lock_home();
     let dir = tempfile::tempdir().unwrap();
     let sock = dir.path().join("agent.sock");
     struct Kill(std::process::Child);
