@@ -546,6 +546,53 @@ remotecommand tmux attach
         }
     }
 
+    /// Every listed alias must resolve, through real `ssh -G`, to the HostName
+    /// of a block OpenSSH actually read; `expected` is alias -> HostName.
+    fn assert_aliases_resolve_via_ssh(config: &Path, expected: &[(&str, &str)]) {
+        let resolver = SshConfigResolver::with_config_path(config);
+        let listed = resolver.list_hosts().unwrap();
+        for alias in &listed {
+            let host = resolver
+                .resolve_host(alias)
+                .unwrap_or_else(|e| panic!("ssh -G rejected listed alias {alias:?}: {e}"));
+            let want = expected.iter().find(|(a, _)| a == alias).map(|(_, h)| *h);
+            assert_eq!(
+                host.hostname.as_deref(),
+                want.or(Some("<not declared>")),
+                "listed alias {alias:?}: ssh resolves it to a different block"
+            );
+        }
+        assert_eq!(listed.len(), expected.len(), "listed aliases: {listed:?}");
+    }
+
+    /// `keyword = value` forms checked against real `ssh -G`. The Include path
+    /// is absolute and comes first: ssh resolves a relative one against
+    /// `~/.ssh`, and an Include after a `Host` line only applies to that block.
+    #[test]
+    fn spaced_equals_round_trip_through_real_ssh() {
+        if Command::new("ssh").arg("-V").output().is_err() {
+            crate::test_support::tool_missing("ssh");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let extra = dir.path().join("extra.conf");
+        fs::write(&extra, "Host extra\n    HostName 10.0.1.3\n").unwrap();
+        let top = dir.path().join("config");
+        let cfg = format!(
+            "Include ={}\nHost = spaced\n    HostName 10.0.1.1\nHost =glued\n    HostName 10.0.1.2\n",
+            extra.display()
+        );
+        fs::write(&top, cfg).unwrap();
+        assert_aliases_resolve_via_ssh(
+            &top,
+            &[
+                ("spaced", "10.0.1.1"),
+                ("glued", "10.0.1.2"),
+                ("extra", "10.0.1.3"),
+            ],
+        );
+    }
+
     #[test]
     fn list_hosts_missing_config_returns_empty() {
         let dir = std::env::temp_dir().join(format!("sshub-missing-{}", std::process::id()));
