@@ -646,6 +646,47 @@ remotecommand tmux attach
         );
     }
 
+    /// Include globs checked against real `ssh -G`: a glob in a directory
+    /// component is followed, and `*` skips dotfiles and dot-directories.
+    #[test]
+    fn include_globs_round_trip_through_real_ssh() {
+        if Command::new("ssh").arg("-V").output().is_err() {
+            crate::test_support::tool_missing("ssh");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        for (sub, host, ip) in [
+            ("conf.d/alpha", "alpha-box", "10.0.2.1"),
+            ("conf.d/.hidden", "hidden-box", "10.0.2.9"),
+        ] {
+            fs::create_dir_all(d.join(sub)).unwrap();
+            fs::write(
+                d.join(sub).join("hosts.conf"),
+                format!("Host {host}\n    HostName {ip}\n"),
+            )
+            .unwrap();
+        }
+        fs::create_dir(d.join("inc")).unwrap();
+        fs::write(
+            d.join("inc/real.conf"),
+            "Host real\n    HostName 10.0.2.3\n",
+        )
+        .unwrap();
+        fs::write(
+            d.join("inc/.old.conf"),
+            "Host stale\n    HostName 10.0.2.4\n",
+        )
+        .unwrap();
+        let top = d.join("config");
+        let cfg = format!(
+            "Include {0}/conf.d/*/hosts.conf\nInclude {0}/inc/*\n",
+            d.display()
+        );
+        fs::write(&top, cfg).unwrap();
+        assert_aliases_resolve_via_ssh(&top, &[("alpha-box", "10.0.2.1"), ("real", "10.0.2.3")]);
+    }
+
     #[test]
     fn list_hosts_missing_config_returns_empty() {
         let dir = std::env::temp_dir().join(format!("sshub-missing-{}", std::process::id()));
