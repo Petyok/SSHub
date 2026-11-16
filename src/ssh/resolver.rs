@@ -154,13 +154,48 @@ fn collect_host_aliases(path: &Path, out: &mut Vec<String>, depth: u8) {
         if keyword.eq_ignore_ascii_case("host") {
             out.extend(rest.split_whitespace().filter_map(listable_host_alias));
         } else if keyword.eq_ignore_ascii_case("include") {
-            for token in rest.split_whitespace() {
-                for inc in expand_include_token(token, base_dir) {
+            for token in split_include_args(rest) {
+                for inc in expand_include_token(&token, base_dir) {
                     collect_host_aliases(&inc, out, depth + 1);
                 }
             }
         }
     }
+}
+
+/// Split the arguments of an `Include` line the way OpenSSH does: whitespace
+/// separates paths, except inside single or double quotes, which group their
+/// contents (`Include "my dir/*.conf"` is one path) and are dropped. A quote
+/// may open or close in the middle of a word, as in a shell.
+fn split_include_args(args: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut in_word = false;
+    let mut quote: Option<char> = None;
+    for c in args.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => current.push(c),
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                in_word = true;
+            }
+            None if c.is_whitespace() => {
+                if in_word {
+                    out.push(std::mem::take(&mut current));
+                    in_word = false;
+                }
+            }
+            None => {
+                current.push(c);
+                in_word = true;
+            }
+        }
+    }
+    if in_word {
+        out.push(current);
+    }
+    out
 }
 
 /// Resolve one `Include` token to concrete file paths: expand `~`, resolve a
@@ -412,6 +447,39 @@ mod tests {
     }
 
     #[test]
+    fn include_with_quoted_path_containing_spaces_is_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("my dir");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("a.conf"), "Host quoted-a\n").unwrap();
+        fs::write(sub.join("b.conf"), "Host quoted-b\n").unwrap();
+        fs::write(dir.path().join("plain.conf"), "Host plain\n").unwrap();
+        let top = dir.path().join("config");
+        fs::write(
+            &top,
+            "Include \"my dir/a.conf\" plain.conf 'my dir/b.conf'\nInclude \"my dir/*.conf\"\n",
+        )
+        .unwrap();
+        let hosts = SshConfigResolver::with_config_path(&top)
+            .list_hosts()
+            .unwrap();
+        assert_eq!(
+            hosts,
+            ["quoted-a", "plain", "quoted-b", "quoted-a", "quoted-b"]
+        );
+    }
+
+    #[test]
+    fn split_include_args_follows_quoting() {
+        assert_eq!(split_include_args("a b"), ["a", "b"]);
+        assert_eq!(split_include_args("\"a b\" c"), ["a b", "c"]);
+        assert_eq!(split_include_args("'a b'"), ["a b"]);
+        assert_eq!(split_include_args("\"a b\"/c.conf"), ["a b/c.conf"]);
+        assert_eq!(split_include_args("\"\""), [""]);
+        assert!(split_include_args("   ").is_empty());
+    }
+
+    #[test]
     fn include_glob_skips_dotfiles_unless_the_pattern_starts_with_a_dot() {
         // glob(3), which OpenSSH uses, never lets `*` match a leading dot.
         let dir = tempfile::tempdir().unwrap();
@@ -644,6 +712,35 @@ remotecommand tmux attach
                 ("extra", "10.0.1.3"),
             ],
         );
+    }
+
+    /// Quoted `Include` paths with spaces checked against real `ssh -G`.
+    #[test]
+    fn quoted_include_round_trip_through_real_ssh() {
+        if Command::new("ssh").arg("-V").output().is_err() {
+            crate::test_support::tool_missing("ssh");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        fs::create_dir(d.join("my dir")).unwrap();
+        fs::write(
+            d.join("my dir/one.conf"),
+            "Host one\n    HostName 10.0.3.1\n",
+        )
+        .unwrap();
+        fs::write(
+            d.join("my dir/two.conf"),
+            "Host two\n    HostName 10.0.3.2\n",
+        )
+        .unwrap();
+        let top = d.join("config");
+        let cfg = format!(
+            "Include \"{0}/my dir/one.conf\"\nInclude '{0}/my dir/two.conf'\n",
+            d.display()
+        );
+        fs::write(&top, cfg).unwrap();
+        assert_aliases_resolve_via_ssh(&top, &[("one", "10.0.3.1"), ("two", "10.0.3.2")]);
     }
 
     /// Include globs checked against real `ssh -G`: a glob in a directory

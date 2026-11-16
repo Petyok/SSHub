@@ -4,6 +4,13 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Quoted `Include` paths in ssh config** (PR #183 by @56steve) - OpenSSH
+  accepts `Include "my dir/*.conf"` with a quoted path that contains spaces,
+  but SSHub split it at the spaces, so the file was never read and its hosts
+  were missing from the list.
+
 ## [0.22.2] - 2026-11-14
 
 ### Fixed
