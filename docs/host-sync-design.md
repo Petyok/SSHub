@@ -7,8 +7,7 @@ built on a single feature branch (`feature/host-sync`) and released as one piece
 
 This is the **technical** document: the rules an implementation must satisfy.
 The narrative version for readers (same design, prose and diagrams, RU/EN) is
-`host-sync-design-v4.html`. Where the two disagree, this file wins — it is what
-`.claude/host-sync/` codes against.
+`host-sync-design-v4.html`. Where the two disagree, this file wins.
 
 Reviews: `security-review-2026-09-19-host-sync-design.md` (against v3),
 `security-review-2026-09-20-host-sync-v4.md` (against v4). Section "Deltas from
@@ -1031,7 +1030,7 @@ what the implementation codes against. Each is cheap now and structural later.
 
 ## Phase B (UX fixes of the epic): what changed in the core
 
-The full design is `host-sync-plan/review/ux-13-phase-b-design.md` (Revision 2); the contract text is sections 4j and 4k of `host-sync-contract.md`. In short:
+The contract text is sections 4j and 4k of `host-sync-contract.md`. In short:
 verdicts are pure functions of the log (a ceremony op past its window stays pending and completes when its proofs arrive); removing a computer needs the phone
 and the paper (the second device is waived with the paper; the emailed code never counts) and is possible with one other computer left (degraded: the
 credentials the removed device held a share of are listed, not reshared); the paper is mandatory for Quorum and for a third holder; a one-computer ring recovers

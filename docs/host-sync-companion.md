@@ -326,7 +326,7 @@ text** in the menu does the same for the newest 8 entries of the phone's chain.
 - **iOS and Safari: unverified.** The page has never been run on an iPhone or in Safari (camera on a local page, Web
   Audio autoplay and storage persistence are unknown there). Do not rely on it before you have run the checks
   yourself.
-- On Android Chrome (one Samsung phone, Android 16, Chrome 155) the page flows ran for real (first run, PIN,
+- On Android Chrome (one mid-range Android 16 phone, Chrome 155) the page flows ran for real (first run, PIN,
   restore, release, short code, Red notice, export), driven from a computer with the camera, sound and clipboard
   switched off, and the code reading and the phone-screen-to-webcam reply were measured with test pages. Enrollment
   by camera, sound and clipboard of the real page, and the real page's reply QR read by a webcam, have not run on a

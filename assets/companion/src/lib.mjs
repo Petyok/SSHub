@@ -1,6 +1,5 @@
 // PoC A - JS reproduction of the Rust stage-0/1/3 primitives.
-// Byte-for-byte parity targets are in ../src/support/{primitives,shamir}.rs and
-// .claude/host-sync/{stage-0-crypto,stage-1-oplog-store,stage-3-creds-quorum}.md.
+// Byte-for-byte parity targets are in ../src/support/{primitives,shamir}.rs.
 // Every deviation from Rust behaviour is a bug: this file's comment "Rust:" marks
 // the exact Rust source each block reproduces.
 

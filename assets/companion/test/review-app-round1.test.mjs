@@ -1,4 +1,4 @@
-// Review round 1 of the phone page (host-sync-plan/review/app-page-round1.md): the reviewer's reproductions, kept as
+// Review round 1 of the phone page: the reviewer's reproductions, kept as
 // permanent tests (each failed while its finding was open), plus the checks of the fixes and of the suspicions.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

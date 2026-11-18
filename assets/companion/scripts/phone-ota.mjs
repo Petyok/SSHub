@@ -384,7 +384,7 @@ async function audioBlock({ label, profile, len, runs }) {
   }
 }
 // One diagnostic look at the phone's reverse-QR page: numbers from the page plus ONE screen capture
-// (temp file, viewed by the director and deleted at once).
+// (temp file, viewed by the operator and deleted at once).
 async function diag() {
   await state.chrome.openTab('about:blank');
   await state.chrome.prepare({ camera: false, silent: true });
@@ -412,7 +412,7 @@ async function reverseQr() {
   const surveyS = Number(arg('survey', 20));
   const laptop = await laptopBrowser();
   const rx = (expr, gesture) => laptop.ev(expr, gesture);
-  const phoneScreenMm = 67.7; // [INFERENCE] Samsung SM-A536E 6.5 in 20:9, width from the diagonal
+  const phoneScreenMm = 67.7; // [INFERENCE] a 6.5 in 20:9 screen, width from the diagonal
   try {
     await state.chrome.openTab('about:blank');
     await state.chrome.prepare({ camera: false, silent: true });

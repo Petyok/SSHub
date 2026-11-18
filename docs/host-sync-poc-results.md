@@ -6,7 +6,7 @@ credentials). It replaces the per-branch `poc/results/*` files and the `poc/` di
 
 Environment names are generic. "Container" means the Linux x86_64 build and test container (rustc 1.99.1, node
 22.23.4, headless Chromium 156, Playwright 1.64.1, Python 3.11 oracle venv). "Laptop" means a 4 core, 8 GB x86_64
-developer laptop. "Phone" means one Android phone, a Samsung SM-A536E (Galaxy A53 5G class) with Android 16 and
+developer laptop. "Phone" means one mid-range Android phone (Galaxy A53 5G class) with Android 16 and
 Chrome 155, connected over USB; no serial numbers or personal data appear in the results. No iPhone was available.
 
 ## Summary
@@ -177,7 +177,7 @@ The snapshot profile (256 MiB, t=4 floor) rides in the blob and a weakened profi
 
 ### D3: real phone (Android)
 
-Samsung SM-A536E (Galaxy A53 5G class), Android 16, Chrome 155, over USB; the same `measure.html` and hash-wasm build
+A mid-range Android phone (Galaxy A53 5G class), Android 16, Chrome 155, over USB; the same `measure.html` and hash-wasm build
 as D2, driven in one tab of the phone's Chrome. The output digests equal the container and laptop digests for all
 three profiles. Battery 60 percent, 34 C before, between and after the runs.
 
@@ -471,7 +471,7 @@ the camera), other browsers, iOS.
 
 ## Phone runs so far, and what is scheduled for the next device session
 
-One Android phone has been used (Samsung SM-A536E, Galaxy A53 5G class, Android 16, Chrome 155, USB), driven from the
+One Android phone has been used (mid-range, Galaxy A53 5G class, Android 16, Chrome 155, USB), driven from the
 laptop with the scripts in `assets/companion/scripts/` (`phone-device.mjs`, `phone-ota.mjs`). Done on it: D3 Argon2,
 23 page checks, C4 handheld QR (four blocks), the reverse QR from the phone screen to the laptop webcam (10 of 10).
 

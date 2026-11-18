@@ -116,7 +116,7 @@ is taken back from a terminal (section 5).
 - Single module `:app`, `uk.petruha.sshub.phone`, Kotlin 2.1, Compose BOM 2025.05, Material 3, Navigation Compose.
   One `Activity`; screens as composables over a `PhoneViewModel` that owns the `PhoneCore` and is the only caller of it.
 - Visual direction: the maintainer chose **A, "Chain"** (dark-first mono, one amber focus, devices as a chain of squares, proofs as squares,
-  time as a tick scale, Red as a diff); the normative spec is `host-sync-plan/android-design/spec-A.md`, FINAL (tokens mapped to M3 roles dark and light, bundled JetBrains Mono 2.304 and
+  time as a tick scale, Red as a diff); the normative spec is design spec A, FINAL (tokens mapped to M3 roles dark and light, bundled JetBrains Mono 2.304 and
   Inter 4.1, both OFL 1.1, type scale, spacing, components, motion with reduced-motion, accessibility, dangerous-field rules, section 12 = catalogue of
   35 screens; prototype `design-demos/A-chain.html`, screenshots `screenshots/A-final/`). Prototype-only aids (dashed prototype-controls rows, the demo PIN,
   auto-advancing receivers) are not app features: the app unlocks with the Keystore (section 4), not a PIN. The UI layer is built around it in three packages:
@@ -393,7 +393,7 @@ Everything runs in a pinned container on gpu-serv; nothing is built on the lapto
 - R8 / minify is off. It is a later option to shrink the APK (about 31 MB unsigned release today); it needs keep rules for uniffi and JNA and a re-run of the reproducibility check.
 - Driver: `gpu-verify/android.sh <checkout> <name> bootstrap|build|test|chrome` syncs the checkout, builds the image, runs
   `android/ci/build.sh` as uid 10001 with a target dir and caches under `/root/sshub-ci/android-app/`, logs to
-  `gpu-verify/logs/android-<name>-<UTC>.log`, registered in `/agents/host-sync-sshub.md`.
+  `gpu-verify/logs/android-<name>-<UTC>.log`.
 - Check "reproducible": build twice in different target dirs and compare `classes*.dex` and `lib/*/*.so` (and the unsigned APK entry hashes
   ignoring `META-INF`); signature blocks differ by design. This check is a CI step of phase 2 (not claimed in phase 1).
 

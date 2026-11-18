@@ -24,7 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
-// Tokens of docs: host-sync-plan/android-design/spec-A.md section 2. This is the ONLY file that may contain Color(0x...).
+// Tokens of the design spec A, section 2. This is the ONLY file that may contain Color(0x...).
 // CI greps for it (android/ci/lint.sh).
 
 @Immutable

@@ -1536,7 +1536,7 @@ leave two holders. A reshare also runs when the holders differ from those the cr
 (a promoted holder, an enabled or disabled exemption): `revocation::next_actions` returns `Contribute` and
 `Receive` without a rotation step.
 
-### 4h. Recovery completion and ring setup (review rounds 2 and 3, director decision)
+### 4h. Recovery completion and ring setup (review rounds 2 and 3)
 
 **Recovery completion.** A `PhoneReenroll` that reached `Ready` stands in for the three proofs of exactly two ops
 by its requester: the `DeviceRevoke` of the holder phone and the `DeviceAdd` of the new phone (`recovery::ready_recovery_for`,
@@ -1606,10 +1606,10 @@ other than the proposer: not the phone, not an unattended device. The migration 
   still open whatever was copied under them; the new shape protects only what is written after the migration. The UI says so.
 * After the ring is Vault the two-holder paper rule (`quorum::paper_rule`) no longer applies to new credentials.
 
-### 4j. Phase B interface freeze (UX fixes of epic #13; design: `host-sync-plan/review/ux-13-phase-b-design.md`, Revision 2)
+### 4j. Phase B interface freeze (UX fixes of epic #13, Phase B design revision 2)
 
 This section is the FROZEN interface the Phase B lanes code against. A change to anything here goes through the lane that owns the
-thing (see the lane briefs in `host-sync-plan/phase-b/`) and is announced to every lane first. Nothing here is released yet, so no
+thing and is announced to every lane first. Nothing here is released yet, so no
 op-format version gate is needed; all new kinds must land before the first release (2a'').
 
 **New ops** (crate `sshub-sync-proto`, `oplog/op.rs`; canonical bytes in `canonical.rs`; tiers in `tier.rs`; vectors, python oracle and JS

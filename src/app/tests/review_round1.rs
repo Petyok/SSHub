@@ -1,5 +1,5 @@
-//! Regression tests for the application-surface review, round 1 (findings F1, F2, F5, F7, F9 of
-//! host-sync-plan/review/app-round1.md): foreign text in the hop config and in review screens,
+//! Regression tests for the application-surface review, round 1 (findings F1, F2, F5, F7, F9):
+//! foreign text in the hop config and in review screens,
 //! the review of group, identity and Red changes, the private agent's lifetime.
 
 use crate::credentials::{identity_key, SecretGate};

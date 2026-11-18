@@ -2,9 +2,9 @@
 // page checks and the over-the-air benches (PoC C4, H3, H4). Node only (built-in fetch and
 // WebSocket), nothing is installed on either device.
 //
-// SAFETY (owner's rules, enforced in code):
+// SAFETY (enforced in code):
 //  * every adb call goes through `adb()`, which accepts only the allow-list below, always with
-//    the phone's serial (`PHONE_SERIAL`, never committed: a TV is on the same adb server);
+//    the phone's serial (`PHONE_SERIAL`, never committed: other devices may share the adb server);
 //  * Chrome is driven in ONE new tab created here (Target.createTarget); other tabs are never
 //    listed, attached, screenshotted or printed;
 //  * camera and microphone are granted to http://localhost:8443 only and set back to "prompt";

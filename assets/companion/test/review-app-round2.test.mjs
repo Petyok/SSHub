@@ -1,4 +1,4 @@
-// Round 2 review reproductions for the phone page (host-sync-plan/review/app-page-round2.md).
+// Round 2 review reproductions for the phone page.
 // Every test marked FAILS asserts the safe behaviour and fails while the finding is open.
 // Run in the tools container: cd /work/assets/companion && NODE_PATH=/opt/node/lib/node_modules node --test test/review-app-round2.test.mjs
 import { test } from 'node:test';
