@@ -1558,25 +1558,25 @@ mod tests {
         let store = LauncherStore::open_in_memory().unwrap();
         // Insert so that flat (sort_order) order interleaves a child between
         // unrelated roots — the bug the tree ordering fixes.
-        let itmo_core = store
+        let acme_core = store
             .create_group(&NewHostGroup {
-                name: "itmo-core".into(),
+                name: "acme-core".into(),
                 sort_order: 0,
                 ..Default::default()
             })
             .unwrap();
-        let itmo = store
+        let acme = store
             .create_group(&NewHostGroup {
-                name: "itmo".into(),
+                name: "acme".into(),
                 sort_order: 1,
                 ..Default::default()
             })
             .unwrap();
-        let itmo_dev = store
+        let acme_dev = store
             .create_group(&NewHostGroup {
-                name: "itmo-dev".into(),
+                name: "acme-dev".into(),
                 sort_order: 2,
-                parent_id: Some(itmo.id),
+                parent_id: Some(acme.id),
                 ..Default::default()
             })
             .unwrap();
@@ -1591,11 +1591,11 @@ mod tests {
         // unrelated root that merely precedes it in sort order.
         let pos = |n: &str| names.iter().position(|x| x == n).unwrap();
         assert!(
-            pos("itmo") + 1 == pos("itmo-dev"),
+            pos("acme") + 1 == pos("acme-dev"),
             "child follows its parent: {names:?}"
         );
-        assert!(pos("itmo-core") < pos("itmo"), "roots keep sort order");
-        let _ = (itmo_core, itmo_dev);
+        assert!(pos("acme-core") < pos("acme"), "roots keep sort order");
+        let _ = (acme_core, acme_dev);
     }
 
     #[test]

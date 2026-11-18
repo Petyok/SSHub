@@ -552,7 +552,7 @@ fn group_parent_picker_filters_as_you_type_and_picks_the_match() {
     app.groups = vec![grp(1, "alpha"), grp(2, "team-prod"), grp(3, "web")];
     app.enter_group_form(None).unwrap();
     app.open_group_field_picker(GroupFormField::Parent);
-    type_str(&mut app, "spbu");
+    type_str(&mut app, "team");
     let (none, options) = app.group_field_picker_options();
     assert_eq!(none, "(top level)", "the none slot stays pinned");
     assert_eq!(options, vec![(2, "team-prod".to_string())]);
@@ -597,11 +597,11 @@ fn host_group_picker_space_toggles_the_filtered_group() {
     }
     app.enter_host_form(None, false).unwrap();
     app.open_field_picker(PickerKind::Group);
-    type_str(&mut app, "spbu");
+    type_str(&mut app, "team");
     app.handle_key(key_char(' ')).unwrap();
     assert_eq!(
         app.field_picker.as_ref().unwrap().query,
-        "spbu",
+        "team",
         "Space is not query text"
     );
     let selected: Vec<i64> = app
@@ -633,7 +633,7 @@ fn host_group_picker_enter_adds_the_highlighted_group_and_closes() {
     let prod = store_group(&app, "team-prod");
     app.enter_host_form(None, false).unwrap();
     app.open_field_picker(PickerKind::Group);
-    type_str(&mut app, "spbu");
+    type_str(&mut app, "team");
     app.handle_key(key(KeyCode::Enter)).unwrap();
     assert_eq!(app.mode, AppMode::HostForm);
     let form = app.host_form.as_ref().unwrap();
