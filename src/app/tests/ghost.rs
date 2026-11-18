@@ -123,13 +123,13 @@ fn remote_password_session_ghosts_second_prefix_after_first_command() {
     let mut app = test_app(vec![]);
     app.terminal_area = ratatui::layout::Rect::new(0, 0, 100, 30);
     let child_sh = concat!(
-        "printf 'debug1: Authenticating to 10.100.1.200:22 as '\\''user'\\''\\n' >&2; ",
+        "printf 'debug1: Authenticating to 198.51.100.200:22 as '\\''user'\\''\\n' >&2; ",
         "printf 'debug1: Next authentication method: password\\n' >&2; ",
         "printf 'debug1: Authentication succeeded (password: auth).\\n' >&2; ",
-        "printf 'debug1: Authenticated to 10.100.1.200 ([10.100.1.200]:22) using \"password\".\\n' >&2; ",
+        "printf 'debug1: Authenticated to 198.51.100.200 ([198.51.100.200]:22) using \"password\".\\n' >&2; ",
         "i=0; while [ $i -lt 60 ]; do echo \"motd banner line $i\"; i=$((i+1)); done; ",
         "echo 'Please change your password regularly'; ",
-        "echo 'Last login: Fri Sep 18 12:00:00 2026 from 10.100.1.99'; ",
+        "echo 'Last login: Fri Sep 18 12:00:00 2026 from 198.51.100.99'; ",
         "printf 'user@monitor::~$ '; exec sleep 30",
     );
     let config = crate::session::SessionConfig {
@@ -225,7 +225,7 @@ fn remote_interactive_bash_ghosts_second_prefix_after_first_command() {
     app.terminal_area = ratatui::layout::Rect::new(0, 0, 100, 30);
     let child_sh = format!(
         concat!(
-            "printf 'debug1: Authenticated to 10.100.1.200 ([10.100.1.200]:22) using \"password\".\\n' >&2; ",
+            "printf 'debug1: Authenticated to 198.51.100.200 ([198.51.100.200]:22) using \"password\".\\n' >&2; ",
             "exec env HOME={home} HISTFILE={home}/hist PS1='user@monitor:~$ ' ",
             "bash --noprofile --norc -i 2>&1",
         ),
@@ -751,8 +751,8 @@ fn manual_password_before_latch_still_records_first_post_auth_command() {
     app.terminal_area = ratatui::layout::Rect::new(0, 0, 100, 30);
     let child_sh = concat!(
         "printf \"user@kuma's password:\"; read -r pw; ",
-        "printf 'debug1: Authenticated to 10.100.1.200 ([10.100.1.200]:22) using \"password\".\\n' >&2; ",
-        "echo 'Last login: Fri Sep 18 12:00:00 2026 from 10.100.1.99'; ",
+        "printf 'debug1: Authenticated to 198.51.100.200 ([198.51.100.200]:22) using \"password\".\\n' >&2; ",
+        "echo 'Last login: Fri Sep 18 12:00:00 2026 from 198.51.100.99'; ",
         "printf 'user@monitor:~$ '; exec sleep 30",
     );
     let config = crate::session::SessionConfig {

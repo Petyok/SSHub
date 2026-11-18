@@ -2013,7 +2013,7 @@ mod tests {
 
         let group = store
             .create_group(&NewHostGroup {
-                name: "dev-vcenter".into(),
+                name: "dev-lab".into(),
                 sort_order: 0,
                 ..Default::default()
             })
@@ -2021,9 +2021,9 @@ mod tests {
 
         let created = store
             .create_host(&NewHost {
-                name: "dev-partners".into(),
+                name: "dev-portal".into(),
                 label: Some("Dev Partners".into()),
-                address: "10.100.19.123".into(),
+                address: "198.51.100.123".into(),
                 port: Some(22),
                 group_id: Some(group.id),
                 identity_id: Some(default_id),
@@ -2033,12 +2033,12 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(created.name, "dev-partners");
-        assert_eq!(created.address, "10.100.19.123");
+        assert_eq!(created.name, "dev-portal");
+        assert_eq!(created.address, "198.51.100.123");
         assert_eq!(created.source, HostSource::Launcher);
         assert_eq!(
             created.group.as_ref().map(|g| g.name.as_str()),
-            Some("dev-vcenter")
+            Some("dev-lab")
         );
         assert_eq!(
             created.identity.as_ref().map(|i| i.name.as_str()),

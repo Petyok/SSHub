@@ -503,8 +503,8 @@ mod hop_tests {
             host.into(),
             host.into(),
             Some(match name {
-                "lb-1" => 11,
-                "lb-2" => 12,
+                "hop-1" => 11,
+                "hop-2" => 12,
                 _ => 13,
             }),
             None,
@@ -535,8 +535,8 @@ mod hop_tests {
             auth.destination_pid = Some(DESTINATION);
             auth.hops = hops;
             // The asking pids are made up: say which hop each one is running for.
-            crate::session::hop_auth::pretend_target(HOP_1, "10.0.4.11");
-            crate::session::hop_auth::pretend_target(HOP_2, "10.0.4.12");
+            crate::session::hop_auth::pretend_target(HOP_1, "192.0.2.11");
+            crate::session::hop_auth::pretend_target(HOP_2, "192.0.2.12");
             let env = auth.channel_env(Path::new("unused"));
             let get = |name: &str| env.iter().find(|(k, _)| k == name).unwrap().1.clone();
             Self {
@@ -582,37 +582,37 @@ mod hop_tests {
     fn each_hop_prompt_is_answered_with_that_hops_own_stored_password() {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let mut rig = Rig::new(vec![
-            hop("lb-1", "10.0.4.11", Some("lb-1-pw"), &asked),
-            hop("lb-2", "10.0.4.12", Some("lb-2-pw"), &asked),
+            hop("hop-1", "192.0.2.11", Some("hop-1-pw"), &asked),
+            hop("hop-2", "192.0.2.12", Some("hop-2-pw"), &asked),
         ]);
         let mut stored = Some(PendingSecret::Password("target-pw".into()));
 
         // One ask at a time: two threads started back to back connect in
         // whichever order the scheduler picks, and the channel queues by that.
-        let first = rig.ask("ops@10.0.4.11's password: ", HOP_1);
+        let first = rig.ask("ops@192.0.2.11's password: ", HOP_1);
         rig.poll_until(&mut stored, |_, _| first.is_finished());
-        let second = rig.ask("ops@10.0.4.12's password: ", HOP_2);
+        let second = rig.ask("ops@192.0.2.12's password: ", HOP_2);
         rig.poll_until(&mut stored, |_, _| second.is_finished());
-        assert_eq!(first.join().unwrap().unwrap(), "lb-1-pw");
-        assert_eq!(second.join().unwrap().unwrap(), "lb-2-pw");
+        assert_eq!(first.join().unwrap().unwrap(), "hop-1-pw");
+        assert_eq!(second.join().unwrap().unwrap(), "hop-2-pw");
         // The target's password went to neither, and no modal was needed.
         assert!(stored.is_some(), "a hop consumed the target's password");
         assert!(rig.auth.request.is_none(), "a hop prompt reached the UI");
 
-        let target = rig.ask("ops@10.0.4.91's password: ", DESTINATION);
+        let target = rig.ask("ops@192.0.2.91's password: ", DESTINATION);
         rig.poll_until(&mut stored, |_, s| s.is_none());
         assert_eq!(target.join().unwrap().unwrap(), "target-pw");
         assert!(rig.auth.request.is_none());
         // Fetched when each hop asked, nothing else.
-        assert_eq!(*asked.lock().unwrap(), ["lb-1:Password", "lb-2:Password"]);
+        assert_eq!(*asked.lock().unwrap(), ["hop-1:Password", "hop-2:Password"]);
     }
 
     #[test]
     fn a_hop_without_a_saved_secret_asks_the_user_and_remembers_to_that_hop() {
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let mut rig = Rig::new(vec![hop("lb-1", "10.0.4.11", None, &asked)]);
+        let mut rig = Rig::new(vec![hop("hop-1", "192.0.2.11", None, &asked)]);
         let mut stored = Some(PendingSecret::Password("target-pw".into()));
-        let asking = rig.ask("ops@10.0.4.11's password: ", HOP_1);
+        let asking = rig.ask("ops@192.0.2.11's password: ", HOP_1);
         rig.poll_until(&mut stored, |r, _| r.auth.request.is_some());
         assert!(
             stored.is_some(),
@@ -620,7 +620,7 @@ mod hop_tests {
         );
         assert_eq!(
             rig.auth.request_hop().map(|h| h.name.as_str()),
-            Some("lb-1")
+            Some("hop-1")
         );
         // The save offer is for the hop host, not the destination.
         assert_eq!(
@@ -637,10 +637,10 @@ mod hop_tests {
     #[test]
     fn a_prompt_that_names_no_saved_hop_is_never_answered_from_storage() {
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let mut rig = Rig::new(vec![hop("lb-1", "10.0.4.11", Some("lb-1-pw"), &asked)]);
+        let mut rig = Rig::new(vec![hop("hop-1", "192.0.2.11", Some("hop-1-pw"), &asked)]);
         let mut stored = Some(PendingSecret::Password("target-pw".into()));
         // Another host, and another login on the saved host.
-        for prompt in ["ops@10.9.9.9's password: ", "root@10.0.4.11's password: "] {
+        for prompt in ["ops@10.9.9.9's password: ", "root@192.0.2.11's password: "] {
             let asking = rig.ask(prompt, HOP_2);
             rig.poll_until(&mut stored, |r, _| r.auth.request.is_some());
             assert!(stored.is_some());
@@ -655,20 +655,20 @@ mod hop_tests {
     #[test]
     fn a_server_chosen_prompt_naming_a_hop_never_fetches_that_hops_password() {
         // A hostile bastion can make ssh show any keyboard-interactive text,
-        // but ssh prefixes it `(user@host) `. A prompt that merely names lb-2
+        // but ssh prefixes it `(user@host) `. A prompt that merely names hop-2
         // (or carries a banner line in front) is the user's to answer.
         let asked = Arc::new(Mutex::new(Vec::new()));
-        let mut rig = Rig::new(vec![hop("lb-2", "10.0.4.12", Some("lb-2-pw"), &asked)]);
+        let mut rig = Rig::new(vec![hop("hop-2", "192.0.2.12", Some("hop-2-pw"), &asked)]);
         let mut stored = Some(PendingSecret::Password("target-pw".into()));
         for prompt in [
-            "(ops@10.0.4.11) ops@10.0.4.12's password: ",
-            "Welcome\nops@10.0.4.12's password: ",
+            "(ops@192.0.2.11) ops@192.0.2.12's password: ",
+            "Welcome\nops@192.0.2.12's password: ",
         ] {
             let asking = rig.ask(prompt, HOP_1);
             rig.poll_until(&mut stored, |r, _| r.auth.request.is_some());
             assert!(
                 rig.auth.request_hop().is_none(),
-                "{prompt:?} was taken for lb-2"
+                "{prompt:?} was taken for hop-2"
             );
             assert_eq!(rig.auth.save_target(PromptClass::Password), None);
             rig.auth.answer("typed".into(), false).unwrap();
@@ -676,7 +676,7 @@ mod hop_tests {
         }
         assert!(
             asked.lock().unwrap().is_empty(),
-            "lb-2's secret was fetched"
+            "hop-2's secret was fetched"
         );
         assert!(stored.is_some());
     }
@@ -685,63 +685,63 @@ mod hop_tests {
     fn a_wrong_stored_hop_password_is_asked_again_and_each_hop_has_its_own_three_tries() {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let mut rig = Rig::new(vec![
-            hop("lb-1", "10.0.4.11", Some("old"), &asked),
-            hop("lb-2", "10.0.4.12", Some("lb-2-pw"), &asked),
+            hop("hop-1", "192.0.2.11", Some("old"), &asked),
+            hop("hop-2", "192.0.2.12", Some("hop-2-pw"), &asked),
         ]);
         let mut stored = None;
-        // lb-1: the stored (wrong) one first, then the user twice: its 3 tries.
-        let first = rig.ask("ops@10.0.4.11's password: ", HOP_1);
+        // hop-1: the stored (wrong) one first, then the user twice: its 3 tries.
+        let first = rig.ask("ops@192.0.2.11's password: ", HOP_1);
         rig.poll_until(&mut stored, |_, _| first.is_finished());
         assert_eq!(first.join().unwrap().unwrap(), "old");
         for n in 2..=3 {
-            let asking = rig.ask("ops@10.0.4.11's password: ", HOP_1);
+            let asking = rig.ask("ops@192.0.2.11's password: ", HOP_1);
             rig.poll_until(&mut stored, |r, _| r.auth.request.is_some());
             assert_eq!(rig.auth.attempts, n);
             rig.auth.answer(format!("typed-{n}"), false).unwrap();
             assert_eq!(asking.join().unwrap().unwrap(), format!("typed-{n}"));
         }
-        // lb-2 starts its own count at 1 (not 4): the stored one, then the user
+        // hop-2 starts its own count at 1 (not 4): the stored one, then the user
         // twice, then it gives up on the fourth.
-        let first = rig.ask("ops@10.0.4.12's password: ", HOP_2);
+        let first = rig.ask("ops@192.0.2.12's password: ", HOP_2);
         rig.poll_until(&mut stored, |_, _| first.is_finished());
-        assert_eq!(first.join().unwrap().unwrap(), "lb-2-pw");
+        assert_eq!(first.join().unwrap().unwrap(), "hop-2-pw");
         for n in 2..=3 {
-            let asking = rig.ask("ops@10.0.4.12's password: ", HOP_2);
+            let asking = rig.ask("ops@192.0.2.12's password: ", HOP_2);
             rig.poll_until(&mut stored, |r, _| r.auth.request.is_some());
-            assert_eq!(rig.auth.attempts, n, "lb-2 shares lb-1's budget");
+            assert_eq!(rig.auth.attempts, n, "hop-2 shares hop-1's budget");
             assert_eq!(
                 rig.auth.request_hop().map(|h| h.name.as_str()),
-                Some("lb-2")
+                Some("hop-2")
             );
             rig.auth.answer(format!("typed-{n}"), false).unwrap();
             assert_eq!(asking.join().unwrap().unwrap(), format!("typed-{n}"));
         }
-        let fourth = rig.ask("ops@10.0.4.12's password: ", HOP_2);
+        let fourth = rig.ask("ops@192.0.2.12's password: ", HOP_2);
         rig.poll_until(&mut stored, |r, _| r.auth.cancelled());
         assert!(fourth.join().unwrap().is_err());
         // Each hop's saved password was fetched once, never re-offered.
-        assert_eq!(*asked.lock().unwrap(), ["lb-1:Password", "lb-2:Password"]);
+        assert_eq!(*asked.lock().unwrap(), ["hop-1:Password", "hop-2:Password"]);
     }
 
     #[test]
     fn three_stored_answers_in_a_chain_do_not_use_up_the_destinations_tries() {
         let asked = Arc::new(Mutex::new(Vec::new()));
         let mut rig = Rig::new(vec![
-            hop("lb-1", "10.0.4.11", Some("a"), &asked),
-            hop("lb-2", "10.0.4.12", Some("b"), &asked),
+            hop("hop-1", "192.0.2.11", Some("a"), &asked),
+            hop("hop-2", "192.0.2.12", Some("b"), &asked),
         ]);
         let mut stored = Some(PendingSecret::Password("target-pw".into()));
         for (prompt, pid) in [
-            ("ops@10.0.4.11's password: ", HOP_1),
-            ("ops@10.0.4.12's password: ", HOP_2),
-            ("ops@10.0.4.91's password: ", DESTINATION),
+            ("ops@192.0.2.11's password: ", HOP_1),
+            ("ops@192.0.2.12's password: ", HOP_2),
+            ("ops@192.0.2.91's password: ", DESTINATION),
         ] {
             let asking = rig.ask(prompt, pid);
             rig.poll_until(&mut stored, |_, _| asking.is_finished());
             asking.join().unwrap().unwrap();
         }
         // The target rejected the stored password: the user still gets a modal.
-        let again = rig.ask("ops@10.0.4.91's password: ", DESTINATION);
+        let again = rig.ask("ops@192.0.2.91's password: ", DESTINATION);
         rig.poll_until(&mut stored, |r, _| r.auth.request.is_some());
         assert!(
             !rig.auth.cancelled(),

@@ -210,9 +210,9 @@ mod tests {
 
         store
             .create_host(&NewHost {
-                name: "dev-partners".into(),
+                name: "dev-portal".into(),
                 label: Some("Dev Partners".into()),
-                address: "10.100.19.123".into(),
+                address: "198.51.100.123".into(),
                 port: Some(22),
                 group_id: None,
                 identity_id: Some(default_id),
@@ -223,8 +223,8 @@ mod tests {
             .unwrap();
 
         let content = render_launcher_hosts(&store).unwrap();
-        assert!(content.contains("Host dev-partners"));
-        assert!(content.contains("HostName 10.100.19.123"));
+        assert!(content.contains("Host dev-portal"));
+        assert!(content.contains("HostName 198.51.100.123"));
         assert!(content.contains("User admin"));
         assert!(content.contains("IdentityFile /home/user/.ssh/id_ed25519"));
         assert!(!content.contains("Port 22"));

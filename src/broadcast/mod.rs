@@ -1120,8 +1120,8 @@ mod tests {
 
         let hop = |user: &str, key: &str| HopSecret {
             user: Some(user.into()),
-            host: "10.0.4.11".into(),
-            via: "10.0.4.11".into(),
+            host: "192.0.2.11".into(),
+            via: "192.0.2.11".into(),
             key_path: None,
             class: crate::session::auth_prompt::PromptClass::Password,
             refs: vec![crate::credentials::SecretRef::Key(key.into())],

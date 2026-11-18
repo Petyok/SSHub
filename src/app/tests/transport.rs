@@ -321,7 +321,7 @@ pub(crate) fn fallback_paths_refuse_a_host_with_an_invalid_jump_instead_of_going
 pub(crate) fn a_chain_resolves_each_hops_own_stored_secret_and_never_the_targets() {
     use crate::credentials::PasswordStore;
     use crate::session::auth_prompt::PromptClass;
-    // you -> lb-1 -> lb-2 -> 1c-1, all saved hosts with a stored password.
+    // you -> hop-1 -> hop-2 -> dest-1, all saved hosts with a stored password.
     let (app, secrets) = crate::app::tests::test_app_with_secrets(vec![]);
     let mk = |name: &str, addr: &str, user: &str, jump: Option<&str>| {
         let mut h = NewHost::launcher(name, addr);
@@ -329,11 +329,15 @@ pub(crate) fn a_chain_resolves_each_hops_own_stored_secret_and_never_the_targets
         h.proxy_jump = jump.map(String::from);
         app.store().create_host(&h).unwrap()
     };
-    let lb1 = mk("lb-1", "10.0.4.11", "ops", None);
-    let lb2 = mk("lb-2", "10.0.4.12", "ops", None);
-    let target = mk("1c-1", "10.0.4.91", "ops", Some("lb-1,lb-2"));
-    mk("lb-3", "10.0.4.13", "ops", None);
-    for (host, pw) in [(&lb1, "lb-1-pw"), (&lb2, "lb-2-pw"), (&target, "1c-1-pw")] {
+    let lb1 = mk("hop-1", "192.0.2.11", "ops", None);
+    let lb2 = mk("hop-2", "192.0.2.12", "ops", None);
+    let target = mk("dest-1", "192.0.2.91", "ops", Some("hop-1,hop-2"));
+    mk("hop-3", "192.0.2.13", "ops", None);
+    for (host, pw) in [
+        (&lb1, "hop-1-pw"),
+        (&lb2, "hop-2-pw"),
+        (&target, "dest-1-pw"),
+    ] {
         secrets
             .set(&crate::credentials::host_key(host.id), pw)
             .unwrap();
@@ -363,16 +367,21 @@ pub(crate) fn a_chain_resolves_each_hops_own_stored_secret_and_never_the_targets
     assert_eq!(
         view,
         [
-            ("ops", "10.0.4.11", key(lb1.id).as_slice()),
-            ("ops", "10.0.4.12", key(lb2.id).as_slice())
+            ("ops", "192.0.2.11", key(lb1.id).as_slice()),
+            ("ops", "192.0.2.12", key(lb2.id).as_slice())
         ]
     );
     assert!(!format!("{staged:?}").contains("-pw"));
     // A saved hop with nothing stored (key auth) is not staged at all, so
     // callers keep BatchMode and strict host-key checking for key-only chains.
-    let only_lb3 = hop_secrets(app.store(), &app.hosts, secrets.as_ref(), Some("lb-3"));
+    let only_lb3 = hop_secrets(app.store(), &app.hosts, secrets.as_ref(), Some("hop-3"));
     assert!(only_lb3.is_empty());
-    let mixed = hop_secrets(app.store(), &app.hosts, secrets.as_ref(), Some("lb-1,lb-3"));
+    let mixed = hop_secrets(
+        app.store(),
+        &app.hosts,
+        secrets.as_ref(),
+        Some("hop-1,hop-3"),
+    );
     assert_eq!(mixed.len(), 1);
     assert!(staged.iter().all(|h| h.class == PromptClass::Password));
 
@@ -385,18 +394,18 @@ pub(crate) fn a_chain_resolves_each_hops_own_stored_secret_and_never_the_targets
             )))
         })
         .collect();
-    let lb2_cred = crate::session::hop_auth::find(&creds, "ops@10.0.4.12's password: ").unwrap();
-    assert_eq!(lb2_cred.name, "lb-2");
+    let lb2_cred = crate::session::hop_auth::find(&creds, "ops@192.0.2.12's password: ").unwrap();
+    assert_eq!(lb2_cred.name, "hop-2");
     assert_eq!(lb2_cred.host_id, Some(lb2.id));
     assert_eq!(
         lb2_cred.secret(PromptClass::Password).unwrap().value(),
-        "lb-2-pw"
+        "hop-2-pw"
     );
     // The target is no hop: its prompt names nobody in the chain.
-    assert!(crate::session::hop_auth::find(&creds, "ops@10.0.4.91's password: ").is_none());
+    assert!(crate::session::hop_auth::find(&creds, "ops@192.0.2.91's password: ").is_none());
 
     // A hop written as its address is still that host; a raw hop is nobody.
-    let by_address = hop_specs(app.store(), &app.hosts, "ops@10.0.4.11:22,ops@192.0.2.1");
+    let by_address = hop_specs(app.store(), &app.hosts, "ops@192.0.2.11:22,ops@192.0.2.1");
     assert_eq!(by_address.len(), 1);
 }
 
@@ -406,7 +415,11 @@ pub(crate) fn connecting_through_a_chain_arms_the_session_with_each_hops_own_cre
     // hops. ssh is killed when the app drops.
     let mut app = crate::app::tests::test_app(vec![]);
     let mut hosts = Vec::new();
-    for (name, jump) in [("lb-1", None), ("lb-2", None), ("1c-1", Some("lb-1,lb-2"))] {
+    for (name, jump) in [
+        ("hop-1", None),
+        ("hop-2", None),
+        ("dest-1", Some("hop-1,hop-2")),
+    ] {
         let mut h = NewHost::launcher(name, "127.0.0.1");
         h.port = Some(1);
         h.username = Some("ops".into());
@@ -425,5 +438,5 @@ pub(crate) fn connecting_through_a_chain_arms_the_session_with_each_hops_own_cre
         .iter()
         .map(|h| h.name.as_str())
         .collect();
-    assert_eq!(names, ["lb-1", "lb-2"]);
+    assert_eq!(names, ["hop-1", "hop-2"]);
 }

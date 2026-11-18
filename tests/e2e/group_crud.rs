@@ -77,11 +77,11 @@ fn create_group_assign_host_visible_in_tree() {
     assert_eq!(app.mode, AppMode::GroupManage);
     app.handle_key(key_char('a')).unwrap();
     assert_eq!(app.mode, AppMode::GroupForm);
-    type_text(&mut app, "dev-vcenter");
+    type_text(&mut app, "dev-lab");
     app.handle_key(key(KeyCode::F(2))).unwrap();
     // After save, returns to GroupManage
     assert_eq!(app.mode, AppMode::GroupManage);
-    assert!(app.groups.iter().any(|g| g.name == "dev-vcenter"));
+    assert!(app.groups.iter().any(|g| g.name == "dev-lab"));
 
     // Go back to hosts to create a host
     app.handle_key(key(KeyCode::Esc)).unwrap();
@@ -98,13 +98,13 @@ fn create_group_assign_host_visible_in_tree() {
     edit_field(&mut app, "vc-host");
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Port (skip)
     app.handle_key(key(KeyCode::Down)).unwrap(); // → Group
-                                                 // Adding a host while the dev-vcenter header is selected pre-checks that
+                                                 // Adding a host while the dev-lab header is selected pre-checks that
                                                  // group. Group is multi-select: Enter opens the checkbox dropdown, Space
                                                  // toggles the highlighted group, Enter adds the highlighted group and
-                                                 // closes. dev-vcenter is already checked, so this keeps it.
+                                                 // closes. dev-lab is already checked, so this keeps it.
     app.handle_key(key(KeyCode::Enter)).unwrap();
     assert_eq!(app.mode, AppMode::FieldPicker);
-    app.handle_key(key(KeyCode::Enter)).unwrap(); // close dropdown (dev-vcenter stays checked)
+    app.handle_key(key(KeyCode::Enter)).unwrap(); // close dropdown (dev-lab stays checked)
     assert_eq!(app.mode, AppMode::HostForm);
     app.handle_key(key(KeyCode::F(2))).unwrap(); // save form
 
@@ -113,8 +113,8 @@ fn create_group_assign_host_visible_in_tree() {
     assert!(
         app.group_sections
             .iter()
-            .any(|s| s.label == "dev-vcenter" && !s.host_indices.is_empty()),
-        "host should appear under dev-vcenter section"
+            .any(|s| s.label == "dev-lab" && !s.host_indices.is_empty()),
+        "host should appear under dev-lab section"
     );
 
     let store = LauncherStore::open(file.path()).unwrap();
@@ -126,7 +126,7 @@ fn create_group_assign_host_visible_in_tree() {
         .list_groups()
         .unwrap()
         .into_iter()
-        .find(|g| g.name == "dev-vcenter")
+        .find(|g| g.name == "dev-lab")
         .expect("group persisted");
     assert_eq!(host.group_id, Some(group.id));
 }

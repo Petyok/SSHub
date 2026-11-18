@@ -580,8 +580,8 @@ mod tests {
         store.open().set("host:5", "hop-s3cr3t").unwrap();
         let hop = HopSecret {
             user: Some("ops".into()),
-            host: "10.0.4.11".into(),
-            via: "lb-1".into(),
+            host: "192.0.2.11".into(),
+            via: "hop-1".into(),
             key_path: None,
             class: PromptClass::Password,
             refs: vec![SecretRef::Key("host:5".into())],

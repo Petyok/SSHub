@@ -3518,7 +3518,7 @@ mod prompt_tests {
         parser.process(
             b"** WARNING: connection is not using a post-quantum key exchange algorithm.\r\n\
               ** This session may be vulnerable to \"store now, decrypt later\" attacks.\r\n\
-              su-adm@10.100.19.105's password: ",
+              ops-admin@198.51.100.105's password: ",
         );
         let tail = current_screen_tail(parser.screen());
         assert!(
