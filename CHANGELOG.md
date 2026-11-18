@@ -4,6 +4,8 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+## [0.22.3] - 2026-11-18
+
 ### Fixed
 
 - **Quoted `Include` paths in ssh config** (PR #183 by @56steve) - OpenSSH
