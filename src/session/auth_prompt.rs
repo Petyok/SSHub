@@ -154,8 +154,8 @@ mod tests {
     #[test]
     fn a_credential_prompt_is_recognised_by_its_shape_not_by_a_word_inside_it() {
         for (prompt, class) in [
-            ("ops@10.0.4.11's password: ", PromptClass::Password),
-            ("(ops@10.0.4.11) Password: ", PromptClass::Password),
+            ("ops@192.0.2.11's password: ", PromptClass::Password),
+            ("(ops@192.0.2.11) Password: ", PromptClass::Password),
             (
                 "Enter passphrase for key '/home/u/.ssh/id': ",
                 PromptClass::Passphrase,

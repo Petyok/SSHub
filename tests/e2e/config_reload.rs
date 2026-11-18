@@ -99,11 +99,11 @@ fn manual_reload_after_write_updates_host_list() {
     assert!(!app.hosts.iter().any(|entry| entry.name() == "ops-node"));
 
     let mut config = fs::read_to_string(&config_path).unwrap();
-    config.push_str("\nHost ops-node\n    HostName 10.0.4.2\n    User ops\n");
+    config.push_str("\nHost ops-node\n    HostName 192.0.2.2\n    User ops\n");
     fs::write(&config_path, config).unwrap();
     fs::write(
         ssh_g_dir.join("ops-node.txt"),
-        "host ops-node\nhostname 10.0.4.2\nuser ops\nport 22\n",
+        "host ops-node\nhostname 192.0.2.2\nuser ops\nport 22\n",
     )
     .unwrap();
 

@@ -507,7 +507,7 @@ pub(crate) fn group_form_cursor_follows_the_focused_field() {
     let mut app = test_app(vec![]);
     let group = crate::store::HostGroup {
         id: 1,
-        name: "spbu-prod".into(),
+        name: "team-prod".into(),
         sort_order: 0,
         default_identity_id: None,
         default_username: Some("sm-adm".into()),
@@ -549,13 +549,13 @@ fn grp(id: i64, name: &str) -> crate::store::HostGroup {
 #[test]
 fn group_parent_picker_filters_as_you_type_and_picks_the_match() {
     let mut app = test_app(vec![]);
-    app.groups = vec![grp(1, "alpha"), grp(2, "spbu-prod"), grp(3, "web")];
+    app.groups = vec![grp(1, "alpha"), grp(2, "team-prod"), grp(3, "web")];
     app.enter_group_form(None).unwrap();
     app.open_group_field_picker(GroupFormField::Parent);
     type_str(&mut app, "spbu");
     let (none, options) = app.group_field_picker_options();
     assert_eq!(none, "(top level)", "the none slot stays pinned");
-    assert_eq!(options, vec![(2, "spbu-prod".to_string())]);
+    assert_eq!(options, vec![(2, "team-prod".to_string())]);
     app.handle_key(key(KeyCode::Enter)).unwrap();
     assert_eq!(app.mode, AppMode::GroupForm);
     assert_eq!(app.group_form.as_ref().unwrap().parent_id, Some(2));
@@ -584,7 +584,7 @@ fn host_identity_picker_maps_the_filtered_row_to_the_right_identity() {
 fn host_group_picker_space_toggles_the_filtered_group() {
     let mut app = test_app(vec![]);
     let mut ids = HashMap::new();
-    for (i, name) in ["alpha", "spbu-prod", "web"].into_iter().enumerate() {
+    for (i, name) in ["alpha", "team-prod", "web"].into_iter().enumerate() {
         let g = app
             .store
             .create_group(&crate::store::NewHostGroup {
@@ -612,7 +612,7 @@ fn host_group_picker_space_toggles_the_filtered_group() {
         .iter()
         .copied()
         .collect();
-    assert_eq!(selected, vec![ids["spbu-prod"]]);
+    assert_eq!(selected, vec![ids["team-prod"]]);
 }
 
 fn store_group(app: &App, name: &str) -> i64 {
@@ -630,7 +630,7 @@ fn store_group(app: &App, name: &str) -> i64 {
 fn host_group_picker_enter_adds_the_highlighted_group_and_closes() {
     let mut app = test_app(vec![]);
     store_group(&app, "alpha");
-    let prod = store_group(&app, "spbu-prod");
+    let prod = store_group(&app, "team-prod");
     app.enter_host_form(None, false).unwrap();
     app.open_field_picker(PickerKind::Group);
     type_str(&mut app, "spbu");

@@ -1,7 +1,7 @@
 //! The jump hosts of a ProxyJump chain and their own stored credentials.
 //!
 //! ssh runs every `-J` hop as a separate `ssh` that inherits the destination's
-//! askpass environment, so a hop's `user@10.0.4.11's password:` arrives at the
+//! askpass environment, so a hop's `user@192.0.2.11's password:` arrives at the
 //! same helper as the destination's prompt. The destination's secret must never
 //! answer it (#141), and nothing used to answer it at all: the user typed the
 //! password of a host whose password SSHub already holds. A hop prompt is now
@@ -33,7 +33,7 @@ pub type Fetch = Arc<dyn Fn(PromptClass) -> Option<PendingSecret> + Send + Sync>
 /// `Debug`: nothing here may reach diagnostic formatting.
 #[derive(Clone)]
 pub struct HopCred {
-    /// The saved host's name, for the modal ("hop lb-1").
+    /// The saved host's name, for the modal ("hop hop-1").
     pub name: String,
     /// The login ssh prints in the prompt; `None` = whatever ssh defaults to.
     pub user: Option<String>,
@@ -266,25 +266,25 @@ mod tests {
     #[test]
     fn the_asker_is_read_from_what_ssh_prints() {
         assert_eq!(
-            asker("ops@10.0.4.11's password: "),
+            asker("ops@192.0.2.11's password: "),
             Some(Asker::Login {
                 user: "ops",
-                host: "10.0.4.11"
+                host: "192.0.2.11"
             })
         );
         // Anything around the prompt makes it not ssh's own: a banner line in
         // front, or the `(user@host) ` prefix every keyboard-interactive
         // prompt carries (a server picks that text, so it can name any hop).
         assert_eq!(
-            asker("Warning: x\r\njohn@corp.com@10.0.4.12's password: "),
+            asker("Warning: x\r\njohn@corp.com@192.0.2.12's password: "),
             None
         );
-        assert_eq!(asker("(ops@bastion) ops@10.0.4.12's password: "), None);
+        assert_eq!(asker("(ops@bastion) ops@192.0.2.12's password: "), None);
         assert_eq!(
-            asker("john@corp.com@10.0.4.12's password: "),
+            asker("john@corp.com@192.0.2.12's password: "),
             Some(Asker::Login {
                 user: "john@corp.com",
-                host: "10.0.4.12"
+                host: "192.0.2.12"
             })
         );
         assert_eq!(
@@ -303,33 +303,33 @@ mod tests {
     #[test]
     fn a_prompt_finds_exactly_the_hop_it_names() {
         let hops = [
-            hop("lb-1", Some("ops"), "10.0.4.11"),
-            hop("lb-2", Some("ops"), "10.0.4.12"),
+            hop("hop-1", Some("ops"), "192.0.2.11"),
+            hop("hop-2", Some("ops"), "192.0.2.12"),
         ];
         assert_eq!(
-            find(&hops, "ops@10.0.4.12's password: ").map(|h| h.name.as_str()),
-            Some("lb-2")
+            find(&hops, "ops@192.0.2.12's password: ").map(|h| h.name.as_str()),
+            Some("hop-2")
         );
         // Another user on a known host, or an unknown host: nobody answers.
-        assert!(find(&hops, "root@10.0.4.12's password: ").is_none());
-        assert!(find(&hops, "ops@10.0.4.99's password: ").is_none());
+        assert!(find(&hops, "root@192.0.2.12's password: ").is_none());
+        assert!(find(&hops, "ops@192.0.2.99's password: ").is_none());
         // A login-less hop answers for whichever user ssh defaulted to.
-        let hops = [hop("lb-3", None, "Lb-3.example")];
-        assert!(find(&hops, "anyone@lb-3.example's password: ").is_some());
+        let hops = [hop("hop-3", None, "Hop-3.example")];
+        assert!(find(&hops, "anyone@hop-3.example's password: ").is_some());
     }
 
     #[test]
     fn two_hops_the_prompt_could_be_are_answered_by_neither() {
         let hops = [
-            hop("a", Some("ops"), "10.0.4.11"),
-            hop("b", Some("ops"), "10.0.4.11"),
+            hop("a", Some("ops"), "192.0.2.11"),
+            hop("b", Some("ops"), "192.0.2.11"),
         ];
-        assert!(find(&hops, "ops@10.0.4.11's password: ").is_none());
+        assert!(find(&hops, "ops@192.0.2.11's password: ").is_none());
     }
 
     #[test]
     fn a_hop_only_ever_answers_its_own_class() {
-        let h = hop("lb-1", Some("ops"), "10.0.4.11");
+        let h = hop("hop-1", Some("ops"), "192.0.2.11");
         assert!(h.secret(PromptClass::Password).is_some());
         assert!(h.secret(PromptClass::Passphrase).is_none());
         assert!(h.secret(PromptClass::HostKey).is_none());
@@ -343,13 +343,13 @@ mod tests {
             store: None,
         }];
         let me = Some(std::process::id());
-        let (_child, pid) = fake_hop_ssh("10.0.4.11");
-        assert!(find_secret(&staged, "ops@10.0.4.11's password: ", Some(pid)).is_some());
-        assert!(find_secret(&staged, "ops@10.0.4.12's password: ", Some(pid)).is_none());
+        let (_child, pid) = fake_hop_ssh("192.0.2.11");
+        assert!(find_secret(&staged, "ops@192.0.2.11's password: ", Some(pid)).is_some());
+        assert!(find_secret(&staged, "ops@192.0.2.12's password: ", Some(pid)).is_none());
         assert!(find_secret(&staged, "Enter passphrase for key '/k': ", Some(pid)).is_none());
         // This test process is not connecting to the hop.
-        assert!(find_secret(&staged, "ops@10.0.4.11's password: ", me).is_none());
-        assert!(find_secret(&staged, "ops@10.0.4.11's password: ", None).is_none());
+        assert!(find_secret(&staged, "ops@192.0.2.11's password: ", me).is_none());
+        assert!(find_secret(&staged, "ops@192.0.2.11's password: ", None).is_none());
     }
 
     /// A process whose last argument is `host`, like a hop's `ssh … <hop>`.
@@ -382,12 +382,12 @@ mod tests {
         // Chain bastion -> db-gw. The bastion's ssh shows a prompt that names
         // db-gw; the text is perfect, but the asking process is the bastion's.
         let hops = [
-            hop("bastion", Some("ops"), "10.0.4.1"),
-            hop("db-gw", Some("ops"), "10.0.4.12"),
+            hop("bastion", Some("ops"), "192.0.2.1"),
+            hop("db-gw", Some("ops"), "192.0.2.12"),
         ];
-        let (_bastion, bastion_pid) = fake_hop_ssh("10.0.4.1");
-        let (_gw, gw_pid) = fake_hop_ssh("10.0.4.12");
-        let lie = "ops@10.0.4.12's password: ";
+        let (_bastion, bastion_pid) = fake_hop_ssh("192.0.2.1");
+        let (_gw, gw_pid) = fake_hop_ssh("192.0.2.12");
+        let lie = "ops@192.0.2.12's password: ";
         assert!(find_for(&hops, lie, Some(bastion_pid)).is_none());
         assert_eq!(
             find_for(&hops, lie, Some(gw_pid)).map(|h| h.name.as_str()),

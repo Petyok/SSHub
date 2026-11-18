@@ -216,7 +216,7 @@ fn group_sections_include_ungrouped_virtual_group() {
 
     let group = store
         .create_group(&NewHostGroup {
-            name: "dev-vcenter".into(),
+            name: "dev-lab".into(),
             sort_order: 0,
             ..Default::default()
         })
@@ -237,7 +237,7 @@ fn group_sections_include_ungrouped_virtual_group() {
         .iter()
         .map(|s| s.label.as_str())
         .collect();
-    assert!(labels.contains(&"dev-vcenter"));
+    assert!(labels.contains(&"dev-lab"));
     assert!(labels.contains(&"_ungrouped"));
 
     let ungrouped = app

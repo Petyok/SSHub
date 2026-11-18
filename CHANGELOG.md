@@ -286,7 +286,7 @@ All notable changes to SSHub are documented in this file.
 ### Fixed
 
 - **Jump hosts with a saved password asked for it again** - connecting through
-  `lb-1 -> lb-2` to a host showed the SSH authentication modal for each hop,
+  `hop-1 -> hop-2` to a host showed the SSH authentication modal for each hop,
   although both hops' passwords were stored. A hop that asks for a password is
   now answered with that hop host's own stored password (or key passphrase),
   fetched when it asks; when it has none the modal names the hop and Remember
