@@ -151,9 +151,9 @@ fn render_host_block(
             }
             // ssh takes the rest of the line verbatim for RemoteCommand, with no
             // quote processing, so the command is written as is (quotes would
-            // reach the remote shell). A leading `=` would be read as the
-            // keyword separator and dropped.
-            if cmd.starts_with('=') {
+            // reach the remote shell). A leading `=`, even after whitespace,
+            // would be read as the keyword separator and dropped.
+            if cmd.trim_start().starts_with('=') {
                 anyhow::bail!("remote command starts with '='");
             }
             lines.push(format!("    RemoteCommand {}", cmd.replace('%', "%%")));
@@ -326,9 +326,11 @@ mod tests {
     fn export_refuses_a_remote_command_starting_with_equals() {
         let store = LauncherStore::open_in_memory().unwrap();
         let mut h = launcher_host(&store, "eq", "10.0.0.1");
-        h.remote_command = Some("=x".into());
-        let r = crate::store::ResolvedConnection::from_stored(&h);
-        assert!(render_host_block(&h, &r).is_err());
+        for cmd in ["=x", " =x", "\t=x"] {
+            h.remote_command = Some(cmd.into());
+            let r = crate::store::ResolvedConnection::from_stored(&h);
+            assert!(render_host_block(&h, &r).is_err(), "{cmd:?}");
+        }
     }
 
     fn launcher_host(
