@@ -251,22 +251,6 @@ fn split_ssh_remote_command(ssh_argv: &[String]) -> (Vec<String>, Option<String>
     }
 }
 
-/// Format a single OpenSSH config option for `-o key=value` argv.
-pub fn format_ssh_config_option(key: &str, value: &str) -> String {
-    if value.is_empty() {
-        return format!("{key}=");
-    }
-    if value
-        .chars()
-        .any(|c| c.is_whitespace() || matches!(c, '"' | '\\' | '='))
-    {
-        let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-        format!("{key}=\"{escaped}\"")
-    } else {
-        format!("{key}={value}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
