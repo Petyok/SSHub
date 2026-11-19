@@ -6,10 +6,11 @@ All notable changes to SSHub are documented in this file.
 
 ### Fixed
 
-- **Startup command in `exported.conf`** - the exported `RemoteCommand` line was
-  written with quotes (`RemoteCommand="tmux attach"`), but ssh reads the rest of
-  that line verbatim, so the remote shell received the quote characters too and
-  failed to find the command. It is now written as `RemoteCommand tmux attach`.
+- **Startup command in `exported.conf`** (PR #187 by @56steve) - the exported
+  `RemoteCommand` line was written with quotes (`RemoteCommand="tmux attach"`),
+  but ssh reads the rest of that line verbatim, so the remote shell received the
+  quote characters too and failed to find the command. It is now written as
+  `RemoteCommand tmux attach`.
 
 ## [0.22.3] - 2026-11-18
 
