@@ -1606,25 +1606,25 @@ mod tests {
         let store = LauncherStore::open_in_memory().unwrap();
         // Insert so that flat (sort_order) order interleaves a child between
         // unrelated roots — the bug the tree ordering fixes.
-        let itmo_core = store
+        let acme_core = store
             .create_group(&NewHostGroup {
-                name: "itmo-core".into(),
+                name: "acme-core".into(),
                 sort_order: 0,
                 ..Default::default()
             })
             .unwrap();
-        let itmo = store
+        let acme = store
             .create_group(&NewHostGroup {
-                name: "itmo".into(),
+                name: "acme".into(),
                 sort_order: 1,
                 ..Default::default()
             })
             .unwrap();
-        let itmo_dev = store
+        let acme_dev = store
             .create_group(&NewHostGroup {
-                name: "itmo-dev".into(),
+                name: "acme-dev".into(),
                 sort_order: 2,
-                parent_id: Some(itmo.id),
+                parent_id: Some(acme.id),
                 ..Default::default()
             })
             .unwrap();
@@ -1639,11 +1639,11 @@ mod tests {
         // unrelated root that merely precedes it in sort order.
         let pos = |n: &str| names.iter().position(|x| x == n).unwrap();
         assert!(
-            pos("itmo") + 1 == pos("itmo-dev"),
+            pos("acme") + 1 == pos("acme-dev"),
             "child follows its parent: {names:?}"
         );
-        assert!(pos("itmo-core") < pos("itmo"), "roots keep sort order");
-        let _ = (itmo_core, itmo_dev);
+        assert!(pos("acme-core") < pos("acme"), "roots keep sort order");
+        let _ = (acme_core, acme_dev);
     }
 
     #[test]
@@ -2061,7 +2061,7 @@ mod tests {
 
         let group = store
             .create_group(&NewHostGroup {
-                name: "dev-vcenter".into(),
+                name: "dev-lab".into(),
                 sort_order: 0,
                 ..Default::default()
             })
@@ -2069,9 +2069,9 @@ mod tests {
 
         let created = store
             .create_host(&NewHost {
-                name: "dev-partners".into(),
+                name: "dev-portal".into(),
                 label: Some("Dev Partners".into()),
-                address: "10.100.19.123".into(),
+                address: "198.51.100.123".into(),
                 port: Some(22),
                 group_id: Some(group.id),
                 identity_id: Some(default_id),
@@ -2081,12 +2081,12 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(created.name, "dev-partners");
-        assert_eq!(created.address, "10.100.19.123");
+        assert_eq!(created.name, "dev-portal");
+        assert_eq!(created.address, "198.51.100.123");
         assert_eq!(created.source, HostSource::Launcher);
         assert_eq!(
             created.group.as_ref().map(|g| g.name.as_str()),
-            Some("dev-vcenter")
+            Some("dev-lab")
         );
         assert_eq!(
             created.identity.as_ref().map(|i| i.name.as_str()),

@@ -194,6 +194,7 @@ impl App {
         self.broadcast_setup = Some(BroadcastSetup {
             options,
             menu_selected: 0,
+            query: String::new(),
             target_label: String::new(),
             command: String::new(),
             cursor: 0,
@@ -222,6 +223,7 @@ impl App {
         self.broadcast_setup = Some(BroadcastSetup {
             options: vec![BroadcastTarget::Hosts { ids, label }],
             menu_selected: 0,
+            query: String::new(),
             target_label: String::new(),
             command: String::new(),
             cursor: 0,
@@ -251,36 +253,72 @@ impl App {
         }
     }
 
-    /// Stage 1: the target-pick menu. Up/Down move the highlight (clamped),
-    /// Enter resolves the highlighted target to candidates and advances to the
-    /// command prompt, Esc closes the wizard.
+    /// Stage 1: the target-pick menu. Typing filters the targets, ↑/↓ move
+    /// the highlight (clamped), Enter resolves the highlighted target and
+    /// advances to the command prompt only when it has hosts to run on; Esc
+    /// clears the filter, then closes the wizard.
     pub(crate) fn handle_key_broadcast_pick(&mut self, key: KeyEvent) -> Result<()> {
+        let Some(s) = self.broadcast_setup.as_mut() else {
+            return Ok(());
+        };
         match key.code {
+            KeyCode::Esc if !s.query.is_empty() => {
+                s.query.clear();
+                s.menu_selected = 0;
+            }
             KeyCode::Esc => {
                 self.broadcast_setup = None;
                 self.mode = AppMode::Normal;
             }
-            _ if self.is_action(KeyAction::MoveDown, &key) => {
-                if let Some(s) = self.broadcast_setup.as_mut() {
-                    if s.menu_selected + 1 < s.options.len() {
-                        s.menu_selected += 1;
-                    }
+            KeyCode::Down => {
+                if s.menu_selected + 1 < s.visible_options().len() {
+                    s.menu_selected += 1;
                 }
             }
-            _ if self.is_action(KeyAction::MoveUp, &key) => {
-                if let Some(s) = self.broadcast_setup.as_mut() {
-                    s.menu_selected = s.menu_selected.saturating_sub(1);
+            KeyCode::Up => s.menu_selected = s.menu_selected.saturating_sub(1),
+            KeyCode::Backspace => {
+                s.query.pop();
+                s.menu_selected = 0;
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                s.query.push(c);
+                s.menu_selected = 0;
+            }
+            KeyCode::Enter => {
+                if s.selected_option().is_none() {
+                    self.host_notice = Some("No target matches the filter.".into());
+                    return Ok(());
+                }
+                self.host_notice = None;
+                // `false`: blocked on a locked credential; the unlock modal is
+                // open and this step repeats after it.
+                if self.resolve_broadcast_candidates() {
+                    self.advance_broadcast_to_command();
                 }
             }
-            KeyCode::Enter if self.resolve_broadcast_candidates() => {
-                self.mode = AppMode::BroadcastCommand;
-            }
-            // Blocked on a locked credential: the unlock modal is open (or the
-            // user was told why not); the step repeats after the unlock.
-            KeyCode::Enter => {}
             _ => {}
         }
         Ok(())
+    }
+
+    /// Move on to the command prompt once the target resolved to hosts; stay
+    /// on the menu otherwise, because a command typed now could never run.
+    fn advance_broadcast_to_command(&mut self) {
+        let Some(s) = self.broadcast_setup.as_ref() else {
+            return;
+        };
+        if !s.candidates.is_empty() {
+            self.mode = AppMode::BroadcastCommand;
+            return;
+        }
+        let label = s.target_label.clone();
+        self.host_notice = Some(match self.host_notice.take() {
+            Some(refused) => format!("No hosts to run on in {label}. {refused}"),
+            None => format!("No managed hosts in {label}."),
+        });
     }
 
     /// Fill `candidates` from the highlighted target: managed hosts only, kept in
@@ -292,17 +330,13 @@ impl App {
         let target = match self
             .broadcast_setup
             .as_ref()
-            .and_then(|s| s.options.get(s.menu_selected))
+            .and_then(|s| s.selected_option())
         {
             Some(t) => t.clone(),
             None => return true,
         };
 
-        let target_label = match &target {
-            BroadcastTarget::Group { label, .. } => format!("group: {label}"),
-            BroadcastTarget::Tag { name } => format!("#{name}"),
-            BroadcastTarget::Hosts { label, .. } => label.clone(),
-        };
+        let target_label = target.menu_label();
 
         let pw_store = self.password_store.as_ref();
         let launcher = &self.store;
@@ -374,7 +408,7 @@ impl App {
 
         if !self.preflight_unlock(needed, &target_label, |app| {
             if app.resolve_broadcast_candidates() {
-                app.mode = AppMode::BroadcastCommand;
+                app.advance_broadcast_to_command();
             }
             Ok(())
         }) {
@@ -440,8 +474,8 @@ impl App {
 
     /// Stage 3: the preview barrier. In edit-targets mode Up/Down move the row
     /// cursor and Space toggles a host's inclusion (`e`/Esc exit edit mode).
-    /// Otherwise `y` starts the run, `e` enters edit mode, and `n`/`N`/Esc close
-    /// the wizard.
+    /// Otherwise `y` starts the run, `e` enters edit mode, `c`/Esc step back to
+    /// the command, and `n`/`N` close the wizard.
     pub(crate) fn handle_key_broadcast_preview(&mut self, key: KeyEvent) -> Result<()> {
         let editing = self
             .broadcast_setup
@@ -486,14 +520,15 @@ impl App {
                         s.edit_targets = true;
                     }
                 }
-                // Back to the command prompt to edit the command (targets kept).
-                KeyCode::Char('c') => {
+                // Back to the command prompt to edit the command (targets
+                // kept); Esc steps back the same way the command step does.
+                KeyCode::Char('c') | KeyCode::Esc => {
                     if let Some(s) = self.broadcast_setup.as_mut() {
                         s.cursor = s.command.chars().count();
                     }
                     self.mode = AppMode::BroadcastCommand;
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                KeyCode::Char('n') | KeyCode::Char('N') => {
                     self.broadcast_setup = None;
                     self.mode = AppMode::Normal;
                 }
@@ -505,8 +540,8 @@ impl App {
 
     /// Launch the run: turn the selected candidates into tasks, spawn the pool,
     /// seed the result table, arm the entry slide (spawn → docked), and hand off
-    /// to the background panel. Refuses (notice + close) when nothing is
-    /// selected.
+    /// to the background panel. Refuses (notice, wizard kept on the preview)
+    /// when nothing is selected.
     fn start_broadcast(&mut self) {
         let Some(setup) = self.broadcast_setup.take() else {
             return;
@@ -526,8 +561,10 @@ impl App {
             .collect();
 
         if tasks.is_empty() {
-            self.host_notice = Some("No hosts selected for broadcast.".into());
-            self.mode = AppMode::Normal;
+            // Keep the wizard (and the typed command): re-include a host with `e`.
+            self.host_notice =
+                Some("No hosts selected for broadcast: press e to pick some.".into());
+            self.broadcast_setup = Some(setup);
             return;
         }
 

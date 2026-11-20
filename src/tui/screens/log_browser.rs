@@ -79,14 +79,63 @@ fn notice_line(frame: &mut Frame, app: &App, inner: Rect, row: u16) {
     }
 }
 
+/// Bottom rows of the Hosts / Segments panes: the key hints, the `/` filter
+/// bar while it is in use, and a pending notice. Returns the area left for the
+/// list.
+fn list_chrome(frame: &mut Frame, app: &App, inner: Rect, hints: &str) -> Rect {
+    let s = app.log_browser.as_ref().unwrap();
+    footer(frame, app, inner, hints);
+    let mut bottom = inner.height.saturating_sub(1);
+    if (s.list_filtering || !s.list_query.is_empty()) && bottom > 0 {
+        bottom -= 1;
+        crate::tui::widgets::filter_bar(
+            frame.buffer_mut(),
+            Rect::new(inner.x, inner.y + bottom, inner.width, 1),
+            &s.list_query,
+            s.list_filtering,
+            app.theme(),
+        );
+    }
+    if s.notice.is_some() && bottom > 0 {
+        bottom -= 1;
+        notice_line(frame, app, inner, bottom);
+    }
+    Rect::new(inner.x, inner.y, inner.width, bottom)
+}
+
+/// Draw the filtered rows of the list on screen, highlighting the selection
+/// when the filter keeps it.
+fn render_list(frame: &mut Frame, app: &App, area: Rect, items: Vec<ListItem>) {
+    let theme = app.theme();
+    let s = app.log_browser.as_ref().unwrap();
+    if items.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " No matches.",
+                theme.style(StyleRole::PopupLegend),
+            )),
+            area,
+        );
+        return;
+    }
+    let sel = s.list_sel();
+    let mut st = ListState::default();
+    st.select(s.list_view().iter().position(|&i| i == sel));
+    frame.render_stateful_widget(
+        List::new(items).highlight_style(theme.style(StyleRole::TableRowSelected)),
+        area,
+        &mut st,
+    );
+}
+
 fn render_hosts(frame: &mut Frame, app: &App, inner: Rect) {
     let theme = app.theme();
     let s = app.log_browser.as_ref().unwrap();
-    let list_area = Rect::new(
-        inner.x,
-        inner.y,
-        inner.width,
-        inner.height.saturating_sub(1),
+    let list_area = list_chrome(
+        frame,
+        app,
+        inner,
+        "\u{2191}\u{2193} move · / filter · Enter open · Esc close",
     );
 
     if s.hosts.is_empty() {
@@ -100,9 +149,10 @@ fn render_hosts(frame: &mut Frame, app: &App, inner: Rect) {
     } else {
         let legend = theme.style(StyleRole::PopupLegend);
         let items: Vec<ListItem> = s
-            .hosts
-            .iter()
-            .map(|h| {
+            .list_view()
+            .into_iter()
+            .map(|i| {
+                let h = &s.hosts[i];
                 ListItem::new(Line::from(vec![
                     Span::styled(format!(" {}", h.dir_name), theme.style(StyleRole::TableRow)),
                     Span::styled(
@@ -117,37 +167,19 @@ fn render_hosts(frame: &mut Frame, app: &App, inner: Rect) {
                 ]))
             })
             .collect();
-        let mut st = ListState::default();
-        st.select(Some(s.host_sel.min(s.hosts.len() - 1)));
-        frame.render_stateful_widget(
-            List::new(items).highlight_style(theme.style(StyleRole::TableRowSelected)),
-            list_area,
-            &mut st,
-        );
+        render_list(frame, app, list_area, items);
     }
-    footer(
-        frame,
-        app,
-        inner,
-        "\u{2191}\u{2193} move · Enter open · Esc close",
-    );
 }
 
 fn render_segments(frame: &mut Frame, app: &App, inner: Rect) {
     let theme = app.theme();
     let s = app.log_browser.as_ref().unwrap();
-    // Reserve the footer row, plus a notice row above it when one is pending
-    // (e.g. opening a segment that turned out to be gone).
-    let notice_h = u16::from(s.notice.is_some());
-    let list_area = Rect::new(
-        inner.x,
-        inner.y,
-        inner.width,
-        inner.height.saturating_sub(1 + notice_h),
+    let list_area = list_chrome(
+        frame,
+        app,
+        inner,
+        "\u{2191}\u{2193} move · / filter · Enter view · Esc back",
     );
-    if notice_h == 1 && inner.height >= 2 {
-        notice_line(frame, app, inner, inner.height - 2);
-    }
 
     if s.segments.is_empty() {
         frame.render_widget(
@@ -160,29 +192,18 @@ fn render_segments(frame: &mut Frame, app: &App, inner: Rect) {
     } else {
         let legend = theme.style(StyleRole::PopupLegend);
         let items: Vec<ListItem> = s
-            .segments
-            .iter()
-            .map(|seg| {
+            .list_view()
+            .into_iter()
+            .map(|i| {
+                let seg = &s.segments[i];
                 ListItem::new(Line::from(vec![
                     Span::styled(format!(" {:>9}  ", human_bytes(seg.bytes)), legend),
                     Span::styled(seg.file_name.clone(), theme.style(StyleRole::TableRow)),
                 ]))
             })
             .collect();
-        let mut st = ListState::default();
-        st.select(Some(s.seg_sel.min(s.segments.len() - 1)));
-        frame.render_stateful_widget(
-            List::new(items).highlight_style(theme.style(StyleRole::TableRowSelected)),
-            list_area,
-            &mut st,
-        );
+        render_list(frame, app, list_area, items);
     }
-    footer(
-        frame,
-        app,
-        inner,
-        "\u{2191}\u{2193} move · Enter view · Esc back",
-    );
 }
 
 fn render_viewer(frame: &mut Frame, app: &App, inner: Rect) {

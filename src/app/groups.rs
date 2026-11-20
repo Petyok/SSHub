@@ -23,45 +23,119 @@ impl App {
         Ok(())
     }
 
+    /// Group manager rows as indexes into `self.groups`: all in tree order, or
+    /// the fuzzy matches of `group_manage_query`, best first.
+    pub fn group_manage_view(&self) -> Vec<usize> {
+        if self.group_manage_query.is_empty() {
+            return (0..self.groups.len()).collect();
+        }
+        let names: Vec<Vec<String>> = self.groups.iter().map(|g| vec![g.name.clone()]).collect();
+        crate::search::fuzzy_indices(&self.group_manage_query, &names)
+    }
+
+    /// Keep the selection on a visible row (the first one when it is hidden).
     pub(crate) fn clamp_group_manage_selected(&mut self) {
-        if !self.groups.is_empty() {
-            self.group_manage_selected = self.group_manage_selected.min(self.groups.len() - 1);
-        } else {
-            self.group_manage_selected = 0;
+        let view = self.group_manage_view();
+        if !view.contains(&self.group_manage_selected) {
+            self.group_manage_selected = if self.group_manage_query.is_empty() {
+                self.group_manage_selected
+                    .min(self.groups.len().saturating_sub(1))
+            } else {
+                view.first().copied().unwrap_or(0)
+            };
         }
     }
 
     pub(crate) fn move_group_manage_selection(&mut self, delta: isize) {
-        if self.groups.is_empty() {
+        let view = self.group_manage_view();
+        if view.is_empty() {
             return;
         }
-        let new = self.group_manage_selected as isize + delta;
-        self.group_manage_selected = new.clamp(0, self.groups.len() as isize - 1) as usize;
+        let pos = view
+            .iter()
+            .position(|&i| i == self.group_manage_selected)
+            .unwrap_or(0) as isize;
+        let new = (pos + delta).clamp(0, view.len() as isize - 1) as usize;
+        self.group_manage_selected = view[new];
+    }
+
+    /// The highlighted group, only when it is visible under the filter.
+    fn group_manage_current(&mut self) -> Option<HostGroup> {
+        let group = self
+            .group_manage_view()
+            .contains(&self.group_manage_selected)
+            .then(|| self.groups.get(self.group_manage_selected).cloned())
+            .flatten();
+        if group.is_none() {
+            self.group_notice = Some("No group selected".into());
+        }
+        group
+    }
+
+    fn close_group_manage(&mut self) {
+        self.group_manage_query.clear();
+        self.group_manage_filtering = false;
+        self.mode = AppMode::Normal;
+    }
+
+    /// Typing the `/` filter: letters are text, arrows move, Enter keeps the
+    /// filter, Esc clears it.
+    fn handle_key_group_manage_filter(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.group_manage_query.clear();
+                self.group_manage_filtering = false;
+            }
+            KeyCode::Enter => self.group_manage_filtering = false,
+            KeyCode::Up => self.move_group_manage_selection(-1),
+            KeyCode::Down => self.move_group_manage_selection(1),
+            KeyCode::Backspace => {
+                self.group_manage_query.pop();
+                self.group_manage_selected = self.group_manage_view().first().copied().unwrap_or(0);
+            }
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                self.group_manage_query.push(c);
+                self.group_manage_selected = self.group_manage_view().first().copied().unwrap_or(0);
+            }
+            _ => {}
+        }
     }
 
     pub(crate) fn handle_key_group_manage(&mut self, key: KeyEvent) -> Result<()> {
         self.group_notice = None;
+        if self.group_manage_filtering {
+            self.handle_key_group_manage_filter(key);
+            return Ok(());
+        }
 
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
+            _ if self.is_action(KeyAction::Cancel, &key) && !self.group_manage_query.is_empty() => {
+                self.group_manage_query.clear();
+            }
             _ if self.is_action(KeyAction::Cancel, &key)
                 || self.is_action(KeyAction::TabHosts, &key) =>
             {
-                self.mode = AppMode::Normal;
+                self.close_group_manage();
             }
+            _ if self.is_action(KeyAction::Search, &key) => self.group_manage_filtering = true,
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_group_manage_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_group_manage_selection(-1),
             _ if self.is_action(KeyAction::AddHost, &key) => self.enter_group_form(None)?,
             _ if self.is_action(KeyAction::Edit, &key) => {
-                if let Some(group) = self.groups.get(self.group_manage_selected).cloned() {
+                if let Some(group) = self.group_manage_current() {
                     self.enter_group_form(Some(&group))?;
                 }
             }
             _ if self.is_action(KeyAction::Delete, &key) => {
-                if let Some(group) = self.groups.get(self.group_manage_selected).cloned() {
+                if let Some(group) = self.group_manage_current() {
                     self.pending_delete = Some(PendingDelete::Group {
                         id: group.id,
-                        name: group.name.clone(),
+                        name: group.name,
+                        return_to_manage: true,
                     });
                     self.mode = AppMode::ConfirmDelete;
                 }
@@ -96,6 +170,7 @@ impl App {
                 parent_id: group.parent_id,
                 field: GroupFormField::Name,
                 return_to_manage,
+                dirty: false,
             }
         } else {
             GroupFormEdit {
@@ -111,42 +186,71 @@ impl App {
                 parent_id: None,
                 field: GroupFormField::Name,
                 return_to_manage,
+                dirty: false,
             }
         };
         self.group_form = Some(form);
+        self.group_notice = None;
         self.mode = AppMode::GroupForm;
         Ok(())
     }
 
-    pub(crate) fn rename_selected_host_group(&mut self) -> Result<()> {
+    /// The user group under the cursor (a host's group or a group header),
+    /// or a notice explaining why there is none. `verb` names the action.
+    fn selected_user_group(&mut self, verb: &str) -> Result<Option<HostGroup>> {
         let Some(group_id) = self.selected_host_group_id() else {
-            self.host_notice = Some("Select a host in a group to rename it".into());
-            return Ok(());
+            self.host_notice = Some(format!("Select a host in a group to {verb} it"));
+            return Ok(None);
         };
-        let Some(group) = self.groups.iter().find(|g| g.id == group_id).cloned() else {
+        if self
+            .favorites_group
+            .as_ref()
+            .is_some_and(|g| g.id == group_id)
+        {
+            let fav = self.config.keybinds.primary(KeyAction::Favorite);
+            self.host_notice = Some(format!(
+                "Favorites is built in and cannot be {verb}d; toggle hosts with {fav}"
+            ));
+            return Ok(None);
+        }
+        let group = self.groups.iter().find(|g| g.id == group_id).cloned();
+        if group.is_none() {
             self.reload_hosts()?;
-            return Ok(());
-        };
-        self.enter_group_form(Some(&group))
+            self.host_notice = Some("That group no longer exists".into());
+        }
+        Ok(group)
+    }
+
+    pub(crate) fn rename_selected_host_group(&mut self) -> Result<()> {
+        match self.selected_user_group("rename")? {
+            Some(group) => self.enter_group_form(Some(&group)),
+            None => Ok(()),
+        }
     }
 
     pub(crate) fn delete_selected_host_group(&mut self) -> Result<()> {
-        let Some(group_id) = self.selected_host_group_id() else {
-            self.host_notice = Some("Select a host in a group to delete it".into());
-            return Ok(());
-        };
-        let name = self
-            .groups
-            .iter()
-            .find(|g| g.id == group_id)
-            .map(|g| g.name.clone())
-            .unwrap_or_else(|| "group".into());
-        self.pending_delete = Some(PendingDelete::Group { id: group_id, name });
-        self.mode = AppMode::ConfirmDelete;
+        if let Some(group) = self.selected_user_group("delete")? {
+            self.pending_delete = Some(PendingDelete::Group {
+                id: group.id,
+                name: group.name,
+                return_to_manage: false,
+            });
+            self.mode = AppMode::ConfirmDelete;
+        }
         Ok(())
     }
 
+    /// Esc: ask before throwing away edits, like every other form.
     pub(crate) fn cancel_group_form(&mut self) -> Result<()> {
+        if self.group_form.as_ref().is_some_and(|f| f.dirty) {
+            self.mode = AppMode::ConfirmDiscard;
+            Ok(())
+        } else {
+            self.discard_group_form()
+        }
+    }
+
+    pub(crate) fn discard_group_form(&mut self) -> Result<()> {
         let return_to_manage = self.group_form.as_ref().is_some_and(|f| f.return_to_manage);
         self.group_form = None;
         if return_to_manage {
@@ -165,7 +269,7 @@ impl App {
 
         let name = form.name.trim().to_string();
         if name.is_empty() {
-            self.host_notice = Some("Group name is required".into());
+            self.group_notice = Some("Group name is required".into());
             self.group_form = Some(form);
             return Ok(());
         }
@@ -178,7 +282,7 @@ impl App {
             match form.default_port.trim().parse() {
                 Ok(p) if p > 0 => Some(p),
                 _ => {
-                    self.host_notice = Some("Default port must be a positive number".into());
+                    self.group_notice = Some("Default port must be a positive number".into());
                     self.group_form = Some(form);
                     return Ok(());
                 }
@@ -190,7 +294,7 @@ impl App {
             .as_deref()
             .and_then(super::hop_editor::proxy_jump_problem)
         {
-            self.host_notice = Some(problem);
+            self.group_notice = Some(problem);
             self.group_form = Some(form);
             return Ok(());
         }
@@ -247,19 +351,16 @@ impl App {
             // Move focus between fields.
             KeyCode::Up | KeyCode::BackTab => self.group_form_move_field(-1),
             KeyCode::Down | KeyCode::Tab => self.group_form_move_field(1),
-            // Enter: save on the name field, open the dropdown on Parent /
-            // Identity, cycle the tri-state on Transport / ForwardAgent.
+            // Enter mirrors the host form: open the dropdown on Parent /
+            // Identity, save on the last field, otherwise advance.
             KeyCode::Enter => match field {
-                Some(GroupFormField::Name) => self.save_group_form()?,
                 Some(GroupFormField::Parent) | Some(GroupFormField::Identity) => {
                     if let Some(kind) = field {
                         self.open_group_field_picker(kind);
                     }
                 }
-                Some(GroupFormField::Transport) | Some(GroupFormField::ForwardAgent) => {
-                    self.group_form_cycle_tristate();
-                }
-                _ => {}
+                Some(f) if Some(&f) == GroupFormField::ALL.last() => self.save_group_form()?,
+                _ => self.group_form_move_field(1),
             },
             // Space opens the dropdown on picker fields, cycles tri-states.
             KeyCode::Char(' ') if field.is_some_and(|f| !f.is_text()) => match field {
@@ -305,6 +406,15 @@ impl App {
         let cur = all.iter().position(|f| *f == form.field).unwrap_or(0) as i32;
         let next = (cur + delta).rem_euclid(all.len() as i32) as usize;
         form.field = all[next];
+        // The cursor indexes the focused field; carried over from a longer
+        // field it points past the end and Backspace panics.
+        form.cursor = match form.field {
+            GroupFormField::Name => text_input::char_len(&form.name),
+            GroupFormField::Username => text_input::char_len(&form.default_username),
+            GroupFormField::Port => text_input::char_len(&form.default_port),
+            GroupFormField::ProxyJump => text_input::char_len(&form.default_proxy_jump),
+            _ => 0,
+        };
     }
 
     /// Open the dropdown list picker for the group form's Parent or Identity
@@ -336,17 +446,30 @@ impl App {
             // Text and tri-state fields never open the picker (guarded above).
             _ => 0,
         };
-        self.group_field_picker = Some(GroupFieldPicker { kind, selected });
+        // The query starts empty, so the full-list index is the visible one.
+        self.group_field_picker = Some(GroupFieldPicker {
+            kind,
+            selected,
+            query: String::new(),
+        });
         self.mode = AppMode::GroupFieldPicker;
     }
 
-    /// Rows shown in the group-form dropdown: the "(none)" slot first, then
-    /// `(value id, label)` for each option.
+    /// Rows shown in the group-form dropdown: the "(none)" slot first (always
+    /// shown), then `(value id, label)` for each option matching the picker's
+    /// fuzzy query, best match first.
     pub fn group_field_picker_options(&self) -> (String, Vec<(i64, String)>) {
         let Some(picker) = self.group_field_picker.as_ref() else {
             return ("(none)".into(), Vec::new());
         };
-        match picker.kind {
+        let filter = |opts: Vec<(i64, String)>| -> Vec<(i64, String)> {
+            let names: Vec<Vec<String>> = opts.iter().map(|(_, n)| vec![n.clone()]).collect();
+            crate::search::fuzzy_indices(&picker.query, &names)
+                .into_iter()
+                .map(|i| opts[i].clone())
+                .collect()
+        };
+        let opts: Vec<(i64, String)> = match picker.kind {
             GroupFormField::Parent => {
                 let self_id = self.group_form.as_ref().and_then(|f| f.id);
                 let opts = self
@@ -359,19 +482,17 @@ impl App {
                             .map(|g| (id, g.name.clone()))
                     })
                     .collect();
-                ("(top level)".into(), opts)
+                return ("(top level)".into(), filter(opts));
             }
-            GroupFormField::Identity => {
-                let opts = self
-                    .identities
-                    .iter()
-                    .map(|i| (i.id, i.name.clone()))
-                    .collect();
-                ("(none)".into(), opts)
-            }
+            GroupFormField::Identity => self
+                .identities
+                .iter()
+                .map(|i| (i.id, i.name.clone()))
+                .collect(),
             // Text and tri-state fields never open the picker (guarded above).
-            _ => ("(none)".into(), Vec::new()),
-        }
+            _ => Vec::new(),
+        };
+        ("(none)".into(), filter(opts))
     }
 
     pub(crate) fn handle_key_group_field_picker(&mut self, key: KeyEvent) -> Result<()> {
@@ -379,15 +500,24 @@ impl App {
         let len = options.len() + 1; // +1 for the none slot
         match key.code {
             KeyCode::Esc => self.close_group_field_picker(),
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down => {
                 if let Some(p) = self.group_field_picker.as_mut() {
                     p.selected = (p.selected + 1) % len;
                 }
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
                 if let Some(p) = self.group_field_picker.as_mut() {
                     p.selected = (p.selected + len - 1) % len;
                 }
+            }
+            KeyCode::Backspace => self.group_field_picker_edit_query(|q| {
+                q.pop();
+            }),
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                self.group_field_picker_edit_query(|q| q.push(c));
             }
             KeyCode::Enter => {
                 let (kind, sel) = self
@@ -401,6 +531,7 @@ impl App {
                     options.get(sel - 1).map(|(id, _)| *id)
                 };
                 if let Some(form) = self.group_form.as_mut() {
+                    form.dirty = true;
                     match kind {
                         GroupFormField::Parent => form.parent_id = new_id,
                         GroupFormField::Identity => form.default_identity_id = new_id,
@@ -413,6 +544,20 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// Edit the filter and highlight the best match (row 1), or the "(none)"
+    /// slot when the query is empty or nothing matches.
+    fn group_field_picker_edit_query(&mut self, edit: impl FnOnce(&mut String)) {
+        let Some(p) = self.group_field_picker.as_mut() else {
+            return;
+        };
+        edit(&mut p.query);
+        let has_query = !p.query.is_empty();
+        let matches = self.group_field_picker_options().1.len();
+        if let Some(p) = self.group_field_picker.as_mut() {
+            p.selected = usize::from(has_query && matches > 0);
+        }
     }
 
     fn close_group_field_picker(&mut self) {
@@ -463,6 +608,7 @@ impl App {
             _ => return,
         };
         form.cursor = text_input::insert_at(target, form.cursor, ch);
+        form.dirty = true;
     }
 
     pub(crate) fn group_form_backspace(&mut self) {
@@ -477,7 +623,9 @@ impl App {
             GroupFormField::ProxyJump => &mut form.default_proxy_jump,
             _ => return,
         };
+        let len_before = target.len();
         form.cursor = text_input::backspace_at(target, form.cursor);
+        form.dirty |= target.len() != len_before;
     }
 
     fn group_form_cursor_key(&mut self, code: KeyCode) {
@@ -490,8 +638,10 @@ impl App {
                 GroupFormField::ProxyJump => &mut form.default_proxy_jump,
                 _ => return,
             };
+            let len_before = target.len();
             let mut cursor = form.cursor;
             text_input::handle_cursor_key(code, target, &mut cursor);
+            form.dirty |= target.len() != len_before;
             form.cursor = cursor;
         }
     }
@@ -501,6 +651,7 @@ impl App {
         let Some(form) = self.group_form.as_mut() else {
             return;
         };
+        form.dirty = true;
         match form.field {
             GroupFormField::Transport => {
                 form.default_transport = match form.default_transport {

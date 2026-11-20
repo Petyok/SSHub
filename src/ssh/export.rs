@@ -149,13 +149,14 @@ fn render_host_block(
             if cmd.contains(|c: char| c.is_control()) {
                 anyhow::bail!("remote command contains control characters");
             }
-            lines.push(format!(
-                "    {}",
-                crate::ssh::host::format_ssh_config_option(
-                    "RemoteCommand",
-                    &cmd.replace('%', "%%")
-                )
-            ));
+            // ssh takes the rest of the line verbatim for RemoteCommand, with no
+            // quote processing, so the command is written as is (quotes would
+            // reach the remote shell). A leading `=`, even after whitespace,
+            // would be read as the keyword separator and dropped.
+            if cmd.trim_start().starts_with('=') {
+                anyhow::bail!("remote command starts with '='");
+            }
+            lines.push(format!("    RemoteCommand {}", cmd.replace('%', "%%")));
         }
     }
 
@@ -191,6 +192,7 @@ fn backup_path(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ssh::HostResolver;
     use crate::store::{LauncherStore, NewHost};
 
     #[test]
@@ -210,9 +212,9 @@ mod tests {
 
         store
             .create_host(&NewHost {
-                name: "dev-partners".into(),
+                name: "dev-portal".into(),
                 label: Some("Dev Partners".into()),
-                address: "10.100.19.123".into(),
+                address: "198.51.100.123".into(),
                 port: Some(22),
                 group_id: None,
                 identity_id: Some(default_id),
@@ -223,8 +225,8 @@ mod tests {
             .unwrap();
 
         let content = render_launcher_hosts(&store).unwrap();
-        assert!(content.contains("Host dev-partners"));
-        assert!(content.contains("HostName 10.100.19.123"));
+        assert!(content.contains("Host dev-portal"));
+        assert!(content.contains("HostName 198.51.100.123"));
         assert!(content.contains("User admin"));
         assert!(content.contains("IdentityFile /home/user/.ssh/id_ed25519"));
         assert!(!content.contains("Port 22"));
@@ -274,7 +276,61 @@ mod tests {
             .unwrap();
 
         let content = render_launcher_hosts(&store).unwrap();
-        assert!(content.contains("RemoteCommand=\"tmux attach\""));
+        assert!(content.contains("\n    RemoteCommand tmux attach\n"));
+    }
+
+    /// ssh reads everything after `RemoteCommand` verbatim (no quote
+    /// processing), so the exported command must come back from `ssh -G`
+    /// exactly as stored.
+    #[test]
+    fn exported_remote_command_round_trips_through_real_ssh() {
+        if std::process::Command::new("ssh")
+            .arg("-V")
+            .output()
+            .is_err()
+        {
+            crate::test_support::tool_missing("ssh");
+            return;
+        }
+        let commands = [
+            "tmux attach",
+            "cd /srv && exec bash",
+            "echo \"a b\" # not a comment",
+            "echo 50%",
+            "FOO=bar run",
+        ];
+        for (n, cmd) in commands.into_iter().enumerate() {
+            let store = LauncherStore::open_in_memory().unwrap();
+            let name = format!("rc{n}");
+            store
+                .create_host(&NewHost {
+                    name: name.clone(),
+                    address: "10.0.0.1".into(),
+                    port: Some(22),
+                    remote_command: Some(cmd.into()),
+                    ..Default::default()
+                })
+                .unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("exported.conf");
+            export_launcher_hosts_to(&store, &path).unwrap();
+
+            let host = crate::ssh::SshConfigResolver::with_config_path(&path)
+                .resolve_host(&name)
+                .unwrap();
+            assert_eq!(host.remote_command.as_deref(), Some(cmd));
+        }
+    }
+
+    #[test]
+    fn export_refuses_a_remote_command_starting_with_equals() {
+        let store = LauncherStore::open_in_memory().unwrap();
+        let mut h = launcher_host(&store, "eq", "10.0.0.1");
+        for cmd in ["=x", " =x", "\t=x"] {
+            h.remote_command = Some(cmd.into());
+            let r = crate::store::ResolvedConnection::from_stored(&h);
+            assert!(render_host_block(&h, &r).is_err(), "{cmd:?}");
+        }
     }
 
     fn launcher_host(

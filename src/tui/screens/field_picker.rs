@@ -11,52 +11,63 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
         return;
     };
 
-    let (title, mut rows): (&str, Vec<String>) = match picker.kind {
+    // `visible` maps each drawn row to its full-list index (see
+    // `App::field_picker_rows`); `picker.selected` indexes the drawn rows.
+    let visible = app.field_picker_rows();
+    let (title, rows, create_index): (&str, Vec<String>, Option<usize>) = match picker.kind {
         PickerKind::Group => {
             // Checkbox list: each group shows [x]/[ ] for its membership in the
             // form's selected set; the final row creates a new group inline.
             let selected = app.host_form.as_ref().map(|f| &f.group_ids);
-            let mut rows: Vec<String> = app
-                .groups
+            let rows = visible
                 .iter()
-                .map(|g| {
-                    let checked = selected.is_some_and(|s| s.contains(&g.id));
-                    let mark = if checked { "[x] " } else { "[ ] " };
-                    format!("{mark}{}", g.name)
+                .map(|&i| match app.groups.get(i) {
+                    Some(g) => {
+                        let checked = selected.is_some_and(|s| s.contains(&g.id));
+                        let mark = if checked { "[x] " } else { "[ ] " };
+                        format!("{mark}{}", g.name)
+                    }
+                    None => "+ New group…".to_string(),
                 })
-                .collect();
-            rows.push("+ New group…".to_string());
-            ("Select groups (Space toggles)", rows)
+                .collect::<Vec<_>>();
+            let create = Some(rows.len() - 1);
+            ("Select groups (Space toggles)", rows, create)
         }
         PickerKind::Identity => {
             // Row 0 restores inheritance (host field cleared to None).
-            let mut rows = vec!["(inherit from group)".to_string()];
-            rows.extend(app.identities.iter().map(|i| i.name.clone()));
-            ("Select identity", rows)
+            let rows = visible
+                .iter()
+                .map(
+                    |&i| match i.checked_sub(1).and_then(|i| app.identities.get(i)) {
+                        Some(id) => id.name.clone(),
+                        None => "(inherit from group)".to_string(),
+                    },
+                )
+                .collect();
+            ("Select identity", rows, None)
         }
     };
-    if rows.is_empty() {
-        rows.push("(no identities)".to_string());
-    }
-
-    // The last Group row is the create affordance.
-    let create_index = if picker.kind == PickerKind::Group {
-        Some(rows.len() - 1)
+    let title = if picker.query.is_empty() {
+        format!(" {title} ")
     } else {
-        None
+        format!(" {title}  /{} ", picker.query)
     };
+    // Only the pinned special row is left: say so on a non-selectable line.
+    let empty_line = (!picker.query.is_empty() && rows.len() == 1)
+        .then(|| format!("no match for \"{}\"", picker.query));
 
     let area = frame.area();
     let inner_w = rows
         .iter()
+        .chain(empty_line.as_ref())
         .map(|r| r.chars().count())
         .max()
         .unwrap_or(10)
-        .max(title.len())
+        .max(title.chars().count())
         .max(20) as u16;
     let popup_w = (inner_w + 4).min(area.width.saturating_sub(2));
-    // rows + optional inline input line + borders.
-    let extra = if picker.creating.is_some() { 1 } else { 0 };
+    // rows + optional empty-state / inline input lines + borders.
+    let extra = u16::from(picker.creating.is_some()) + u16::from(empty_line.is_some());
     let popup_h = (rows.len() as u16 + 2 + extra).min(area.height.saturating_sub(2));
     let x = area.x + (area.width.saturating_sub(popup_w)) / 2;
     let y = area.y + (area.height.saturating_sub(popup_h)) / 2;
@@ -75,10 +86,7 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
     frame.render_widget(
         Block::default()
             .borders(Borders::ALL)
-            .title(Span::styled(
-                format!(" {title} "),
-                theme.style(StyleRole::PopupTitle),
-            ))
+            .title(Span::styled(title, theme.style(StyleRole::PopupTitle)))
             .border_style(crate::tui::popup_border_style(theme, popup)),
         popup,
     );
@@ -128,6 +136,14 @@ pub fn render_field_picker(frame: &mut Frame, app: &App) {
             ry,
             crate::tui::text::ellipsize(label, avail.saturating_sub(2)),
             style,
+        );
+    }
+    if let Some(line) = empty_line.as_ref().filter(|_| rows.len() < max_rows) {
+        buf.set_string(
+            row_x + 2,
+            popup.y + 1 + rows.len() as u16,
+            crate::tui::text::ellipsize(line, popup.width.saturating_sub(5) as usize),
+            theme.style(StyleRole::PickerRow),
         );
     }
 

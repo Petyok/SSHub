@@ -142,8 +142,8 @@ pub(crate) fn session_tabs_switch_detach_and_focus() {
     assert_eq!(app.mode, AppMode::Normal);
 
     app.handle_key(KeyEvent::new(
-        KeyCode::Char('s'),
-        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        KeyCode::Char('S'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
     ))
     .unwrap();
     assert!(matches!(app.mode, AppMode::Session | AppMode::Connecting));
@@ -801,13 +801,13 @@ pub(crate) fn session_strip_binds_work_on_every_dashboard_tab() {
         app.active_tab = tab as usize;
 
         app.handle_key(KeyEvent::new(
-            KeyCode::Char('s'),
-            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            KeyCode::Char('S'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
         ))
         .unwrap();
         assert!(
             matches!(app.mode, AppMode::Session | AppMode::Connecting),
-            "tab {tab}: resume (Ctrl+Shift+S) must focus the session"
+            "tab {tab}: resume (Alt+Shift+S) must focus the session"
         );
 
         app.mode = AppMode::Normal;
@@ -844,7 +844,7 @@ pub(crate) fn session_strip_cycle_and_sftp_from_non_hosts_tab() {
         .push(crate::session::Session::spawn(cfg, (24, 80), None).unwrap());
     app.active_session = Some(0);
     app.active_tab = 2; // tunnels
-                        // Pre-seed a browser so Ctrl+Shift+F only switches tabs (no worker thread /
+                        // Pre-seed a browser so Alt+Shift+F only switches tabs (no worker thread /
                         // outbound connect that races other tests on SSHUB_CONFIG_DIR).
     app.sftp = Some(crate::sftp::model::SftpState::new("/srv", "/home/me"));
 
@@ -855,17 +855,14 @@ pub(crate) fn session_strip_cycle_and_sftp_from_non_hosts_tab() {
     assert_eq!(app.active_tab, 2);
 
     app.handle_key(KeyEvent::new(
-        KeyCode::Char('f'),
-        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        KeyCode::Char('F'),
+        KeyModifiers::ALT | KeyModifiers::SHIFT,
     ))
     .unwrap();
-    assert_eq!(
-        app.active_tab, 1,
-        "Ctrl+Shift+F must switch to the SFTP tab"
-    );
+    assert_eq!(app.active_tab, 1, "Alt+Shift+F must switch to the SFTP tab");
     assert!(
         app.sftp.is_some(),
-        "Ctrl+Shift+F must keep the existing SFTP browser"
+        "Alt+Shift+F must keep the existing SFTP browser"
     );
     assert_eq!(app.mode, AppMode::Normal);
 }
@@ -1178,4 +1175,34 @@ pub(crate) fn sharing_logs_in_with_the_hosts_stored_password_after_the_session_d
     app.sessions[0].config.host_name = "10.0.0.9".into();
     assert!(app.stored_secret_for_session(0).is_none());
     app.shutdown_all();
+}
+
+/// Ctrl+X in the session switcher closes the selected (dead) tab and keeps the
+/// switcher open on the remaining ones.
+#[test]
+pub(crate) fn session_switcher_ctrl_x_closes_the_selected_tab() {
+    use crate::app::SessionPickerPurpose::SwitchSession;
+    use crate::session::SessionPhase;
+    use std::time::Instant;
+
+    let mut app = app_with_sessions(&["aaa", "bbb", "ccc"]);
+    app.sessions[1].phase = SessionPhase::Exited {
+        status: "exit 1".into(),
+        at: Instant::now(),
+    };
+    app.active_session = Some(2);
+    app.open_session_picker(SwitchSession);
+    app.session_picker.as_mut().unwrap().selected = 1;
+    let ctrl_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
+    app.handle_key(ctrl_x).unwrap();
+
+    let names: Vec<&str> = app
+        .sessions
+        .iter()
+        .map(|s| s.display_name.as_str())
+        .collect();
+    assert_eq!(names, ["aaa", "ccc"]);
+    assert_eq!(app.active_session, Some(1), "still points at ccc");
+    assert_eq!(app.mode, AppMode::SessionPicker);
+    assert_eq!(app.session_picker_rows().len(), 2);
 }

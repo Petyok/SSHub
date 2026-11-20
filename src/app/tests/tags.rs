@@ -190,3 +190,65 @@ pub(crate) fn hash_enters_tag_filter_and_enter_applies() {
     assert!(app.tag_filters.is_empty());
     assert_eq!(app.filtered_indices.len(), 2);
 }
+
+#[test]
+pub(crate) fn tag_popup_keeps_slash_filter_and_own_query() {
+    let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
+    legacy_meta(&mut app.hosts[0]).tags = vec!["prod".into()];
+    legacy_meta(&mut app.hosts[1]).tags = vec!["staging".into()];
+    app.search_query = "web".into();
+    app.rebuild_filter();
+    assert_eq!(app.filtered_indices, vec![0]);
+
+    app.handle_key(key_char('#')).unwrap();
+    app.handle_key(key_char('s')).unwrap();
+    assert_eq!(
+        app.search_query, "web",
+        "typing in # must not touch the / filter"
+    );
+    assert_eq!(app.filtered_indices, vec![0]);
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+
+    assert_eq!(app.mode, AppMode::Normal);
+    assert_eq!(app.search_query, "web");
+    assert_eq!(app.filtered_indices, vec![0]);
+}
+
+#[test]
+pub(crate) fn tag_popup_accepts_shift_letters() {
+    let mut app = test_app(vec![("web", host("web"))]);
+    legacy_meta(&mut app.hosts[0]).tags = vec!["Prod".into()];
+    app.rebuild_filter();
+
+    app.handle_key(key_char('#')).unwrap();
+    app.handle_key(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT))
+        .unwrap();
+    assert_eq!(app.tag_filter_query, "P");
+}
+
+#[test]
+pub(crate) fn paste_reaches_query_pickers_but_not_confirmations() {
+    let mut app = test_app(vec![("web", host("web"))]);
+    app.mode = AppMode::Help;
+    app.handle_paste("conn").unwrap();
+    assert_eq!(app.help_query, "conn");
+
+    app.known_hosts = Some(KnownHostsState {
+        entries: Vec::new(),
+        selected: 0,
+        query: String::new(),
+        confirming_delete: false,
+        notice: None,
+        notice_is_error: false,
+    });
+    app.mode = AppMode::KnownHosts;
+    app.handle_paste("web").unwrap();
+    assert_eq!(app.known_hosts.as_ref().unwrap().query, "web");
+
+    // A paste must not answer the delete confirmation with its first char.
+    app.known_hosts.as_mut().unwrap().confirming_delete = true;
+    app.handle_paste("yes").unwrap();
+    let state = app.known_hosts.as_ref().unwrap();
+    assert!(state.confirming_delete);
+    assert_eq!(state.query, "web");
+}

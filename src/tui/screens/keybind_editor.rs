@@ -62,6 +62,17 @@ pub fn render_keybind_editor(frame: &mut Frame, app: &App) {
         crate::tui::text::ellipsize(&query_line, content_w),
         theme.style(StyleRole::PickerQuery),
     );
+    // Row y+2 sits between the query and the list; it carries the clash warning.
+    if let Some(notice) = app.keybind_notice.as_deref() {
+        if popup.height >= 5 {
+            buf.set_string(
+                row_x,
+                popup.y + 2,
+                crate::tui::text::ellipsize(notice, content_w),
+                theme.style(StyleRole::KeybindValueCapturing),
+            );
+        }
+    }
 
     let visible = popup.height.saturating_sub(5) as usize;
     let total = actions.len();

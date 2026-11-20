@@ -107,11 +107,30 @@ impl UsePicker {
     }
 }
 
-/// `#` tag picker: feeds `tag:` terms into the filter.
+/// `#` tag picker: feeds `tag:` terms into the filter. Typing narrows the
+/// list (fuzzy, best first).
 #[derive(Clone)]
 pub struct TagPicker {
     pub items: Vec<String>,
+    pub query: String,
+    /// Index into [`TagPicker::visible`].
     pub selected: usize,
+}
+
+impl TagPicker {
+    pub fn new(items: Vec<String>) -> Self {
+        Self {
+            items,
+            query: String::new(),
+            selected: 0,
+        }
+    }
+
+    /// `items` indices that survive the query, best match first.
+    pub fn visible(&self) -> Vec<usize> {
+        let items: Vec<Vec<String>> = self.items.iter().map(|t| vec![t.clone()]).collect();
+        crate::search::fuzzy_indices(&self.query, &items)
+    }
 }
 
 /// The map model plus the cursor, lens and filter. `pos` walks along the
@@ -751,7 +770,7 @@ impl App {
             let tags = view.all_tags();
             view.picker = old.picker.clone().and_then(|mut p| {
                 p.items.retain(|t| tags.contains(t));
-                p.selected = p.selected.min(p.items.len().saturating_sub(1));
+                p.selected = p.selected.min(p.visible().len().saturating_sub(1));
                 (!p.items.is_empty()).then_some(p)
             });
             view.use_picker = old.use_picker.as_ref().and_then(|p| {
@@ -877,7 +896,7 @@ impl App {
                     if items.is_empty() {
                         self.host_notice = Some("no tags on any host".into());
                     } else {
-                        v.picker = Some(TagPicker { items, selected: 0 });
+                        v.picker = Some(TagPicker::new(items));
                     }
                 }
             }
@@ -989,10 +1008,16 @@ impl App {
         let Some(p) = v.picker.as_mut() else {
             return Ok(());
         };
+        let visible = p.visible();
+        let last = visible.len().saturating_sub(1);
         match key.code {
             KeyCode::Esc => v.picker = None,
             KeyCode::Enter => {
-                let tag = p.items[p.selected].clone();
+                let Some(&i) = visible.get(p.selected) else {
+                    self.host_notice = Some("no tag matches the typed text".into());
+                    return Ok(());
+                };
+                let tag = p.items[i].clone();
                 let mut terms = crate::map::filter::split_terms(&v.query);
                 let unquoted = format!("tag:{tag}");
                 if let Some(at) = terms.iter().position(|t| *t == unquoted) {
@@ -1004,7 +1029,22 @@ impl App {
                 v.picker = None;
                 v.apply_filter();
             }
-            _ if down => p.selected = (p.selected + 1).min(p.items.len() - 1),
+            KeyCode::Down => p.selected = (p.selected + 1).min(last),
+            KeyCode::Up => p.selected = p.selected.saturating_sub(1),
+            KeyCode::Backspace => {
+                p.query.pop();
+                p.selected = 0;
+            }
+            // Letters are query text, even ones bound to map movement.
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                p.query.push(c);
+                p.selected = 0;
+            }
+            _ if down => p.selected = (p.selected + 1).min(last),
             _ if up => p.selected = p.selected.saturating_sub(1),
             _ => {}
         }
@@ -1465,9 +1505,9 @@ impl App {
         self.map_move_row(delta);
     }
 
-    /// Bracketed paste into the map's text inputs (the host picker, the filter
-    /// line). `true` when the map took the text. Newlines and tabs become
-    /// single spaces: both inputs are one line.
+    /// Bracketed paste into the map's text inputs (the host and tag pickers,
+    /// the filter line). `true` when the map took the text. Newlines and tabs
+    /// become single spaces: every input is one line.
     pub(crate) fn map_paste(&mut self, text: &str) -> bool {
         if self.active_tab != 5 || self.mode != AppMode::Normal {
             return false;
@@ -1479,7 +1519,10 @@ impl App {
         if let Some(p) = v.use_picker.as_mut() {
             p.query.push_str(&line);
             p.selected = 0;
-        } else if v.editing && v.picker.is_none() {
+        } else if let Some(p) = v.picker.as_mut() {
+            p.query.push_str(&line);
+            p.selected = 0;
+        } else if v.editing {
             v.query.push_str(&line);
             v.apply_filter();
         } else {
@@ -1680,13 +1723,31 @@ mod tests {
         let mut app = jump_fleet();
         let v = app.map_view.as_mut().unwrap();
         v.editing = true;
-        v.picker = Some(TagPicker {
-            items: vec!["a".into()],
-            selected: 0,
-        });
+        v.picker = Some(TagPicker::new(vec!["a".into()]));
         app.reset_tab_input_state();
         let v = app.map_view.as_ref().unwrap();
         assert!(!v.editing && v.picker.is_none() && v.use_picker.is_none());
+    }
+
+    #[test]
+    fn typing_in_the_tag_picker_narrows_it() {
+        let mut app = jump_fleet();
+        app.map_view.as_mut().unwrap().picker = Some(TagPicker::new(vec![
+            "db".into(),
+            "pci".into(),
+            "prod".into(),
+        ]));
+        // Letters are query text, not map or global binds.
+        for c in "pci".chars() {
+            app.handle_key(key_char(c)).unwrap();
+        }
+        assert_eq!(app.mode, AppMode::Normal);
+        let p = app.map_view.as_ref().unwrap().picker.as_ref().unwrap();
+        assert_eq!(p.query, "pci");
+        assert_eq!(p.visible(), vec![1]);
+        app.handle_key(crate::app::tests::key(crossterm::event::KeyCode::Enter))
+            .unwrap();
+        assert_eq!(app.map_view.as_ref().unwrap().query, "tag:pci");
     }
 
     #[test]

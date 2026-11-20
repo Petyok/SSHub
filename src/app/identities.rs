@@ -127,22 +127,24 @@ impl App {
         };
         let name = identity.name.clone();
         let cert_path = identity.certificate.clone();
+        let secret = self.stored_secret(&crate::credentials::identity_key(identity.id));
+        let secret = Some(secret.as_str()).filter(|s| !s.is_empty());
         // Fresh check at action time: the cached snapshot may predate a cert
         // rotation on disk, and a stale "valid" must not bless a new file.
         let mismatch = cert_path.as_ref().is_some_and(|cert| {
-            crate::ssh::cert::check_key_match(
-                cert,
-                key_path,
-                Some(self.stored_secret(&crate::credentials::identity_key(identity.id)))
-                    .as_deref()
-                    .filter(|s| !s.is_empty()),
-            ) == crate::ssh::cert::KeyMatch::Mismatch
+            crate::ssh::cert::check_key_match(cert, key_path, secret)
+                == crate::ssh::cert::KeyMatch::Mismatch
         });
         let cert_arg = cert_path
             .as_deref()
+            .map(|p| crate::ssh::expand_tilde(&p.to_string_lossy()))
             .map(|p| p.to_string_lossy().into_owned());
-        match crate::ssh::agent::add_key_with_cert(&key_path.to_string_lossy(), cert_arg.as_deref())
-        {
+        let key_arg = crate::ssh::expand_tilde(&key_path.to_string_lossy());
+        match crate::ssh::agent::add_key_with_cert(
+            &key_arg.to_string_lossy(),
+            cert_arg.as_deref(),
+            secret,
+        ) {
             Ok(()) => {
                 self.identity_notice = Some(if mismatch {
                     format!("Added {name} to agent — certificate does not match the key!")
@@ -330,6 +332,7 @@ impl App {
 
     pub(crate) fn edit_selected_identity(&mut self) -> Result<()> {
         let Some(identity) = self.selected_identity().cloned() else {
+            self.identity_notice = Some("No identity selected.".into());
             return Ok(());
         };
         self.enter_identity_form(Some(&identity))
@@ -368,12 +371,27 @@ impl App {
             return Ok(());
         };
 
-        let name = form.name.trim();
+        // Empty name: fall back to the key file's stem, then the username.
+        let key_stem = std::path::Path::new(form.private_key.trim())
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .filter(|_| form.pasted_key.is_none());
+        let name = [
+            Some(form.name.trim().to_string()),
+            key_stem,
+            Some(form.username.trim().to_string()),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|n| !n.is_empty())
+        .unwrap_or_default();
         if name.is_empty() {
-            self.identity_notice = Some("Identity name is required".into());
+            self.identity_notice =
+                Some("Identity name is required (or set a private key path or username)".into());
             self.identity_form = Some(form);
             return Ok(());
         }
+        let name = name.as_str();
 
         let username = optional_field(&form.username);
         let private_key = if let Some(blob) = form.pasted_key.as_deref() {

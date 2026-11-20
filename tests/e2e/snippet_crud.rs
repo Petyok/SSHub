@@ -86,7 +86,7 @@ fn create_snippet_via_manager_persists() {
 }
 
 #[test]
-fn empty_name_or_command_is_rejected() {
+fn empty_command_is_rejected() {
     let file = NamedTempFile::new().unwrap();
     let mut app = app_with_store(file.path());
 

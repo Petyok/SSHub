@@ -12,6 +12,7 @@ pub fn byte_index(value: &str, char_index: usize) -> usize {
 
 /// Insert `ch` at char position `cursor`, return new cursor.
 pub fn insert_at(value: &mut String, cursor: usize, ch: char) -> usize {
+    let cursor = cursor.min(char_len(value));
     let idx = byte_index(value, cursor);
     value.insert(idx, ch);
     cursor + 1
@@ -19,6 +20,7 @@ pub fn insert_at(value: &mut String, cursor: usize, ch: char) -> usize {
 
 /// Delete char before `cursor`, return new cursor.
 pub fn backspace_at(value: &mut String, cursor: usize) -> usize {
+    let cursor = cursor.min(char_len(value));
     if cursor == 0 {
         return 0;
     }
@@ -130,6 +132,17 @@ pub fn with_cursor(value: &str, cursor: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn out_of_range_cursor_is_clamped_not_panicking() {
+        let mut value = "ab".to_string();
+        assert_eq!(backspace_at(&mut value, 9), 1);
+        assert_eq!(value, "a");
+        assert_eq!(insert_at(&mut value, 9, 'c'), 2);
+        assert_eq!(value, "ac");
+        let mut empty = String::new();
+        assert_eq!(backspace_at(&mut empty, 5), 0);
+    }
 
     #[test]
     fn insert_handles_multibyte_at_start_middle_and_end() {

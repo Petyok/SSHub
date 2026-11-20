@@ -250,14 +250,13 @@ impl App {
         }
 
         let address = form.address.trim();
-        let name = form.name.trim();
+        // No alias typed: the host is called by its address.
+        let name = match form.name.trim() {
+            "" => address,
+            n => n,
+        };
         if address.is_empty() {
             self.host_notice = Some("Address is required".into());
-            self.host_form = Some(form);
-            return Ok(());
-        }
-        if name.is_empty() {
-            self.host_notice = Some("Name (alias) is required".into());
             self.host_form = Some(form);
             return Ok(());
         }
@@ -424,10 +423,10 @@ impl App {
             // Single-step model: type straight into the active field.
             // Enter/Tab/Down advance; Enter on the LAST field saves the form
             // (a modifier-free save path; F2/Ctrl+S always work).
-            KeyCode::Enter if field == HostFormField::Group => {
+            KeyCode::Enter | KeyCode::Char(' ') if field == HostFormField::Group => {
                 self.open_field_picker(PickerKind::Group)
             }
-            KeyCode::Enter if field == HostFormField::Identity => {
+            KeyCode::Enter | KeyCode::Char(' ') if field == HostFormField::Identity => {
                 self.open_field_picker(PickerKind::Identity)
             }
             KeyCode::Enter if field == HostFormField::OsIcon => self.save_host_form()?,

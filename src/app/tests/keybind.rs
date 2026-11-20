@@ -349,3 +349,30 @@ pub(crate) fn upgrade_strips_help_shift_h_so_known_hosts_opens() {
         assert!(app.known_hosts.is_some());
     });
 }
+
+/// A captured key that another action already uses is kept but named, not
+/// accepted silently.
+#[test]
+pub(crate) fn keybind_editor_warns_about_a_shared_key() {
+    let dir = tempfile::tempdir().unwrap();
+    crate::config::with_test_config_dir(dir.path(), || {
+        let mut app = test_app(vec![("web", host("web"))]);
+        app.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL))
+            .unwrap();
+        let row = app
+            .filtered_keybind_actions()
+            .iter()
+            .position(|a| *a == KeyAction::Delete)
+            .unwrap();
+        app.keybind_editor.as_mut().unwrap().selected = row;
+        app.handle_key(key(KeyCode::Enter)).unwrap();
+        app.handle_key(key_char('a')).unwrap();
+
+        assert_eq!(app.config.keybinds.delete, vec!["a".to_string()]);
+        let notice = app.keybind_notice.clone().unwrap_or_default();
+        assert!(notice.contains("Add host"), "{notice}");
+        // The next key clears the warning.
+        app.handle_key(key(KeyCode::Down)).unwrap();
+        assert!(app.keybind_notice.is_none());
+    });
+}

@@ -774,17 +774,17 @@ fn draw_tag_picker(
     p: &crate::app::network_map::TagPicker,
     st: &Styles,
 ) {
-    let rows = p
-        .items
+    let visible = p.visible();
+    let rows = visible
         .len()
-        .min(inner.height.saturating_sub(4) as usize)
+        .min(inner.height.saturating_sub(5) as usize)
         .max(1);
     let w = 36.min(inner.width.saturating_sub(2));
     let area = Rect::new(
         inner.x + (inner.width - w) / 2,
         inner.y + 1,
         w,
-        rows as u16 + 2,
+        rows as u16 + 3,
     );
     for y in area.y..area.y + area.height {
         for x in area.x..area.x + area.width {
@@ -792,21 +792,41 @@ fn draw_tag_picker(
         }
     }
     let body = panel(buf, area, "tag filter", st.accent, st.bright);
+    let max_x = body.x + body.width;
+    put(
+        buf,
+        body.x,
+        body.y,
+        &format!(" \u{203a} {}\u{258f}", p.query),
+        st.text,
+        max_x,
+    );
+    if visible.is_empty() {
+        put(
+            buf,
+            body.x,
+            body.y + 1,
+            "   no matching tags",
+            st.dim,
+            max_x,
+        );
+        return;
+    }
     let first = p.selected.saturating_sub(rows - 1);
-    for (i, tag) in p.items.iter().skip(first).take(rows).enumerate() {
+    for (i, &t) in visible.iter().skip(first).take(rows).enumerate() {
         let style = if first + i == p.selected {
             st.selected
         } else {
             st.text
         };
-        let text = format!(" #{tag}");
+        let text = format!(" #{}", p.items[t]);
         put(
             buf,
             body.x,
-            body.y + i as u16,
+            body.y + 1 + i as u16,
             &format!("{text:<w$}", w = body.width as usize),
             style,
-            body.x + body.width,
+            max_x,
         );
     }
 }

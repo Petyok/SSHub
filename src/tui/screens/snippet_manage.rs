@@ -56,11 +56,17 @@ pub fn render_snippet_manage_popup(frame: &mut Frame, app: &App) {
             )),
             list_area,
         );
+    } else if app.snippet_manage_view().is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled("No snippets match the filter.", legend)),
+            list_area,
+        );
     } else {
-        let items: Vec<ListItem> = app
-            .snippets
+        let view = app.snippet_manage_view();
+        let items: Vec<ListItem> = view
             .iter()
-            .map(|snippet| {
+            .map(|&i| {
+                let snippet = &app.snippets[i];
                 let tags = if snippet.tags.is_empty() {
                     String::new()
                 } else {
@@ -78,9 +84,7 @@ pub fn render_snippet_manage_popup(frame: &mut Frame, app: &App) {
             .collect();
 
         let mut state = ListState::default();
-        state.select(Some(
-            app.snippet_manage_selected.min(app.snippets.len() - 1),
-        ));
+        state.select(view.iter().position(|&i| i == app.snippet_manage_selected));
         let list = List::new(items).highlight_style(theme.style(StyleRole::TableRowSelected));
         frame.render_stateful_widget(list, list_area, &mut state);
     }
@@ -97,11 +101,16 @@ pub fn render_snippet_manage_popup(frame: &mut Frame, app: &App) {
     }
 
     let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+    let query = &app.snippet_manage_query;
+    let hint = if app.snippet_manage_filtering {
+        format!(" / {query}\u{2581} · Enter keep · Esc clear")
+    } else if !query.is_empty() {
+        format!(" filter: {query} · / edit · a add · e edit · d delete · Esc clear")
+    } else {
+        " / filter · a add · e edit · d delete · Enter edit · Esc back".to_string()
+    };
     frame.render_widget(
-        Paragraph::new(Span::styled(
-            " a add · e edit · d delete · Enter edit · Esc back",
-            theme.style(StyleRole::PopupHint),
-        )),
+        Paragraph::new(Span::styled(hint, theme.style(StyleRole::PopupHint))),
         hint_area,
     );
 }

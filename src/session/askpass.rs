@@ -851,7 +851,7 @@ mod tests {
             let out = std::process::Command::new(&ssh)
                 .args(["-c", script])
                 .env("SSHUB_TEST_FILE_HELPER", "1")
-                .env("SSHUB_TEST_PROMPT", "ops@10.0.4.91's password: ")
+                .env("SSHUB_TEST_PROMPT", "ops@192.0.2.91's password: ")
                 .envs(guard.env(Path::new("unused")))
                 .output_retrying();
             String::from_utf8_lossy(&out.stdout).into_owned()
@@ -888,8 +888,8 @@ mod tests {
             prefix: "profile:7:".into(),
         };
         let backing = store.open();
-        backing.set("host:1", "lb-1-pw").unwrap();
-        backing.set("host:2", "lb-2-pw").unwrap();
+        backing.set("host:1", "hop-1-pw").unwrap();
+        backing.set("host:2", "hop-2-pw").unwrap();
         let hop = |user: &str, host: &str, key: &str| HopSecret {
             user: Some(user.into()),
             host: host.into(),
@@ -903,16 +903,16 @@ mod tests {
         let guard = AskpassSecret::staged(
             Some(&PendingSecret::Password("target-pw".into())),
             &[
-                hop("ops", "10.0.4.11", "host:1"),
-                hop("ops", "10.0.4.12", "host:2"),
+                hop("ops", "192.0.2.11", "host:1"),
+                hop("ops", "192.0.2.12", "host:2"),
                 // Nothing is stored under this reference.
-                hop("ops", "10.0.4.13", "host:404"),
+                hop("ops", "192.0.2.13", "host:404"),
             ],
         )
         .unwrap();
         let staged_text = std::fs::read_to_string(&guard.path).unwrap();
         assert!(
-            !staged_text.contains("lb-1-pw") && !staged_text.contains("lb-2-pw"),
+            !staged_text.contains("hop-1-pw") && !staged_text.contains("hop-2-pw"),
             "a hop's secret was written to the staged file: {staged_text}"
         );
         std::fs::copy(guard.path.clone(), &path).unwrap();
@@ -944,25 +944,25 @@ mod tests {
         let as_hop =
             |prompt: &str| as_hop_via(prompt, prompt.split(['@', '\'']).nth(1).unwrap_or("none"));
         // The destination: the first line, whatever the prompt says.
-        let dest = run(&helper, "ops@10.0.4.91's password: ");
+        let dest = run(&helper, "ops@192.0.2.91's password: ");
         assert!(
             dest.contains("target-pw") && dest.contains("helper-exit=0"),
             "{dest}"
         );
         // Each hop: its own line, found by the prompt.
-        let one = as_hop("ops@10.0.4.11's password: ");
+        let one = as_hop("ops@192.0.2.11's password: ");
         assert!(
-            one.contains("lb-1-pw") && !one.contains("lb-2-pw") && !one.contains("target-pw"),
+            one.contains("hop-1-pw") && !one.contains("hop-2-pw") && !one.contains("target-pw"),
             "{one}"
         );
-        let two = as_hop("ops@10.0.4.12's password: ");
+        let two = as_hop("ops@192.0.2.12's password: ");
         assert!(
-            two.contains("lb-2-pw") && !two.contains("lb-1-pw") && !two.contains("target-pw"),
+            two.contains("hop-2-pw") && !two.contains("hop-1-pw") && !two.contains("target-pw"),
             "{two}"
         );
-        // A prompt naming lb-2 from the ssh that connects to lb-1 (a hostile
-        // hop's text) gets nothing: not lb-2's secret, not lb-1's, not the target's.
-        let lie = as_hop_via("ops@10.0.4.12's password: ", "10.0.4.11");
+        // A prompt naming hop-2 from the ssh that connects to hop-1 (a hostile
+        // hop's text) gets nothing: not hop-2's secret, not hop-1's, not the target's.
+        let lie = as_hop_via("ops@192.0.2.12's password: ", "192.0.2.11");
         assert!(
             !lie.contains("-pw") && lie.contains("helper-exit=1"),
             "{lie}"
@@ -971,8 +971,8 @@ mod tests {
         for prompt in [
             "ops@10.9.9.9's password: ",
             // Staged, but its reference resolves to nothing: fail closed.
-            "ops@10.0.4.13's password: ",
-            "root@10.0.4.11's password: ",
+            "ops@192.0.2.13's password: ",
+            "root@192.0.2.11's password: ",
             "Password: ",
         ] {
             let other = as_hop(prompt);
@@ -1082,11 +1082,11 @@ mod tests {
             "{ok}"
         );
         for prompt in [
-            "ops@10.0.4.91's password: ",
+            "ops@192.0.2.91's password: ",
             "Verification code: ",
             "Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
             // A server-sent keyboard-interactive prompt is prefixed `(user@host) `.
-            "(ops@10.0.4.91) Enter passphrase for key '/home/u/.ssh/id': ",
+            "(ops@192.0.2.91) Enter passphrase for key '/home/u/.ssh/id': ",
         ] {
             let out = run(prompt);
             assert!(

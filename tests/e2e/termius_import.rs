@@ -165,7 +165,7 @@ fn imported_host_password_is_resolved_at_connect_time() {
     let export = tempfile::tempdir().unwrap();
     let real =
         "\u{feff}\"Label\",\"Host\",\"Port\",\"Username\",\"Password\",\"SSH_Key\",\"OS\"\r\n\
-                \"dev-alumni\",\"10.100.19.83\",\"22\",\"su-adm\",\"StrongPassw0rd\",\"\",\"\"\r\n";
+                \"dev-wiki\",\"198.51.100.83\",\"22\",\"ops-admin\",\"StrongPassw0rd\",\"\",\"\"\r\n";
     std::fs::write(export.path().join("L00t.csv"), real).unwrap();
 
     let store = Arc::new(LauncherStore::open_in_memory().unwrap());
@@ -177,9 +177,9 @@ fn imported_host_password_is_resolved_at_connect_time() {
     assert_eq!(report.keyring_failures, 0);
 
     // The host took its name from the Label and has_password set.
-    let host = store.get_host_by_name("dev-alumni").unwrap().unwrap();
-    assert_eq!(host.address, "10.100.19.83");
-    assert_eq!(host.username.as_deref(), Some("su-adm"));
+    let host = store.get_host_by_name("dev-wiki").unwrap().unwrap();
+    assert_eq!(host.address, "198.51.100.83");
+    assert_eq!(host.username.as_deref(), Some("ops-admin"));
     assert!(
         host.has_password,
         "row must be flagged as having a password"
@@ -191,7 +191,7 @@ fn imported_host_password_is_resolved_at_connect_time() {
     let entry = app
         .hosts
         .iter()
-        .find(|h| h.name() == "dev-alumni")
+        .find(|h| h.name() == "dev-wiki")
         .cloned()
         .expect("imported host present after reload");
     let effective = entry.managed().and_then(|m| m.identity.as_ref());

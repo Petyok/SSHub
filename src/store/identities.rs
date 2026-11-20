@@ -261,7 +261,7 @@ mod tests {
 
         let created = store
             .create_identity(&NewIdentity {
-                name: "dev-vcenter".into(),
+                name: "dev-lab".into(),
                 username: Some("admin".into()),
                 private_key: Some(PathBuf::from("~/.ssh/id_ed25519")),
                 certificate: None,
@@ -270,14 +270,14 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(created.name, "dev-vcenter");
+        assert_eq!(created.name, "dev-lab");
         assert_eq!(
             store.get_identity(created.id).unwrap(),
             Some(created.clone())
         );
 
         let all = store.list_identities().unwrap();
-        assert!(all.iter().any(|i| i.name == "dev-vcenter"));
+        assert!(all.iter().any(|i| i.name == "dev-lab"));
 
         let updated = store
             .update_identity(

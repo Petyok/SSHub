@@ -137,8 +137,12 @@ pub(crate) fn base64_encode_known_vectors() {
     );
 }
 
+fn ctrl_p() -> KeyEvent {
+    KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL)
+}
+
 #[test]
-pub(crate) fn slash_opens_palette_mode() {
+pub(crate) fn ctrl_p_opens_palette_mode() {
     let mut app = test_app(vec![
         ("web-prod", host("web-prod")),
         ("db-staging", host("db-staging")),
@@ -147,7 +151,7 @@ pub(crate) fn slash_opens_palette_mode() {
     legacy_meta(&mut app.hosts[1]).tags = vec!["staging".into()];
     app.rebuild_filter();
 
-    app.handle_key(key_char('/')).unwrap();
+    app.handle_key(ctrl_p()).unwrap();
     assert_eq!(app.mode, AppMode::Palette);
     assert_eq!(app.palette_results.len(), 2);
 
@@ -158,8 +162,8 @@ pub(crate) fn slash_opens_palette_mode() {
 
 #[test]
 pub(crate) fn bare_char_does_not_open_palette() {
-    // Type-ahead was removed: search is only reachable via '/'. A bare letter in
-    // Normal mode must not open the palette (it stays a normal-mode shortcut / no-op).
+    // Type-ahead was removed: a bare letter in Normal mode must not open the
+    // palette (it stays a normal-mode shortcut / no-op).
     let mut app = test_app(vec![
         ("web-prod", host("web-prod")),
         ("db-staging", host("db-staging")),
@@ -178,7 +182,7 @@ pub(crate) fn palette_types_nav_letters() {
     let mut app = test_app(vec![("jira", host("jira")), ("kafka", host("kafka"))]);
     app.rebuild_filter();
 
-    app.handle_key(key_char('/')).unwrap();
+    app.handle_key(ctrl_p()).unwrap();
     assert_eq!(app.mode, AppMode::Palette);
     for c in "jira".chars() {
         app.handle_key(key_char(c)).unwrap();
@@ -245,6 +249,55 @@ pub(crate) fn j_k_type_into_search_query() {
     app.rebuild_filter();
     app.handle_key(key(KeyCode::Down)).unwrap();
     assert_eq!(app.selected, 1);
+}
+
+/// `/` is a list filter, not a quick-connect: Enter applies it and hands the
+/// filtered list back to normal navigation, so the edit key works on a match.
+#[test]
+pub(crate) fn slash_enter_applies_filter_and_edit_opens_the_match() {
+    let mut app = test_app(vec![]);
+    for (name, addr) in [("db-01", "10.0.0.1"), ("web-01", "10.0.0.2")] {
+        app.store
+            .create_host(&crate::store::NewHost::launcher(name, addr))
+            .unwrap();
+    }
+    app.reload_hosts().unwrap();
+
+    app.handle_key(key_char('/')).unwrap();
+    assert_eq!(app.mode, AppMode::Search);
+    for c in "web".chars() {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+
+    assert_eq!(app.mode, AppMode::Normal);
+    assert_eq!(app.search_query, "web", "Enter keeps the filter applied");
+    assert_eq!(app.filtered_indices.len(), 1);
+    assert_eq!(app.selected_entry().unwrap().name(), "web-01");
+
+    app.handle_key(key_char('e')).unwrap();
+    assert_eq!(app.mode, AppMode::HostForm);
+    assert_eq!(app.host_form.as_ref().unwrap().address, "10.0.0.2");
+}
+
+#[test]
+pub(crate) fn esc_clears_an_applied_search_and_slash_refines_it() {
+    let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
+    app.handle_key(key_char('/')).unwrap();
+    app.handle_key(key_char('w')).unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.filtered_indices.len(), 1);
+
+    // A second `/` reopens the input with the query kept.
+    app.handle_key(key_char('/')).unwrap();
+    assert_eq!(app.mode, AppMode::Search);
+    assert_eq!(app.search_query, "w");
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert!(app.search_query.is_empty());
+    assert_eq!(app.filtered_indices.len(), 2);
 }
 
 #[test]
@@ -1220,4 +1273,293 @@ fn on_the_zoomed_panel_a_drag_copies_and_a_click_copies_nothing() {
         .unwrap();
     assert_eq!(app.host_notice, None);
     assert!(app.panel_sel.is_none());
+}
+
+/// A key push whose "ssh" is the `sh -c` script, in its popup the way
+/// `push_public_key_to_host` leaves it.
+fn key_push_running(script: &str) -> App {
+    let mut app = test_app(vec![("edge", host("edge"))]);
+    let config = crate::session::SessionConfig {
+        hops: Vec::new(),
+        argv: vec!["sh".into(), "-c".into(), script.into()],
+        display_name: "Push Key to edge".into(),
+        meta: crate::session::SessionMeta::default(),
+        pending_secret: None,
+        key_push_identity: Some("deploy".into()),
+        host_name: "edge".into(),
+    };
+    let session = crate::session::Session::spawn(config, (24, 80), None).unwrap();
+    app.key_push = Some(KeyPush {
+        identity: "deploy".into(),
+        host: "edge".into(),
+        started: std::time::Instant::now(),
+        session: Some(session),
+        state: KeyPushState::Running,
+        user: None,
+        via: "direct".into(),
+    });
+    app.mode = AppMode::KeyPush;
+    app
+}
+
+/// Poll like the event loop until the push leaves `Running`.
+fn settle_key_push(app: &mut App) -> KeyPushState {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        app.poll_key_push();
+        let state = app.key_push.as_ref().unwrap().state.clone();
+        if state != KeyPushState::Running {
+            return state;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "key push never settled"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Petr: a key push must not open a TTY that ends in "exit 0: succeeded".
+/// The outcome shows in the popup, no tab appears, Enter returns to the list.
+#[test]
+fn key_push_reports_its_outcome_in_a_popup_without_a_session_tab() {
+    for (script, want, text) in [
+        (
+            "exit 0",
+            KeyPushState::Installed,
+            "Key deploy installed on edge",
+        ),
+        (
+            "echo 'sshub: key already present' >&2",
+            KeyPushState::AlreadyPresent,
+            "already present on edge",
+        ),
+    ] {
+        let mut app = key_push_running(script);
+        assert_eq!(settle_key_push(&mut app), want, "{script}");
+        assert!(app.sessions.is_empty(), "no terminal tab for a key push");
+        assert!(app.key_push.as_ref().unwrap().session.is_none());
+        assert!(screen(&mut app).contains(text), "{script}");
+
+        app.handle_key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(app.mode, AppMode::Normal);
+        assert!(app.key_push.is_none());
+    }
+}
+
+/// A failed push says why in words, not as an exit code.
+#[test]
+fn key_push_failure_shows_the_reason_not_the_exit_code() {
+    let mut app = key_push_running(
+        "echo 'ssh: connect to host edge port 22: Connection timed out' >&2; exit 255",
+    );
+    let KeyPushState::Failed(reason) = settle_key_push(&mut app) else {
+        panic!("expected a failure");
+    };
+    assert!(reason.contains("Connection timed out"), "{reason}");
+    assert!(!reason.contains("255"), "{reason}");
+    assert!(app.sessions.is_empty());
+}
+
+/// Esc while the push runs kills ssh and says it was cancelled.
+#[test]
+fn esc_cancels_a_running_key_push() {
+    let mut app = key_push_running("sleep 30");
+    app.poll_key_push();
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    let push = app.key_push.as_ref().unwrap();
+    assert_eq!(push.state, KeyPushState::Cancelled);
+    assert!(push.session.is_none(), "the ssh child is dropped (killed)");
+    assert_eq!(app.mode, AppMode::KeyPush, "the popup says so first");
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+}
+
+/// A prompt sshub cannot answer flips the popup to "needs input" instead of
+/// hanging; Enter hands the live ssh to a terminal tab to answer it.
+#[test]
+fn key_push_waiting_on_a_prompt_offers_a_terminal_tab() {
+    let mut app = key_push_running("printf 'deploy@edge password: '; read x");
+    assert_eq!(settle_key_push(&mut app), KeyPushState::NeedsInput);
+    assert!(app.sessions.is_empty());
+
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert!(app.key_push.is_none());
+    assert_eq!(app.sessions.len(), 1);
+    assert_eq!(app.active_session, Some(0));
+    assert_eq!(app.mode, AppMode::Session);
+    assert_eq!(app.sessions[0].key_push_identity.as_deref(), Some("deploy"));
+}
+
+/// ~20 identities need a filter: typed letters narrow the push-key identity
+/// list, arrows stay navigation, and Enter on an empty match keeps it open.
+#[test]
+fn push_key_identity_picker_filters_by_typed_query() {
+    let mut app = test_app(vec![("web", host("web"))]);
+    for (i, name) in ["alpha", "bravo"].iter().enumerate() {
+        app.store
+            .create_identity(&crate::store::NewIdentity {
+                name: (*name).into(),
+                username: None,
+                private_key: Some(std::path::PathBuf::from(format!("~/.ssh/{name}"))),
+                certificate: None,
+                sort_order: i as i32,
+                has_password: false,
+            })
+            .unwrap();
+    }
+    app.trigger_push_key_from_hosts().unwrap();
+    assert_eq!(app.mode, AppMode::PushKeyIdentityPicker);
+    for c in "brv".chars() {
+        app.handle_key(key_char(c)).unwrap();
+    }
+    let names: Vec<&str> = app
+        .push_key_identity_matches()
+        .iter()
+        .map(|i| i.name.as_str())
+        .collect();
+    assert_eq!(names, ["bravo"]);
+
+    app.handle_key(key_char('z')).unwrap();
+    assert!(app.push_key_identity_matches().is_empty());
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(
+        app.mode,
+        AppMode::PushKeyIdentityPicker,
+        "no match: stays open"
+    );
+}
+
+/// Keygen's default target skips names already taken in the directory.
+#[test]
+fn keygen_default_name_skips_existing_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let stem = "id_ed25519_sshub";
+    assert_eq!(crate::app::keygen::free_key_name(dir.path(), stem), stem);
+    std::fs::write(dir.path().join(stem), "").unwrap();
+    std::fs::write(dir.path().join(format!("{stem}_2.pub")), "").unwrap();
+    assert_eq!(
+        crate::app::keygen::free_key_name(dir.path(), stem),
+        "id_ed25519_sshub_3"
+    );
+}
+
+/// A failed passphrase store must stay on screen, not be replaced by "success".
+#[test]
+fn keygen_reports_a_failed_passphrase_store() {
+    if std::process::Command::new("ssh-keygen")
+        .arg("-V")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipping: ssh-keygen missing");
+        return;
+    }
+    struct Locked;
+    impl crate::credentials::PasswordStore for Locked {
+        fn get(&self, _: &str) -> anyhow::Result<Option<String>> {
+            Ok(None)
+        }
+        fn set(&self, _: &str, _: &str) -> anyhow::Result<()> {
+            Err(anyhow::anyhow!("keyring locked"))
+        }
+        fn delete(&self, _: &str) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+    let mut app = test_app_with_store(vec![], Box::new(Locked));
+    let dir = tempfile::tempdir().unwrap();
+    app.enter_keygen_form().unwrap();
+    let form = app.keygen_form.as_mut().unwrap();
+    form.passphrase = "s3cret-pass".into();
+    form.target_path = dir.path().join("k").to_string_lossy().into_owned();
+    app.save_keygen_form().unwrap();
+
+    let notice = app.identity_notice.clone().unwrap_or_default();
+    assert!(notice.contains("storing the passphrase failed"), "{notice}");
+}
+
+/// #8/#20: the tunnel form refuses a tunnel with no SSH server or a garbage
+/// destination port (error on the form, focus on the field), and a blank
+/// destination port forwards to the local port number.
+#[test]
+fn tunnel_form_requires_a_server_and_defaults_the_dest_port() {
+    let mut app = tunnel_form_with_port(TunnelFormField::Label);
+    let host_id = app
+        .store
+        .create_host(&crate::store::NewHost::launcher("edge-db", "10.0.0.9"))
+        .unwrap()
+        .id;
+
+    app.handle_key(key(KeyCode::F(2))).unwrap();
+    assert_eq!(app.mode, AppMode::TunnelForm, "no server: refused");
+    assert_eq!(app.tunnel_notice.as_deref(), Some("Pick an SSH server"));
+    assert_eq!(
+        app.tunnel_form.as_ref().unwrap().active_field,
+        TunnelFormField::Host
+    );
+
+    let f = app.tunnel_form.as_mut().unwrap();
+    f.host_id = Some(host_id);
+    f.remote_port = "pg".into();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
+    assert_eq!(app.mode, AppMode::TunnelForm, "garbage port: refused");
+    assert_eq!(
+        app.tunnel_notice.as_deref(),
+        Some("Invalid destination port")
+    );
+    assert!(app.store.list_tunnels().unwrap().is_empty());
+
+    app.tunnel_form.as_mut().unwrap().remote_port.clear();
+    app.handle_key(key(KeyCode::F(2))).unwrap();
+    assert_eq!(app.mode, AppMode::Normal);
+    assert_eq!(app.store.list_tunnels().unwrap()[0].remote_port, 8080);
+}
+
+/// An identity saved without a name is named after its key file, else its user.
+#[test]
+fn identity_without_name_defaults_to_key_stem_then_user() {
+    let mut app = test_app(vec![]);
+    app.active_tab = 3;
+    app.enter_identity_form(None).unwrap();
+    app.identity_form.as_mut().unwrap().private_key = "/nonexistent/sshub/id_work".into();
+    app.save_identity_form().unwrap();
+    assert_eq!(app.mode, AppMode::Normal, "{:?}", app.identity_notice);
+    assert!(app.identities.iter().any(|i| i.name == "id_work"));
+
+    app.enter_identity_form(None).unwrap();
+    app.identity_form.as_mut().unwrap().username = "deploy".into();
+    app.save_identity_form().unwrap();
+    assert!(app.identities.iter().any(|i| i.name == "deploy"));
+
+    app.enter_identity_form(None).unwrap();
+    app.save_identity_form().unwrap();
+    assert_eq!(app.mode, AppMode::IdentityForm, "nothing to name it after");
+}
+
+/// Enter on the Keys tab edits the selected identity instead of doing nothing.
+#[test]
+fn enter_on_keys_tab_edits_the_selected_identity() {
+    let mut app = test_app(vec![]);
+    let created = app
+        .store
+        .create_identity(&crate::store::NewIdentity {
+            name: "work".into(),
+            username: Some("deploy".into()),
+            private_key: None,
+            certificate: None,
+            sort_order: 0,
+            has_password: false,
+        })
+        .unwrap();
+    app.reload_identities().unwrap();
+    app.active_tab = 3;
+    app.identity_selected = app
+        .identities
+        .iter()
+        .position(|i| i.id == created.id)
+        .unwrap();
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    assert_eq!(app.mode, AppMode::IdentityForm);
+    assert_eq!(app.identity_form.as_ref().unwrap().id, Some(created.id));
 }

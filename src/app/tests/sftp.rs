@@ -416,7 +416,7 @@ fn shift_letters_type_into_the_sftp_host_search() {
 
     assert_eq!(app.mode, AppMode::Normal, "no overlay opened");
     assert!(app.sftp_picker_searching);
-    assert_eq!(app.search_query, "SL");
+    assert_eq!(app.sftp_picker_query, "SL");
 }
 
 /// The same guard covers the file filter inside a live SFTP browser.
@@ -663,4 +663,87 @@ fn goto_prompt_accepts_a_bracketed_paste() {
     app.handle_key(key_char('g')).unwrap();
     app.handle_paste("/srv/www\n").unwrap();
     assert_eq!(app.sftp_prompt.as_ref().unwrap().value, "/srv/www");
+}
+
+/// #1: an async connect failure must not replace a form the user opened
+/// meanwhile; it waits as a toast. On the dashboard it still pops up.
+#[test]
+fn sftp_connect_failure_pops_up_only_on_the_dashboard() {
+    let mut app = test_app(vec![]);
+    app.mode = AppMode::HostForm;
+    app.sftp_host = Some("edge".into());
+    app.apply_sftp_event(crate::sftp::SftpEvent::ConnectFailed("timeout".into()));
+    assert_eq!(app.mode, AppMode::HostForm, "the form stays up");
+    assert!(app.notice_popup.is_none());
+    assert!(app.host_notice.as_deref().unwrap().contains("edge"));
+
+    app.mode = AppMode::Normal;
+    app.apply_sftp_event(crate::sftp::SftpEvent::ConnectFailed("timeout".into()));
+    assert_eq!(app.mode, AppMode::Notice);
+    assert!(app.notice_popup.is_some());
+}
+
+/// #2: Esc with staged work asks before dropping it; `n` keeps the session,
+/// `y` disconnects. With nothing pending Esc disconnects at once.
+#[test]
+fn esc_in_the_browser_confirms_when_the_queue_is_not_empty() {
+    let (mut app, _tmp) = local_browser();
+    app.sftp.as_mut().unwrap().local.selected = 1; // alpha/ (row 0 is `..`)
+    app.handle_key(key(KeyCode::Right)).unwrap();
+    assert_eq!(app.sftp.as_ref().unwrap().queue.len(), 1);
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert_eq!(app.mode, AppMode::ConfirmDelete);
+    assert!(matches!(
+        app.pending_delete,
+        Some(PendingDelete::SftpDisconnect { queued: 1, .. })
+    ));
+    app.handle_key(key_char('n')).unwrap();
+    assert!(app.sftp.is_some(), "n keeps the session and its queue");
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    app.handle_key(key_char('y')).unwrap();
+    assert!(app.sftp.is_none());
+
+    let (mut app, _tmp) = local_browser();
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert!(app.sftp.is_none(), "nothing pending: no question");
+}
+
+/// #6: the SFTP picker search has its own query; it neither clears nor
+/// leaves behind the Hosts tab `/` filter.
+#[test]
+fn sftp_picker_search_leaves_the_hosts_filter_alone() {
+    let mut app = test_app(vec![("web", host("web")), ("db", host("db"))]);
+    app.search_query = "web".into();
+    app.rebuild_filter();
+    app.active_tab = 1;
+
+    app.handle_key(key_char('/')).unwrap();
+    type_text(&mut app, "db");
+    assert_eq!(app.search_query, "web", "hosts filter untouched");
+    assert_eq!(app.selected_entry().unwrap().name(), "db");
+
+    app.handle_key(key(KeyCode::Esc)).unwrap();
+    assert!(app.sftp_picker_query.is_empty());
+    assert_eq!(app.search_query, "web");
+    assert_eq!(app.filtered_indices.len(), 1);
+    assert_eq!(app.selected_entry().unwrap().name(), "web");
+}
+
+/// #23: Enter on the remote pane during a run says why nothing happens.
+#[test]
+fn remote_enter_during_a_run_sets_a_notice() {
+    use crate::sftp::model::{Phase, SftpState};
+    let mut app = test_app(vec![]);
+    app.active_tab = 1;
+    let mut state = SftpState::new("/srv", "/data"); // remote pane focused
+    state.remote.set_entries(vec![dir_entry("www")]);
+    state.phase = Phase::Running;
+    app.sftp = Some(state);
+
+    app.handle_key(key(KeyCode::Enter)).unwrap();
+    let s = app.sftp.as_ref().unwrap();
+    assert_eq!(s.remote.cwd, std::path::PathBuf::from("/srv"));
+    assert!(s.notice.as_deref().unwrap().contains("busy"));
 }

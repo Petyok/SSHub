@@ -154,11 +154,42 @@ impl App {
         }
     }
 
+    /// Ctrl+X in the switcher: close the selected tab (typically a dead one)
+    /// without leaving the picker, unless it was the last session.
+    fn close_session_from_picker(&mut self, index: usize) {
+        if index >= self.sessions.len() {
+            return;
+        }
+        if self.active_session == Some(index) {
+            self.reset_ghost();
+        }
+        // Session::drop kills the child + joins the reader thread.
+        self.sessions.remove(index);
+        let len = self.sessions.len();
+        self.active_session = match self.active_session {
+            _ if len == 0 => None,
+            Some(a) if a == index => Some(index.min(len - 1)),
+            Some(a) if a > index => Some(a - 1),
+            other => other,
+        };
+        // Panes of the closed session turn empty (panes key on session ids).
+        self.sync_panes();
+        if len == 0 {
+            self.session_picker = None;
+            self.panes = None;
+            self.mode = AppMode::Normal;
+            return;
+        }
+        let rows = self.session_picker_rows().len();
+        if let Some(p) = self.session_picker.as_mut() {
+            p.selected = p.selected.min(rows.saturating_sub(1));
+        }
+    }
+
     pub(crate) fn handle_key_session_picker(&mut self, key: KeyEvent) -> Result<()> {
-        // Ctrl+Shift+T works inside the picker too: close it and open a local
-        // shell tab. Checked before the `key.code` match so the generic Char arm
-        // cannot swallow it. Carried over from development, which added it to the
-        // handler this module replaced.
+        // The local-shell bind works inside the picker too: close it and open a
+        // local shell tab. Checked before the `key.code` match so the generic
+        // Char arm cannot swallow it.
         if self.is_action(KeyAction::LocalShell, &key) {
             self.close_session_picker();
             self.open_local_shell()?;
@@ -177,6 +208,14 @@ impl App {
                 }
                 if let Some(p) = self.session_picker.as_mut() {
                     p.selected = 0;
+                }
+                return Ok(());
+            }
+        }
+        if let Some((SessionPickerPurpose::SwitchSession, selected)) = picker {
+            if key.code == KeyCode::Char('x') && key.modifiers == KeyModifiers::CONTROL {
+                if let Some(row) = rows.get(selected) {
+                    self.close_session_from_picker(row.index);
                 }
                 return Ok(());
             }

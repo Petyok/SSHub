@@ -12,7 +12,7 @@ static ASKPASS_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// `0700` helper script that just `cat`s it. Both are removed on drop. This
 /// keeps the passphrase out of ssh-keygen's argv (where `ps` would expose it)
 /// and, unlike reusing the app binary as the helper, works in unit tests too.
-struct KeygenAskpass {
+pub(crate) struct KeygenAskpass {
     secret: PathBuf,
     script: PathBuf,
 }
@@ -36,7 +36,7 @@ impl KeygenAskpass {
     /// Stage the helper in the temp dir, else in `$XDG_RUNTIME_DIR`: a `noexec`
     /// mount cannot run it, and ssh-keygen then ignores a missing askpass
     /// instead of failing. A directory is used only if the helper really runs.
-    fn new(passphrase: &str) -> std::io::Result<Self> {
+    pub(crate) fn new(passphrase: &str) -> std::io::Result<Self> {
         let mut dirs = vec![std::env::temp_dir()];
         dirs.extend(std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from));
         let mut last = None;
@@ -112,7 +112,7 @@ impl KeygenAskpass {
         }
     }
 
-    fn env(&self) -> Vec<(String, String)> {
+    pub(crate) fn env(&self) -> Vec<(String, String)> {
         vec![
             (
                 "SSH_ASKPASS".into(),

@@ -159,10 +159,19 @@ pub fn render(frame: &mut Frame, app: &App) {
     }
 
     if has_hint {
+        let hint = match picker.purpose {
+            crate::app::SessionPickerPurpose::SwitchSession => {
+                "type to filter · \u{2191}/\u{2193} · Enter · Ctrl+X close tab · Esc"
+            }
+            crate::app::SessionPickerPurpose::Workspaces => {
+                "type to filter · \u{2191}/\u{2193} · Enter · Ctrl+X delete · Esc"
+            }
+            _ => "type to filter · \u{2191}/\u{2193} · Enter · Esc",
+        };
         buf.set_stringn(
             inner.x,
             inner.y + inner.height - 1,
-            "type to filter · \u{2191}/\u{2193} · Enter · Esc",
+            hint,
             inner_w,
             theme.style(StyleRole::PopupLegend),
         );

@@ -913,6 +913,7 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
         AppMode::PushKeyIdentityPicker => {
             screens::push_key_pickers::render_identity_picker(frame, app)
         }
+        AppMode::KeyPush => screens::key_push::render(frame, app),
         AppMode::ConfirmDiscard => {
             if app.host_form.is_some() {
                 render_form_popup(frame, app, FormKind::Host);
@@ -923,6 +924,11 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             } else if app.snippet_form.is_some() {
                 screens::snippet_manage::render_snippet_manage_popup(frame, app);
                 screens::snippet_form::render_snippet_form(frame, app);
+            } else if let Some(form) = app.group_form.as_ref() {
+                if form.return_to_manage {
+                    screens::group_manage::render_group_manage_popup(frame, app);
+                }
+                render_form_popup(frame, app, FormKind::Group);
             }
             render_confirm_discard_popup(frame, app);
         }
@@ -1316,6 +1322,7 @@ fn map_footer(app: &App) -> Vec<(String, &'static str)> {
     let arrows = ("\u{2191}\u{2193}".to_string(), "row");
     if v.picker.is_some() {
         return vec![
+            ("type".into(), "filter"),
             ("\u{2191}\u{2193}".into(), "tag"),
             ("\u{21b5}".into(), "toggle"),
             ("Esc".into(), "close"),
@@ -1522,6 +1529,18 @@ fn footer_keybinds(
     app: &App,
     footer_width: u16,
 ) -> (Vec<(String, std::borrow::Cow<'_, str>)>, usize) {
+    // The key-push popup owns every key while it is up.
+    if let Some(push) = app
+        .key_push
+        .as_ref()
+        .filter(|_| app.mode == AppMode::KeyPush)
+    {
+        let hints = screens::key_push::hints(&push.state)
+            .iter()
+            .map(|(k, v)| (k.to_string(), std::borrow::Cow::Borrowed(*v)))
+            .collect();
+        return (hints, 0);
+    }
     let mut binds: Vec<(String, &'static str)> = match app.active_tab {
         0 => vec![
             ("\u{2191}\u{2193}".into(), "select"),
@@ -1607,7 +1626,7 @@ fn footer_keybinds(
             ("/".into(), "filter"),
             ("a".into(), "add"),
             ("g".into(), "generate"),
-            ("e".into(), "edit"),
+            ("\u{21b5}/e".into(), "edit"),
             ("d".into(), "delete"),
             ("p/r".into(), "agent +/-"),
             ("P".into(), "push key"),
@@ -1617,7 +1636,8 @@ fn footer_keybinds(
         ],
         4 => vec![
             ("\u{2191}\u{2193}".into(), "select"),
-            ("f".into(), "filter"),
+            ("/".into(), "filter"),
+            ("f".into(), "status"),
             ("r".into(), "range"),
             ("?".into(), "help"),
             ("q".into(), "quit"),
@@ -1688,7 +1708,7 @@ fn footer_keybinds(
             "add as sync device",
         ));
     }
-    if matches!(app.active_tab, 2 | 3) && app.list_filter_editing {
+    if matches!(app.active_tab, 2..=4) && app.list_filter_editing {
         binds = vec![
             (
                 screens::map::key_label(
@@ -1707,6 +1727,24 @@ fn footer_keybinds(
                 "clear filter",
             ),
         ];
+    }
+    // The hosts `/` filter: while typing, Enter applies it; once applied, the
+    // way to drop it leads the normal hosts footer.
+    if app.active_tab == 0 {
+        let kb = &app.config.keybinds;
+        let cancel = screens::map::key_label(kb.primary(crate::config::KeyAction::Cancel));
+        if app.mode == AppMode::Search {
+            binds = vec![
+                ("\u{2191}\u{2193}".into(), "select"),
+                (
+                    screens::map::key_label(kb.primary(crate::config::KeyAction::Connect)),
+                    "apply filter",
+                ),
+                (cancel, "clear filter"),
+            ];
+        } else if app.mode == AppMode::Normal && !app.search_query.is_empty() {
+            binds.insert(0, (cancel, "clear filter"));
+        }
     }
     // The host form's hop editor has its own footers (D10, D11, D13).
     if let Some(hints) = hop_editor_footer(app) {
@@ -2692,6 +2730,24 @@ fn render_confirm_delete_popup(frame: &mut Frame, app: &App) {
                 format!("Delete '{name}'?")
             }
         }
+        Some(PendingDelete::SftpDisconnect { running, queued }) => {
+            let stop = if *running {
+                "stop the running transfer"
+            } else {
+                ""
+            };
+            let drop = if *queued > 0 {
+                format!("drop {queued} queued item(s)")
+            } else {
+                String::new()
+            };
+            let and = if stop.is_empty() || drop.is_empty() {
+                ""
+            } else {
+                " and "
+            };
+            format!("Disconnect SFTP? This will {stop}{and}{drop}.")
+        }
         None => "Delete?".to_string(),
     };
     let area = frame.area();
@@ -2707,7 +2763,16 @@ fn render_confirm_delete_popup(frame: &mut Frame, app: &App) {
     let lines = vec![
         ratatui::text::Line::from(message),
         ratatui::text::Line::from(""),
-        ratatui::text::Line::from("y: delete    Esc: cancel"),
+        ratatui::text::Line::from(
+            if matches!(
+                app.pending_delete,
+                Some(PendingDelete::SftpDisconnect { .. })
+            ) {
+                "y: disconnect    Esc: cancel"
+            } else {
+                "y: delete    Esc: cancel"
+            },
+        ),
     ];
 
     let popup_area = crate::tui::popup_open_rect(popup_area, app);
@@ -6943,6 +7008,7 @@ marker = { foreground = \"#ab0005\" }\n\
             default_forward_agent: None,
             parent_id: None,
             return_to_manage: false,
+            dirty: false,
         });
         app.mode = AppMode::GroupForm;
         let buf = render_to_buffer(&app, 120, 38);
@@ -7032,6 +7098,7 @@ marker = { foreground = \"#ab0005\" }\n\
         app.field_picker = Some(crate::app::FieldPicker {
             kind: crate::app::PickerKind::Group,
             selected: 0,
+            query: String::new(),
             creating: None,
             cursor: 0,
         });
@@ -7059,6 +7126,7 @@ marker = { foreground = \"#ab0005\" }\n\
             default_forward_agent: None,
             parent_id: None,
             return_to_manage: false,
+            dirty: false,
         });
         app.mode = AppMode::GroupForm;
         let buf = render_to_buffer(&app, 120, 38);
@@ -7163,9 +7231,9 @@ marker = { foreground = \"#ab0005\" }\n\
 
         for (which, app, title, idle_label, hint) in [
             // The host form's Port row now shows a muted "inherited: …"
-            // placeholder when cleared, so the idle-value probe uses the
-            // Name row (never inheritable) instead.
-            ("host form", &host, "New host", "Name (alias):", "Tab/"),
+            // placeholder when cleared and an empty Name a muted "defaults
+            // to" hint, so the idle-value probe uses the Label row instead.
+            ("host form", &host, "New host", "Label:", "Tab/"),
             (
                 "identity form",
                 &identity,
@@ -7315,12 +7383,12 @@ marker = { foreground = \"#ab0005\" }\n\
             Some(marker(0xa90001)),
             "the marker is components.focus.indicator"
         );
-        // The Name row is idle and never inheritable, so its value carries
-        // the plain value role. (Port now shows a muted "inherited: …"
-        // placeholder when cleared — see the help-role assertion below.)
-        let (px, py) = crate::test_support::find_text(&buf, "Name (alias):");
+        // The Label row is idle and never a placeholder, so its value carries
+        // the plain value role. (Port shows a muted "inherited: …" and an
+        // empty Name a muted "defaults to …" — see the help-role assertion below.)
+        let (px, py) = crate::test_support::find_text(&buf, "Label:");
         assert_eq!(
-            cell_style(&buf, px + 14, py).fg,
+            cell_style(&buf, px + 7, py).fg,
             Some(marker(0xa50004)),
             "an idle value is components.form.value"
         );
@@ -7431,6 +7499,7 @@ marker = { foreground = \"#ab0005\" }\n\
             default_forward_agent: None,
             parent_id: None,
             return_to_manage: false,
+            dirty: false,
         });
         app.mode = AppMode::GroupForm;
         wear(&mut app, OVERLAY_MARKERS);
@@ -7977,6 +8046,7 @@ marker = { foreground = \"#ab0005\" }\n\
                 app.field_picker = Some(crate::app::FieldPicker {
                     kind: crate::app::PickerKind::Group,
                     selected: 0,
+                    query: String::new(),
                     creating: Some("new-group".into()),
                     cursor: 0,
                 });
@@ -7993,10 +8063,12 @@ marker = { foreground = \"#ab0005\" }\n\
                     default_forward_agent: None,
                     parent_id: None,
                     return_to_manage: true,
+                    dirty: false,
                 });
                 app.group_field_picker = Some(crate::app::GroupFieldPicker {
                     kind: crate::app::GroupFormField::Parent,
                     selected: 0,
+                    query: String::new(),
                 });
                 app.session_picker = Some(crate::app::SessionPicker {
                     purpose: crate::app::SessionPickerPurpose::SwitchSession,

@@ -88,11 +88,10 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
 
     // Total host count for the panel badge.
     let count_str = app.filtered_indices.len().to_string();
-    // Surface active tag filters in the panel title so they stay visible once
-    // the picker popup closes.
-    let raw_title = if app.tag_filters.is_empty() {
-        "hosts".to_string()
-    } else {
+    // Surface active tag filters and the `/` query in the panel title so they
+    // stay visible once the picker popup or the search input closes.
+    let mut raw_title = "hosts".to_string();
+    if !app.tag_filters.is_empty() {
         // Spell out the AND operator so an empty result set is self-explaining.
         let joined = app
             .tag_filters
@@ -100,8 +99,16 @@ pub fn render_hosts_panel(frame: &mut Frame, area: Rect, app: &App) {
             .map(|t| format!("#{t}"))
             .collect::<Vec<_>>()
             .join(" AND ");
-        format!("hosts · {joined}")
-    };
+        raw_title.push_str(&format!(" · {joined}"));
+    }
+    if app.mode == crate::app::AppMode::Search || !app.search_query.is_empty() {
+        let cursor = if app.mode == crate::app::AppMode::Search {
+            "\u{258f}"
+        } else {
+            ""
+        };
+        raw_title.push_str(&format!(" · /{}{cursor}", app.search_query));
+    }
     let max_title = (area.width as usize).saturating_sub(12).max(5);
     let title = crate::tui::text::ellipsize(&raw_title, max_title);
     panel_box::render_panel_box(

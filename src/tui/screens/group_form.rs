@@ -15,10 +15,15 @@ pub fn render_group_field_picker(frame: &mut Frame, app: &App) {
     };
     let (none_label, options) = app.group_field_picker_options();
     let title = match picker.kind {
-        GroupFormField::Parent => " Parent group ",
-        GroupFormField::Identity => " Default identity ",
+        GroupFormField::Parent => "Parent group",
+        GroupFormField::Identity => "Default identity",
         // Text and tri-state fields never open the picker (guarded in App).
-        _ => " Select ",
+        _ => "Select",
+    };
+    let title = if picker.query.is_empty() {
+        format!(" {title} ")
+    } else {
+        format!(" {title}  /{} ", picker.query)
     };
 
     let theme = app.theme();
@@ -33,6 +38,14 @@ pub fn render_group_field_picker(frame: &mut Frame, app: &App) {
             .iter()
             .map(|(_, name)| ListItem::new(Span::styled(format!(" {name}"), row))),
     );
+    // Rows that map to a choice; the empty-state line below is not one.
+    let choices = items.len();
+    if options.is_empty() && !picker.query.is_empty() {
+        items.push(ListItem::new(Span::styled(
+            format!(" no match for \"{}\"", picker.query),
+            theme.style(StyleRole::PopupLegend),
+        )));
+    }
 
     let area = frame.area();
     let width = crate::tui::fit_popup(area.width * 40 / 100, 24, area.width.saturating_sub(2));
@@ -52,15 +65,14 @@ pub fn render_group_field_picker(frame: &mut Frame, app: &App) {
     frame.render_widget(block, popup);
     crate::tui::paint_popup_border(frame, popup, theme);
 
-    let len = items.len();
     let mut state = ListState::default();
-    state.select(Some(picker.selected.min(len.saturating_sub(1))));
+    state.select(Some(picker.selected.min(choices.saturating_sub(1))));
     frame.render_stateful_widget(
         List::new(items).highlight_style(theme.style(StyleRole::PickerRowSelected)),
         inner,
         &mut state,
     );
-    app.record_list_rows(inner, state.offset(), len);
+    app.record_list_rows(inner, state.offset(), choices);
 }
 
 pub fn render_group_form(
@@ -189,7 +201,7 @@ pub fn render_group_form(
         blank(),
         (
             Line::from(Span::styled(
-                "\u{2191}\u{2193} move field  ·  Enter save/choose  ·  Space choose/cycle  ·  Esc cancel",
+                "\u{2191}\u{2193} move field  ·  Enter next/choose  ·  Space choose/cycle  ·  Esc cancel",
                 help,
             )),
             None,

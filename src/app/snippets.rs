@@ -24,14 +24,44 @@ impl App {
         self.snippet_manage_selected = self
             .snippet_manage_selected
             .min(self.snippets.len().saturating_sub(1));
+        self.snap_snippet_manage_selection();
     }
 
+    /// `snippets` indices the manager lists: all of them, or those matching
+    /// the `/` filter, best first.
+    pub fn snippet_manage_view(&self) -> Vec<usize> {
+        rank_snippets(&self.snippets, &self.snippet_manage_query)
+    }
+
+    /// Keep the selection on a visible row after the filter or list changed.
+    fn snap_snippet_manage_selection(&mut self) {
+        let view = self.snippet_manage_view();
+        if !view.contains(&self.snippet_manage_selected) {
+            self.snippet_manage_selected = view.first().copied().unwrap_or(0);
+        }
+    }
+
+    /// The highlighted snippet, or `None` when the filter hides every row.
+    fn selected_managed_snippet(&self) -> Option<Snippet> {
+        self.snippet_manage_view()
+            .contains(&self.snippet_manage_selected)
+            .then(|| self.snippets.get(self.snippet_manage_selected).cloned())
+            .flatten()
+    }
+
+    /// Step the selection through the visible rows; saturates at both ends,
+    /// so `isize::MIN` / `isize::MAX` jump to the first / last row.
     fn move_snippet_manage_selection(&mut self, delta: isize) {
-        if self.snippets.is_empty() {
+        let view = self.snippet_manage_view();
+        if view.is_empty() {
             return;
         }
-        let new = self.snippet_manage_selected as isize + delta;
-        self.snippet_manage_selected = new.clamp(0, self.snippets.len() as isize - 1) as usize;
+        let pos = view
+            .iter()
+            .position(|&i| i == self.snippet_manage_selected)
+            .unwrap_or(0) as isize;
+        let next = pos.saturating_add(delta).clamp(0, view.len() as isize - 1);
+        self.snippet_manage_selected = view[next as usize];
     }
 
     // ── Manager overlay ─────────────────────────────────────────
@@ -44,35 +74,85 @@ impl App {
         Ok(())
     }
 
+    fn close_snippet_manage(&mut self) {
+        self.snippet_manage_query.clear();
+        self.snippet_manage_filtering = false;
+        self.mode = AppMode::Normal;
+    }
+
     pub(crate) fn handle_key_snippet_manage(&mut self, key: KeyEvent) -> Result<()> {
         self.snippet_notice = None;
+        if self.snippet_manage_filtering {
+            self.handle_key_snippet_manage_filter(key);
+            return Ok(());
+        }
         match key.code {
             _ if self.is_action(KeyAction::Quit, &key) => self.request_quit(),
+            _ if self.is_action(KeyAction::Search, &key) => self.snippet_manage_filtering = true,
+            _ if self.is_action(KeyAction::Cancel, &key)
+                && !self.snippet_manage_query.is_empty() =>
+            {
+                self.snippet_manage_query.clear();
+            }
             _ if self.is_action(KeyAction::Cancel, &key)
                 || self.is_action(KeyAction::TabHosts, &key) =>
             {
-                self.mode = AppMode::Normal;
+                self.close_snippet_manage();
             }
             _ if self.is_action(KeyAction::MoveDown, &key) => self.move_snippet_manage_selection(1),
             _ if self.is_action(KeyAction::MoveUp, &key) => self.move_snippet_manage_selection(-1),
+            KeyCode::PageDown => self.move_snippet_manage_selection(10),
+            KeyCode::PageUp => self.move_snippet_manage_selection(-10),
+            KeyCode::Home => self.move_snippet_manage_selection(isize::MIN),
+            KeyCode::End => self.move_snippet_manage_selection(isize::MAX),
             _ if self.is_action(KeyAction::AddHost, &key) => self.enter_snippet_form(None),
             _ if self.is_action(KeyAction::Edit, &key) || key.code == KeyCode::Enter => {
-                if let Some(snippet) = self.snippets.get(self.snippet_manage_selected).cloned() {
-                    self.enter_snippet_form(Some(&snippet));
+                match self.selected_managed_snippet() {
+                    Some(snippet) => self.enter_snippet_form(Some(&snippet)),
+                    None => self.snippet_notice = Some("No snippet selected".into()),
                 }
             }
-            _ if self.is_action(KeyAction::Delete, &key) => {
-                if let Some(snippet) = self.snippets.get(self.snippet_manage_selected).cloned() {
+            _ if self.is_action(KeyAction::Delete, &key) => match self.selected_managed_snippet() {
+                Some(snippet) => {
                     self.pending_delete = Some(PendingDelete::Snippet {
                         id: snippet.id,
                         name: snippet.name,
                     });
                     self.mode = AppMode::ConfirmDelete;
                 }
-            }
+                None => self.snippet_notice = Some("No snippet selected".into()),
+            },
             _ => {}
         }
+        self.snap_snippet_manage_selection();
         Ok(())
+    }
+
+    /// Keystrokes while the manager's `/` filter has focus: letters are query
+    /// text, arrows move, Enter keeps the filter, Esc drops it.
+    fn handle_key_snippet_manage_filter(&mut self, key: KeyEvent) {
+        match key.code {
+            _ if self.is_action(KeyAction::Cancel, &key) => {
+                self.snippet_manage_query.clear();
+                self.snippet_manage_filtering = false;
+            }
+            _ if self.is_action(KeyAction::Connect, &key) => self.snippet_manage_filtering = false,
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                self.snippet_manage_query.push(c);
+            }
+            KeyCode::Backspace => {
+                self.snippet_manage_query.pop();
+            }
+            KeyCode::Up => self.move_snippet_manage_selection(-1),
+            KeyCode::Down => self.move_snippet_manage_selection(1),
+            KeyCode::PageUp => self.move_snippet_manage_selection(-10),
+            KeyCode::PageDown => self.move_snippet_manage_selection(10),
+            _ => {}
+        }
+        self.snap_snippet_manage_selection();
     }
 
     // ── Add/edit form ───────────────────────────────────────────
@@ -166,13 +246,21 @@ impl App {
             return Ok(());
         };
 
-        let name = form.name.trim();
         let command = form.command.trim();
-        if name.is_empty() || command.is_empty() {
-            self.snippet_notice = Some("Name and command are both required".into());
+        if command.is_empty() {
+            self.snippet_notice = Some("Command is required".into());
             self.snippet_form = Some(form);
             return Ok(());
         }
+        // No name typed: the start of the command names it.
+        let default_name;
+        let name = match form.name.trim() {
+            "" => {
+                default_name = snippet_default_name(command);
+                default_name.as_str()
+            }
+            typed => typed,
+        };
 
         let description = {
             let d = form.description.trim();
@@ -215,6 +303,15 @@ impl App {
         // Keep the freshly saved snippet highlighted.
         if let Some(pos) = self.snippets.iter().position(|s| s.name == name) {
             self.snippet_manage_selected = pos;
+        }
+        if !self
+            .snippet_manage_view()
+            .contains(&self.snippet_manage_selected)
+        {
+            if let Some(n) = self.snippet_notice.as_mut() {
+                n.push_str(" (hidden by the filter)");
+            }
+            self.snap_snippet_manage_selection();
         }
         self.mode = AppMode::SnippetManage;
         Ok(())
@@ -395,6 +492,17 @@ impl App {
         self.notice_popup = Some(message);
         self.mode = AppMode::Notice;
     }
+}
+
+/// Name for a snippet saved without one: the command's first line, trimmed,
+/// cut to 30 characters.
+fn snippet_default_name(command: &str) -> String {
+    let line = command.lines().next().unwrap_or("").trim();
+    line.chars()
+        .take(30)
+        .collect::<String>()
+        .trim_end()
+        .to_string()
 }
 
 /// Fuzzy-rank snippets against `query`, returning indices into `snippets`

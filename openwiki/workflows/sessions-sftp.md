@@ -23,8 +23,8 @@ In-session keys (`App::handle_key_session`, `src/app/session.rs`; all rebindable
 | `Ctrl+W` | Close the tab |
 | `Ctrl+[` / `Ctrl+]` (also `Ctrl+PageUp` / `Ctrl+PageDown`) | Previous / next tab |
 | `Alt+S` | Session switcher |
-| `Ctrl+Shift+T` | Local shell tab |
-| `Ctrl+Shift+F` | Open the SFTP tab for this host |
+| `Alt+Shift+T` | Local shell tab |
+| `Alt+Shift+F` | Open the SFTP tab for this host |
 | `Ctrl+N` | [Snippet picker](session-tools.md#command-snippets) (running sessions only) |
 | `Tab` / `Ctrl+F` | Accept a visible [ghost completion](session-tools.md#ghost-text-suggestions); Esc dismisses it |
 | `PageUp` / `PageDown` | Local scrollback, half a screen per press. On the alternate screen (vim, tmux, less) they are forwarded to the remote instead |
@@ -33,11 +33,11 @@ In-session keys (`App::handle_key_session`, `src/app/session.rs`; all rebindable
 
 Every other key snaps the view back to live and is encoded to xterm bytes by `session/keys.rs`; `Ctrl+C` always reaches the remote.
 
-**Session switcher** (`Alt+S`, `src/app/session_picker.rs`, `screens/session_picker.rs`): a type-to-filter list of open sessions matching name, user or address, each with its ordinal, endpoint and a phase badge `conn` / `up` / `exit`. Enter jumps to the session (with the tab slide animation when opened from a session), Esc closes, `Ctrl+Shift+T` closes it and opens a local shell. The same picker, with a host list instead of sessions, serves `Ctrl+T` (new session tab) and the SFTP left-pane server choice. The switcher refuses to open when there are no sessions.
+**Session switcher** (`Alt+S`, `src/app/session_picker.rs`, `screens/session_picker.rs`): a type-to-filter list of open sessions matching name, user or address, each with its ordinal, endpoint and a phase badge `conn` / `up` / `exit`. Enter jumps to the session (with the tab slide animation when opened from a session), `Ctrl+X` closes the selected tab (a dead one, typically) and keeps the switcher open, Esc closes, `Alt+Shift+T` closes it and opens a local shell. The same picker, with a host list instead of sessions, serves `Ctrl+T` (new session tab) and the SFTP left-pane server choice. The switcher refuses to open when there are no sessions.
 
-**Dashboard session strip** (`handle_key_background_sessions`): with sessions running, every dashboard tab accepts `Ctrl+Shift+S` (resume the selected session), `Ctrl+[`/`Ctrl+]` (move the strip selection without entering), `Alt+S`, `Ctrl+T`, `Ctrl+W`, `Ctrl+Shift+F`. The footer leads with `resume` (`KeybindsConfig::session_footer_hints`).
+**Dashboard session strip** (`handle_key_background_sessions`): with sessions running, every dashboard tab accepts `Alt+Shift+S` (resume the selected session), `Ctrl+[`/`Ctrl+]` (move the strip selection without entering), `Alt+S`, `Ctrl+T`, `Ctrl+W`, `Alt+Shift+F`. The footer leads with `resume` (`KeybindsConfig::session_footer_hints`). The Alt+Shift defaults replaced Ctrl+Shift ones, which legacy terminals deliver without the Shift.
 
-**Local shell** (`src/app/local_shell.rs`): `Ctrl+Shift+T` from any dashboard tab, a session, or the switcher opens a tab running `$SHELL` (falling back to `/bin/sh`) with stderr merged onto the PTY so the prompt renders. Detach and close behave like ssh tabs.
+**Local shell** (`src/app/local_shell.rs`): `Alt+Shift+T` from any dashboard tab, a session, or the switcher opens a tab running `$SHELL` (falling back to `/bin/sh`) with stderr merged onto the PTY so the prompt renders. Detach and close behave like ssh tabs.
 
 ### Split view and workspaces (#73)
 

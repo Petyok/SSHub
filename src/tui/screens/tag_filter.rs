@@ -20,7 +20,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     } else {
         " filter by tag ".to_string()
     };
-    let query_line = format!("› {}\u{2588}", app.search_query);
+    let query_line = format!("› {}\u{2588}", app.tag_filter_query);
     let hint = "↑/↓ move · Space toggle (multi) · Enter apply · Esc close";
 
     let empty_note = "no tags yet — add comma-separated tags on a host";

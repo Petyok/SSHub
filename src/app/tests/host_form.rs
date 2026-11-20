@@ -410,6 +410,17 @@ pub(crate) fn secret_field_hints_name_the_binds_and_follow_rebinds() {
     );
 }
 
+/// A new host without an alias is saved under its address, not refused.
+#[test]
+pub(crate) fn new_host_without_a_name_is_named_by_its_address() {
+    let mut app = test_app(vec![]);
+    app.enter_host_form(None, false).unwrap();
+    app.host_form.as_mut().unwrap().address = "10.0.0.7".into();
+    app.save_host_form().unwrap();
+    assert!(app.host_form.is_none(), "{:?}", app.host_notice);
+    assert!(app.hosts.iter().any(|h| h.name() == "10.0.0.7"));
+}
+
 /// Ctrl+U wipes the field the user is looking at — and *only* that field. Every
 /// non-text row used to be handed `&mut address` as its "active field", so
 /// `End` then `Ctrl+U` on *Session log* emptied the address behind the user's

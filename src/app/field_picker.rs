@@ -1,14 +1,56 @@
 use super::*;
 
 impl App {
-    /// Number of selectable rows in the dropdown (incl. the "+ New group" row,
-    /// and the Identity picker's leading "(inherit from group)" row).
-    pub fn field_picker_len(&self, kind: PickerKind) -> usize {
-        match kind {
-            // groups (checkboxes) + "+ New group…"
-            PickerKind::Group => self.groups.len() + 1,
-            // "(inherit from group)" + identities
-            PickerKind::Identity => self.identities.len() + 1,
+    /// Visible dropdown rows as indexes into the full row list (groups then
+    /// "+ New group…", or "(inherit from group)" then identities), fuzzy
+    /// filtered by the picker's query, best match first. The special row
+    /// stays pinned so it is reachable while filtering.
+    pub fn field_picker_rows(&self) -> Vec<usize> {
+        let Some(picker) = self.field_picker.as_ref() else {
+            return Vec::new();
+        };
+        match picker.kind {
+            PickerKind::Group => {
+                let names: Vec<Vec<String>> =
+                    self.groups.iter().map(|g| vec![g.name.clone()]).collect();
+                let mut rows = crate::search::fuzzy_indices(&picker.query, &names);
+                rows.push(self.field_picker_create_index());
+                rows
+            }
+            PickerKind::Identity => {
+                let names: Vec<Vec<String>> = self
+                    .identities
+                    .iter()
+                    .map(|i| vec![i.name.clone()])
+                    .collect();
+                std::iter::once(0)
+                    .chain(
+                        crate::search::fuzzy_indices(&picker.query, &names)
+                            .into_iter()
+                            .map(|i| i + 1),
+                    )
+                    .collect()
+            }
+        }
+    }
+
+    /// Full-list row index of the highlighted visible row.
+    fn field_picker_selected_row(&self) -> Option<usize> {
+        let selected = self.field_picker.as_ref()?.selected;
+        self.field_picker_rows().get(selected).copied()
+    }
+
+    /// Edit the filter and move the highlight to the best match (the first
+    /// identity rather than the pinned "(inherit from group)" row).
+    fn field_picker_edit_query(&mut self, edit: impl FnOnce(&mut String)) {
+        let Some(p) = self.field_picker.as_mut() else {
+            return;
+        };
+        edit(&mut p.query);
+        let skip_inherit = p.kind == PickerKind::Identity && !p.query.is_empty();
+        let rows = self.field_picker_rows().len();
+        if let Some(p) = self.field_picker.as_mut() {
+            p.selected = usize::from(skip_inherit && rows > 1);
         }
     }
 
@@ -29,9 +71,12 @@ impl App {
             PickerKind::Group => form.group_index,
             PickerKind::Identity => form.identity_index,
         };
+        // The query starts empty, so visible rows are the full list and the
+        // stored full-list index is also the visible one.
         self.field_picker = Some(FieldPicker {
             kind,
             selected,
+            query: String::new(),
             creating: None,
             cursor: 0,
         });
@@ -50,18 +95,18 @@ impl App {
         }
 
         let kind = picker.kind;
-        let len = self.field_picker_len(kind);
+        let len = self.field_picker_rows().len();
         match key.code {
             KeyCode::Esc => {
                 self.field_picker = None;
                 self.mode = AppMode::HostForm;
             }
-            KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
+            KeyCode::Down => {
                 if let Some(p) = self.field_picker.as_mut() {
                     p.selected = (p.selected + 1) % len.max(1);
                 }
             }
-            KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => {
+            KeyCode::Up => {
                 if let Some(p) = self.field_picker.as_mut() {
                     p.selected = (p.selected + len.saturating_sub(1)) % len.max(1);
                 }
@@ -70,6 +115,15 @@ impl App {
                 self.field_picker_toggle_group();
             }
             KeyCode::Enter => self.field_picker_confirm()?,
+            KeyCode::Backspace => self.field_picker_edit_query(|q| {
+                q.pop();
+            }),
+            KeyCode::Char(c)
+                if (key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT)
+                    && !c.is_control() =>
+            {
+                self.field_picker_edit_query(|q| q.push(c));
+            }
             _ => {}
         }
         Ok(())
@@ -81,12 +135,11 @@ impl App {
     /// at connect time, so pinning today's default would only freeze the host
     /// against later group changes.
     pub(crate) fn field_picker_toggle_group(&mut self) {
-        let Some(picker) = self.field_picker.as_ref() else {
+        let Some(idx) = self.field_picker_selected_row() else {
             return;
         };
-        let idx = picker.selected;
         let Some(group) = self.groups.get(idx) else {
-            return; // create row or out of range
+            return; // create row
         };
         let gid = group.id;
         if let Some(form) = self.host_form.as_mut() {
@@ -103,9 +156,13 @@ impl App {
         let Some(picker) = self.field_picker.as_ref() else {
             return Ok(());
         };
-        match picker.kind {
+        let kind = picker.kind;
+        let Some(row) = self.field_picker_selected_row() else {
+            return Ok(());
+        };
+        match kind {
             PickerKind::Group => {
-                if picker.selected == self.field_picker_create_index() {
+                if row == self.field_picker_create_index() {
                     // Enter inline "new group" text entry.
                     if let Some(p) = self.field_picker.as_mut() {
                         p.creating = Some(String::new());
@@ -113,17 +170,20 @@ impl App {
                     }
                     return Ok(());
                 }
-                // Multi-select: Space toggles rows; Enter on a group row just
-                // closes the dropdown back to the form. Remember the highlight
-                // so reopening lands on the same row.
-                let group_index = picker.selected;
+                // Multi-select: Space toggles rows; Enter adds the highlighted
+                // group (never removes it) and closes the dropdown. Remember
+                // the highlight so reopening lands on the same row.
+                let gid = self.groups.get(row).map(|g| g.id);
                 if let Some(form) = self.host_form.as_mut() {
-                    form.group_index = group_index;
+                    form.group_index = row;
+                    if gid.is_some_and(|gid| form.group_ids.insert(gid)) {
+                        form.dirty = true;
+                    }
                 }
             }
             PickerKind::Identity => {
                 if let Some(form) = self.host_form.as_mut() {
-                    form.identity_index = picker.selected;
+                    form.identity_index = row;
                     form.dirty = true;
                 }
             }

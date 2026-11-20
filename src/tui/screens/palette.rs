@@ -172,8 +172,11 @@ pub fn render_palette(
         let host_idx = filtered[idx_in_filtered];
         let is_selected = idx_in_filtered == selected;
 
-        // CONTRACT: HostEntry interface
-        let entry = &hosts[host_idx];
+        // CONTRACT: HostEntry interface. A config reload can shrink `hosts`
+        // under stale indices for one frame: skip, never index out of bounds.
+        let Some(entry) = hosts.get(host_idx) else {
+            continue;
+        };
         let name = entry.display_name();
         let _tags_str = entry.tags().join(" \u{00b7} ");
 
@@ -301,10 +304,10 @@ pub fn render_palette(
 
     // ── detail block (4 rows) ───────────────────────────────
     let detail_y = detail_sep_y + 1;
-    if !filtered.is_empty() && detail_y + 1 < inner.y + inner.height {
-        let sel_idx = filtered[selected.min(filtered.len() - 1)];
-        let entry = &hosts[sel_idx];
-
+    let sel_entry = filtered
+        .get(selected.min(filtered.len().saturating_sub(1)))
+        .and_then(|&i| hosts.get(i));
+    if let Some(entry) = sel_entry.filter(|_| detail_y + 1 < inner.y + inner.height) {
         // CONTRACT: HostEntry interface
         let host_addr = entry
             .managed()
@@ -402,8 +405,10 @@ pub fn render_palette(
     // ── hint line below the box ─────────────────────────────
     let hint_y = popup_area.y + popup_area.height;
     if hint_y < area.height {
-        let hint = " \u{21b5} connect   esc cancel";
-        let hint_x = popup_area.x + (popup_area.width.saturating_sub(hint.len() as u16)) / 2;
+        let hint =
+            " \u{21b5} connect  ^E edit  ^F sftp  ^K push key  ^N duplicate  ^D delete  esc cancel";
+        let hint_w = hint.chars().count() as u16;
+        let hint_x = popup_area.x + (popup_area.width.saturating_sub(hint_w)) / 2;
         buf.set_string(hint_x, hint_y, hint, legend);
     }
 }

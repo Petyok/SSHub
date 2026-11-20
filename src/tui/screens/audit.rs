@@ -47,6 +47,16 @@ pub fn render_audit(frame: &mut Frame, area: Rect, app: &App) {
         app.audit_range,
         theme,
     );
+    // The `/` filter sits on the spacer row under the strip.
+    if app.list_filter_editing || !app.audit_query.is_empty() {
+        crate::tui::widgets::filter_bar(
+            buf,
+            Rect::new(inner_x, filter_y + 1, inner_w, 1),
+            &app.audit_query,
+            app.list_filter_editing,
+            theme,
+        );
+    }
 
     if let Some(event) = app.auth_events_cache.get(app.audit_selected) {
         let note = audit_note(event);
@@ -86,7 +96,11 @@ pub fn render_audit(frame: &mut Frame, area: Rect, app: &App) {
 
     // Empty state
     if events.is_empty() && max_rows > 0 {
-        let msg = "No audit events";
+        let msg = if app.audit_query.is_empty() {
+            "No audit events"
+        } else {
+            "No events match the filter"
+        };
         let x = inner_x + (inner_w.saturating_sub(msg.len() as u16)) / 2;
         let y = data_y + 2.min(max_rows.saturating_sub(1) as u16);
         buf.set_string(x, y, msg, theme.style(StyleRole::TextDim));

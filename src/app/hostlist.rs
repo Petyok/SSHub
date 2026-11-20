@@ -604,6 +604,13 @@ impl App {
     }
 
     pub(crate) fn rebuild_filter(&mut self) {
+        // The SFTP picker search has its own query so it never touches the
+        // Hosts tab `/` filter; the list itself is shared.
+        let query = if self.sftp_picker_searching {
+            self.sftp_picker_query.clone()
+        } else {
+            self.search_query.clone()
+        };
         let candidates: Vec<usize> = if self.tag_filters.is_empty() {
             (0..self.hosts.len()).collect()
         } else {
@@ -623,7 +630,7 @@ impl App {
             .iter()
             .map(|&idx| self.hosts[idx].clone())
             .collect();
-        let local_matches = self.search.update_query(&entries, &self.search_query);
+        let local_matches = self.search.update_query(&entries, &query);
         let mut filtered: Vec<usize> = local_matches
             .into_iter()
             .map(|local_idx| candidates[local_idx])
@@ -640,7 +647,7 @@ impl App {
         // While a filter is active, drop groups whose whole subtree has no
         // matching hosts — but keep a parent that itself is empty when a
         // descendant still matches, so nested results stay reachable.
-        let filtering = !self.tag_filters.is_empty() || !self.search_query.is_empty();
+        let filtering = !self.tag_filters.is_empty() || !query.is_empty();
         if filtering {
             let keep = subtree_has_hosts(&self.group_sections);
             let mut it = keep.into_iter();
@@ -656,8 +663,7 @@ impl App {
         // the list can mark it. Done here, once per rebuild, because the
         // renderer only holds `&App` and the matcher needs `&mut`.
         self.search_matches.clear();
-        if !self.search_query.is_empty() {
-            let query = self.search_query.clone();
+        if !query.is_empty() {
             for &idx in &self.filtered_indices {
                 let name = self.hosts[idx].display_name().to_string();
                 let hits = self.search.display_match_indices(&name, &query);
