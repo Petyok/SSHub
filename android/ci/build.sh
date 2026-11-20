@@ -51,7 +51,7 @@ if [ "$mode" = connected ]; then
         while kill -0 "$gp" 2>/dev/null; do
             if hit=$(grep -m1 -E '^[A-Za-z0-9_.$]+ > .*\] FAILED' "$glog"); then
                 echo "FAILFAST: first failure: $hit"
-                for p in uk.petruha.sshub.phone uk.petruha.sshub.phone.test uk.petruha.sshub.phone.debug uk.petruha.sshub.phone.debug.test; do adb shell am force-stop "$p" >/dev/null 2>&1 || true; done
+                for p in io.github.petyok.sshub io.github.petyok.sshub.test io.github.petyok.sshub.debug io.github.petyok.sshub.debug.test; do adb shell am force-stop "$p" >/dev/null 2>&1 || true; done
                 pkill -f GradleWrapperMain || true; pkill -f gradle-launcher || true; kill "$gp" 2>/dev/null || true
                 rc=1
                 break

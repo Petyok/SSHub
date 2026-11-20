@@ -113,7 +113,7 @@ is taken back from a terminal (section 5).
 
 ### 2.2 Kotlin app: `android/`
 
-- Single module `:app`, `uk.petruha.sshub.phone`, Kotlin 2.1, Compose BOM 2025.05, Material 3, Navigation Compose.
+- Single module `:app`, `io.github.petyok.sshub`, Kotlin 2.1, Compose BOM 2025.05, Material 3, Navigation Compose.
   One `Activity`; screens as composables over a `PhoneViewModel` that owns the `PhoneCore` and is the only caller of it.
 - Visual direction: the maintainer chose **A, "Chain"** (dark-first mono, one amber focus, devices as a chain of squares, proofs as squares,
   time as a tick scale, Red as a diff); the normative spec is design spec A, FINAL (tokens mapped to M3 roles dark and light, bundled JetBrains Mono 2.304 and
@@ -138,7 +138,7 @@ is taken back from a terminal (section 5).
 
 ### 2.3 Kotlin adapter
 
-`UniffiPhoneCore` (`android/app/src/main/java/uk/petruha/sshub/phone/core/uniffi/`) is the one implementation of `PhoneCoreApi` the release app
+`UniffiPhoneCore` (`android/app/src/main/java/io/github/petyok/sshub/core/uniffi/`) is the one implementation of `PhoneCoreApi` the release app
 uses: a thin adapter over the generated `uniffi.sshub_phone_core.PhoneCore` (errors are aliased on import: the generated `CoreException`
 and `Opened` share names with ours). One `PhoneCore` per process; it reads the sealed state from `SealedStateStore` (`noBackupFilesDir/core/state.bin`)
 at construction and writes `sealed_state()` after every call that changes it (unlock, `openFrame` of anything but a refusal, every decision,
@@ -385,7 +385,7 @@ Everything runs in a pinned container on gpu-serv; nothing is built on the lapto
 - Gradle: plugin versions pinned in `build.gradle.kts`, dependency versions pinned inline, and Gradle dependency verification is ON:
   `android/gradle/verification-metadata.xml` holds the sha256 of every artifact the build, the release variant and the instrumented tests resolve
   (about 500 components). A changed or new artifact fails the build. To refresh after a dependency change, run on gpu-serv
-  `GRADLE_EXTRA="--write-verification-metadata sha256" TEST_CLASS=uk.petruha.sshub.phone.app.AppRootTest gpu-verify/android.sh <checkout> <name> test`
+  `GRADLE_EXTRA="--write-verification-metadata sha256" TEST_CLASS=io.github.petyok.sshub.app.AppRootTest gpu-verify/android.sh <checkout> <name> test`
   (it covers assembleDebug, assembleRelease and connectedDebugAndroidTest), review the diff of the XML and commit it. Signature verification is not used (sha256 only).
 - Reproducibility (checked 2026-10-26): `app-release-unsigned.apk` built twice in two clean containers (separate source copy, cargo target and Gradle project
   dirs; only the download caches are shared) is byte for byte identical: 541 entries; first check (49dd4cc) sha256 75b128a71af436f9dc62e8680683483a19156c23148c48524fe3f807eb36f4a3, re-check after the core additions (runs rc and rd) sha256 6d060ba07f781685b8d6335775c59c7e9e83c6b4f77b65f04551e187d221fef5 (`android/ci/apk-diff.py A B` lists differing
@@ -452,14 +452,14 @@ as pasted base64 and as BLE frames, which is exactly what the app produces.
 
 ## 11b. Phase 2 result: the Kotlin side
 
-- Code: `android/app/src/main/java/uk/petruha/sshub/phone/`: `ui/theme` (spec-A tokens dark and light, bundled fonts, reduced motion), `ui/components`
+- Code: `android/app/src/main/java/io/github/petyok/sshub/`: `ui/theme` (spec-A tokens dark and light, bundled fonts, reduced motion), `ui/components`
   (about 30 components, Canvas glyphs, no icon font), `ui/screens/{identity,home,release,trust,recovery,enroll}` (all 35 screens of spec 12, stateless
   `XScreen(state, actions)` plus a ViewModel and a nav builder per group), `core/` (the Kotlin `PhoneCoreApi`, ports in `Platform.kt`, and
   `core/uniffi/UniffiPhoneCore`, the adapter over the Rust core), `platform/` (Keystore AES-GCM vault with StrongBox and BiometricPrompt, atomic sealed-state
   file in `noBackupFilesDir`, CameraX luma frames, BLE GATT central for C20 driving the Rust `BleSession`, AudioTrack FSK playback, sensitive clipboard with
   the 60 s clear, FLAG_SECURE helper), `app/AppRoot` (nav host, bottom bar, lock on stop and screen off, theme choice).
 - Debug builds run the REAL core (the debug APK, signed with the committed public debug key, is what is installed for a device session); the Kotlin
-  `FakePhoneCore` (src/debug) is for instrumented tests only (the `core=fake` extra is ignored outside instrumentation); the debug app id is `uk.petruha.sshub.phone.debug`. Release builds always use the Rust core.
+  `FakePhoneCore` (src/debug) is for instrumented tests only (the `core=fake` extra is ignored outside instrumentation); the debug app id is `io.github.petyok.sshub.debug`. Release builds always use the Rust core.
 - CI (`android/ci/build.sh`): host tests of the core, `cargo ndk` with `--profile phone`, uniffi bindings, `lint.sh` (no `Color(0x` outside the theme, no
   `Ellipsis` or `maxLines` in ui, no `Log.` in platform and core), `manifest-check.sh` (permissions exactly CAMERA, BLUETOOTH_SCAN neverForLocation,
   BLUETOOTH_CONNECT, USE_BIOMETRIC, HIDE_OVERLAY_WINDOWS; no INTERNET; backup and cleartext off), debug APK and test APK.

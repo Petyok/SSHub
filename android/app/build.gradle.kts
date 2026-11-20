@@ -5,13 +5,13 @@ plugins {
 }
 
 android {
-    namespace = "uk.petruha.sshub.phone"
+    namespace = "io.github.petyok.sshub"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
-        applicationId = "uk.petruha.sshub.phone"
+        applicationId = "io.github.petyok.sshub"
         minSdk = 30
         targetSdk = 35
         versionCode = 1

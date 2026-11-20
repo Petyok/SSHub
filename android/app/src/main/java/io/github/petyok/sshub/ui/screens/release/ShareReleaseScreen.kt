@@ -1,0 +1,244 @@
+package io.github.petyok.sshub.ui.screens.release
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import io.github.petyok.sshub.core.ChannelKind
+import io.github.petyok.sshub.core.displayName
+import io.github.petyok.sshub.core.nameAndId
+import io.github.petyok.sshub.ui.components.BarButtons
+import io.github.petyok.sshub.ui.components.BigWords
+import io.github.petyok.sshub.ui.components.ButtonKind
+import io.github.petyok.sshub.ui.components.CheckboxRow
+import io.github.petyok.sshub.ui.components.ChoiceRow
+import io.github.petyok.sshub.ui.components.DiffBox
+import io.github.petyok.sshub.ui.components.DiffEntry
+import io.github.petyok.sshub.ui.components.HexGroups
+import io.github.petyok.sshub.ui.components.HoldCover
+import io.github.petyok.sshub.ui.components.KeyValue
+import io.github.petyok.sshub.ui.components.Note
+import io.github.petyok.sshub.ui.components.ScreenFrame
+import io.github.petyok.sshub.ui.components.SecureWindow
+import io.github.petyok.sshub.ui.components.SectionHeading
+import io.github.petyok.sshub.ui.components.SshubButton
+import io.github.petyok.sshub.ui.components.SshubCard
+import io.github.petyok.sshub.ui.components.TickScale
+import io.github.petyok.sshub.ui.components.StopBox
+import io.github.petyok.sshub.ui.components.ToggleRow
+import io.github.petyok.sshub.ui.components.WarnBox
+import io.github.petyok.sshub.ui.components.WordGrid
+import io.github.petyok.sshub.ui.components.WordKeycap
+import io.github.petyok.sshub.ui.theme.SshubText
+import io.github.petyok.sshub.ui.theme.sshub
+
+class ReleaseActions(
+    val onBack: () -> Unit = {},
+    val onApprove: () -> Unit = {},
+    val onDecline: () -> Unit = {},
+    val onTyped: (String) -> Unit = {},
+    val onChannel: (ChannelKind, Boolean) -> Unit = { _, _ -> },
+    val onSound: (ChannelKind?) -> Unit = {},
+    val onShortCode: (Boolean) -> Unit = {},
+    val onByHand: (Boolean) -> Unit = {},
+    val onCopy: () -> Unit = {},
+    val onAskAgain: () -> Unit = {},
+    val onScanId: () -> Unit = {},
+)
+
+/** Share release (spec 12 `release`, rules D8 to D13, D15, D16, D18, D19). Stateless: every number comes from `state`. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ShareReleaseScreen(state: ReleaseState, on: ReleaseActions) {
+    SecureWindow()
+    val v = state.view
+    val review = state.phase == ApprovalPhase.Review || state.phase == ApprovalPhase.Signing
+    val released = state.phase == ApprovalPhase.Approved
+    ScreenFrame(title = "Share release", onBack = on.onBack, bar = { ReleaseBar(state, on) }) {
+        if (state.closed) {
+            WindowClosedBox()
+            return@ScreenFrame
+        }
+        if (v.headPending && review) {
+            StopBox("This phone does not sign yet.", Modifier.padding(bottom = 12.dp), live = true) {
+                Text(
+                    "It was restored and has not taken its chain from a terminal. Approve stays off until it has; the request waits here. Take the chain from the Security menu, then open this request again.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        }
+
+        if (v.plain.isNotEmpty()) Text(v.plain, Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
+        SshubCard {
+            Text("requester", style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(displayName(v.requesterName), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onSurface)
+            Text(v.requesterId, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            KeyValue("share", "${v.shareKind}, sharing round ${v.shareEpoch}, share ${v.shareIndex}", Modifier.padding(top = 8.dp))
+            v.requesterKey?.let { HexGroups(it, Modifier.padding(top = 8.dp), groups = null, label = "Requester key") }
+        }
+
+        // Lifetime of the challenge, one needle step per second (spec 8): `now` is whole seconds. The one timer sits in this card.
+        val total = (v.expiresAt - v.signedAt).coerceAtLeast(1L)
+        val left = state.left
+        val signedAgo = (state.now - v.signedAt).coerceAtLeast(0L)
+        SshubCard(Modifier.padding(top = 12.dp)) {
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                ExpiryLine(
+                    state.timerLeft, if (state.windowIsTimer) spokenWindow(state.timerLeft) else announcement(left, released),
+                    danger = state.timerLeft <= 0L,
+                )
+                Text("signed ${durationText(signedAgo)} ago", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            TickScale(
+                intervals = total.toInt(), major = 10, fraction = (total - left).toFloat() / total.toFloat(),
+                description = "Request valid for $total seconds, $left seconds left",
+                modifier = Modifier.padding(top = 8.dp), labels = Triple("signed", "", ""),
+            )
+        }
+
+        if (v.hostUid.isNotEmpty()) {
+            SectionHeading("Host", trailing = "the terminal shows the same id")
+            HexGroups(v.hostUid, groups = null, label = "Host id")
+        }
+        if (v.opRows.isNotEmpty()) {
+            TechnicalDetails("${v.opRows.size} fields, ${v.opRows.count { it.danger }} flagged", startOpen = v.plain.isEmpty()) {
+                SectionHeading("What you release", trailing = "${v.opRows.size} fields")
+                DiffBox(v.opRows.map { DiffEntry(it.key, it.from, it.to, it.mono, it.danger) })
+            }
+        }
+
+        SectionHeading("Binding words", trailing = "compare with the terminal")
+        BigWords(v.words)
+        if (v.bindingHash.isNotEmpty()) HexGroups(v.bindingHash, Modifier.padding(top = 8.dp), groups = null, label = "Binding hash")
+        Note("Compare the host and the four words with the terminal.", Modifier.padding(top = 8.dp))
+
+        ChecksCard(v.checks)
+
+        if (v.mustType != null && review) NeverMet(state, on)
+
+        if (review) {
+            SectionHeading("Show the answer as", trailing = if (state.channelsOn.isEmpty() && !state.byHand) "nothing chosen" else "${state.channelsOn.size} on")
+            SshubCard {
+                v.channels.firstOrNull { it.kind == ChannelKind.Qr }?.let { c -> ToggleRow(c.label, c.kind in state.channelsOn, { on.onChannel(c.kind, it) }) }
+                Text("Sound", Modifier.padding(top = 8.dp), style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val sounds = v.channels.filter { it.kind != ChannelKind.Qr }
+                val chosen = sounds.firstOrNull { it.kind in state.channelsOn }?.kind
+                ChoiceRow("Off", chosen == null, { on.onSound(null) }, Modifier.padding(top = 4.dp))
+                sounds.forEach { c -> ChoiceRow(c.label, chosen == c.kind, { on.onSound(c.kind) }, Modifier.padding(top = 6.dp)) }
+            }
+            if (v.shortCodeOffer != null) {
+                SshubCard(Modifier.padding(top = 12.dp)) {
+                    ToggleRow("Also issue a short code", state.shortCode, on.onShortCode)
+                    Note(v.shortCodeOffer)
+                }
+            }
+            CheckboxRow("Type it by hand", state.byHand, on.onByHand, Modifier.padding(top = 8.dp))
+            if (state.byHand) {
+                WarnBox("Look around first.") {
+                    Text("Anyone who sees these has this share.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+                    Text(
+                        "The share index and the words appear here after you approve. They stay covered until you hold.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
+
+        state.error?.let { ErrorBox(it) }
+
+        if (released) ReleasedCard(state, on)
+        if (state.phase == ApprovalPhase.Declined) {
+            SshubCard(Modifier.padding(top = 12.dp)) {
+                Text("Declined.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.onSurface)
+                Note("Nothing was released.")
+            }
+        }
+    }
+}
+
+/** D13: warn box with name, id in mono, the typed id gates the primary button. No amber inside. */
+@Composable
+private fun NeverMet(state: ReleaseState, on: ReleaseActions) {
+    val v = state.view
+    val required = v.mustType ?: return
+    val mismatch = state.typed.isNotBlank() && !typedIdMatches(required, state.typed)
+    WarnBox("This requester has never met this phone.", Modifier.padding(top = 12.dp)) {
+        Text(
+            "Its signature cannot be checked. Approve only if you started this request yourself and the id printed on the terminal is $required.",
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(nameAndId(v.requesterName, required), style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
+    }
+    TypedIdField(
+        state.typed, on.onTyped, on.onScanId, Modifier.padding(top = 12.dp), placeholder = "Type $required",
+        error = if (mismatch) "does not match" else null, label = "Typed requester id",
+    )
+}
+
+@Composable
+private fun ReleasedCard(state: ReleaseState, on: ReleaseActions) {
+    val v = state.view
+    val out = state.outcome
+    val shown = v.channels.filter { it.kind in state.channelsOn }.joinToString(", ") { it.label }.ifEmpty { "nothing on this phone" }
+    SshubCard(Modifier.padding(top = 12.dp)) {
+        Text("Signed.", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.sshub.ok)
+        Note("Shown as: $shown. Check on the terminal that it took the share.")
+        if (state.restored) {
+            Note("The code was shown when you approved. It is not shown again.", Modifier.padding(top = 4.dp))
+            return@SshubCard
+        }
+        val frame = out?.outgoing
+        if (frame != null) {
+            if (ChannelKind.Qr in state.channelsOn) QrLoop(frame.qr, QR_DESCRIPTION)
+            CopyAsText(state.copied, state.clearsIn, on.onCopy)
+        }
+        val code = out?.shortCode
+        if (code != null) {
+            Text("short code, shown once", Modifier.padding(top = 12.dp), style = SshubText.fieldKey, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            FlowRow(
+                Modifier.fillMaxWidth().padding(top = 4.dp).clearAndSetSemantics { contentDescription = "Short code, shown once: " + code.code.split('-').joinToString(", ") },
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                code.code.split('-').forEach { WordKeycap(it, Modifier.padding(horizontal = 4.dp)) }
+            }
+            if (code.weak) Note("This code is weaker than the usual profile on this phone.", Modifier.padding(top = 4.dp))
+        }
+        val hand = out?.byHand
+        if (hand != null) {
+            WarnBox("Look around first.", Modifier.padding(top = 12.dp)) {
+                Text("Anyone who sees these has this share.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
+            }
+            Text("share index ${hand.index}", Modifier.padding(top = 12.dp, bottom = 8.dp), style = SshubText.monoBody, color = MaterialTheme.colorScheme.onSurface)
+            HoldCover { WordGrid(hand.words) }
+        }
+    }
+}
+
+@Composable
+private fun ReleaseBar(state: ReleaseState, on: ReleaseActions) {
+    when {
+        state.closed -> SshubButton("Back to approvals", on.onBack, Modifier.fillMaxWidth())
+        state.phase == ApprovalPhase.Approved || state.phase == ApprovalPhase.Declined -> SshubButton("Back to approvals", on.onBack, Modifier.fillMaxWidth())
+        state.left <= 0L -> SshubButton("Ask the terminal again", on.onAskAgain, Modifier.fillMaxWidth())
+        else -> {
+            val gate = state.gate
+            BarButtons {
+                SshubButton("Decline", on.onDecline, kind = ButtonKind.Outline, enabled = state.phase == ApprovalPhase.Review)
+                SshubButton(
+                    "Approve", on.onApprove, kind = ButtonKind.Primary,
+                    subtitle = if (gate.reason == TYPE_ID_FIRST) TYPE_ID_FIRST else "sign with the phone",
+                    enabled = gate.enabled, disabledReason = gate.reason,
+                )
+            }
+        }
+    }
+}
