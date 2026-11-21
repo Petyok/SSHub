@@ -339,6 +339,39 @@ sshub audit stats --days 7
 # The jump-host map as a Graphviz graph
 sshub map --dot | dot -Tsvg -o map.svg
 
+# Host sync between your own devices (end to end encrypted, over ssh); see "Sync (tab 7)"
+sshub sync-join laptop                        # enroll with the device at host "laptop": compare the words (or, if it has no screen, approve the admission)
+sshub sync-now                                # sync with every ring device that has a known host
+sshub sync-now laptop --format json           # one device, by name or id prefix
+sshub sync-status                             # (exit 3 while a recovery of the phone is open) ring devices (this one marked), how each was verified, pending changes, credential mode
+sshub sync-review                             # every change waiting for review (id, author, reason, field diffs, Red ceremony)
+sshub sync-review --approve 3fa9c1            # or --reject; id = unique prefix (6+ hex digits)
+sshub sync-review --approve-all --device <id>   # only that device's changes held for being away that touch no address, jump host, command, user or key
+sshub sync-review --approve-all               # every waiting change without a ceremony, in one pass (Red changes, share releases and doubtful ones stay)
+sshub sync-revoke <device>                    # remove a device (a big change for a full device; needs two computers you control and the paper phrase, see below)
+sshub sync-role <device> holder|mirror        # promote or demote (Red)
+sshub sync-approve <op-id>                    # second-device vote on a Red change
+sshub sync-factor <op-id> --paper|--email-code   # third factor, read without echo
+sshub sync-factor-register paper|email [--sender <this device>]   # the emailed code is kept, sealed, only on its sender: register on the device that will mail it
+sshub sync-recovery start [--paper] | approve <op-id> | ack <op-id> | cancel <op-id> --factor paper|email | status
+sshub sync-mode vault|quorum [--cosigner <device>]   # two steps: the first call proposes the change (Red); run it again once its ceremony completed to re-encrypt the credentials
+sshub sync-exemption on|off <device>          # master-phrase exemption (on needs the TUI)
+sshub sync-export --window <seconds> --out <path> [--wait <seconds>]   # bulk export (Red, window <= 3600 s, 0600 file)
+sshub sync-migrate [--remove-local]           # replicate this profile's saved secrets
+sshub sync-heal                               # after a device was replaced or retired: re-seal saved passwords to every current full device (paper phrase typed once)
+sshub sync-rekey [--csv FILE|--stdin] [--new-key HOST]...   # after a stolen device: list, or save new secrets (lines host,newpassword) / a new key installed with the current login
+sshub sync-replace-terminal <old> [--new <computer>]   # replace a full computer in steps (enroll, promote, remove), the paper typed once
+sshub sync-trust-renew [<id>] [--days N]       # list renewable trust sessions, or print the kind 11 renewal request for the phone
+sshub sync-import-kit                         # second machine: set up the Vault from the kit and the phrase
+sshub sync-phone-enroll [--replace] [--ble]               # enroll the phone as text (--replace: the verified phone is the NEW phone of a handover from the old one, which still works): frames (base64) on stdin and stdout, the four words, then y or n (--ble: the frames also over Bluetooth)
+sshub sync-notice <op-id> [--ble]             # the kind 3 notice (base64) of a Red op for the phone (--ble: also handed over Bluetooth)
+sshub sync-phone-chain <phone-id> [--ble]   # the kind 5 list of a restored phone's own newest ops, naming this terminal (unsigned sender): the phone needs it from two different terminals
+sshub sync-phone-ops [--ble] < ops.txt        # take in the ops the phone copied (kind 5, base64); prints what applied and why the rest was skipped (chain-gap, already-known, invalid) (--ble: from the phone over Bluetooth)
+sshub sync-share-request <host> [--wait 120] [--ble]  # prints the host name, its host id and the four binding words (compare them with the phone), the kind 1 challenge, then reads the phone's kind 2 reply on stdin (or over Bluetooth) and opens the credential in this process
+sshub sync-cert-request (--group G | --host H...) [--days 30] [--budget 10] [--ble]   # kind 9 trust-session request for the phone
+# Exit codes of sync-now: 0 ok, 1 offline/failed, 2 usage, 3 fork detected. Admin verbs: 0 ok, 1 error, 2 usage.
+# sync-serve / sync-enroll are what a peer runs over ssh (frames on stdin and stdout); not for interactive use.
+
 # Inventory sync with ~/.ssh/config
 sshub import                                  # import hosts from ssh config (--from ssh)
 sshub import --from termius ./termius-export  # import a Termius export dir (L00t.csv)
@@ -390,7 +423,7 @@ Defaults below. Rebind any action with **Ctrl+K** (saved to `config.toml`). Pres
 
 | Key              | Action                          |
 |------------------|---------------------------------|
-| `1`..`6`, `h` / `i` | Switch tab (hosts/sftp/tunnels/identities/audit/map); `h` is hosts, `i` identities |
+| `1`..`7`, `h` / `i` | Switch tab (hosts/sftp/tunnels/identities/audit/map/sync); `h` is hosts, `i` identities |
 | `Esc`            | Back / close overlay            |
 | `Ctrl+H`         | Settings (theme, transparency, logging, ping, updates, profiles, command history); fixed, not rebindable |
 | `Ctrl+K`         | Keybind editor                  |
@@ -479,6 +512,7 @@ arrives as arrow keys, exactly as in a real terminal.
 | `x`                | Cancel a running broadcast / clear its error toasts |
 | `Shift+U`          | Install the sshub update, or check for one |
 | `Shift+W`          | What's new: release notes of this version or the installed update |
+| `A`                | Make the selected host one of your sync devices (once sync is set up) |
 
 ### SFTP (tab 2)
 
@@ -557,6 +591,129 @@ arrives as arrow keys, exactly as in a real terminal.
 Under 80x24 the map becomes an outline (one hop per row); under 40x12 it asks for a bigger terminal.
 
 In the host form, the ProxyJump field is the hop editor: `a` add a saved host, `r` a raw hop, `Enter` replace, `d` remove, `Ctrl+↑` / `Ctrl+↓` move, `n` direct (stores `none`, overriding a group jump), `X` clear (inherit), `t` test the chain. ssh_config hosts stay read-only.
+
+### Sync (tab 7)
+
+Sync keeps hosts and credentials identical on your own devices (laptops, a server, a phone as the second factor), end to end encrypted, over plain `ssh`: a sync is `ssh <peer> sshub sync-serve`, with no daemon and no open port. The words used on screen and in this section are defined in [docs/host-sync-glossary.md](docs/host-sync-glossary.md) (full device, view-only copy, the four check words, trust session, short code). Design and threat model: [docs/host-sync-design.md](docs/host-sync-design.md). The phone app and the phone page: [docs/host-sync-android.md](docs/host-sync-android.md) and [docs/host-sync-companion.md](docs/host-sync-companion.md).
+
+**With one computer there is no backup of your host list.** The phone and the paper phrase hold pieces of passwords, not your hosts. Add a second computer, or a view-only copy on a server at a permanent address, before you rely on sync; until then a lost computer is a lost host list.
+
+#### Quick start
+
+Everything below works from the terminal; the phone steps also have CLI verbs (see the sync verbs in the command list above).
+
+1. **Set up a ring.** On the first machine open the Sync tab (`7`). On the hosts tab select a machine that runs sshub and press `t`, or on a blank machine run `sshub sync-join <host>` against one that has a ring. The first run issues a six-word master phrase and a ring secret, asks you to retype two words, and writes the printable kit (keep it offline, never photograph it). The default credential mode is Vault. Remember that this first computer is the only copy of your host list until you add a second device (step 2).
+2. **Add a device.** `A` on the hosts tab (or `sshub sync-join <host>` on the new machine). If both ends have a screen, compare the four check words and answer yes only when identical; for a machine reached over plain ssh the words prove nothing and you approve on the SSH host key you verified. A new device starts as a view-only copy (it sees your hosts but holds no piece of any password). Make it a full device with `M`, "Change a device's role" (or `sshub sync-role <device> holder`); that is a big change (see step 4). On a second machine with the Vault kit: `M`, "Import the Vault kit" (or `sshub sync-import-kit`). Sync runs at start (`[sync] auto_sync_on_start`), on `y` in the Sync tab, or with `sshub sync-now`.
+3. **Add the phone.** Install the SSHub app on your Android phone, open it and write down the 24 backup words it shows (it asks you to retype two). In the app choose "Connect to a terminal", and on the terminal `M`, "Add my phone" (or `sshub sync-phone-enroll`). Both screens show a QR in five short steps: Terminal code, Phone code, Terminal keys, Compare the words, Finish. In step 4 both show four check words; answer yes only if they are identical. The phone is then proposed as a full device (a big change, see step 4). No camera on the terminal? Each step also has a text form to paste, and with the `bluetooth` build the steps can travel over Bluetooth. The phone page is an alternative to the app (see "The phone companion").
+4. **Approve a change.** A change to an address, jump host, remote command, user or key waits in the review list: `R` in the Sync tab (or `sshub sync-review`), then `a` approve or `r` reject. A big change (a new full device, a removed device, a mode change, a new phone, a bulk export) also needs the three approvals: the phone's confirmation, a second device with a person at the keyboard (`a` there, or `sshub sync-approve <change-id>`) and the paper phrase or the emailed code, which come from outside your devices: `p` types the paper phrase, `e` the emailed code (or `sshub sync-factor <change-id> --paper|--email-code`). Every device evaluates the same rule on the same log; an approval round that is not complete in 3 days is dropped. A change id is the first 8 hex digits shown in the review list; any 6 or more digits that identify one change are accepted.
+
+   **Removing a stolen or lost device** (`M`, "Revoke a device", or `sshub sync-revoke <device>`) needs two computers or servers you control, the one you remove included, together with the phone and the paper phrase (with three or more, the other computers also re-share your passwords; with two, the passwords the removed device held a piece of stay on an exposure list until you change them). With fewer, change the passwords of the hosts and remove the device's key from every host's `authorized_keys` by hand.
+5. **Unlock a Quorum credential.** `M`, "Switch the credential mode" proposes Quorum (a Red change); when the ceremony completes run it again to re-encrypt the credentials ("Finish the switch to Quorum", or `sshub sync-mode quorum`). After that a connect that needs a credential opens the unlock modal: it shows the phone's challenge as a QR (also sound or Bluetooth in a build with those features), asks full devices with a person at the keyboard to approve on their screen, and accepts the phone's reply (pasted code, camera, microphone). From the CLI the request is written as a share release, synced, and waits up to `SSHUB_UNLOCK_WAIT` seconds (default 120, at most 3600) for a holder to run `sshub sync-review --approve <id>` (the id is printed). `sshub sync-share-request <host>` asks the phone directly. For many hosts use a trust session (`t` in the Sync tab, scope and 7, 30 or 90 days).
+6. **Recover a lost phone.** On any other device with a person at the keyboard: `M`, "Recovery of a lost phone", Start (or `sshub sync-recovery start [--paper]`). It needs two other devices with a person at the keyboard or the paper phrase, plus the paper phrase or the emailed code (`sshub sync-factor <change-id>`), then a 7 day wait during which every device shows it; a device other than the requester confirms it (`sshub sync-recovery ack <change-id>`, automatic on devices with a person at the keyboard). The owner of a phone that is not lost cancels it from the phone with nothing else. After the time lock the recovery stays completable for 3 days, then it lapses and must be started again. When it completes, add the new phone as in step 3. `sshub sync-recovery status` and `sshub sync-status` show each recovery's state and what it waits for.
+
+#### Vault and Quorum
+
+**Vault** is the default. Every credential is encrypted under a key derived from a six-word master phrase and a ring secret (a QR on the printed kit), so any machine with the kit and the phrase can open them and no second device is needed. Its strength is the cost of guessing the phrase: a stolen device holds the ciphertext and the ring secret, so the phrase is what remains. **Quorum** splits each credential's key into shares held by your devices, the phone and a paper phrase, and any two open it: nothing on a stolen machine can be guessed, a second share has to come from a holder that agrees (a holder under a trust session, an attended holder approving on its screen, the phone). Switching modes is a Red change.
+
+What sync does not protect against (the design's honest list, word for word):
+
+- **Genesis:** if the first machine is compromised while the ring is created, no scheme detects it.
+- **Metadata:** addresses, `proxy_jump`, notes, groups are readable by every ring device. That is what makes sync work. Only credentials are encrypted.
+- **Revocation is not retroactive:** a revoked device keeps what it already downloaded; revocation protects the future (reissue), not the past.
+- **Revocation is not instant:** it propagates on sync. The window is narrowed by the freshness check before every release, not closed.
+- **The trust-certificate window:** an attacker on a trusted machine reaches credentials inside the certificate's scope, bounded by the new-host budget. Over a full term they cover the scope; what bounds them is the scope, what notices them is the visible list of opened hosts.
+- **A stolen device in Vault mode:** the machine holds the ciphertext and the ring secret, so the master phrase remains to be guessed: strength by cost, not by impossibility. In Quorum mode there is nothing to guess.
+- **A holder in someone else's datacenter:** a VPS holder puts a share of every key on the most exposed machine in the ring. VPS plus any one device is every credential. Allowed, warned about, not defended.
+- **Paper plus any one computer:** two shares of two. The recovery phrase is a key to everything, like a wallet seed.
+- **The printed kit** (ring secret QR, and in Vault mode the master phrase): it reconstitutes Vault mode without any device of yours. Treat it as the credential store itself, never photograph it.
+- **A phone that only ever sees one machine:** a compromised courier can withhold its ops until the phone touches any other device; bounded by the freshness threshold.
+- **Checkpoints:** pruning forgets old ops on the devices that prune, not on the revoked device or in backups; a fork hidden below an accepted cut is no longer provable by a pruned peer.
+- **A password changed on the server itself**, outside sshub, is not detected.
+- **Old wrapped shares after a revocation:** the forward-secure wrap keys of Quorum mode protect against theft after retirement for holders that can rotate. Not covered: a copy of a holder's key file taken before retirement; holders that cannot rotate (the paper phrase, a phone that has not contacted a terminal since the revocation), whose theft still combines with the revoked device's old share; backups and flash storage that keep a deleted key; and a lying contributor, which can make a credential unrecoverable (the password is then re-entered) but cannot disclose one.
+
+#### Keys
+
+| Key | Where | Action |
+|-----|-------|--------|
+| `7` | anywhere | Open the Sync tab; until you have a group of devices it says how to start or join one |
+| `↑` / `↓` | Sync tab | Select a device |
+| `y` | Sync tab | Sync now with the selected device (not with this device) |
+| `Enter` | Sync tab | On a compromised device: its proof and what to do next. On a behind or stale one: sync first, then (if it is still behind) re-enroll it through its recorded host |
+| `R` | Sync tab | Review every change waiting for approval |
+| `t` | Sync tab | Start a trust session: which hosts (a group, or hosts marked with Space, at most 64; never everything), how many days (7, 30 or 90), new hosts per day |
+| `M` | Sync tab | Manage your devices: overview, trust sessions, revoke a device, roles, credential mode (propose, then finish the switch once the ring agreed), add my phone, paste phone ops, recovery, paper and emailed-code factors, exemption, bulk export, move local secrets into the ring, import the Vault kit |
+| `K` | Sync tab | Register the paper phrase: the 24 words are shown, you type three of them back (chosen at random). Required before a switch to Quorum or a third full device; the Sync tab shows a standing line until it is done |
+| `A` | Hosts tab | Make the selected host one of your sync devices |
+| `A` | Review | Approve, on this device only, every change of the selected change's device that waits only because the device was away and touches no address, jump host, remote command, user or key; `sshub sync-review --approve-all --device <id>` does the same. Anything else stays one by one with its full diff |
+| `a` `r` `p` `e` | Review | `a` approve (for a big change: add this device's approval), `r` reject, `p` type the paper phrase (24 words, nothing is shown), `e` type the emailed code, `Esc` close |
+
+All seven sync keys (tab, now, review, trust, manage, paper, and `A` on the hosts tab) are rebindable in the keybind editor. A device that signed two different histories (a fork) takes over the whole screen and names the device; `Esc` closes the alert and the badge stays red. The tab bar shows `⇅N ⏳Nops`, red when a device is compromised.
+
+The Sync tab is titled "Your devices". Its header says the password mode (Vault or Quorum), how many changes wait for approval and whether you can cut off a stolen device ("yes", or "no, add N more computers": the rule is two computers or servers you control and a registered paper phrase). The table lists each device with its kind (full device, view-only copy, phone), its state (in sync, missed some changes, away too long, needs a look, COMPROMISED, removed) and when it was last in sync; `Enter` opens its details, including its id as a QR code (`sshub:dev:1:<16 hex>`) that the phone app can scan. Lines above the table ask for attention: the ring secret is missing ("Press M, then Import the Vault kit"), a switch or export is still to be finished, a big change expires within 24 hours, the phone has not been seen for 7 days (trust sessions stop at 14). On every tab the tab bar shows the most urgent one of: a big change expires in N h, phone not seen for N days, `sync: offline 6d`, `sync: 2 waiting`; `sshub host list` prints a warning on stderr when a big change expires within 24 hours.
+
+`M` is grouped: Your devices (overview), Changes waiting for approval, Devices (remove a device, change what a device may do), Phone (add the phone, take in what the phone signed, show a restored phone's own changes), Passwords (switch to Quorum or back to Vault, import the Vault kit, paper phrase wizard and sheet, emailed code, move saved passwords), Recovery, Advanced (trust sessions, master phrase exemption, export). Entries that do not apply stay listed with "(not now: reason)". Switching back from Quorum to Vault works in the terminal: `M`, Passwords, "Switch back to Vault": pick the co-signing computer, then choose it again once the approvals are in; a dialog gathers a second full device's approval or the phone for each password. Switching back removes no device: devices that already held pieces of a password can still open the copies made before the switch, so change the password on the server if that matters. `sshub sync-mode vault --cosigner <device>` only proposes it. A trust session is set up on one screen ("Let <this computer> open <hosts> without asking, for 30 days, up to 10 new hosts a day"); the phone's answer is read by the camera (build with the `camera` feature), over Bluetooth, or pasted. An export is proposed once and continued by choosing it again after the approvals. Enrolling a server without a screen asks "Is <host> your server?" with its SSH key fingerprint; the four check words appear only when a person sits at the other end. `sshub sync-join` ends by saying to import the Vault kit when the group uses Vault.
+
+#### Starting a ring, joining, unlocking
+
+First run on a machine with no ring: the app issues a six-word master phrase (from the EFF list) and a ring secret, shows the words once, asks you to retype two of them, then writes the printable kit as two separate files at paths you choose: a phrase sheet and a ring secret sheet (the secret as a QR code and as text). Each carries the "do not photograph" warning, is created owner-only and never overwritten; the phrase is kept nowhere else on disk. Your devices then form a group, with this machine as the first member: the master-phrase key is derived (one second or two, 1 GiB of memory), the ring secret goes to the profile's credential store, and this device becomes the group's first member. On a second machine, `M` then "Import the Vault kit" (or `sshub sync-import-kit`) sets up the Vault from the kit and the phrase.
+
+Joining: `A` on the hosts tab or `sshub sync-join <host>`. Enrollment shows four check words. When both ends have a screen you compare them and answer yes only if they are identical (verified by the four check words). When the other end has no terminal (for example `t` enrolls a server over a plain ssh command) the words prove nothing: the dialog says so, and you approve the admission on the strength of the SSH host key you verified for that host (recorded as verified by the SSH host key). Which of the two admitted a device is shown per device on this tab and in `sshub sync-status`. Roles follow membership, not who connected: the side that already has a group invites, a blank side joins, and two different groups are never merged.
+
+A synced credential stays locked until opened: a connect, SFTP, tunnel, broadcast or key push that needs one opens the unlock modal. In Vault mode you type the six words (the CLI asks on the terminal without echo). In Quorum mode the CLI writes a share release, syncs with the attended holders it has a host for and waits up to `SSHUB_UNLOCK_WAIT` seconds (default 120) for one of them to approve it: in its TUI, or with `sshub sync-review --approve <id>` there (the id is printed). The CLI does not try the phone or trust-session paths. In Quorum mode the modal shows, under the host name, the host id (32 hex digits in groups of four, the way the phone draws it) and the challenge's four check words: compare both with the phone's release screen before you approve there. The modal asks holders that may release under a trust session, asks full devices with a person at the keyboard to approve on their screen, and arms the phone: it shows the phone's challenge code and accepts the pasted reply, the 16 character short code or the 24 words, and, in builds with the opt-in `audio`, `camera` and `bluetooth` features, listens for the phone's sound, reads its code, or serves it over Bluetooth by itself while the modal is open (the modal says when a listener is not compiled in or finds no device; with Bluetooth it shows the name to pick in the phone app's (or page's) device list, `SSHub-` and four characters that change every time). A synced identity's key never touches a disk: it lives in a private `ssh-agent` of this process (and in memory for SFTP) until you lock or quit.
+
+While the profile is in a ring, saving a password, a passphrase or an identity's key file (host form, identity form, key generation, the auth prompt's remember choice, `host add --password-stdin`, `identity add`) writes a replicated credential instead of a local keyring entry, and clearing one replicates the clearing. `M` then "Move this machine's saved secrets into the ring" replicates what was saved before.
+
+#### Review and big changes
+
+Review lists every waiting change with why it waits (`tier`, `stale`, `resurrection`, `revoke-conflict`, `unknown-author`) and its fields as `old -> new`; fields that can redirect a connection (address, port, user, proxy jump, remote command, credentials) are marked `!` and drawn in the error colour. `a` approves and applies an ordinary change, `r` rejects it; both act on the store at once.
+
+A **big** change (removing a full device, changing a role, switching the credential mode, issuing a trust session, registering the paper phrase or emailed code, the master-phrase exemption, a bulk export) takes effect only when the three approvals are in the log: the phone's signature, a second full device with a person at the keyboard, and the paper phrase or an emailed code from outside your devices. Review shows which are present and which are missing; with only one full device with a person at the keyboard, the second device is waived and the paper phrase is required. `a` adds this device's approval, `p` and `e` type the paper phrase or the emailed code; a change whose time ran out is rejected. The approving device never approves for the proposer: propose on one device, approve on another.
+
+#### Trust sessions, recovery, paper
+
+`t` on the Sync tab (or `M`, "Trust session") asks the phone to certify that this machine may open a group or host list for a while without asking each time: a looping QR carries the request, the phone's answer is pasted back, and the approval round above completes it. `M` also extends a trust session's daily budget (a second QR) or revokes it. Recovery of a lost phone (start, approve, acknowledge, cancel, status) is under `M` and in `sshub sync-recovery`. The paper phrase is created and shown once, registered only when you type it back exactly, and can be written to one printable sheet (a single owner-only HTML file with the 24 words, the "do not photograph" warning and the sentence that the sheet is the credential store). The emailed code is registered once and shown once.
+
+#### The phone companion
+
+The phone is the second factor: it holds one piece of your saved passwords, approves big changes and releases a password when you ask. The recommended way is the **SSHub app for Android** (a native app; `android/` in this repository, described in [docs/host-sync-android.md](docs/host-sync-android.md)). Quick start step 3 above connects it. It asks the phone's screen lock before every approval, shows plain sentences for what it asks you to approve ("Make laptop-2 a full device ... Asked by laptop-2."), and keeps its key in the Android key store. Back up the 24 words it shows: they are the only way to get the same phone key back after a wipe, a new phone or a change of fingerprints.
+
+On the terminal side, `M` also holds the phone entries: "Add my phone" (connect the phone), "Paste phone ops" (take in the list of changes the phone copies out), "Show a restored phone's own ops" (a phone restored from its 24 words must read its own newest changes from **two different terminals** before it signs again; each list names its terminal). A switch from Vault to Quorum is the same two steps as `sshub sync-mode quorum`: `M`, "Switch the credential mode" proposes it and shows the approval round; once your devices agreed the same entry reads "Finish the switch to Quorum" and re-wraps the credentials (it asks the master phrase, nothing is shown).
+
+**The phone page** (`assets/companion/sshub-companion.html`) is an alternative that needs no app: one self-contained file with the same steps, for a browser on a phone. Its release fingerprint is shown on it and in `assets/companion/FINGERPRINT`; compare it with the one the terminal shows (Sync tab status or `sshub sync-status`) before you trust it. A browser only gives a page the camera and microphone in a secure context, so the page has to be served from `https://` or from `localhost`. To try it from a development machine over USB:
+
+```bash
+python3 -m http.server 8443 --bind 127.0.0.1 --directory assets/companion &
+adb reverse tcp:8443 tcp:8443
+# on the phone: open http://localhost:8443/sshub-companion.html
+```
+
+#### Configuration and build options
+
+```toml
+[sync]
+auto_sync_on_start = true   # one sync round with every device that has a known host when sshub starts
+unattended = false          # true on a device nobody sits at (the Hub): it enrolls as unattended, never votes and no checkpoint or Red change waits for it; read at enrollment, so an already enrolled Hub must re-enroll
+
+[sync.notify]               # off until `command` is set; mails a recovery announcement or a third-factor code
+command = "/usr/sbin/sendmail -t -i"   # split without a shell; needs -t (recipients from the headers) and -i (a lone "." must not end the body)
+to = ["me@example.com"]
+from = "sshub@example.com"
+```
+
+The mail is sent by `sshub sync-serve` on the device that serves the round (the Hub, in a ring with one); SMTP credentials belong to the sendmail command's own configuration, never to this file. The phone receivers are opt-in cargo features, off in release binaries: `audio` (microphone, FSK burst) needs the ALSA development files on Linux (`libasound2-dev` on Debian and Ubuntu) and CoreAudio on macOS; `camera` (webcam, the phone's reverse QR) needs nothing extra on Linux (V4L2) and uses AVFoundation on macOS; `bluetooth` (Bluetooth Low Energy: the terminal advertises as a GATT peripheral, the phone app connects natively, the phone page with Web Bluetooth in Chrome on Android; contract C20 in `docs/host-sync-contract.md`) needs a running `bluetoothd` and an adapter on Linux (BlueZ over D-Bus, `libdbus-1-dev` to build) and uses CoreBluetooth on macOS (the first use asks for Bluetooth access). It carries the same frames as the QR, no pairing and no trust in the link; iOS browsers have no Web Bluetooth. The developer check is:
+
+```bash
+cargo build --features audio,camera,bluetooth
+cargo clippy --all-targets --features audio,camera,bluetooth -- -D warnings
+cargo run --example media-probe --features audio,camera   # lists the devices and listens briefly
+cargo run --example media-probe --features bluetooth -- 120 --ble   # advertises, sends a test frame, prints what the page sends back
+```
+
+On a machine with several adapters, `SSHUB_BLE_ADAPTER=hci1` (an adapter name as BlueZ lists it) makes the Bluetooth channel serve on that adapter; without it BlueZ's default adapter is used.
+
+#### Where sync keeps its state
+
+Sync state lives in the profile directory under `sync/`: `device.key` (this device's identity, encrypted; its passphrase is in the credential store) and `peers.json` (which ssh host reaches which device). Both are owner-only files, belong to one profile, and are never copied by profile transfers or the guided migration, which move hosts, groups, identities and tunnels only.
 
 ## Theming
 
@@ -645,6 +802,11 @@ max_entries_per_host = 200  # Settings adjusts it between 1 and 2000
 [ssh]
 config_path = "~/.ssh/config"   # this profile's ssh_config source (profile mode only; SSHUB_SSH_CONFIG wins)
 
+[sync]
+auto_sync_on_start = true       # host sync: one round with known devices at start (see "Sync (tab 7)")
+# unattended = true             # a device nobody sits at (the Hub): enrolls as unattended; an already enrolled Hub must re-enroll
+# [sync.notify] command = "/usr/sbin/sendmail -t -i" ... mails recovery announcements and codes
+
 [keybinds]
 profiles_manage = ["Alt+P"]     # every action is a list of key specs; Ctrl+K edits them
 ```
@@ -676,6 +838,7 @@ cargo run -- --dry-run # quick sanity check
 | `SSHUB_DRY_RUN`    | Exit immediately without TUI              |
 | `SSHUB_AUTO_QUIT`  | `1` = quit after first draw, `q` = send quit key |
 | `SSHUB_VERSION_LABEL` | Replace the tab-bar version label; set but empty hides it (demo recordings) |
+| `SSHUB_UNLOCK_WAIT` | Seconds a CLI command (`host connect`, `host resolve`, ...) waits in Quorum mode for a holder to approve its share release (default 120; `0` does not ask) |
 | `SSHUB_INSTALL_CHANNEL` | Declare how sshub was installed (`npm`, `cargo`, `source`, ...); picks the `Shift+U` update route and the tab-bar suffix (the npm shim sets `npm`) |
 
 ## Tech stack

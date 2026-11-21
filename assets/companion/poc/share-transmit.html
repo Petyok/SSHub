@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PoC H transmit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { font: 14px monospace; background: #fff; color: #000; margin: 16px; }
+  button { font: inherit; padding: 6px 12px; }
+  canvas { image-rendering: pixelated; border: 0; }
+  /* ?full=1: only the code, as wide as the screen (what a webcam needs) */
+  body.full { margin: 0; }
+  body.full > :not(canvas):not(script) { display: none; }
+  body.full canvas { display: block; }
+</style>
+</head>
+<body>
+<h3>PoC H transmit (audio FSK burst + looping QR)</h3>
+<p>
+  seed <span id="seed"></span> len <span id="len"></span> bytes ·
+  profile <select id="profile"><option value="slow">slow (60 ms)</option><option value="fast">fast (30 ms)</option></select> ·
+  QR v<span id="ver"></span> chunk <span id="chunk"></span> B ·
+  sha256 <span id="sha"></span>
+</p>
+<p><button id="send">Send audio burst</button> <button id="qr">Start QR loop</button> <button id="stopqr">Stop QR loop</button></p>
+<p id="status"></p>
+<canvas id="qrc"></canvas>
+<script src="vendor/qrcode.js"></script>
+<script src="vendor/jsQR.js"></script>
+<script src="share-lib.js"></script>
+<script>
+(function () {
+  "use strict";
+  const L = window.ShareLib;
+  const q = new URLSearchParams(location.search);
+  const seed = Number(q.get("seed") || 1);
+  const len = Number(q.get("len") || 56);
+  const version = Number(q.get("version") || 10);
+  const payload = L.seededBytes(len, seed);
+  const chunkSize = L.byteCapacity(version, "M") - L.CHUNK_HDR;
+  const frames = L.fountainChunks(payload, chunkSize);
+  const $ = (id) => document.getElementById(id);
+  $("seed").textContent = seed; $("len").textContent = len;
+  $("ver").textContent = version; $("chunk").textContent = chunkSize;
+  L.sha256Hex(payload).then((h) => { $("sha").textContent = h; });
+  const profile = () => (($("profile").value === "fast") ? L.FSK_FAST : L.FSK);
+
+  let ctx = null;
+  $("send").onclick = () => {
+    // ponytail: no unlock/retry handling; the user gesture from this click starts the context
+    ctx = ctx || new AudioContext({ sampleRate: L.FSK.sampleRate });
+    const samples = L.fskEncode(L.frame(payload), profile());
+    const buf = ctx.createBuffer(1, samples.length, L.FSK.sampleRate);
+    buf.copyToChannel(samples, 0);
+    const src = ctx.createBufferSource();
+    src.buffer = buf; src.connect(ctx.destination); src.start();
+    $("status").textContent = "audio sent: " + (samples.length / L.FSK.sampleRate).toFixed(2) + " s";
+  };
+
+  // Loop the indexed chunk set. Sender loops; receiver needs one full pass plus gaps.
+  // ?full=1 draws the code with an integer number of device pixels per module, as wide as the
+  // screen (CSS width = canvas px / devicePixelRatio); ?fps=N sets the frame rate, ?auto=1 starts it.
+  const full = q.get("full") === "1";
+  const fps = Number(q.get("fps") || 8);
+  if (full) document.body.classList.add("full");
+  let timer = null, i = 0;
+  const canvas = $("qrc");
+  const info = { version, chunkSize, frames: frames.length, fps, full };
+  function show() {
+    const qr = L.qrFor(frames[i], version, "M");
+    const n = qr.getModuleCount();
+    if (full) {
+      const dpr = window.devicePixelRatio || 1;
+      const s = Math.max(1, Math.floor((window.innerWidth * dpr) / (n + 8)));
+      L.drawQR(canvas, qr, s, 4);
+      canvas.style.width = canvas.width / dpr + "px";
+      canvas.style.height = canvas.height / dpr + "px";
+      Object.assign(info, { modules: n, device_px_per_module: s, canvas_device_px: canvas.width, dpr, inner_w: window.innerWidth, width_fraction: canvas.width / (window.innerWidth * dpr) });
+    } else L.drawQR(canvas, qr, 4, 4);
+    i = (i + 1) % frames.length;
+  }
+  $("qr").onclick = () => { if (!timer) { show(); timer = setInterval(show, 1000 / fps); } };
+  $("stopqr").onclick = () => { clearInterval(timer); timer = null; };
+  if (q.get("auto") === "1") $("qr").click();
+  window.__tx = { payload, frames, chunkSize, info };
+})();
+</script>
+</body>
+</html>

@@ -145,6 +145,81 @@ impl Default for UpdatesConfig {
     }
 }
 
+/// Host sync (epic #13): background sync and the out-of-band notifications.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncConfig {
+    /// Run a sync round against reachable devices when sshub starts. Off: sync
+    /// only when asked. Nothing is sent to a machine that cannot be reached.
+    #[serde(default = "default_true")]
+    pub auto_sync_on_start: bool,
+    #[serde(default)]
+    pub notify: NotifyConfig,
+    /// This device has no human at a screen (a Hub, a server): it enrolls as an UNATTENDED device. It then
+    /// never votes, never counts toward a Red ceremony or a checkpoint's signers, and releases a share only
+    /// under a trust certificate. Read when the device enrolls; a ring remembers what it was told then.
+    #[serde(default)]
+    pub unattended: bool,
+    /// The user chose "Not now" at the mail step after enrolling a phone: do not offer it again by itself.
+    #[serde(default)]
+    pub notify_declined: bool,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self {
+            auto_sync_on_start: true,
+            notify: NotifyConfig::default(),
+            unattended: false,
+            notify_declined: false,
+        }
+    }
+}
+
+/// The mail command the TUI proposes (design 7b): the local sendmail, with the recipients read from the headers.
+pub const DEFAULT_MAIL_COMMAND: &str = "/usr/sbin/sendmail -t -i";
+
+/// [`DEFAULT_MAIL_COMMAND`] when it exists on this machine.
+pub fn default_mail_command() -> Option<&'static str> {
+    Path::new("/usr/sbin/sendmail")
+        .exists()
+        .then_some(DEFAULT_MAIL_COMMAND)
+}
+
+/// Write `[sync.notify]` (and clear a recorded "Not now") into the config at `path`, keeping the rest of the file.
+pub fn write_notify_at(path: &Path, notify: NotifyConfig) -> anyhow::Result<()> {
+    let mut config = load_config_at(path)?;
+    config.sync.notify = notify;
+    config.sync.notify_declined = false;
+    save_config_at(path, &config)
+}
+
+/// Record "Not now" at the mail step.
+pub fn decline_notify_at(path: &Path) -> anyhow::Result<()> {
+    let mut config = load_config_at(path)?;
+    config.sync.notify_declined = true;
+    save_config_at(path, &config)
+}
+
+/// Notifications (a recovery started, a Hub went quiet), sent through a local
+/// sendmail-compatible command. Off until `command` is set. SMTP credentials
+/// belong to that command's own config, never to this file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NotifyConfig {
+    /// Full command line, split into arguments without a shell, for example
+    /// `/usr/sbin/sendmail -t -i`. It must take the recipients from the message
+    /// headers (`-t`) and must pass `-i` (or `-oi`): without it sendmail ends the
+    /// message at a line holding only `.`, which would cut the body short. Quote
+    /// an argument with `"` or `'` if it contains spaces.
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Recipient addresses, written into the To header.
+    #[serde(default)]
+    pub to: Vec<String>,
+    /// Sender address, written into the From header.
+    #[serde(default)]
+    pub from: Option<String>,
+}
+
 fn default_tunnel_reconnect_max_attempts() -> u32 {
     12
 }
@@ -364,6 +439,8 @@ pub struct AppConfig {
     pub updates: UpdatesConfig,
     #[serde(default)]
     pub ssh: SshSourceConfig,
+    #[serde(default)]
+    pub sync: SyncConfig,
 }
 
 /// Path to `config.toml` inside [`config_dir`].
@@ -1330,5 +1407,78 @@ confirm_quit = false
             assert!(!toml.contains(retired), "{retired} written: {toml}");
         }
         assert_eq!(config.appearance.active_theme, "default");
+    }
+
+    #[test]
+    fn sync_defaults_when_the_section_is_missing() {
+        let config = parse_config_str("").unwrap();
+        assert!(config.sync.auto_sync_on_start);
+        assert!(config.sync.notify.command.is_none());
+        assert!(config.sync.notify.to.is_empty());
+        assert!(config.sync.notify.from.is_none());
+    }
+
+    #[test]
+    fn a_device_is_attended_unless_its_config_says_it_has_nobody_at_the_screen() {
+        assert!(!parse_config_str("").unwrap().sync.unattended);
+        assert!(
+            parse_config_str("[sync]\nunattended = true\n")
+                .unwrap()
+                .sync
+                .unattended
+        );
+    }
+
+    #[test]
+    fn sync_section_parses_notify_settings() {
+        let config = parse_config_str(
+            "[sync]\nauto_sync_on_start = false\n\n[sync.notify]\ncommand = \"/usr/sbin/sendmail -t -i\"\nto = [\"me@example.com\"]\nfrom = \"sshub@example.com\"\n",
+        )
+        .unwrap();
+        assert!(!config.sync.auto_sync_on_start);
+        assert_eq!(
+            config.sync.notify.command.as_deref(),
+            Some("/usr/sbin/sendmail -t -i")
+        );
+        assert_eq!(config.sync.notify.to, ["me@example.com"]);
+        assert_eq!(
+            config.sync.notify.from.as_deref(),
+            Some("sshub@example.com")
+        );
+    }
+
+    #[test]
+    fn the_notify_writer_keeps_the_rest_of_the_file_and_not_now_is_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "# my notes\n[sync]\nauto_sync_on_start = false\n").unwrap();
+        decline_notify_at(&path).unwrap();
+        assert!(load_config_at(&path).unwrap().sync.notify_declined);
+        write_notify_at(
+            &path,
+            NotifyConfig {
+                command: Some(DEFAULT_MAIL_COMMAND.into()),
+                to: vec!["me@example.com".into()],
+                from: Some("sshub@example.com".into()),
+            },
+        )
+        .unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# my notes"), "{text}");
+        assert!(text.contains("[sync.notify]"), "{text}");
+        let back = load_config_at(&path).unwrap();
+        assert!(!back.sync.auto_sync_on_start && !back.sync.notify_declined);
+        assert_eq!(back.sync.notify.to, ["me@example.com"]);
+        assert_eq!(
+            back.sync.notify.command.as_deref(),
+            Some(DEFAULT_MAIL_COMMAND)
+        );
+    }
+
+    #[test]
+    fn an_empty_sync_section_keeps_the_defaults() {
+        let config = parse_config_str("[sync]\n[sync.notify]\n").unwrap();
+        assert!(config.sync.auto_sync_on_start);
+        assert!(config.sync.notify.command.is_none());
     }
 }

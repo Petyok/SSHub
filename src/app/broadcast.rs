@@ -232,7 +232,13 @@ impl App {
             edit_targets: false,
         });
         self.host_notice = None;
-        self.resolve_broadcast_candidates();
+        // Locked credentials: the unlock runs first, then this step repeats.
+        if !self.resolve_broadcast_candidates() {
+            if self.mode != AppMode::SyncUnlock {
+                self.broadcast_setup = None; // nothing can unlock: no wizard
+            }
+            return;
+        }
         let any = self
             .broadcast_setup
             .as_ref()
@@ -282,24 +288,15 @@ impl App {
                 s.menu_selected = 0;
             }
             KeyCode::Enter => {
-                let Some(label) = s.selected_option().map(BroadcastTarget::menu_label) else {
+                if s.selected_option().is_none() {
                     self.host_notice = Some("No target matches the filter.".into());
                     return Ok(());
-                };
+                }
                 self.host_notice = None;
-                self.resolve_broadcast_candidates();
-                let any = self
-                    .broadcast_setup
-                    .as_ref()
-                    .is_some_and(|s| !s.candidates.is_empty());
-                if any {
-                    self.mode = AppMode::BroadcastCommand;
-                } else {
-                    // Stay on the menu: a command typed now could never run.
-                    self.host_notice = Some(match self.host_notice.take() {
-                        Some(refused) => format!("No hosts to run on in {label}. {refused}"),
-                        None => format!("No managed hosts in {label}."),
-                    });
+                // `false`: blocked on a locked credential; the unlock modal is
+                // open and this step repeats after it.
+                if self.resolve_broadcast_candidates() {
+                    self.advance_broadcast_to_command();
                 }
             }
             _ => {}
@@ -307,17 +304,36 @@ impl App {
         Ok(())
     }
 
+    /// Move on to the command prompt once the target resolved to hosts; stay
+    /// on the menu otherwise, because a command typed now could never run.
+    fn advance_broadcast_to_command(&mut self) {
+        let Some(s) = self.broadcast_setup.as_ref() else {
+            return;
+        };
+        if !s.candidates.is_empty() {
+            self.mode = AppMode::BroadcastCommand;
+            return;
+        }
+        let label = s.target_label.clone();
+        self.host_notice = Some(match self.host_notice.take() {
+            Some(refused) => format!("No hosts to run on in {label}. {refused}"),
+            None => format!("No managed hosts in {label}."),
+        });
+    }
+
     /// Fill `candidates` from the highlighted target: managed hosts only, kept in
     /// host-list order, each selected by default. Also derives the display
     /// `target_label` shown in the prompt / panel header.
-    fn resolve_broadcast_candidates(&mut self) {
+    /// `false` when a credential the hosts need is still locked: the unlock
+    /// runs first and this step repeats by itself afterwards.
+    fn resolve_broadcast_candidates(&mut self) -> bool {
         let target = match self
             .broadcast_setup
             .as_ref()
             .and_then(|s| s.selected_option())
         {
             Some(t) => t.clone(),
-            None => return,
+            None => return true,
         };
 
         let target_label = target.menu_label();
@@ -327,6 +343,7 @@ impl App {
         // Hosts whose ProxyJump cannot be resolved are left out: running ssh
         // without the jump would reach them directly, which nobody asked for.
         let mut refused: Vec<String> = Vec::new();
+        let mut needed: Vec<crate::credentials::SecretRef> = Vec::new();
         let candidates: Vec<BroadcastCandidate> = self
             .hosts
             .iter()
@@ -351,6 +368,13 @@ impl App {
                     }
                     None => None,
                 };
+                needed.extend(connection_secret_refs(
+                    launcher,
+                    &self.hosts,
+                    entry.managed(),
+                    effective.as_ref().and_then(|r| r.identity.as_ref()),
+                    effective.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+                ));
                 let secret = resolve_pending_secret(
                     entry,
                     effective.as_ref().and_then(|r| r.identity.as_ref()),
@@ -382,6 +406,15 @@ impl App {
             })
             .collect();
 
+        if !self.preflight_unlock(needed, &target_label, |app| {
+            if app.resolve_broadcast_candidates() {
+                app.advance_broadcast_to_command();
+            }
+            Ok(())
+        }) {
+            return false;
+        }
+
         if !refused.is_empty() {
             self.host_notice = Some(format!("Not included: {}", refused.join("; ")));
         }
@@ -390,6 +423,7 @@ impl App {
             s.target_label = target_label;
             s.preview_selected = 0;
         }
+        true
     }
 
     /// Stage 2: single-line command entry. Mirrors the SFTP prompt's text-input

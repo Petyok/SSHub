@@ -64,6 +64,9 @@ jobs:
         run: cargo build --all-targets
       - name: Run tests
         run: cargo test
+      # The workspace's default member is the terminal; the protocol crate is tested explicitly.
+      - name: Run protocol crate tests
+        run: cargo test -p sshub-sync-proto --all-features
 
   lint:
     name: Lint
@@ -77,9 +80,9 @@ jobs:
       - name: Install libdbus (Linux keyring backend)
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: rustfmt
-        run: cargo fmt --check
+        run: cargo fmt --check --all
       # The tree is warning-free as of #50, so warnings fail the build from here
       # on. Without this the last pile grew back: 42 warnings on the `e2e` target
       # were enough noise that a real one in new code went unread.
       - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets -p sshub -p sshub-sync-proto -- -D warnings

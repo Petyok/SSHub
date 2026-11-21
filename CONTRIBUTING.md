@@ -164,6 +164,24 @@ Rules that keep the suite green:
   occur. If the fallback only triggers when a service is absent, structure
   the code so the fallback is testable directly.
 
+Optional capture features (`audio`, `camera`, `bluetooth`, the phone receivers in `src/sync/media/`) are
+off by default and are not part of the default build or the default CI run. When you touch
+`src/sync/media/` or `Cargo.toml` features, check them once by hand. On Linux the `audio` feature
+needs the ALSA headers (`apt install libasound2-dev pkg-config`):
+
+```bash
+cargo build --features audio,camera,bluetooth --example media-probe
+cargo clippy --all-targets --features audio,camera,bluetooth -- -D warnings
+cargo test --lib --features bluetooth sync::media
+```
+
+The Bluetooth transport has one more check that needs a Bluetooth stack: an `#[ignore]`d test that serves
+the real BlueZ transport on one virtual controller and drives it from a GATT client on a second one
+(`src/sync/media/ble_bluez/vhci_tests.rs`). It needs the `hci_vhci` kernel module on the machine and runs
+only inside the container of `tests/ble-vhci/` (private D-Bus, `btvirt`, `bluetoothd`; see
+`tests/ble-vhci/run.sh` for the flags and `docs/host-sync-poc-results.md` for the details), never in CI by default.
+`SSHUB_BLE_ADAPTER=hciN` makes the transport serve on that adapter instead of BlueZ's default.
+
 Run a specific test:
 
 ```bash

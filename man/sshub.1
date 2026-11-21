@@ -389,6 +389,91 @@ gradient directions and the perimeter rule, the complete role catalogue, and
 worked examples) is in
 .I docs/theme\-system.md
 in the source tree.
+.SS Host sync (headless, encrypted peer-to-peer)
+.TP
+.B sshub sync\-join \fIHOST\fR
+Join the group of devices of the device at
+.IR HOST ,
+a launcher host name or
+.RI [ USER @] HOST [: PORT ].
+Runs
+.B sshub sync\-enroll
+there over ssh. The four check words and the peer name are printed on stdout.
+If the other end has a screen too, compare the words and answer
+.B y
+on stdin only if they are identical (anything else, or EOF, refuses). If it has
+none, the words prove nothing: the command says so and asks
+.B Admit this device?
+instead; the device's identity then rests on the SSH host key you verified. The
+success line names the role (joined, or admitted the peer) and how the
+device was verified (by the four check words, or by the SSH host key only). Exits 0 when joined, 1 on failure,
+2 on usage error.
+.TP
+.B sshub sync\-now \fR[\fIDEVICE\fR] [\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
+Sync with one of your devices (name or unique id prefix) or, without
+.IR DEVICE ,
+with every other device that has a known host; the rest are reported as
+.BR "skipped (no host known)"
+(with how to record one: the hosts tab key
+.BR t ,
+or
+.BR "sshub sync\-join" )
+and a device still waiting for approval as
+.BR "not admitted yet" .
+One line per device:
+.B <name>: ok applied N, pending M, received R, sent S
+(plus
+.B behind
+and
+.B suspect
+ids). Exit 0 on success or when nothing could be attempted, 1 when a device was
+offline or failed, 2 on usage error, 3 when a fork is proven
+.RB ( "FORK DETECTED: <name>" ).
+.TP
+.B sshub sync\-status \fR[\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
+Read-only: your devices (name, short id, role, status, last in sync, last change number,
+host), pending change count and credential mode, then the saved passwords that are exposed or not yet shared with a
+current full device. Never creates a device key on a profile without a ring. Exits 3 while a recovery of the phone is
+open and was not started on this terminal; the recoveries are listed.
+.TP
+.B sshub sync\-review \fR[\fB\-\-approve\fR \fIID\fR | \fB\-\-reject\fR \fIID\fR] [\fB\-\-format\fR \fBplain\fR|\fBjson\fR]
+List the changes waiting for review: an id (the first 8 hex digits are shown), the author device, a
+summary and one line per field (marked
+.B [!]
+when dangerous). Every waiting change is listed with the reason it waits
+(in brackets; the
+.B reason
+field of the JSON items) and a big change with the three approvals it has and misses. With
+.B \-\-approve
+or
+.B \-\-reject
+the change whose id starts with
+.I ID
+(at least 6 hex digits, unique) is resolved in the store like in the TUI.
+.B \-\-approve\-all
+resolves every waiting change that has no ceremony and no doubtful reason; with
+.BI \-\-device \ DEVICE
+it approves, on this device only, just the changes of that device that wait only because it was away and touch
+no address, jump host, remote command, user or key.
+Never creates a device key. Exit 0 on success or empty queue, 1 on a store
+error, 2 on an unknown or ambiguous id or bad options.
+.TP
+.B sshub sync\-serve
+.TQ
+.B sshub sync\-enroll
+Run by a peer over ssh; stdin and stdout carry protocol frames only (one sync
+round, or the existing-device side of an enrollment). Not for interactive use.
+Enrollment roles come from the handshake: the side that already has a ring
+invites, a blank side joins; two different rings are refused.
+.B sync\-enroll
+asks for the SAS confirmation on /dev/tty only when stdin is a terminal
+.RB ( "ssh \-t" ).
+Otherwise there is no human on that side: it never confirms as one, tells the
+peer it has no screen, admits on the strength of the authenticated ssh session
+and prints
+.B SAS words: <words> (peer has screen: ...)
+to stderr for the log only.
+Exit 0 on success, 1 on error.
 .SS Inventory and config
 .TP
 .B sshub tags \fR[\fB\-\-format\fR \fIF\fR]
@@ -456,6 +541,113 @@ Irreversible; requires
 Leaves
 .I ~/.ssh/config
 untouched.
+.TP
+.B sshub sync\-revoke \fIDEVICE\fR
+Remove a device: needs one approval for a view-only copy, and is a big change for a full device. Removing a full device needs two computers or servers you control, the one you remove included, together with the phone and the paper phrase (with three or more, the other computers also re-share your passwords; with two, the passwords the removed device held a piece of stay on an exposure list until you change them); with fewer, change the passwords of the hosts and remove the device's key from every host's authorized_keys by hand. Prints the approval status.
+.TP
+.B sshub sync\-role \fIDEVICE\fR \fBholder\fR|\fBmirror\fR
+Make a device a full device or a view-only copy (a big change).
+.TP
+.B sshub sync\-approve \fIOP\fR
+Approve a pending big change as this device, which has a person at the keyboard.
+.TP
+.B sshub sync\-factor \fIOP\fR \fB\-\-paper\fR|\fB\-\-email\-code\fR
+Add the paper phrase or the emailed code to a big change; the secret is read without echo.
+.TP
+.B sshub sync\-factor\-register \fBpaper\fR|\fBemail\fR \fR[\fB\-\-sender\fR \fIDEVICE\fR]
+Register the paper phrase or the emailed code. The emailed code is kept, sealed, only on its sender: register it on
+the device that will mail it (\fB\-\-sender\fR may only name this device).
+The paper phrase must be registered before a switch to Quorum and before a change that leaves three or more full
+devices: \fBsync\-mode quorum\fR and \fBsync\-role \fIDEVICE\fR \fBholder\fR refuse without it. In the terminal screen the key
+\fBK\fR on the Sync tab opens the wizard (24 words shown, three random ones typed back).
+.TP
+.B sshub sync\-phone\-enroll \fR[\fB\-\-replace\fR]
+Add the phone from this terminal as text. Prints the terminal's frames; read the phone's frames
+(base64, one per line) and then \fBy\fR or \fBn\fR for the four check words from standard input. A verified phone is
+registered and proposed as a full device (a big change). With \fB\-\-replace\fR the verified phone is the new phone of a
+handover from the old one (which must still work): nothing is registered, and the kind 12 request for the old phone, the
+eight words to compare and the next steps are printed instead.
+.TP
+.B sshub sync\-notice \fIOP\fR
+Print the kind 3 notice (base64) of a big change for the phone.
+.TP
+.B sshub sync\-phone\-ops
+Take in the changes the phone copied (kind 5, base64) from standard input and print what applied.
+.TP
+.B sshub sync\-phone\-chain \fIPHONE\fR
+Print the kind 5 list of a phone's own newest changes (at most 8) that this terminal holds, for a phone restored
+from its 24 words to read. The list names this terminal; the phone needs the same newest change from two different terminals.
+.TP
+.B sshub sync\-share\-request \fIHOST\fR \fR[\fB\-\-wait\fR \fISECS\fR]
+Print the host name with its host id (8 groups of four uppercase hex digits, as the phone draws it) and the challenge's
+four check words, to compare with the phone before approving there, then the kind 1 challenge for the phone;
+read its kind 2 reply from standard input and open the credential in this process.
+The TUI unlock modal shows the same host id and words under the host name.
+.TP
+.B sshub sync\-cert\-request \fR(\fB\-\-group\fR \fINAME\fR|\fB\-\-host\fR \fINAME\fR...) [\fB\-\-days\fR \fIN\fR] [\fB\-\-budget\fR \fIN\fR]
+Print the kind 9 trust-session request for the phone. Every verb takes \fB\-\-format\fR \fBplain\fR|\fBjson\fR.
+.TP
+.B sshub sync\-recovery \fBstart\fR \fR[\fB\-\-paper\fR]|\fBapprove\fR \fIOP\fR|\fBack\fR \fIOP\fR|\fBcancel\fR \fIOP\fR \fB\-\-factor\fR \fBpaper\fR|\fBemail\fR|\fBstatus\fR
+Replacing a lost phone.
+.TP
+.B sshub sync\-mode \fBvault\fR|\fBquorum\fR \fR[\fB\-\-cosigner\fR \fIDEVICE\fR]
+Change the credential mode (a big change), in two steps: the first call proposes the change
+and shows the approval status, a later call (after your devices agreed) re-encrypts the credentials.
+.TP
+.B sshub sync\-exemption \fBon\fR|\fBoff\fR \fIDEVICE\fR
+Master phrase exemption of a device (advanced).
+.TP
+.B sshub sync\-export \fB\-\-window\fR \fISECS\fR \fB\-\-out\fR \fIPATH\fR \fR[\fB\-\-wait\fR \fISECS\fR]
+Bulk export inside a Red-approved window, as a Termius CSV (mode 0600).
+.TP
+.B sshub sync\-migrate \fR[\fB\-\-remove\-local\fR]
+Write existing local secrets as replicated credentials.
+.TP
+.B sshub sync\-heal
+Re-seal the saved passwords that a current full device does not hold a piece of yet to every current device. The paper
+phrase is read once without echo. Passwords a removed device held a piece of are skipped (see sync\-rekey).
+.TP
+.B sshub sync\-rekey \fR[\fB\-\-csv\fR \fIFILE\fR|\fB\-\-stdin\fR] [\fB\-\-new\-key\fR \fIHOST\fR]...
+Without options, list the saved passwords that share a key with a removed device. \fB\-\-csv\fR and \fB\-\-stdin\fR read
+lines \fIhost\fR,\fInewpassword\fR and save them; \fB\-\-new\-key\fR generates a key, installs it on the server with the
+credential the host has now (through \fBsshub exec\fR) and only then saves it. Passwords cannot be changed on a server by
+SSHub, and the old key's line in authorized_keys is removed by you.
+.TP
+.B sshub sync\-replace\-terminal \fIOLD\fR [\fB\-\-new\fR \fICOMPUTER\fR]
+Replace a full computer in steps: how to enroll the new one, then its promotion, then the removal of the old one. The
+paper phrase is read once and goes to both.
+.TP
+.B sshub sync\-trust\-renew \fR[\fIID\fR] [\fB\-\-days\fR \fIN\fR] [\fB\-\-ble\fR]
+List the trust sessions that can be renewed, or print the kind 11 renewal request for the phone. Run it on a computer that
+is not the delegate. It first prints an \fBopened:\fR line with the hosts opened under the session (or "no list sent").
+.TP
+.B sshub sync\-import\-kit
+Read the ring kit and the six master words without echo.
+.PP
+All of these accept
+.B \-\-format plain|json
+and the global
+.BR \-\-profile .
+.PP
+The phone's sound and webcam receivers are opt-in cargo features, off in
+release binaries:
+.B audio
+needs the ALSA development files on Linux (libasound2\-dev on Debian and
+Ubuntu) and uses CoreAudio on macOS;
+.B camera
+needs nothing extra on Linux (V4L2) and uses AVFoundation on macOS;
+.B bluetooth
+(Bluetooth Low Energy, the phone app connects natively, the phone page with Web Bluetooth) needs a running
+bluetoothd and an adapter on Linux (libdbus\-1\-dev to build) and uses CoreBluetooth on
+macOS. The phone verbs take
+.B \-\-ble
+to carry their frames over Bluetooth too. Developer check:
+.B cargo build \-\-features audio,camera,bluetooth
+and
+.BR "cargo clippy \-\-all\-targets \-\-features audio,camera,bluetooth \-\- \-D warnings" .
+Design and threat model:
+.I docs/host\-sync\-design.md
+in the source tree.
 .SH EXIT STATUS
 .TP
 .B 0
@@ -502,6 +694,11 @@ and the update check.
 .TP
 .B SSHUB_VERSION_LABEL
 Replace the version label in the tab bar; set but empty hides it.
+.TP
+.B SSHUB_UNLOCK_WAIT
+Seconds a command waits, in Quorum mode, for a full device with a person at the keyboard to approve its share
+release (default 120; 0 does not ask). That device approves in its TUI or with
+.BR "sshub sync\-review \-\-approve" .
 .TP
 .B SSHUB_INSTALL_CHANNEL
 How sshub was installed
@@ -563,6 +760,39 @@ else the last used one. In compatibility mode the directory is
 .I ~/.config/sshub/themes
 (honors
 .BR SSHUB_CONFIG_DIR ).
+.TP
+.I [sync]
+section of
+.IR config.toml :
+.B auto_sync_on_start
+(default true) runs one sync round with every device that has a known host when
+the TUI starts;
+.B unattended
+(default false) marks a device nobody sits at, such as a Hub: it enrolls as an unattended device, never votes, and no
+checkpoint or Red change waits for it. The ring is told when the device enrolls, so an already enrolled Hub must
+re-enroll to change it;
+.B [sync.notify]
+(off until
+.B command
+is set) mails recovery announcements and third-factor codes from
+.BR "sshub sync\-serve" :
+.B command
+is split into arguments without a shell and must read the recipients from the
+headers and pass
+.BR \-i ,
+for example
+.BR "/usr/sbin/sendmail \-t \-i" ;
+.B to
+and
+.B from
+fill the headers. SMTP credentials belong to that command, never to this file.
+.TP
+.I sync/ (in a profile)
+.I device.key
+(this device's identity, encrypted) and
+.I peers.json
+(which ssh host reaches which device): owner-only, per profile, never copied by
+profile transfers.
 .TP
 .I ~/.ssh/config
 Read-only source of ssh_config hosts merged into the launcher. A profile can

@@ -3,7 +3,9 @@ pub mod header;
 pub mod hosts_panel;
 pub mod middle_stack;
 pub mod panel_box;
+pub mod qr_frames;
 pub mod right_stack;
+pub mod sync_panel;
 pub mod tab_bar;
 
 /// One-row `/` filter bar for the Tunnels and Identities tabs, in the same

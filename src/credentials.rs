@@ -19,6 +19,15 @@ pub trait PasswordStore: Send + Sync {
     fn locator(&self) -> Option<StoreLocator> {
         None
     }
+    /// The unlock gate when this store guards synced credentials; `None` for a
+    /// store that holds only local secrets.
+    fn gate(&self) -> Option<&SecretGate> {
+        None
+    }
+    /// The same gate as a shared handle, for the unlocker that fills it.
+    fn shared_gate(&self) -> Option<std::sync::Arc<SecretGate>> {
+        None
+    }
 }
 
 /// Enough to reopen a [`PasswordStore`] in another process: never a secret.
@@ -60,8 +69,16 @@ impl StoreLocator {
 }
 
 /// The credential store of one profile: the OS keyring when usable, else the
-/// profile's `credentials.json`, always under the profile's key prefix.
+/// profile's `credentials.json`, always under the profile's key prefix. Synced
+/// credentials are answered by the gate, never read from the inner store.
 pub fn open_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn PasswordStore> {
+    Box::new(QuorumGatedStore::new(open_ungated_for_profile(paths)))
+}
+
+/// [`open_for_profile`] without the gate: for the one job that must read the
+/// local copies of secrets about to be synced (migration), and for keys the
+/// sync stage keeps itself (`sync-ring-secret`).
+pub fn open_ungated_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn PasswordStore> {
     let prefix = paths.credential_prefix();
     if check_keyring_available() {
         let _ = migrate_fallback_to_keyring(&paths.credentials_file());
@@ -75,11 +92,39 @@ pub fn open_for_profile(paths: &crate::profile::ProfilePaths) -> Box<dyn Passwor
 }
 
 /// Which credential-store entry holds a secret: a stored key (`host:3`,
-/// `identity:7`) or a host's Secret Service lookup spec (#142).
+/// `identity:7`), a host's Secret Service lookup spec (#142), or the opened
+/// plaintext of a synced credential handed over directly.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SecretRef {
     Key(String),
     Lookup(String),
+    /// A synced credential already open in this process, held by whoever
+    /// stages it for a child that cannot open it itself (the askpass helper).
+    Staged(StagedValue),
+    /// What the child sees of a [`SecretRef::Staged`]: a handle to ask the
+    /// staging process for, never the value.
+    Handle(String),
+}
+
+/// Plaintext of an opened synced credential. Zeroized on drop; `Debug` never
+/// prints it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct StagedValue(zeroize::Zeroizing<String>);
+
+impl StagedValue {
+    pub fn new(value: String) -> Self {
+        Self(zeroize::Zeroizing::new(value))
+    }
+
+    pub fn value(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for StagedValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("StagedValue(..)")
+    }
 }
 
 impl SecretRef {
@@ -88,6 +133,9 @@ impl SecretRef {
         match self {
             Self::Key(key) => store.get(key).ok().flatten(),
             Self::Lookup(spec) => store.lookup(spec).ok(),
+            Self::Staged(value) => Some(value.value().to_string()),
+            // Only the staging process holds the value; the helper asks for it.
+            Self::Handle(_) => None,
         }
     }
 }
@@ -413,6 +461,538 @@ pub fn host_key(id: i64) -> String {
     format!("host:{id}")
 }
 
+// ── Gate for synced credentials ──────────────────────────
+
+/// A synced credential that is not open in this process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Locked {
+    pub secret: SecretRef,
+}
+
+impl std::fmt::Display for Locked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.secret {
+            SecretRef::Key(key) => write!(
+                f,
+                "{key} is a synced credential and is locked: it needs a second share"
+            ),
+            SecretRef::Lookup(spec) => write!(f, "secret lookup {spec} is locked"),
+            SecretRef::Staged(_) | SecretRef::Handle(_) => {
+                write!(f, "a staged credential is locked")
+            }
+        }
+    }
+}
+
+impl std::error::Error for Locked {}
+
+type SyncedCheck = Box<dyn Fn(&str) -> bool + Send + Sync>;
+
+/// Which store keys are synced credentials, and the plaintext of those opened
+/// in this process. The plaintext lives in memory only, in [`Zeroizing`]
+/// strings; nothing here touches a disk.
+#[derive(Default)]
+pub struct SecretGate {
+    synced: std::sync::RwLock<Option<SyncedCheck>>,
+    unlocked: std::sync::Mutex<HashMap<String, zeroize::Zeroizing<String>>>,
+    replicator: std::sync::OnceLock<Box<dyn Replicator>>,
+    /// Identities whose key this gate put into the private agent.
+    key_ids: std::sync::Mutex<std::collections::BTreeSet<i64>>,
+    /// The one private ssh-agent of this process, started with the first key.
+    agent: std::sync::Mutex<Option<crate::sync::cred_ops::PrivateAgent>>,
+}
+
+/// Turns a secret save into a replicated credential when the profile is in a
+/// ring: every write that goes through the gated store calls it first.
+pub trait Replicator: Send + Sync {
+    /// Save `password` (or clear it, `None`) of store key `key` as a synced
+    /// credential. `Ok(false)`: not a ring credential, store it locally.
+    fn replicate(&self, key: &str, password: Option<&str>) -> Result<bool>;
+    /// The key bytes of identity `identity_id` changed: replicate them too.
+    fn replicate_identity_key(&self, identity_id: i64) -> Result<bool>;
+}
+
+impl SecretGate {
+    /// Install the replicator once; a second call is ignored.
+    pub fn set_replicator(&self, replicator: Box<dyn Replicator>) {
+        let _ = self.replicator.set(replicator);
+    }
+
+    pub fn replicator(&self) -> Option<&dyn Replicator> {
+        self.replicator.get().map(|r| r.as_ref())
+    }
+
+    /// Say which keys are synced credentials. Until this is called nothing is:
+    /// every secret is local and passes through.
+    pub fn set_synced_check(&self, check: impl Fn(&str) -> bool + Send + Sync + 'static) {
+        *self.synced.write().unwrap_or_else(|e| e.into_inner()) = Some(Box::new(check));
+    }
+
+    /// Whether any key can be synced at all. False until the sync stage says
+    /// which keys are; lets hot paths skip the gate entirely.
+    pub fn guards_any(&self) -> bool {
+        self.synced
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    pub fn is_synced(&self, key: &str) -> bool {
+        self.synced
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .is_some_and(|check| check(key))
+    }
+
+    /// Open `key` for this process.
+    pub fn insert(&self, key: impl Into<String>, value: zeroize::Zeroizing<String>) {
+        let hash = value_hash(&value);
+        let old = self
+            .unlocked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(key.into(), value);
+        open_values_add(hash);
+        if let Some(old) = old {
+            open_values_remove(value_hash(&old));
+        }
+    }
+
+    /// The opened plaintext of `key`, if it is open.
+    pub fn get(&self, key: &str) -> Option<zeroize::Zeroizing<String>> {
+        self.unlocked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(key)
+            .cloned()
+    }
+
+    /// An opened synced identity's private key goes into this process's private
+    /// ssh-agent (started on the first key; socket in a 0700 directory) and
+    /// into memory for in-process SFTP: no private key byte touches a disk.
+    /// The passphrase, if the gate holds one for the same credential, reaches
+    /// `ssh-add` through the askpass helper. The agent dies on
+    /// [`SecretGate::lock_all`] and when the gate drops.
+    pub fn insert_private_key(
+        &self,
+        key: &str,
+        pem: zeroize::Zeroizing<String>,
+    ) -> anyhow::Result<()> {
+        let id: i64 = key
+            .strip_prefix("identity:")
+            .and_then(|i| i.parse().ok())
+            .ok_or_else(|| anyhow::anyhow!("{key} is not an identity credential"))?;
+        // The passphrase (if any) answers ssh-add's prompt through the helper.
+        let passphrase = self.get(key).filter(|p| !p.is_empty());
+        let staged = match &passphrase {
+            Some(p) => Some(
+                crate::session::askpass::AskpassSecret::staged(
+                    Some(&crate::session::PendingSecret::Passphrase(p.to_string())),
+                    &[],
+                )
+                .map_err(|e| anyhow::anyhow!("could not stage the key passphrase: {e}"))?,
+            ),
+            None => None,
+        };
+        let askpass = match &staged {
+            Some(guard) => {
+                let exe = crate::session::askpass::helper_exe()?;
+                Some(crate::sync::cred_ops::AskpassEnv {
+                    env: guard.env(&exe),
+                    program: exe,
+                })
+            }
+            None => None,
+        };
+        let mut agent = self.agent.lock().unwrap_or_else(|e| e.into_inner());
+        if agent.is_none() {
+            *agent = Some(crate::sync::cred_ops::PrivateAgent::start()?);
+        }
+        let live = agent.as_mut().expect("started above");
+        let added = live.add_key(&pem, KEY_TTL_SECS, askpass.as_ref())?;
+        SYNCED_KEYS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                id,
+                SyncedKey {
+                    pem,
+                    socket: live.socket().to_path_buf(),
+                    public_file: added.public_file,
+                },
+            );
+        self.key_ids
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(id);
+        Ok(())
+    }
+
+    /// Forget every opened secret (zeroized as they drop) and stop the private
+    /// agent with the keys in it.
+    pub fn lock_all(&self) {
+        let ids: Vec<i64> =
+            std::mem::take(&mut *self.key_ids.lock().unwrap_or_else(|e| e.into_inner()))
+                .into_iter()
+                .collect();
+        if !ids.is_empty() {
+            let mut keys = SYNCED_KEYS.lock().unwrap_or_else(|e| e.into_inner());
+            for id in ids {
+                keys.remove(&id);
+            }
+        }
+        // Dropping the agent kills it and removes its directory.
+        *self.agent.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let closed: Vec<_> = self
+            .unlocked
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .drain()
+            .collect();
+        for (_, value) in closed {
+            open_values_remove(value_hash(&value));
+        }
+    }
+
+    /// The synced credentials among `refs` that are not open yet.
+    pub fn locked(&self, refs: &[SecretRef]) -> Vec<SecretRef> {
+        refs.iter()
+            .filter(|r| match r {
+                SecretRef::Key(key) => self.is_synced(key) && self.get(key).is_none(),
+                SecretRef::Lookup(_) | SecretRef::Staged(_) | SecretRef::Handle(_) => false,
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+impl Drop for SecretGate {
+    fn drop(&mut self) {
+        self.lock_all();
+    }
+}
+
+/// How long the private agent keeps a synced identity's key.
+const KEY_TTL_SECS: u32 = 8 * 3600;
+
+struct SyncedKey {
+    pem: zeroize::Zeroizing<String>,
+    socket: std::path::PathBuf,
+    public_file: std::path::PathBuf,
+}
+
+/// Opened synced identity keys by identity id (see
+/// [`SecretGate::insert_private_key`]).
+static SYNCED_KEYS: std::sync::Mutex<std::collections::BTreeMap<i64, SyncedKey>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// How ssh reaches an opened synced identity: the private agent's socket and
+/// the public key file that selects the key in it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentUse {
+    pub socket: std::path::PathBuf,
+    pub public_file: std::path::PathBuf,
+}
+
+pub fn synced_identity_agent(id: i64) -> Option<AgentUse> {
+    SYNCED_KEYS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&id)
+        .map(|k| AgentUse {
+            socket: k.socket.clone(),
+            public_file: k.public_file.clone(),
+        })
+}
+
+/// Jump hosts (as ssh is given them) whose identity has no key on this disk,
+/// noted by the hop resolver so the connection builder can point ssh at the
+/// private agent for them.
+static HOP_IDENTITIES: std::sync::Mutex<std::collections::BTreeMap<String, i64>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+pub fn note_hop_identity(via: &str, identity_id: i64) {
+    HOP_IDENTITIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(via.to_string(), identity_id);
+}
+
+/// The host part of one `-J` token: `user@host:port`, `[v6]:port` or a name.
+fn jump_token_host(token: &str) -> &str {
+    let t = token.rsplit_once('@').map_or(token, |(_, h)| h);
+    if let Some(inner) = t.strip_prefix('[') {
+        return inner.split_once(']').map_or(inner, |(h, _)| h);
+    }
+    match t.rsplit_once(':') {
+        Some((h, port)) if !h.contains(':') && port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => t,
+    }
+}
+
+/// A per-connection ssh config for jump hosts that need a synced key: the
+/// hop's `Host` block (private agent, its public key, IdentitiesOnly) first,
+/// then `Match all` (an `Include` inside a `Host` block is skipped for every other
+/// host) and the user's own config, so `-F <this>` changes nothing else. ssh passes
+/// `-F` to the jump command, which `-o` options are not. Written 0600 into the
+/// agent's 0700 directory, removed with it. `None` when no hop needs it.
+pub fn hop_agent_config(jump: &str) -> Option<std::path::PathBuf> {
+    let noted = HOP_IDENTITIES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let mut blocks = String::new();
+    let mut dir = None;
+    for token in jump.split(',') {
+        let host = jump_token_host(token.trim());
+        // A synced name is foreign text: only a plain host name may become a `Host` line
+        // (the charset a raw hop is held to); anything else gets no block.
+        if host.is_empty()
+            || !host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            continue;
+        }
+        let Some(agent) = noted.get(host).and_then(|id| synced_identity_agent(*id)) else {
+            continue;
+        };
+        dir = agent.socket.parent().map(std::path::Path::to_path_buf);
+        blocks.push_str(&format!(
+            "Host {host}\n    IdentityAgent {}\n    IdentityFile {}\n    IdentitiesOnly yes\n",
+            agent.socket.display(),
+            agent.public_file.display()
+        ));
+    }
+    let dir = dir?;
+    let text = format!(
+        "# sshub: synced keys for jump hosts, then your own configuration\n{blocks}Match all\nInclude ~/.ssh/config\nInclude /etc/ssh/ssh_config\n"
+    );
+    let name = format!(
+        "hops-{}.conf",
+        &blake3::hash(text.as_bytes()).to_hex()[..12]
+    );
+    let path = dir.join(name);
+    if !path.exists() {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .ok()?;
+        f.write_all(text.as_bytes()).ok()?;
+    }
+    Some(path)
+}
+
+/// The key bytes behind an agent public file, for in-process SFTP
+/// (`userauth_pubkey_memory`): memory only.
+pub fn synced_key_for_public_file(path: &std::path::Path) -> Option<zeroize::Zeroizing<String>> {
+    SYNCED_KEYS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .find(|k| k.public_file == path)
+        .map(|k| k.pem.clone())
+}
+
+// A process-wide count of the opened synced plaintexts, by hash, so a path that
+// only holds a secret's value (the askpass staging) can tell it is synced and
+// keep it off the disk. Hashes only: no second copy of a plaintext lives here.
+static OPEN_VALUES: std::sync::Mutex<Option<HashMap<[u8; 32], usize>>> =
+    std::sync::Mutex::new(None);
+
+fn value_hash(value: &str) -> [u8; 32] {
+    *blake3::hash(value.as_bytes()).as_bytes()
+}
+
+fn open_values_add(hash: [u8; 32]) {
+    let mut map = OPEN_VALUES.lock().unwrap_or_else(|e| e.into_inner());
+    *map.get_or_insert_with(HashMap::new)
+        .entry(hash)
+        .or_insert(0) += 1;
+}
+
+fn open_values_remove(hash: [u8; 32]) {
+    let mut map = OPEN_VALUES.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = map.as_mut() {
+        if let Some(n) = map.get_mut(&hash) {
+            *n -= 1;
+            if *n == 0 {
+                map.remove(&hash);
+            }
+        }
+    }
+}
+
+/// Whether `value` is the plaintext of a synced credential that is open in
+/// this process. A local secret equal to one is treated the same: it takes the
+/// safer route.
+pub fn is_open_synced_value(value: &str) -> bool {
+    OPEN_VALUES
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .is_some_and(|map| map.contains_key(&value_hash(value)))
+}
+
+/// Decorator around a profile's store: a synced credential is answered from
+/// the gate (`Err(Locked)` until it is open in this process) and never read
+/// from or written to the inner store; every other key passes through.
+pub struct QuorumGatedStore {
+    inner: Box<dyn PasswordStore>,
+    gate: std::sync::Arc<SecretGate>,
+}
+
+impl QuorumGatedStore {
+    /// A gate that guards nothing until [`SecretGate::set_synced_check`].
+    pub fn new(inner: Box<dyn PasswordStore>) -> Self {
+        Self::with_gate(inner, std::sync::Arc::new(SecretGate::default()))
+    }
+
+    pub fn with_gate(inner: Box<dyn PasswordStore>, gate: std::sync::Arc<SecretGate>) -> Self {
+        Self { inner, gate }
+    }
+
+    /// A handle on the gate, for whoever opens credentials.
+    pub fn gate_handle(&self) -> std::sync::Arc<SecretGate> {
+        self.gate.clone()
+    }
+}
+
+impl PasswordStore for QuorumGatedStore {
+    fn get(&self, key: &str) -> Result<Option<String>> {
+        if !self.gate.is_synced(key) {
+            return self.inner.get(key);
+        }
+        match self.gate.get(key) {
+            Some(value) => Ok(Some(value.to_string())),
+            None => Err(Locked {
+                secret: SecretRef::Key(key.to_string()),
+            }
+            .into()),
+        }
+    }
+
+    fn set(&self, key: &str, password: &str) -> Result<()> {
+        if let Some(r) = self.gate.replicator() {
+            if r.replicate(key, Some(password))? {
+                // The user just typed it: it is open in this process.
+                self.gate
+                    .insert(key, zeroize::Zeroizing::new(password.to_string()));
+                return Ok(());
+            }
+        }
+        if self.gate.is_synced(key) {
+            anyhow::bail!(
+                "{key} is a synced credential: change it through sync, not the local store"
+            );
+        }
+        self.inner.set(key, password)
+    }
+
+    fn delete(&self, key: &str) -> Result<()> {
+        if let Some(r) = self.gate.replicator() {
+            if r.replicate(key, None)? {
+                self.gate
+                    .insert(key, zeroize::Zeroizing::new(String::new()));
+                return Ok(());
+            }
+        }
+        if self.gate.is_synced(key) {
+            anyhow::bail!(
+                "{key} is a synced credential: remove it through sync, not the local store"
+            );
+        }
+        self.inner.delete(key)
+    }
+
+    fn lookup(&self, spec: &str) -> Result<String> {
+        self.inner.lookup(spec)
+    }
+
+    fn locator(&self) -> Option<StoreLocator> {
+        self.inner.locator()
+    }
+
+    fn gate(&self) -> Option<&SecretGate> {
+        Some(&self.gate)
+    }
+
+    fn shared_gate(&self) -> Option<std::sync::Arc<SecretGate>> {
+        Some(self.gate.clone())
+    }
+}
+
+/// Why a credential could not be opened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnlockError {
+    /// More shares are needed; says where to get them.
+    NeedsShares(String),
+    Cancelled,
+    Failed(String),
+}
+
+impl std::fmt::Display for UnlockError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnlockError::NeedsShares(how) => {
+                write!(f, "this credential needs a second share: {how}")
+            }
+            UnlockError::Cancelled => write!(f, "unlock cancelled"),
+            UnlockError::Failed(why) => write!(f, "unlock failed: {why}"),
+        }
+    }
+}
+
+impl std::error::Error for UnlockError {}
+
+/// Opens synced credentials: assembles the shares (or opens the vault) and
+/// puts the plaintext into its [`SecretGate`]. Implemented by the sync stage.
+pub trait Unlocker: Send + Sync {
+    /// The gate of the store the credentials are read from.
+    fn gate(&self) -> &SecretGate;
+    /// Open `locked`; may block (a CLI waits for shares).
+    fn unlock(&self, locked: &[SecretRef]) -> std::result::Result<(), UnlockError>;
+}
+
+/// Open every credential in `refs` that is synced and still locked. A pass for
+/// nothing locked; an error if the unlocker fails or leaves one closed.
+pub fn ensure_unlocked(
+    refs: &[SecretRef],
+    unlocker: &dyn Unlocker,
+) -> std::result::Result<(), UnlockError> {
+    let locked = unlocker.gate().locked(refs);
+    if locked.is_empty() {
+        return Ok(());
+    }
+    unlocker.unlock(&locked)?;
+    let still = unlocker.gate().locked(refs);
+    if still.is_empty() {
+        Ok(())
+    } else {
+        Err(UnlockError::Failed(format!(
+            "{} credential(s) are still locked",
+            still.len()
+        )))
+    }
+}
+
+/// The synced credentials among `refs` that `store` has not opened.
+pub fn locked_refs(store: &dyn PasswordStore, refs: &[SecretRef]) -> Vec<SecretRef> {
+    store.gate().map(|g| g.locked(refs)).unwrap_or_default()
+}
+
+/// What a caller with no way to open credentials says when one is locked.
+pub fn needs_share_message() -> UnlockError {
+    UnlockError::NeedsShares(
+        "it is saved in your synced devices and is locked: open it in the terminal screen (sshub, then connect or tab 7) while its sync worker runs, or start a trust session there".into(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -577,5 +1157,153 @@ mod tests {
             None
         );
         assert!(NoopPasswordStore.locator().is_none());
+    }
+
+    // ── The gate ─────────────────────────────────────────
+
+    fn gated(dir: &std::path::Path) -> QuorumGatedStore {
+        let store = QuorumGatedStore::new(Box::new(FilePasswordStore::new(dir.join("c.json"))));
+        store
+            .gate_handle()
+            .set_synced_check(|k| k.starts_with("host:9"));
+        store
+    }
+
+    #[test]
+    fn a_local_key_passes_through_and_a_synced_one_is_locked_until_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = gated(dir.path());
+        store.set("host:1", "local-pw").unwrap();
+        assert_eq!(store.get("host:1").unwrap(), Some("local-pw".into()));
+
+        let err = store.get("host:9").unwrap_err();
+        let locked = err.downcast_ref::<Locked>().expect("a Locked error");
+        assert_eq!(locked.secret, SecretRef::Key("host:9".into()));
+        assert!(locked.to_string().contains("second share"));
+        // `read` swallows errors: a locked credential reads as nothing.
+        assert_eq!(SecretRef::Key("host:9".into()).read(&store), None);
+
+        store
+            .gate_handle()
+            .insert("host:9", zeroize::Zeroizing::new("synced-pw".into()));
+        assert_eq!(store.get("host:9").unwrap(), Some("synced-pw".into()));
+        store.gate_handle().lock_all();
+        assert!(store.get("host:9").is_err(), "locking again closes it");
+    }
+
+    #[test]
+    fn a_synced_credential_is_never_written_to_the_local_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = gated(dir.path());
+        assert!(store.set("host:9", "TOPSECRET").is_err());
+        assert!(store.delete("host:9").is_err());
+        store
+            .gate_handle()
+            .insert("host:9", zeroize::Zeroizing::new("TOPSECRET".into()));
+        let _ = store.get("host:9");
+        store.set("host:1", "other").unwrap();
+        // Nothing under the store's directory carries the plaintext.
+        for entry in std::fs::read_dir(dir.path()).unwrap() {
+            let text = std::fs::read(entry.unwrap().path()).unwrap();
+            assert!(
+                !String::from_utf8_lossy(&text).contains("TOPSECRET"),
+                "plaintext reached the disk"
+            );
+        }
+    }
+
+    #[test]
+    fn a_store_that_guards_nothing_costs_nothing_and_passes_everything() {
+        let dir = tempfile::tempdir().unwrap();
+        let store =
+            QuorumGatedStore::new(Box::new(FilePasswordStore::new(dir.path().join("c.json"))));
+        assert!(!store.gate().unwrap().guards_any());
+        store.set("host:9", "pw").unwrap();
+        assert_eq!(store.get("host:9").unwrap(), Some("pw".into()));
+        assert!(locked_refs(&store, &[SecretRef::Key("host:9".into())]).is_empty());
+        assert!(NoopPasswordStore.gate().is_none());
+    }
+
+    #[test]
+    fn a_staged_value_reads_without_a_store_and_never_prints() {
+        let r = SecretRef::Staged(StagedValue::new("hunter2".into()));
+        assert_eq!(r.read(&NoopPasswordStore), Some("hunter2".into()));
+        assert!(!format!("{r:?}").contains("hunter2"));
+    }
+
+    struct Opener {
+        gate: std::sync::Arc<SecretGate>,
+        calls: std::sync::atomic::AtomicUsize,
+        open: bool,
+    }
+
+    impl Unlocker for Opener {
+        fn gate(&self) -> &SecretGate {
+            &self.gate
+        }
+        fn unlock(&self, locked: &[SecretRef]) -> std::result::Result<(), UnlockError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if !self.open {
+                return Err(UnlockError::Cancelled);
+            }
+            for r in locked {
+                if let SecretRef::Key(k) = r {
+                    self.gate
+                        .insert(k.clone(), zeroize::Zeroizing::new("pw".into()));
+                }
+            }
+            Ok(())
+        }
+    }
+
+    fn opener(open: bool) -> Opener {
+        let gate = std::sync::Arc::new(SecretGate::default());
+        gate.set_synced_check(|k| k.starts_with("host:"));
+        Opener {
+            gate,
+            calls: Default::default(),
+            open,
+        }
+    }
+
+    #[test]
+    fn ensure_unlocked_opens_only_what_is_locked_and_checks_the_result() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let refs = [
+            SecretRef::Key("host:1".into()),
+            SecretRef::Key("identity:2".into()), // local: never asked about
+        ];
+        let u = opener(true);
+        ensure_unlocked(&refs, &u).unwrap();
+        assert_eq!(u.calls.load(SeqCst), 1);
+        assert!(u.gate.get("host:1").is_some() && u.gate.get("identity:2").is_none());
+        ensure_unlocked(&refs, &u).unwrap();
+        assert_eq!(
+            u.calls.load(SeqCst),
+            1,
+            "already open: the unlocker is not asked"
+        );
+
+        let refused = opener(false);
+        assert_eq!(
+            ensure_unlocked(&refs, &refused),
+            Err(UnlockError::Cancelled)
+        );
+
+        struct Liar(std::sync::Arc<SecretGate>);
+        impl Unlocker for Liar {
+            fn gate(&self) -> &SecretGate {
+                &self.0
+            }
+            fn unlock(&self, _: &[SecretRef]) -> std::result::Result<(), UnlockError> {
+                Ok(()) // claims success, opens nothing
+            }
+        }
+        let liar = Liar(refused.gate.clone());
+        assert!(matches!(
+            ensure_unlocked(&refs, &liar),
+            Err(UnlockError::Failed(_))
+        ));
+        assert!(needs_share_message().to_string().contains("second share"));
     }
 }

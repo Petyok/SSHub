@@ -209,6 +209,21 @@ impl App {
                 None,
             );
         } else {
+            // Synced credentials the login reads must be open first; the
+            // start then runs again by itself.
+            let pre = host
+                .as_ref()
+                .and_then(|h| self.store.resolve_connection(h).ok());
+            let refs = connection_secret_refs(
+                &self.store,
+                &self.hosts,
+                host.as_ref(),
+                pre.as_ref().and_then(|r| r.identity.as_ref()),
+                pre.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+            );
+            if !self.preflight_unlock(refs, host_name, move |app| app.toggle_tunnel_by_id(id)) {
+                return Ok(());
+            }
             self.tunnel_manager.resume_auto_reconnect(tunnel.id);
             let (secret, _) = host
                 .as_ref()
@@ -708,6 +723,15 @@ impl App {
                 .and_then(|hid| self.store.get_host(hid).ok().flatten());
             let host_name = host.as_ref().map(|h| h.name.as_str()).unwrap_or("unknown");
             let label = tunnel.label.as_deref().unwrap_or("");
+            // No one is at the keyboard to unlock: a tunnel whose credentials
+            // are locked stays stopped and says why.
+            if self.tunnel_credentials_locked(&tunnel) {
+                self.tunnel_notice = Some(format!(
+                    "Tunnel :{} waits for its credentials to be unlocked",
+                    tunnel.local_port
+                ));
+                continue;
+            }
             self.tunnel_manager.resume_auto_reconnect(tunnel.id);
             let (secret, _) = host
                 .as_ref()
@@ -778,8 +802,16 @@ impl App {
             return Ok(());
         }
         let store = Arc::clone(&self.store);
+        // Tunnels whose credentials are locked wait for an unlock instead of
+        // reconnecting into a prompt nobody can answer.
+        let ready: Vec<crate::store::Tunnel> = self
+            .tunnels
+            .iter()
+            .filter(|t| !self.tunnel_credentials_locked(t))
+            .cloned()
+            .collect();
         let events = self.tunnel_manager.tick_reconnect(
-            &self.tunnels,
+            &ready,
             &self.config.tunnel_reconnect,
             |host_id| {
                 store.get_host(host_id).ok().flatten().map(|h| {

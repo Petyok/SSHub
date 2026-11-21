@@ -6,6 +6,7 @@ default:
 # Run all test targets (unit + integration). CI-friendly; no TTY required.
 test:
     cargo test --no-default-features
+    cargo test -p sshub-sync-proto --all-features
     cargo test --no-default-features --test smoke
     cargo test --no-default-features --test e2e
     cargo test --no-default-features --test config_load

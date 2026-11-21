@@ -1,7 +1,7 @@
 ---
 type: Data Model
-title: Data Model & Storage, launcher.db v21, metadata.db, config.toml, and hybrid hosts
-description: SSHub persists each profile's state in two SQLite databases (launcher.db at schema v21 for managed hosts, groups and their connection defaults, identities, tunnels, audit, snippets, log bookmarks, opt-in command history and saved split-view workspaces; metadata.db for legacy ssh_config aliases), snapshots launcher.db before every migration, keeps settings in config.toml, and merges managed hosts with read-only ~/.ssh/config aliases through HostResolver.
+title: Data Model & Storage, launcher.db v22, metadata.db, config.toml, and hybrid hosts
+description: SSHub persists each profile's state in two SQLite databases (launcher.db at schema v22 for managed hosts, groups and their connection defaults, identities, tunnels, audit, snippets, log bookmarks, opt-in command history and saved split-view workspaces; metadata.db for legacy ssh_config aliases), snapshots launcher.db before every migration, keeps settings in config.toml, and merges managed hosts with read-only ~/.ssh/config aliases through HostResolver.
 resource: src/store/migrate.rs
 tags: [storage, sqlite, schema, migrations, config, hosts, architecture]
 ---
@@ -53,7 +53,7 @@ migrations and seeds the "Default" identity. `run_migrations`
 3. One transaction: the base v2 schema (`CREATE TABLE IF NOT EXISTS`), then
    every `migrate_vN_to_vN+1` step below the current version, then the legacy
    metadata import (fresh DB only), then `schema_version` is set to
-   **`SCHEMA_VERSION = 21`**. Column adds are guarded with `pragma_table_info`
+   **`SCHEMA_VERSION = 22`**. Column adds are guarded with `pragma_table_info`
    so re-runs are safe.
 
 Migration history worth knowing:
@@ -76,6 +76,7 @@ Migration history worth knowing:
 | v18 | `hosts.ping` (per-host ping override: `NULL` inherit, 1 on, 0 off) |
 | v19 | `hosts.secret_lookup` (one `Attribute=value` Secret Service spec) |
 | v20 | `workspaces` table (saved split-view layouts) |
+| v22 | host sync: `uid` BLOB columns on `hosts`, `host_groups`, `identities` (stable replicated ids) and the `sync_*` op-log tables (`src/sync/oplog/`) |
 | v21 | `hosts` and `identities` rebuilt with `AUTOINCREMENT`: ids are never reused, so a new host can no longer adopt the keyring secret (`host:<id>` / `identity:<id>`) a deleted one left behind. Child rows (memberships, tunnels, command history, host and group identity references) are copied out and put back around the `DROP TABLE` |
 
 The v16 and v21 rebuilds carry the same hazard: `DROP TABLE hosts` fires every

@@ -902,6 +902,18 @@ impl App {
         let effective = entry
             .managed()
             .and_then(|m| self.store.resolve_connection(m).ok());
+        let refs = connection_secret_refs(
+            &self.store,
+            &self.hosts,
+            entry.managed(),
+            effective.as_ref().and_then(|r| r.identity.as_ref()),
+            None,
+        );
+        let label = entry.name().to_string();
+        let again = entry.clone();
+        if !self.preflight_unlock(refs, &label, move |app| app.sftp_connect_to(again)) {
+            return Ok(());
+        }
         let (secret, _diag) = resolve_pending_secret(
             &entry,
             effective.as_ref().and_then(|r| r.identity.as_ref()),
@@ -1013,6 +1025,19 @@ impl App {
         let effective = entry
             .managed()
             .and_then(|m| self.store.resolve_connection(m).ok());
+        let refs = connection_secret_refs(
+            &self.store,
+            &self.hosts,
+            entry.managed(),
+            effective.as_ref().and_then(|r| r.identity.as_ref()),
+            None,
+        );
+        let label = entry.name().to_string();
+        if !self.preflight_unlock(refs, &label, move |app| {
+            app.sftp_connect_left_pane(host_idx)
+        }) {
+            return Ok(());
+        }
         let (secret, _diag) = resolve_pending_secret(
             &entry,
             effective.as_ref().and_then(|r| r.identity.as_ref()),

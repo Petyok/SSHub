@@ -521,6 +521,30 @@ pub enum AppMode {
     /// Fuzzy snippet picker floated over a live session; Enter runs the
     /// selected command in the PTY, Tab inserts it without a newline.
     SnippetPicker,
+    /// Review of pending synced operations (Sync tab, `R`).
+    SyncReview,
+    /// Unlock modal: shares collected, short-code field.
+    SyncUnlock,
+    /// Enrollment SAS words to compare on both machines.
+    SyncSas,
+    /// Full-screen alert naming a device caught forking its history. Not a
+    /// popup: it takes over the frame, over a live session too.
+    SyncForkAlert,
+    /// Full-screen notice that a recovery of the phone is open and was not started here. Like the fork alert it
+    /// takes over the frame; Esc only dismisses it, there is no acknowledge, and it never writes an op.
+    SyncRecoveryAlert,
+    /// Trust session, step 1: scope.
+    TrustSessionScope,
+    /// Trust session, step 2: term.
+    TrustSessionTtl,
+    /// Holder side: confirm a share release, naming the requesting device.
+    SyncReleaseConfirm,
+    /// Vault first run: the six words and the paper-kit rules.
+    SyncOnboarding,
+    /// Generic Sync modals (see `app/sync_ui.rs`): a text prompt, a menu, a text panel.
+    SyncPrompt,
+    SyncMenu,
+    SyncInfo,
 }
 
 /// Which pane the log browser is showing.

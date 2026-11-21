@@ -697,6 +697,16 @@ fn will_render_session_tab_slide(app: &App) -> bool {
 }
 
 fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
+    // The fork alert is the whole frame, over a live session too: no chrome and
+    // no popup snapshot, and nothing of the session shows through.
+    if app.mode == AppMode::SyncForkAlert {
+        screens::sync::render_fork_alert(frame, app);
+        return;
+    }
+    if app.mode == AppMode::SyncRecoveryAlert {
+        screens::sync::render_recovery_alert(frame, app);
+        return;
+    }
     let session_behind_picker = session_behind_picker(app);
 
     // Embedded session takes over the whole frame — no dashboard chrome.
@@ -786,7 +796,7 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             .as_ref()
             .filter(|p| !p.compat)
             .map(|p| p.name.as_str()),
-        app.update_badge().as_deref(),
+        &app.tab_badges(),
         theme,
     );
 
@@ -957,6 +967,16 @@ fn render_inner(frame: &mut Frame, app: &App, composition: &FrameComposition) {
             // Keep the snippet list behind the form for context.
             screens::snippet_manage::render_snippet_manage_popup(frame, app);
             screens::snippet_form::render_snippet_form(frame, app);
+        }
+        AppMode::SyncReview => screens::sync::render_review(frame, app),
+        AppMode::SyncUnlock => screens::sync::render_unlock(frame, app),
+        AppMode::SyncSas => screens::sync::render_sas(frame, app),
+        AppMode::TrustSessionScope => screens::sync::render_trust_scope(frame, app),
+        AppMode::TrustSessionTtl => screens::sync::render_trust_ttl(frame, app),
+        AppMode::SyncReleaseConfirm => screens::sync::render_release_confirm(frame, app),
+        AppMode::SyncOnboarding => screens::sync::render_onboarding(frame, app),
+        AppMode::SyncPrompt | AppMode::SyncMenu | AppMode::SyncInfo => {
+            screens::sync::render_sync_ui(frame, app)
         }
         _ => {}
     }
@@ -1622,8 +1642,72 @@ fn footer_keybinds(
             ("?".into(), "help"),
             ("q".into(), "quit"),
         ],
+        6 if app.sync.configured => {
+            let mut v: Vec<(String, &'static str)> = vec![
+                ("\u{2191}\u{2193}".into(), "select"),
+                ("Enter".into(), "details"),
+                (
+                    screens::map::key_label(
+                        app.config
+                            .keybinds
+                            .primary(crate::config::KeyAction::SyncNow),
+                    ),
+                    "sync now",
+                ),
+                (
+                    screens::map::key_label(
+                        app.config
+                            .keybinds
+                            .primary(crate::config::KeyAction::SyncReview),
+                    ),
+                    "review",
+                ),
+                (
+                    screens::map::key_label(
+                        app.config
+                            .keybinds
+                            .primary(crate::config::KeyAction::SyncTrust),
+                    ),
+                    "trust session",
+                ),
+                (
+                    screens::map::key_label(
+                        app.config
+                            .keybinds
+                            .primary(crate::config::KeyAction::SyncAdmin),
+                    ),
+                    "manage",
+                ),
+            ];
+            // The drop-phone key only does something while the Bluetooth channel runs.
+            if crate::app::sync_phone::ble_active(app) {
+                v.push((
+                    screens::map::key_label(
+                        app.config
+                            .keybinds
+                            .primary(crate::config::KeyAction::SyncBleDrop),
+                    ),
+                    "drop phone",
+                ));
+            }
+            v.push(("?".into(), "help"));
+            v.push(("q".into(), "quit"));
+            v
+        }
+        6 => vec![("?".into(), "help"), ("q".into(), "quit")],
         _ => vec![("q".into(), "quit")],
     };
+    // The enroll key only does something once a sync worker runs.
+    if app.active_tab == 0 && app.sync.worker {
+        binds.push((
+            screens::map::key_label(
+                app.config
+                    .keybinds
+                    .primary(crate::config::KeyAction::SyncEnroll),
+            ),
+            "add as sync device",
+        ));
+    }
     if matches!(app.active_tab, 2..=4) && app.list_filter_editing {
         binds = vec![
             (
@@ -2133,6 +2217,7 @@ fn render_tab_body(
         3 => render_keys_body(frame, areas, app),
         4 => render_audit_body(frame, areas, app),
         5 => screens::map::render_map(frame, areas.body, app),
+        6 => screens::sync::render(frame, areas.body, app),
         _ => render_hosts_body(frame, areas, app),
     }
 }
@@ -2924,7 +3009,7 @@ mod tests {
                 record,
                 dir.path().join("ssh_config"),
             ));
-            for width in [80, 180] {
+            for width in [100, 180] {
                 let buffer = render_to_buffer(&app, width, 24);
                 let area =
                     dashboard_layout::dashboard_layout_zoomed(buffer.area, app.ui_zoom).tab_bar;
@@ -2951,8 +3036,8 @@ mod tests {
         };
         let mut state = crate::profile::ProfileState::default();
         for (name, narrow) in [
-            ("界".repeat(20), format!("{}…", "界".repeat(4))),
-            ("e\u{301}".repeat(20), format!("{}…", "e\u{301}".repeat(9))),
+            ("界".repeat(20), "…".to_string()),
+            ("e\u{301}".repeat(20), "e\u{301}…".to_string()),
         ] {
             let record = crate::profile::create_profile(&roots, &mut state, &name).unwrap();
             app.profile = Some(crate::profile::profile_paths(
@@ -2960,15 +3045,15 @@ mod tests {
                 &record,
                 dir.path().join("ssh_config"),
             ));
-            for width in [80, 120, 180] {
+            for width in [80, 160, 200] {
                 let buffer = render_to_buffer(&app, width, 24);
                 let area =
                     dashboard_layout::dashboard_layout_zoomed(buffer.area, app.ui_zoom).tab_bar;
-                let start = if width < 132 { 60 } else { 77 };
+                let start = if width < 143 { 68 } else { 88 };
                 let adjusted;
                 let expected_name = if width == 80 {
                     &narrow
-                } else if width == 120 {
+                } else if width == 160 {
                     let scope = (start..area.right())
                         .find(|&x| {
                             (x..(x + 6).min(area.right()))
@@ -2976,7 +3061,7 @@ mod tests {
                                 .collect::<String>()
                                 == "scope:"
                         })
-                        .expect("scope badge should remain visible at 120 columns");
+                        .expect("scope badge should remain visible at 160 columns");
                     let budget = (scope - start - 9 - 2) as usize;
                     if Span::raw(&name).width() > budget {
                         let (unit, unit_width) = if name.starts_with('界') {
@@ -3030,10 +3115,38 @@ mod tests {
     }
 
     #[test]
+    fn the_seventh_tab_is_never_covered_and_has_its_own_footer() {
+        let mut app = test_app_with_hosts();
+        app.active_tab = 6;
+        for width in [80, 90, 100, 110, 120, 160] {
+            let buffer = render_to_buffer(&app, width, 24);
+            let y = dashboard_layout::dashboard_layout_zoomed(buffer.area, app.ui_zoom)
+                .tab_bar
+                .y;
+            let row: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
+            assert!(row.contains("[7] sync"), "{width}: {row:?}");
+            assert!(row.contains("6  map"), "{width}: {row:?}");
+        }
+        let bare = buffer_text(&render_to_buffer(&app, 120, 30));
+        assert!(
+            bare.contains("q quit") && !bare.contains("sync now"),
+            "{bare}"
+        );
+        app.sync = crate::app::sync::sample_sync_view();
+        let full = buffer_text(&render_to_buffer(&app, 120, 30));
+        for hint in ["y sync now", "R review", "t trust", "q quit"] {
+            assert!(full.contains(hint), "{hint}: {full}");
+        }
+        app.active_tab = 0;
+        let hosts = buffer_text(&render_to_buffer(&app, 200, 30));
+        assert!(hosts.contains("A add as sync device"), "{hosts}");
+    }
+
+    #[test]
     fn tab_bar_long_profile_preserves_scope_and_version() {
         let app = test_app_with_hosts();
         for name in [format!("alpha{}", "a".repeat(90)), "alpha".into()] {
-            for width in [80, 120] {
+            for width in [80, 120, 160] {
                 let mut terminal = Terminal::new(TestBackend::new(width, 1)).unwrap();
                 terminal
                     .draw(|frame| {
@@ -3043,7 +3156,7 @@ mod tests {
                             1,
                             "~/.config/sshub",
                             Some(&name),
-                            None,
+                            &widgets::tab_bar::TabBadges::default(),
                             app.theme(),
                         )
                     })
@@ -3051,16 +3164,27 @@ mod tests {
                 let buffer = terminal.backend().buffer();
                 let row: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
                 assert!(row.contains("identities") && row.contains("audit"), "{row}");
-                assert!(row.contains("profile: alpha"), "{row}");
+                assert!(
+                    row.contains(if width == 80 {
+                        "profile: "
+                    } else {
+                        "profile: alpha"
+                    }),
+                    "{row}"
+                );
                 if name.len() > 12 {
                     assert!(row.contains('…'), "{row}");
                 }
-                if width == 120 {
-                    assert!(row.contains("scope: ~/.config/sshub"), "{row}");
+                // Seven tabs leave 51 columns at 120: the version stays, the
+                // scope gives way. At 160 there is room for both.
+                if width >= 120 {
                     assert!(
                         row.contains(concat!("v", env!("CARGO_PKG_VERSION"))),
                         "{row}"
                     );
+                }
+                if width == 160 {
+                    assert!(row.contains("scope: ~/.config/sshub"), "{row}");
                     let scope = row.find("scope:").unwrap();
                     let profile = &row[..scope];
                     assert!(profile.ends_with("  "), "{row}");
@@ -3086,17 +3210,19 @@ mod tests {
                     1,
                     "~/.config/sshub",
                     Some("alpha"),
-                    Some("updating to v99.0.0…"),
+                    &widgets::tab_bar::TabBadges {
+                        update: Some("updating to v99.0.0…".into()),
+                        sync: None,
+                    },
                     app.theme(),
                 )
             })
             .unwrap();
         let buffer = terminal.backend().buffer();
         let row: String = (0..120).map(|x| buffer[(x, 0)].symbol()).collect();
-        assert!(
-            row.contains("profile: alpha") && row.contains("audit"),
-            "{row}"
-        );
+        // The update badge outranks the profile name's room: the name shrinks
+        // to a few columns, the tabs, the version and the badge stay.
+        assert!(row.contains("profile: ") && row.contains("sync"), "{row}");
         assert!(row.contains("updating to v99.0.0…"), "{row}");
         assert!(
             row.contains(concat!("v", env!("CARGO_PKG_VERSION"))),
@@ -3405,7 +3531,15 @@ mod tests {
     #[test]
     fn tab_clicks_land_on_the_tab_drawn_there() {
         let app = test_app_with_hosts();
-        let labels = ["hosts", "sftp", "tunnels", "identities", "audit", "map"];
+        let labels = [
+            "hosts",
+            "sftp",
+            "tunnels",
+            "identities",
+            "audit",
+            "map",
+            "sync",
+        ];
         for width in [80u16, 100, 131, 132, 160] {
             for profile in [None, Some("alpha")] {
                 let area = Rect::new(0, 0, width, 1);
@@ -3418,7 +3552,7 @@ mod tests {
                             1,
                             "~/.config/sshub",
                             profile,
-                            None,
+                            &widgets::tab_bar::TabBadges::default(),
                             app.theme(),
                         )
                     })
@@ -3745,7 +3879,7 @@ mod tests {
                         .as_ref()
                         .filter(|p| !p.compat)
                         .map(|p| p.name.as_str()),
-                    app.update_badge().as_deref(),
+                    &app.tab_badges(),
                     theme,
                 );
                 let rule2 = row_in(area, areas.tab_bar.y + areas.tab_bar.height);
@@ -5729,6 +5863,87 @@ mod tests {
     }
 
     #[test]
+    fn the_unlock_footer_offers_drop_phone_only_with_a_bluetooth_channel() {
+        use crate::app::sync::{UnlockPathKind, UnlockPathView, UnlockView};
+        let view = |paths: Vec<UnlockPathKind>| UnlockView {
+            host: "web-1".into(),
+            have: 1,
+            need: 2,
+            paths: paths
+                .into_iter()
+                .map(|kind| UnlockPathView {
+                    kind,
+                    status: "x".into(),
+                })
+                .collect(),
+            frames: vec![],
+            host_id: String::new(),
+            words: String::new(),
+            code: String::new(),
+        };
+        for (paths, expect) in [
+            (vec![UnlockPathKind::PhoneQr], false),
+            (
+                vec![UnlockPathKind::PhoneQr, UnlockPathKind::Bluetooth],
+                true,
+            ),
+        ] {
+            let mut app = test_app_with_hosts();
+            app.sync = crate::app::sync::sample_sync_view();
+            app.open_sync_unlock(view(paths));
+            let buffer = render_to_buffer(&app, 120, 38);
+            assert_eq!(buffer_contains(&buffer, "drop phone"), expect);
+        }
+    }
+
+    #[test]
+    fn the_unlock_modal_shows_the_host_id_and_the_binding_words_for_the_phone() {
+        use crate::app::sync::UnlockView;
+        let mut app = test_app_with_hosts();
+        app.sync = crate::app::sync::sample_sync_view();
+        app.open_sync_unlock(UnlockView {
+            host: "web-1".into(),
+            have: 1,
+            need: 2,
+            paths: vec![],
+            frames: vec![],
+            host_id: "A3F9 007C 1B2E 55D0 9C41 7E08 F2A6 3D19".into(),
+            words: "harbor-globe-lantern-mint".into(),
+            code: String::new(),
+        });
+        let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "Unlocking web-1"));
+        assert!(buffer_contains(
+            &buffer,
+            "host id  A3F9 007C 1B2E 55D0 9C41 7E08 F2A6 3D19"
+        ));
+        assert!(buffer_contains(&buffer, "harbor-globe-lantern-mint"));
+    }
+
+    #[test]
+    fn the_review_shows_a_broken_ceremony_rule() {
+        let mut app = test_app_with_hosts();
+        app.mode = AppMode::SyncReview;
+        app.sync = crate::app::sync::sample_sync_view();
+        app.sync.review[0].red = Some(crate::app::sync::RedView {
+            have: vec!["phone signature".into()],
+            missing: vec!["emailed code".into()],
+            expired: false,
+            blocked: None,
+            rule_violation: Some(
+                "the sender of the emailed code also approved as second device".into(),
+            ),
+            note: Some("the emailed code cannot count here".into()),
+            single_machine: false,
+            blockers: Vec::new(),
+        });
+        let buffer = render_to_buffer(&app, 120, 38);
+        assert!(buffer_contains(&buffer, "emailed code cannot count"));
+        assert!(buffer_contains(&buffer, "not allowed"));
+        assert!(buffer_contains(&buffer, "also approved as second device"));
+    }
+
+    #[test]
     fn overlays_do_not_panic_on_a_tiny_terminal() {
         // Regression: popup geometry used u16::clamp(min, max) with max derived
         // from the terminal size, which asserted min<=max and crashed the TUI
@@ -5741,11 +5956,24 @@ mod tests {
             AppMode::KeybindEditor,
             AppMode::ConfirmQuit,
             AppMode::KnownHosts,
+            AppMode::SyncReview,
+            AppMode::SyncUnlock,
+            AppMode::SyncSas,
+            AppMode::SyncForkAlert,
+            AppMode::SyncRecoveryAlert,
+            AppMode::TrustSessionScope,
+            AppMode::TrustSessionTtl,
+            AppMode::SyncReleaseConfirm,
+            AppMode::SyncOnboarding,
+            AppMode::SyncPrompt,
+            AppMode::SyncMenu,
+            AppMode::SyncInfo,
         ];
         for &mode in &modes {
             for (w, h) in [(1u16, 1u16), (10, 3), (30, 8), (49, 20)] {
                 let mut app = test_app_with_hosts();
                 app.mode = mode;
+                app.sync = crate::app::sync::sample_sync_view_with_modals();
                 if mode == AppMode::KnownHosts {
                     app.known_hosts = Some(crate::app::KnownHostsState {
                         entries: vec![crate::known_hosts::KnownHostEntry {

@@ -21,6 +21,14 @@ pub fn print_command_help(cmd: &str) {
         "map" => print_map(),
         "tags" => print_tags(),
         "sync" => print_sync(),
+        "sync-serve" => print_sync_serve(),
+        "sync-enroll" => print_sync_enroll(),
+        "sync-join" => print_sync_join(),
+        "sync-now" => print_sync_now(),
+        "sync-status" => print_sync_status(),
+        "sync-review" => print_sync_review(),
+        c if super::sync_admin::is_admin_command(c) => super::sync_admin::print_help(c),
+        c if super::sync_phone_cmd::is_phone_command(c) => super::sync_phone_cmd::print_help(c),
         "import" => print_import(),
         "export" => print_export(),
         "completions" => print_completions(),
@@ -109,7 +117,16 @@ instead of waiting for a human. A per-host or ssh_config remote command is
 overridden by the command given here. Session transcripts are skipped for exec —
 script(1) wrapping fights redirection; use `sshub connect` when you want one.
 Mosh hosts are refused: mosh has no one-shot command mode. Runs show up in
-`sshub audit list --via exec`."#
+`sshub audit list --via exec`.
+
+SAVED PASSWORDS IN A QUORUM RING: a command that needs a synced password asks a
+full device with a person at the keyboard to approve it (it waits SSHUB_UNLOCK_WAIT
+seconds, 120 by default; the approval is `sshub sync-review --approve <id>` or the
+terminal screen of that device). It never asks the phone. For cron, tunnels and
+other unattended runs open it first in the terminal screen (the run then
+inherits it), or start a trust session (tab 7, then t): the phone lets this
+computer open some hosts without asking for up to 90 days, and it stops 14 days
+after the phone last touched any of your computers."#
     );
 }
 
@@ -214,7 +231,11 @@ USAGE:
     sshub sftp chmod  <host> <octal-mode> <remote-path>
 
 <host> is a saved host name. rm is destructive and requires --yes; --recursive
-descends into directories."#
+descends into directories.
+
+A saved password that is synced in a Quorum ring is asked of another full device
+with a person at the keyboard (SSHUB_UNLOCK_WAIT seconds, 120 by default; approve
+with `sshub sync-review --approve <id>`). See `sshub exec --help` for unattended runs."#
     );
 }
 
@@ -260,6 +281,145 @@ fn print_sync() {
 
 USAGE:
     sshub sync"#
+    );
+}
+
+fn print_sync_serve() {
+    println!(
+        r#"sshub sync-serve - answer one host-sync round on stdin/stdout
+
+USAGE:
+    sshub [--profile NAME] sync-serve
+
+Run by a peer over ssh (`ssh host sshub sync-serve`); not meant for a terminal.
+Stdout carries only protocol frames, the server speaks first, and one round is
+served. Errors go to stderr.
+
+EXIT CODES:
+    0  round completed
+    1  error"#
+    );
+}
+
+fn print_sync_enroll() {
+    println!(
+        r#"sshub sync-enroll - existing-device side of an enrollment, on stdin/stdout
+
+USAGE:
+    sshub [--profile NAME] sync-enroll
+
+Run by the joining device over ssh (`sshub sync-join <host>`). Roles come from
+the handshake: the side that already has a ring invites, a blank side joins.
+With a terminal (`ssh -t`) the four SAS words are shown on /dev/tty and
+confirmed with y/n. Without one (the usual case) there is no human here: the
+device never confirms as one, tells the peer it has no screen, and admits on
+the strength of the authenticated ssh session; the words go to stderr for the
+log only. The peer then sees that its words prove nothing.
+
+EXIT CODES:
+    0  enrolled
+    1  error or refused"#
+    );
+}
+
+fn print_sync_join() {
+    println!(
+        r#"sshub sync-join - join the ring of another device
+
+USAGE:
+    sshub [--profile NAME] sync-join <host>
+
+<host> is a host name from the launcher list or [user@]host[:port]. It runs
+`sshub sync-enroll` there over ssh. If the other end has a screen too, compare
+the printed words with its words and answer y (anything else, or EOF, refuses).
+If it has none, the words prove nothing: you are asked `Admit this device?`
+and its identity rests on the SSH host key you verified. The host is remembered
+for `sync-now`. A joining device is a view-only copy until the ring approves more.
+
+EXIT CODES:
+    0  joined
+    1  failed or refused
+    2  usage error"#
+    );
+}
+
+fn print_sync_now() {
+    println!(
+        r#"sshub sync-now - sync with ring devices over ssh
+
+USAGE:
+    sshub [--profile NAME] sync-now [<device>] [--format plain|json]
+
+<device> is a device name or an id prefix (an ambiguous one is an error).
+Without it every other ring device with a known host is synced; the rest are
+listed as `skipped (no host known)` with how to record one (the hosts tab `t`, or
+`sshub sync-join <host>`); a device the ring announced that is still waiting for
+your approval shows as `not admitted yet`. One line per device:
+    <name>: ok applied N, pending M, received R, sent S
+plus `behind:` / `suspect:` device ids when a round reports them.
+
+EXIT CODES:
+    0  done (also when nothing could be attempted)
+    1  a device was offline or the round failed
+    2  usage error
+    3  fork detected (`FORK DETECTED: <name>`)"#
+    );
+}
+
+fn print_sync_review() {
+    println!(
+        r#"sshub sync-review - list, approve or reject pending sync changes
+
+USAGE:
+    sshub [--profile NAME] sync-review [--format plain|json]
+    sshub [--profile NAME] sync-review (--approve <id> | --reject <id>) [--format plain|json]
+    sshub [--profile NAME] sync-review --approve-all [--device ID] [--format plain|json]
+
+Without a flag, lists each change waiting for review: an 8-digit id, the
+author device, a summary, and one line per field (`[!]` marks a dangerous
+field). EVERY waiting change is listed with why it waits: the reason is in
+brackets after the summary (`tier`, `stale`, `resurrection`, `revoke-conflict`,
+`unknown-author`) and is the `reason` field of the JSON items. A Red change
+shows its ceremony (proofs present and missing). --approve / --reject take a
+unique prefix (at least 6 hex digits) of an id and resolve the change the
+way the TUI does: a Red change is approved only when its ceremony is complete. Approving
+a share release (a requester asking this holder for a share of a credential) is the explicit
+consent: the line names the requester, its full device id and the request age, and the grants
+are written as the TUI confirmation would; a request older than 120 s is refused.
+--approve-all approves, in one pass, every waiting change that has no ceremony (a new host's address, a rename onto a
+taken name ...): for a ring that delivered thousands of changes, where one --approve call per change is not workable.
+Red changes (they need their own proofs), share releases, changes of unknown authors and every change held as
+revoked-author, not-holder, revoke-conflict or resurrection are left for --approve <id>;
+it prints how many were approved and how many are left.
+--approve-all --device <id> approves, on this device only, just the changes of that device held as stale (it was away)
+that touch no address, jump host, remote command, user or key; everything else stays for --approve <id>.
+Read-only otherwise; never creates a device key (approving a share release loads the existing one).
+
+EXIT CODES:
+    0  listed, approved or rejected (also when nothing is waiting)
+    1  store error
+    2  usage error (unknown or ambiguous id, both flags, bad option)"#
+    );
+}
+
+fn print_sync_status() {
+    println!(
+        r#"sshub sync-status - show the sync ring (read-only)
+
+USAGE:
+    sshub [--profile NAME] sync-status [--format plain|json]
+
+Lists your devices (name, short id, kind, state, last in sync, last change number, host if
+known), the number of pending changes and the credential mode, then the saved passwords that
+are exposed or not yet shared with a current full device. Never creates a device key on a
+profile without a ring, which prints `No sync ring on this profile yet.`
+
+EXIT CODES:
+    0  listed
+    1  error
+    2  usage error
+    3  a recovery of the phone is open and was not started here (it is listed; cancel it from the
+       phone if the phone is not lost)"#
     );
 }
 

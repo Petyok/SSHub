@@ -442,6 +442,7 @@ impl App {
         };
 
         if let Some(id) = form.id {
+            let key_before = self.store.get_identity(id)?.and_then(|i| i.private_key);
             if password_changed {
                 if let Err(e) =
                     self.put_secret(&crate::credentials::identity_key(id), &form.password)
@@ -461,6 +462,9 @@ impl App {
                     ..Default::default()
                 },
             )?;
+            if key_before != self.store.get_identity(id)?.and_then(|i| i.private_key) {
+                self.replicate_identity_key(id);
+            }
         } else {
             let sort_order = self.identities.len() as i32;
             let created = self.store.create_identity(&NewIdentity {
@@ -480,6 +484,7 @@ impl App {
                         Some(format!("Saved, but storing the passphrase failed: {e}"));
                 }
             }
+            self.replicate_identity_key(created.id);
         }
 
         self.mode = AppMode::Normal;

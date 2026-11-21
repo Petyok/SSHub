@@ -227,6 +227,25 @@ impl Ssh2Transport {
         let session = self.session.as_ref().unwrap();
         let user = self.username();
 
+        // A synced identity's key: authenticate from memory, no agent, no file.
+        let synced =
+            self.host.identity_file.as_deref().and_then(|f| {
+                crate::credentials::synced_key_for_public_file(std::path::Path::new(f))
+            });
+        if let Some(pem) = synced {
+            let pass = match &self.secret {
+                Some(PendingSecret::Passphrase(p)) => Some(p.as_str()),
+                _ => None,
+            };
+            session
+                .userauth_pubkey_memory(&user, None, &pem, pass)
+                .context("public-key authentication failed")?;
+            if !session.authenticated() {
+                return Err(anyhow!("authentication did not complete"));
+            }
+            return Ok(());
+        }
+
         match &self.secret {
             // A stored passphrase means "unlock this private key file".
             Some(PendingSecret::Passphrase(pass)) => {

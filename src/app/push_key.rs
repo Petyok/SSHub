@@ -242,6 +242,28 @@ impl App {
             return Ok(());
         };
 
+        // The key's passphrase and every secret the login to the host reads
+        // must be open first; the push then runs again by itself.
+        let pre = entry
+            .managed()
+            .and_then(|m| self.store.resolve_connection(m).ok());
+        let mut refs = connection_secret_refs(
+            &self.store,
+            &self.hosts,
+            entry.managed(),
+            pre.as_ref().and_then(|r| r.identity.as_ref()),
+            pre.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+        );
+        refs.push(crate::credentials::SecretRef::Key(
+            crate::credentials::identity_key(identity.id),
+        ));
+        let (again_entry, again_identity) = (entry.clone(), identity.clone());
+        if !self.preflight_unlock(refs, entry.name(), move |app| {
+            app.push_public_key_to_host(&again_entry, &again_identity)
+        }) {
+            return Ok(());
+        }
+
         let passphrase = if identity.has_password {
             self.password_store
                 .get(&crate::credentials::identity_key(identity.id))
@@ -269,16 +291,7 @@ impl App {
             }
         };
 
-        let escaped_key = public_key.replace("'", "'\\''");
-        // "Already present" goes to stderr, which reaches `debug_log` and never
-        // the PTY: PTY bytes before auth read as a prompt that needs the user.
-        let remote_cmd = format!(
-            "umask 077 && mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && \
-             key='{}' && \
-             (grep -qxF \"$key\" ~/.ssh/authorized_keys && echo '{KEY_PRESENT_MARKER}' >&2 || \
-              echo \"$key\" >> ~/.ssh/authorized_keys)",
-            escaped_key
-        );
+        let remote_cmd = install_key_command(&public_key);
 
         let resolved = match entry.managed() {
             Some(m) => match self.store.resolve_connection(m) {
@@ -657,4 +670,17 @@ impl KeyPush {
             KeyPushState::Cancelled => format!("Push of key {id} to {host} cancelled."),
         }
     }
+}
+
+/// The remote command that appends `public_key` to `~/.ssh/authorized_keys` once (the push-key verb and the rekey
+/// step install keys with the same one). "Already present" goes to stderr, which reaches `debug_log` and never
+/// the PTY: PTY bytes before auth read as a prompt that needs the user.
+pub(crate) fn install_key_command(public_key: &str) -> String {
+    let escaped_key = public_key.replace('\'', "'\\''");
+    format!(
+        "umask 077 && mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && \
+         key='{escaped_key}' && \
+         (grep -qxF \"$key\" ~/.ssh/authorized_keys && echo '{KEY_PRESENT_MARKER}' >&2 || \
+          echo \"$key\" >> ~/.ssh/authorized_keys)"
+    )
 }

@@ -62,6 +62,10 @@ fn cmd_list(ctx: &CliContext, args: &[String]) -> Result<i32> {
 
     let indices = apply_filters(&ctx.hosts, &ctx.store, &tags, group.as_deref(), sort)?;
 
+    // A big sync change that is about to be dropped is said once, on stderr, so a script's output stays clean.
+    if let Some(line) = crate::sync::health::cli_line(&ctx.store, crate::store::now_ts()) {
+        eprintln!("{line}");
+    }
     match fmt {
         OutputFormat::Json => {
             let records: Vec<_> = indices
@@ -104,6 +108,17 @@ fn cmd_resolve(ctx: &CliContext, args: &[String]) -> Result<i32> {
         host_usage("resolve requires <name>");
     };
     let entry = ctx.host_by_name(name)?;
+    // `has_stored_secret` and the argv depend on the credential being open.
+    let resolved = match entry.managed() {
+        Some(m) => ctx.store.resolve_connection(m).ok(),
+        None => None,
+    };
+    ctx.ensure_unlocked_for(
+        name,
+        entry.managed(),
+        resolved.as_ref().and_then(|r| r.identity.as_ref()),
+        resolved.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+    )?;
     let resolve = host_resolve_json(entry, &ctx.store, ctx.password_store(), verbose);
     match fmt {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&resolve)?),
@@ -154,6 +169,12 @@ fn cmd_connect(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         None => None,
     };
     let effective_identity = resolved.as_ref().and_then(|r| r.identity.as_ref());
+    ctx.ensure_unlocked_for(
+        &host_name,
+        entry.managed(),
+        effective_identity,
+        resolved.as_ref().and_then(|r| r.proxy_jump.as_deref()),
+    )?;
     let (pending_secret, credential_diag) =
         resolve_pending_secret(&entry, effective_identity, ctx.password_store());
     if verbose {
@@ -380,12 +401,16 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     ctx.store.set_host_groups(created.id, &group_ids)?;
 
+    // The host exists either way; a password that could not be stored (or replicated) is reported AND fails the
+    // command, so a script never mistakes a host without its password for a complete add.
+    let mut password_failed = false;
     if let Some(pw) = spec.password {
         if let Err(e) = ctx
             .password_store()
             .set(&crate::credentials::host_key(created.id), &pw)
         {
-            eprintln!("sshub: warning: storing password failed: {e:#}");
+            eprintln!("sshub: storing password failed: {e:#}");
+            password_failed = true;
         }
     }
 
@@ -396,7 +421,7 @@ fn cmd_add(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
 
     ctx.reload_hosts()?;
     println!("{}", created.name);
-    Ok(0)
+    Ok(i32::from(password_failed))
 }
 
 fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
@@ -553,12 +578,14 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
         ctx.store.set_host_groups(managed.id, &group_ids)?;
     }
 
+    let mut password_failed = false;
     if let Some(pw) = patch.password {
         if let Err(e) = ctx
             .password_store()
             .set(&crate::credentials::host_key(managed.id), &pw)
         {
-            eprintln!("sshub: warning: storing password failed: {e:#}");
+            eprintln!("sshub: storing password failed: {e:#}");
+            password_failed = true;
         }
     } else if patch.clear_password {
         let _ = ctx
@@ -569,7 +596,7 @@ fn cmd_edit(ctx: &mut CliContext, args: &[String]) -> Result<i32> {
     ctx.reload_hosts()?;
     let out_name = update.name.as_deref().unwrap_or(saved_name.as_str());
     println!("{out_name}");
-    Ok(0)
+    Ok(i32::from(password_failed))
 }
 
 fn apply_metadata_edit(

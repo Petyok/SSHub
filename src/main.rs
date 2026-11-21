@@ -42,6 +42,35 @@ fn main() -> Result<()> {
         std::process::exit(code);
     }
 
+    // Host-sync commands are headless too, and sync-serve/sync-enroll own
+    // stdout for protocol frames, so they never reach `CliContext`.
+    if let Some(cmd) = args
+        .first()
+        .filter(|c| sshub::cli::sync_cmd::is_sync_command(c))
+    {
+        let code = sshub::cli::sync_cmd::run(cmd, &args[1..], || resolve_cli_profile(&startup))?;
+        std::process::exit(code);
+    }
+
+    // Red/admin verbs of host sync (headless, same shape).
+    if let Some(cmd) = args
+        .first()
+        .filter(|c| sshub::cli::sync_admin::is_admin_command(c))
+    {
+        let code = sshub::cli::sync_admin::run(cmd, &args[1..], || resolve_cli_profile(&startup))?;
+        std::process::exit(code);
+    }
+
+    // The phone's terminal side (text frames in and out).
+    if let Some(cmd) = args
+        .first()
+        .filter(|c| sshub::cli::sync_phone_cmd::is_phone_command(c))
+    {
+        let code =
+            sshub::cli::sync_phone_cmd::run(cmd, &args[1..], || resolve_cli_profile(&startup))?;
+        std::process::exit(code);
+    }
+
     if let Some(cmd) = args.first() {
         if sshub::cli::is_subcommand(cmd) {
             let code = run_cli(&startup, &args)?;
@@ -221,6 +250,22 @@ THEMES (headless; no database):
     sshub theme list         [--format plain|json]
     sshub theme show  <id>   [--resolved] [--format toml|json]
 
+HOST SYNC (headless; encrypted peer-to-peer over ssh):
+    sshub sync-join <host>                   Join the ring of the device at <host>
+    sshub sync-now [<device>] [--format plain|json]   Sync with ring devices
+    sshub sync-status [--format plain|json]  Ring devices, pending changes, credential mode
+    sshub sync-review [--approve <id> | --reject <id>] [--format plain|json]   Review pending changes
+    sshub sync-revoke <device> | sync-role <device> holder|mirror | sync-approve <op-id>
+    sshub sync-factor <op-id> (--paper | --email-code) | sync-factor-register paper|email
+    sshub sync-recovery start|approve|ack|cancel|status | sync-mode vault|quorum
+    sshub sync-exemption on|off <device> | sync-export --window <s> --out <path>
+    sshub sync-migrate [--remove-local] | sync-import-kit   (sshub <verb> --help for each)
+    sshub sync-phone-enroll | sync-notice <op-id> | sync-phone-chain <phone-id> | sync-phone-ops
+    sshub sync-share-request <host>
+    sshub sync-cert-request (--group G | --host H...)   The phone's terminal side, frames as base64 text
+                                           (--ble on each: carry the frames over Bluetooth too)
+    sshub sync-serve | sync-enroll           Run by a peer over ssh (frames on stdin/stdout)
+
 INVENTORY / CONFIG:
     sshub tags [--format plain|json]
     sshub sync                              Refresh ssh_config rows in DB
@@ -242,6 +287,7 @@ ENVIRONMENT:
     SSHUB_DRY_RUN             Exit immediately (fallback: SSH_LAUNCHER_DRY_RUN)
     SSHUB_AUTO_QUIT           Headless smoke (fallback: SSH_LAUNCHER_AUTO_QUIT): 1 = quit after first draw, q = quit via q key
     SSHUB_VERSION_LABEL       Replace the tab-bar version label; set but empty hides it
+    SSHUB_UNLOCK_WAIT         Seconds a CLI command waits for a holder to approve a share release (default 120; 0 = do not ask)
     SSHUB_INSTALL_CHANNEL     How sshub was installed (npm, cargo, source, …); picks the update route
 
     Directory overrides disable profiles (compat mode): the override directory

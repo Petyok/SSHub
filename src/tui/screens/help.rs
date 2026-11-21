@@ -56,8 +56,8 @@ pub const HELP_ITEMS: &[HelpItem] = &[
         desc: "Move up / down",
     },
     HelpItem::Entry {
-        key: "1..6 / h i",
-        desc: "Switch tab (hosts, sftp, tunnels, identities, audit, map)",
+        key: "1..7 / h i",
+        desc: "Switch tab (hosts, sftp, tunnels, identities, audit, map, sync)",
     },
     HelpItem::Entry {
         key: "Tab",
@@ -170,6 +170,10 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "Shift+W",
         desc: "What's new: release notes of this version or the installed update",
+    },
+    HelpItem::Entry {
+        key: "A",
+        desc: "Add the selected host as a sync device: enroll it over ssh (once sync is set up)",
     },
     HelpItem::Entry {
         key: "b",
@@ -458,6 +462,52 @@ pub const HELP_ITEMS: &[HelpItem] = &[
     HelpItem::Entry {
         key: "",
         desc: "Tags are comma-separated, e.g.  prod, db, eu-west",
+    },
+    HelpItem::Blank,
+    HelpItem::Section("sync (tab 7)"),
+    HelpItem::Entry {
+        key: "\u{2191}\u{2193}",
+        desc: "Select a device",
+    },
+    HelpItem::Entry {
+        key: "y",
+        desc: "Sync now with the selected device",
+    },
+    HelpItem::Entry {
+        key: "Enter",
+        desc: "Details of the selected device (with its id as a QR for the phone app). A device that was away: nothing is blocked, and if a round reports behind, Enter re-enrolls it; a COMPROMISED one: show the proof",
+    },
+    HelpItem::Entry {
+        key: "R",
+        desc: "Review every change waiting for approval, with why it waits (a approve, r reject, Esc close; A approves every change of the same device that waits only because it was away and touches no address, jump host or command). A big change shows its three approvals: a adds this device's approval, p types the paper phrase, e the emailed code",
+    },
+    HelpItem::Entry {
+        key: "t",
+        desc: "Trust session: the phone lets a computer open some hosts without asking. Pick which hosts first (a group, or hosts marked with Space), then confirm days and new hosts a day on one screen",
+    },
+    HelpItem::Entry {
+        key: "M",
+        desc: "Manage, in groups: Devices (remove, full device or view-only copy), Phone, Passwords (Vault or Quorum, kit, paper phrase), Recovery, Advanced (trust sessions, exemption, export). What does not apply now says why",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "In the M menu: master phrase exemption (Quorum only; with it this computer alone plus the master phrase opens every password), export of every saved password (propose; choose it again once the others approved: it continues; the file is written owner-only and never overwritten), the paper phrase wizard (write down, then type three random words back; P on the Sync tab opens it) and a printable paper phrase sheet. A mode switch or export that was approved shows a Finish row on the Sync tab.",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "Unlock dialog (Quorum): under the host name it shows the host id, 32 hex digits in groups of four, and four check words. The phone's approval screen shows the same two: compare both before approving there",
+    },
+    HelpItem::Entry {
+        key: "Ctrl+B",
+        desc: "In the unlock and phone enrollment dialogs of a build with the `bluetooth` feature, while the Bluetooth channel is on: disconnect the connected phone (the terminal advertises again with the same tag)",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "A synced credential opens in a modal when something needs it: type the six words of the master phrase and press Enter (Esc cancels).",
+    },
+    HelpItem::Entry {
+        key: "",
+        desc: "Not set up yet: A on the hosts tab enrolls a machine as one of your devices; sshub sync-join <device> joins a blank machine. Adding a computer shows four check words to compare; when the other end has no screen they prove nothing and you approve the admission on trust in the SSH host key (the device list says how each one was verified). A fork takes over the screen and names the device.",
     },
     HelpItem::Blank,
     HelpItem::Section("groups"),

@@ -8,7 +8,10 @@
 //! [`maybe_run_askpass`]); the destination's secret is handed over through a
 //! private `0600` file that is removed when the session ends. Jump hops'
 //! secrets are never written: the file holds references into the credential
-//! store, which the helper reads when that hop's prompt arrives.
+//! store, which the helper reads when that hop's prompt arrives. The plaintext
+//! of a synced credential is the one thing no file may hold: the staging
+//! process keeps it and serves it over a private socket (see
+//! [`AskpassSecret::staged`]).
 
 use std::io::Write;
 
@@ -60,9 +63,20 @@ fn strip_deleted_marker(exe: &Path) -> Option<PathBuf> {
     base.exists().then_some(base)
 }
 
-/// A secret staged in a short-lived, owner-only file for `SSH_ASKPASS`.
+/// A secret staged for `SSH_ASKPASS`: a short-lived owner-only file, except
+/// that the plaintext of a synced credential never touches a disk. It stays in
+/// this process and is served to the helper over a private socket.
 pub struct AskpassSecret {
     path: PathBuf,
+    server: Option<SecretServer>,
+}
+
+/// Where staged files and sockets go: `$XDG_RUNTIME_DIR` (tmpfs on Linux) or
+/// the system temp dir.
+fn runtime_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
 }
 
 impl AskpassSecret {
@@ -76,15 +90,29 @@ impl AskpassSecret {
     /// jump hops' secrets. The first line is the destination's; a `C<TAB>p|k`
     /// line says whether it is a password or a key passphrase; an `S` line
     /// names the credential store; every other line is one hop reference
-    /// (`H<TAB>class<TAB>user<TAB>host<TAB>key<TAB>via<TAB>ref…`). A hop's
-    /// secret is never written: the helper reads it from the store when that
-    /// hop's prompt arrives. The helper answers a hop's prompt from the line
-    /// that names that hop, and the destination's prompt with the first line,
-    /// only for a prompt of its class: never the other way round.
+    /// (`H<TAB>class<TAB>user<TAB>host<TAB>key<TAB>via<TAB>ref…`). A local
+    /// hop secret is never written: the helper reads it from the store when
+    /// that hop's prompt arrives. A synced credential open in this process is
+    /// never written either, hop or destination: the file holds a handle
+    /// (`V<TAB>d` for the destination, `s:<id>` in a hop line) and the helper
+    /// asks this process for the value over a socket in a private directory,
+    /// with a one-time token from its environment. The helper answers a hop's
+    /// prompt from the line that names that hop, and the destination's prompt
+    /// with the first line, only for a prompt of its class: never the other
+    /// way round.
     pub fn staged(
         secret: Option<&PendingSecret>,
         hops: &[super::hop_auth::HopSecret],
     ) -> std::io::Result<Self> {
+        Self::staged_in(&runtime_dir(), secret, hops)
+    }
+
+    fn staged_in(
+        dir: &Path,
+        secret: Option<&PendingSecret>,
+        hops: &[super::hop_auth::HopSecret],
+    ) -> std::io::Result<Self> {
+        use zeroize::Zeroizing;
         let value = secret.map_or("", PendingSecret::value);
         if value.contains(['\n', '\r']) {
             return Err(std::io::Error::new(
@@ -92,9 +120,12 @@ impl AskpassSecret {
                 "a secret with a line break cannot be staged",
             ));
         }
-        let dir = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(std::env::temp_dir);
+        // Values this process keeps for the helper to ask for, by handle.
+        let mut held: Vec<(String, Zeroizing<String>)> = Vec::new();
+        let dest_synced = !value.is_empty() && crate::credentials::is_open_synced_value(value);
+        if dest_synced {
+            held.push(("d".into(), Zeroizing::new(value.to_string())));
+        }
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let path = dir.join(format!("sshub-askpass-{}-{}", std::process::id(), n));
 
@@ -107,13 +138,16 @@ impl AskpassSecret {
         }
         let mut f = opts.open(&path)?;
         // The file now exists and is ours: any failure below removes it.
-        let guard = Self { path };
+        let mut guard = Self { path, server: None };
         // ssh strips the trailing newline from the askpass output.
-        writeln!(f, "{value}")?;
+        writeln!(f, "{}", if dest_synced { "" } else { value })?;
         match secret {
             Some(PendingSecret::Password(_)) => writeln!(f, "C\tp")?,
             Some(PendingSecret::Passphrase(_)) => writeln!(f, "C\tk")?,
             None => {}
+        }
+        if dest_synced {
+            writeln!(f, "V\td")?;
         }
         // One `S` line names the credential store the hop references live in.
         // The helper opens exactly that store (same profile prefix, same
@@ -124,9 +158,11 @@ impl AskpassSecret {
             writeln!(f, "{line}")?;
         }
         for hop in hops {
-            // Without the store, or with another one than the `S` line names,
-            // the helper could not read the secret: leave the hop out.
-            if store_line.is_none() || hop.store.as_ref() != store {
+            // A hop whose secrets are all held here needs no store. Any
+            // other, without the store or with another one than the `S` line
+            // names, could not be read by the helper: leave it out.
+            let only_staged = hop.refs.iter().all(|r| matches!(r, SecretRef::Staged(_)));
+            if !only_staged && (store_line.is_none() || hop.store.as_ref() != store) {
                 continue;
             }
             let class = match hop.class {
@@ -137,25 +173,36 @@ impl AskpassSecret {
                 hop.user.as_deref().unwrap_or(""),
                 hop.key_path.as_deref().unwrap_or(""),
             );
+            let mut mine: Vec<(String, Zeroizing<String>)> = Vec::new();
             let refs: Vec<String> = hop
                 .refs
                 .iter()
                 .map(|r| match r {
                     SecretRef::Key(k) => format!("k:{k}"),
                     SecretRef::Lookup(s) => format!("l:{s}"),
+                    SecretRef::Handle(id) => format!("s:{id}"),
+                    // An opened synced credential: kept here, never written.
+                    SecretRef::Staged(v) => {
+                        let id = format!("s{}", held.len() + mine.len());
+                        mine.push((id.clone(), Zeroizing::new(v.value().to_string())));
+                        format!("s:{id}")
+                    }
                 })
                 .collect();
             // The format cannot hold a tab or a line break. Such a hop is left
             // out (its prompt then goes unanswered), never mis-parsed into a
-            // shifted field with another reference.
+            // shifted field with another reference. A held value must also be
+            // one line, since the helper hands it to ssh as one.
             if [user, hop.host.as_str(), hop.via.as_str(), key]
                 .into_iter()
                 .chain(refs.iter().map(String::as_str))
                 .any(|field| field.contains(['\t', '\n', '\r']))
+                || mine.iter().any(|(_, v)| v.contains(['\n', '\r']))
                 || refs.is_empty()
             {
                 continue;
             }
+            held.extend(mine);
             writeln!(
                 f,
                 "H\t{class}\t{user}\t{}\t{key}\t{}\t{}",
@@ -163,6 +210,10 @@ impl AskpassSecret {
                 hop.via,
                 refs.join("\t")
             )?;
+        }
+        if !held.is_empty() {
+            // No server, no staging: a synced secret never falls back to a file.
+            guard.server = Some(SecretServer::start(dir, held)?);
         }
         Ok(guard)
     }
@@ -172,9 +223,15 @@ impl AskpassSecret {
         &self.path
     }
 
+    /// Whether this staging holds a synced credential, which lives only as
+    /// long as this process does.
+    pub fn holds_synced(&self) -> bool {
+        self.server.is_some()
+    }
+
     /// Environment for the ssh child so it consults this helper.
     pub fn env(&self, exe: &Path) -> Vec<(String, String)> {
-        vec![
+        let mut env = vec![
             ("SSH_ASKPASS".into(), exe.to_string_lossy().into_owned()),
             ("SSH_ASKPASS_REQUIRE".into(), "force".into()),
             (
@@ -182,13 +239,23 @@ impl AskpassSecret {
                 self.path.to_string_lossy().into_owned(),
             ),
             (OWNER_ENV.into(), std::process::id().to_string()),
-        ]
+        ];
+        if let Some(server) = &self.server {
+            env.push((
+                VALUES_SOCK_ENV.into(),
+                server.socket().to_string_lossy().into_owned(),
+            ));
+            env.push((VALUES_TOKEN_ENV.into(), server.token().to_string()));
+        }
+        env
     }
 
     /// Keep the file after this guard is gone, for an ssh that outlives the
     /// process that staged it: a detached tunnel (#144). Set [`READ_ONCE_ENV`]
     /// on that ssh so the helper removes the file once it has been read, and
     /// [`remove_outlived`] it when the tunnel stops without ever asking.
+    /// Callers must refuse a guard that [`holds_synced`](Self::holds_synced):
+    /// its values die with this process.
     pub fn outlive(mut self) -> PathBuf {
         std::mem::take(&mut self.path)
     }
@@ -200,6 +267,132 @@ impl Drop for AskpassSecret {
             let _ = std::fs::remove_file(&self.path);
         }
     }
+}
+
+/// Names the socket and token of the process holding synced secrets for the
+/// helper (this process, for the lifetime of the staging guard).
+const VALUES_SOCK_ENV: &str = "SSHUB_ASKPASS_VALUES";
+const VALUES_TOKEN_ENV: &str = "SSHUB_ASKPASS_VALUES_TOKEN";
+
+/// Serves held plaintexts, by handle, to the helper: a socket in a `0700`
+/// directory, a random token, and nothing on disk but the socket inode.
+struct SecretServer {
+    directory: tempfile::TempDir,
+    token: String,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl SecretServer {
+    fn start(
+        root: &Path,
+        values: Vec<(String, zeroize::Zeroizing<String>)>,
+    ) -> std::io::Result<Self> {
+        use std::io::Read;
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::net::UnixListener;
+        let directory = tempfile::Builder::new()
+            .prefix("sshub-askpass-")
+            .tempdir_in(root)?;
+        std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))?;
+        let socket = directory.path().join("s");
+        let listener = UnixListener::bind(&socket)?;
+        std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
+        listener.set_nonblocking(true)?;
+        let mut random = [0u8; 32];
+        std::fs::File::open("/dev/urandom")?.read_exact(&mut random)?;
+        let token: String = random.iter().map(|b| format!("{b:02x}")).collect();
+
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (stop_flag, expect) = (stop.clone(), token.clone());
+        let thread = std::thread::spawn(move || {
+            let values: std::collections::HashMap<_, _> = values.into_iter().collect();
+            while !stop_flag.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((conn, _)) => serve_held(conn, &expect, &values),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(20));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Ok(Self {
+            directory,
+            token,
+            stop,
+            thread: Some(thread),
+        })
+    }
+
+    fn socket(&self) -> PathBuf {
+        self.directory.path().join("s")
+    }
+
+    fn token(&self) -> &str {
+        &self.token
+    }
+}
+
+impl Drop for SecretServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        // `directory` removes the socket and itself.
+    }
+}
+
+/// One request: `<token>\t<handle>\n`; the answer is the value and `\n`.
+fn serve_held(
+    mut conn: std::os::unix::net::UnixStream,
+    token: &str,
+    values: &std::collections::HashMap<String, zeroize::Zeroizing<String>>,
+) {
+    use std::io::Read;
+    let timeout = Some(std::time::Duration::from_secs(2));
+    let _ = conn.set_nonblocking(false);
+    let _ = conn.set_read_timeout(timeout);
+    let _ = conn.set_write_timeout(timeout);
+    let mut request = Vec::new();
+    let mut byte = [0u8; 1];
+    while request.len() < 256 {
+        match conn.read(&mut byte) {
+            Ok(1) if byte[0] != b'\n' => request.push(byte[0]),
+            _ => break,
+        }
+    }
+    let request = String::from_utf8_lossy(&request);
+    let Some((got, id)) = request.split_once('\t') else {
+        return;
+    };
+    if got != token {
+        return;
+    }
+    if let Some(value) = values.get(id) {
+        let _ = writeln!(conn, "{}", value.as_str());
+    }
+}
+
+/// Ask the process that staged the secrets for the value behind `id`.
+fn fetch_held(id: &str) -> Option<String> {
+    let sock = std::env::var_os(VALUES_SOCK_ENV)?;
+    let token = std::env::var(VALUES_TOKEN_ENV).ok()?;
+    fetch_held_from(Path::new(&sock), &token, id)
+}
+
+fn fetch_held_from(sock: &Path, token: &str, id: &str) -> Option<String> {
+    use std::io::Read;
+    let timeout = Some(std::time::Duration::from_secs(2));
+    let mut conn = std::os::unix::net::UnixStream::connect(sock).ok()?;
+    conn.set_read_timeout(timeout).ok()?;
+    conn.set_write_timeout(timeout).ok()?;
+    writeln!(conn, "{token}\t{id}").ok()?;
+    let mut answer = String::new();
+    conn.read_to_string(&mut answer).ok()?;
+    let value = answer.strip_suffix('\n').unwrap_or(&answer);
+    (!value.is_empty() && !value.contains(['\n', '\r'])).then(|| value.to_string())
 }
 
 /// Remove a file handed out by [`AskpassSecret::outlive`]. Refuses any path
@@ -310,11 +503,15 @@ fn print_answer(value: &str) {
 }
 
 /// What a staged file holds: the destination's secret (first line), its class
-/// (`C<TAB>p|k` line) and the hop secrets after it.
+/// (`C<TAB>p|k` line), a handle for a destination secret held by the staging
+/// process (`V<TAB>id`) and the hop secrets after it.
 struct Staged<'a> {
     destination: &'a str,
     /// The class of the destination's secret, when the stager knew it.
     class: Option<PromptClass>,
+    /// Set when the destination's secret is not in the file but held by the
+    /// staging process.
+    destination_handle: Option<&'a str>,
     hops: Vec<super::hop_auth::HopSecret>,
 }
 
@@ -373,6 +570,7 @@ fn parse_hop(line: &str) -> Option<super::hop_auth::HopSecret> {
         .filter_map(|r| match r.split_at_checked(2)? {
             ("k:", key) => Some(SecretRef::Key(key.to_string())),
             ("l:", spec) => Some(SecretRef::Lookup(spec.to_string())),
+            ("s:", id) => Some(SecretRef::Handle(id.to_string())),
             _ => None,
         })
         .collect();
@@ -391,12 +589,14 @@ fn parse_staged(text: &str) -> Staged<'_> {
     let mut lines = text.lines();
     let destination = lines.next().unwrap_or("");
     let mut class = None;
+    let mut destination_handle = None;
     let mut store = None;
     let mut hops = Vec::new();
     for line in lines {
         match line {
             "C\tp" => class = Some(PromptClass::Password),
             "C\tk" => class = Some(PromptClass::Passphrase),
+            _ if line.starts_with("V\t") => destination_handle = line.strip_prefix("V\t"),
             _ if line.starts_with("S\t") => store = parse_store(line),
             _ => hops.extend(parse_hop(line)),
         }
@@ -407,6 +607,7 @@ fn parse_staged(text: &str) -> Staged<'_> {
     Staged {
         destination,
         class,
+        destination_handle,
         hops,
     }
 }
@@ -415,10 +616,21 @@ fn parse_staged(text: &str) -> Staged<'_> {
 /// no store, no reference that resolves, or a value ssh could not take as one
 /// line, and the hop's prompt is left to the user.
 fn hop_value(hop: &super::hop_auth::HopSecret) -> Option<String> {
-    let store = hop.store.as_ref()?.open();
+    // A staged value needs no store; a store-less hop reads only those.
+    let store = hop.store.as_ref().map_or_else(
+        || {
+            Box::new(crate::credentials::NoopPasswordStore)
+                as Box<dyn crate::credentials::PasswordStore>
+        },
+        StoreLocator::open,
+    );
     hop.refs
         .iter()
-        .find_map(|r| r.read(store.as_ref()))
+        .find_map(|r| match r {
+            // Held by the staging process: asked for now, never read from a file.
+            SecretRef::Handle(id) => fetch_held(id),
+            _ => r.read(store.as_ref()),
+        })
         .filter(|v| !v.is_empty() && !v.contains(['\n', '\r']))
 }
 
@@ -540,11 +752,16 @@ pub fn maybe_run_askpass() -> bool {
     let class = prompt.as_deref().map(PromptClass::classify);
     let answers = matches!(class, Some(PromptClass::Password | PromptClass::Passphrase))
         && staged.class.is_none_or(|staged| Some(staged) == class);
-    if staged.destination.is_empty() || !answers {
+    let destination = if staged.destination.is_empty() {
+        staged.destination_handle.and_then(fetch_held)
+    } else {
+        Some(staged.destination.to_string())
+    };
+    let Some(destination) = destination.filter(|_| answers) else {
         // Hop-only staging, or a prompt that is the user's: nothing to say.
         std::process::exit(1);
-    }
-    print_answer(staged.destination);
+    };
+    print_answer(&destination);
     if read_once {
         consume(Path::new(&file), &Answered::Destination);
     }
@@ -553,6 +770,26 @@ pub fn maybe_run_askpass() -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// `output()` that retries ETXTBSY: a stand-in written by this test can still be open for writing in a child another test
+    /// thread forked a moment ago, until that child execs (close-on-exec). The file is never touched again, so a short retry ends.
+    trait OutputRetrying {
+        fn output_retrying(&mut self) -> std::process::Output;
+    }
+
+    impl OutputRetrying for std::process::Command {
+        fn output_retrying(&mut self) -> std::process::Output {
+            for _ in 0..200 {
+                match self.output() {
+                    Err(e) if e.raw_os_error() == Some(26) => {
+                        std::thread::sleep(std::time::Duration::from_millis(25))
+                    }
+                    other => return other.unwrap(),
+                }
+            }
+            self.output().unwrap()
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -570,6 +807,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let guard = AskpassSecret {
             path: dir.path().join("sshub-askpass-test"),
+            server: None,
         };
         std::fs::write(&guard.path, "s3cr3t\n").unwrap();
         let path = guard.outlive();
@@ -602,6 +840,7 @@ mod tests {
         // Staged in this test's own dir: another test repoints XDG_RUNTIME_DIR.
         let guard = AskpassSecret {
             path: dir.path().join("secret"),
+            server: None,
         };
         std::fs::write(&guard.path, "s3cr3t\n").unwrap();
         let helper = format!(
@@ -614,8 +853,7 @@ mod tests {
                 .env("SSHUB_TEST_FILE_HELPER", "1")
                 .env("SSHUB_TEST_PROMPT", "ops@192.0.2.91's password: ")
                 .envs(guard.env(Path::new("unused")))
-                .output()
-                .unwrap();
+                .output_retrying();
             String::from_utf8_lossy(&out.stdout).into_owned()
         };
 
@@ -678,7 +916,7 @@ mod tests {
             "a hop's secret was written to the staged file: {staged_text}"
         );
         std::fs::copy(guard.path.clone(), &path).unwrap();
-        let guard = AskpassSecret { path };
+        let guard = AskpassSecret { path, server: None };
         let helper = format!(
             "'{}' --exact session::askpass::tests::file_helper_entry --nocapture; echo helper-exit=$?",
             std::env::current_exe().unwrap().display()
@@ -689,8 +927,7 @@ mod tests {
                 .env("SSHUB_TEST_FILE_HELPER", "1")
                 .env("SSHUB_TEST_PROMPT", prompt)
                 .envs(guard.env(Path::new("unused")))
-                .output()
-                .unwrap();
+                .output_retrying();
             String::from_utf8_lossy(&out.stdout).into_owned()
         };
         // The hop's own ssh, whose last argument is the host it connects to.
@@ -836,8 +1073,7 @@ mod tests {
                 .env("SSHUB_TEST_FILE_HELPER", "1")
                 .env("SSHUB_TEST_PROMPT", prompt)
                 .envs(guard.env(Path::new("unused")))
-                .output()
-                .unwrap();
+                .output_retrying();
             String::from_utf8_lossy(&out.stdout).into_owned()
         };
         let ok = run("Enter passphrase for key '/home/u/.ssh/id': ");
@@ -930,6 +1166,146 @@ mod tests {
         .unwrap();
         let text = std::fs::read_to_string(&guard.path).unwrap();
         assert!(parse_staged(&text).hops.is_empty(), "{text}");
+    }
+
+    /// Every regular file under `root`, contents included.
+    fn all_file_text(root: &Path) -> String {
+        let mut text = String::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let path = entry.path();
+                let kind = entry.file_type().unwrap();
+                if kind.is_dir() {
+                    stack.push(path);
+                } else if kind.is_file() {
+                    text.push_str(&String::from_utf8_lossy(&std::fs::read(&path).unwrap()));
+                    text.push_str(&path.to_string_lossy());
+                }
+            }
+        }
+        text
+    }
+
+    fn synced_hop(secret: &str) -> super::super::hop_auth::HopSecret {
+        super::super::hop_auth::HopSecret {
+            user: Some("ops".into()),
+            host: "10.0.4.11".into(),
+            via: "lb-1".into(),
+            key_path: None,
+            class: PromptClass::Password,
+            refs: vec![SecretRef::Staged(crate::credentials::StagedValue::new(
+                secret.into(),
+            ))],
+            store: None,
+        }
+    }
+
+    /// Open `value` in a throwaway gate so the staging treats it as synced.
+    fn open_synced(value: &str) -> crate::credentials::SecretGate {
+        let gate = crate::credentials::SecretGate::default();
+        gate.insert("host:1", zeroize::Zeroizing::new(value.to_string()));
+        gate
+    }
+
+    #[test]
+    fn a_synced_hop_secret_never_reaches_a_file_and_the_helper_gets_it_over_the_socket() {
+        let root = tempfile::tempdir().unwrap();
+        let guard =
+            AskpassSecret::staged_in(root.path(), None, &[synced_hop("hop-s3cr3t")]).unwrap();
+        assert!(guard.holds_synced());
+        let on_disk = all_file_text(root.path());
+        assert!(!on_disk.contains("hop-s3cr3t"), "plaintext reached a file");
+        assert!(on_disk.contains("s:s0"), "the file holds only a handle");
+
+        // What the helper does: parse the file, ask for the handle.
+        let text = std::fs::read_to_string(guard.path()).unwrap();
+        let staged = parse_staged(&text);
+        assert!(matches!(
+            staged.hops[0].refs.as_slice(),
+            [SecretRef::Handle(_)]
+        ));
+        let env = guard.env(Path::new("/x"));
+        let get = |k: &str| {
+            env.iter()
+                .find(|(n, _)| n == k)
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
+        let (sock, token) = (get(VALUES_SOCK_ENV), get(VALUES_TOKEN_ENV));
+        assert_eq!(
+            fetch_held_from(Path::new(&sock), &token, "s0").as_deref(),
+            Some("hop-s3cr3t")
+        );
+        // A wrong token or an unknown handle gets nothing.
+        assert_eq!(fetch_held_from(Path::new(&sock), "wrong", "s0"), None);
+        assert_eq!(fetch_held_from(Path::new(&sock), &token, "s9"), None);
+        // The socket directory is private to the owner.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = Path::new(&sock).parent().unwrap().to_path_buf();
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+
+        // Dropping the guard removes the socket and its directory.
+        drop(guard);
+        assert!(!Path::new(&sock).exists() && !dir.exists());
+        assert_eq!(all_file_text(root.path()), "", "nothing is left behind");
+    }
+
+    #[test]
+    fn a_synced_destination_secret_is_held_not_written() {
+        let root = tempfile::tempdir().unwrap();
+        let _gate = open_synced("dest-s3cr3t");
+        let secret = PendingSecret::Password("dest-s3cr3t".into());
+        let guard = AskpassSecret::staged_in(root.path(), Some(&secret), &[]).unwrap();
+        let text = std::fs::read_to_string(guard.path()).unwrap();
+        assert!(!all_file_text(root.path()).contains("dest-s3cr3t"));
+        let staged = parse_staged(&text);
+        assert_eq!(staged.destination, "");
+        assert_eq!(staged.destination_handle, Some("d"));
+        assert_eq!(staged.class, Some(PromptClass::Password));
+        let env = guard.env(Path::new("/x"));
+        let get = |k: &str| {
+            env.iter()
+                .find(|(n, _)| n == k)
+                .map(|(_, v)| v.clone())
+                .unwrap()
+        };
+        assert_eq!(
+            fetch_held_from(
+                Path::new(&get(VALUES_SOCK_ENV)),
+                &get(VALUES_TOKEN_ENV),
+                "d"
+            )
+            .as_deref(),
+            Some("dest-s3cr3t")
+        );
+    }
+
+    #[test]
+    fn a_local_secret_is_staged_in_the_file_as_before_with_no_server() {
+        let root = tempfile::tempdir().unwrap();
+        let secret = PendingSecret::Password("local-s3cr3t".into());
+        let guard = AskpassSecret::staged_in(root.path(), Some(&secret), &[]).unwrap();
+        assert!(!guard.holds_synced());
+        assert!(std::fs::read_to_string(guard.path())
+            .unwrap()
+            .starts_with("local-s3cr3t\n"));
+        assert!(guard
+            .env(Path::new("/x"))
+            .iter()
+            .all(|(k, _)| k != VALUES_SOCK_ENV));
+    }
+
+    #[test]
+    fn a_synced_value_ssh_could_not_take_as_one_line_is_not_staged() {
+        let root = tempfile::tempdir().unwrap();
+        let guard =
+            AskpassSecret::staged_in(root.path(), None, &[synced_hop("two\nlines")]).unwrap();
+        assert!(!guard.holds_synced(), "nothing to serve, no server");
+        assert!(!all_file_text(root.path()).contains("two"));
     }
 
     #[test]

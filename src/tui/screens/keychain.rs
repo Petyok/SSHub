@@ -290,7 +290,7 @@ mod tests {
         // width, measured back out of real cells, never re-derived from the
         // truncation math. Both path rows must fit the popup inner width
         // they were given, cut with an ellipsis: a user screenshot showed
-        // `/home/petruha/sshub-dev/tmp/manual/smoke-certs/id-cert.pub`
+        // `/home/janedoe/sshub-dev/tmp/manual/smoke-certs/id-cert.pub`
         // escaping the field with its editing underline trailing off the
         // form. The neighbouring private-key row shares the same display
         // path and overflowed the same way, so both are asserted here, in
@@ -303,9 +303,9 @@ mod tests {
             for editing in [false, true] {
                 let mut form = form_with_cert();
                 form.private_key =
-                    "/home/petruha/sshub-dev/tmp/manual/smoke-certs/id_ed25519".into();
+                    "/home/janedoe/sshub-dev/tmp/manual/smoke-certs/id_ed25519".into();
                 form.certificate =
-                    "/home/petruha/sshub-dev/tmp/manual/smoke-certs/id-cert.pub".into();
+                    "/home/janedoe/sshub-dev/tmp/manual/smoke-certs/id-cert.pub".into();
                 form.field = edited;
                 form.editing = editing;
                 form.cursor = match edited {

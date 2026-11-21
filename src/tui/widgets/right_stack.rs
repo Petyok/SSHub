@@ -26,9 +26,28 @@ pub fn render_right_stack(frame: &mut Frame, area: Rect, app: &App) {
     let w = area.width;
 
     // ── Panel 1: Recent sessions ────────────────────────
-    let recent_area = Rect::new(area.x, y, w, RECENT_H.min(area.height));
+    let recent_total = RECENT_H.min(area.height);
+    // A configured ring shares the Recent slot: the panel keeps four rows
+    // (one session) and the sync summary takes the rest. Only at full height,
+    // so short terminals keep the Recent panel as it was.
+    let sync_slot = app.sync.configured && recent_total == RECENT_H;
+    let recent_h = if sync_slot {
+        RECENT_H - crate::tui::widgets::sync_panel::SYNC_H - crate::tui::dashboard_layout::PANEL_GAP
+    } else {
+        recent_total
+    };
+    let recent_area = Rect::new(area.x, y, w, recent_h);
     render_recent_panel(buf, recent_area, app);
-    y += recent_area.height + crate::tui::dashboard_layout::PANEL_GAP;
+    if sync_slot {
+        let sync_area = Rect::new(
+            area.x,
+            y + recent_h + crate::tui::dashboard_layout::PANEL_GAP,
+            w,
+            crate::tui::widgets::sync_panel::SYNC_H,
+        );
+        crate::tui::widgets::sync_panel::render_sync_panel(buf, sync_area, app);
+    }
+    y += recent_total + crate::tui::dashboard_layout::PANEL_GAP;
 
     if y >= area.y + area.height {
         return;

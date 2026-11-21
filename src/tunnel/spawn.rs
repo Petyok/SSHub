@@ -404,6 +404,16 @@ pub fn spawn_detached_tunnel(
 
     let mut args = build_tunnel_argv(tunnel, host, resolved, secret.is_some() || !hops.is_empty())?;
     let staged = stage_tunnel_askpass(&mut args, secret, hops)?;
+    // A synced credential lives only in this process, which is about to exit
+    // while ssh stays: it cannot be handed to a detached ssh without a file.
+    if staged
+        .as_ref()
+        .is_some_and(|(guard, _)| guard.holds_synced())
+    {
+        anyhow::bail!(
+            "a synced credential cannot be handed to a detached tunnel: start this tunnel from the TUI or in the foreground"
+        );
+    }
     let mut cmd = Command::new(&args[0]);
     cmd.args(&args[1..])
         .stdin(Stdio::null())
@@ -789,5 +799,38 @@ mod tests {
         .map(str::to_string)
         .collect();
         assert_eq!(argv, expected);
+    }
+
+    #[test]
+    fn a_detached_tunnel_refuses_a_synced_credential_and_leaves_nothing_behind() {
+        let store = crate::store::LauncherStore::open_in_memory().unwrap();
+        let host = store
+            .create_host(&crate::store::NewHost::launcher("web", "127.0.0.1"))
+            .unwrap();
+        let id = store
+            .create_tunnel(&crate::store::NewTunnel {
+                host_id: Some(host.id),
+                tunnel_type: crate::store::TunnelType::Local,
+                local_port: 18997,
+                remote_host: "localhost".into(),
+                remote_port: 80,
+                label: None,
+                auto_connect: false,
+            })
+            .unwrap();
+        let tunnel = store.get_tunnel(id).unwrap().unwrap();
+        let resolved = store.resolve_connection(&host).unwrap();
+        let gate = crate::credentials::SecretGate::default();
+        gate.insert("host:1", zeroize::Zeroizing::new("SYNCED-tunnel-pw".into()));
+        let secret = PendingSecret::Password("SYNCED-tunnel-pw".into());
+        let dir = tempfile::tempdir().unwrap();
+        let err = spawn_detached_tunnel(&tunnel, &host, &resolved, Some(&secret), &[], dir.path())
+            .unwrap_err();
+        assert!(err.to_string().contains("detached tunnel"), "{err:#}");
+        let pids = dir.path().join("tunnels");
+        assert!(
+            !pids.exists() || std::fs::read_dir(&pids).unwrap().next().is_none(),
+            "no pid file, so no ssh was started"
+        );
     }
 }

@@ -74,7 +74,7 @@ directory is resolved.
 
 ### Architecture
 - [Runtime architecture](architecture/overview.md): dispatch, startup, the 50 ms event loop, `AppMode` and `active_tab`, render pipeline, workers and channels, source map.
-- [Data model & storage](architecture/data-model.md): `launcher.db` schema v21 and its migrations, pre-migration snapshots, group defaults, transfer engine, `metadata.db`, the hybrid host model, `config.toml`.
+- [Data model & storage](architecture/data-model.md): `launcher.db` schema v22 and its migrations, pre-migration snapshots, group defaults, transfer engine, `metadata.db`, the hybrid host model, `config.toml`.
 - [Profiles](architecture/profiles.md): layout, compat mode, startup selection, in-app switching, legacy migration, cross-profile transfers.
 - [Theme system internals](architecture/themes.md): registry, resolver, `ThemeManager`, picker; the authoring guide is `docs/theme-system.md`.
 

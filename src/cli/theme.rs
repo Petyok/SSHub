@@ -501,9 +501,31 @@ fn positionals_without_options(args: &[String]) -> Result<Vec<String>, i32> {
 /// DEL, is left exactly as written. The JSON and TOML formats need none of this:
 /// serde escapes control characters there already.
 fn sanitize_plain(text: &str) -> String {
+    escape_controls(text, false)
+}
+
+/// [`sanitize_plain`] for text a ring peer wrote (names, notes, commands in a
+/// review): C1 (`U+0080..U+009F`, where some terminals take a CSI or OSC
+/// introducer) and the invisible and bidirectional format characters (zero width marks
+/// `U+200B..U+200F`, embeddings and overrides `U+202A..U+202E`, isolates `U+2066..U+2069`,
+/// the byte order mark `U+FEFF`, which make a name read differently from what it is) are
+/// escaped as well.
+pub(crate) fn sanitize_foreign(text: &str) -> String {
+    escape_controls(text, true)
+}
+
+fn escape_controls(text: &str, c1: bool) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
-        if ch <= '\u{001f}' || ch == '\u{007f}' {
+        let foreign = c1
+            && (('\u{0080}'..='\u{009f}').contains(&ch)
+                || ('\u{200b}'..='\u{200f}').contains(&ch)
+                || ('\u{202a}'..='\u{202e}').contains(&ch)
+                || ('\u{2060}'..='\u{2064}').contains(&ch)
+                || ('\u{2066}'..='\u{2069}').contains(&ch)
+                || matches!(ch, '\u{061c}' | '\u{2028}' | '\u{2029}' | '\u{00ad}')
+                || ch == '\u{feff}');
+        if ch <= '\u{001f}' || ch == '\u{007f}' || foreign {
             let _ = write!(out, "\\u{{{:04x}}}", ch as u32);
         } else {
             out.push(ch);

@@ -4,6 +4,80 @@ All notable changes to SSHub are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Host sync between your own machines** - hosts, groups and identities replicate over plain SSH between devices you
+  enroll yourself, end to end encrypted, with no daemon, no server and no open port (a sync is
+  `ssh <peer> sshub sync-serve`). Enroll with `t` on a host in the hosts tab or `sshub sync-join <host>`; the four words
+  are a real check only when both ends have a screen, otherwise the admission rests on the verified SSH host key, and the
+  Sync tab (`7`) shows which method admitted each device. Changes to dangerous fields (address, jump host, remote
+  command, user, key) never apply silently and wait for your approval in the review list (`R`, or `sshub sync-review`);
+  safe fields merge on their own. Credentials sync in one of two modes: **Vault** (encrypted under a six-word master
+  phrase and a ring secret from a printed kit) or **Quorum** (every secret needs two shares held by your machines, a
+  paper phrase and the phone, so a copy of one device opens nothing; unlocking from the terminal asks an attended holder
+  or the phone, and `SSHUB_UNLOCK_WAIT` bounds the wait). The **phone companion** is one offline page you open on Android
+  that shows what is being asked and who asks, signs the approval and releases a share by QR code or clipboard, or, with
+  the opt-in cargo features, by sound (`audio`), the webcam (`camera`) or Bluetooth Low Energy (`bluetooth`). Dangerous
+  ring changes (a new or revoked holder, a mode switch, a new phone, a bulk export) are **Red ceremonies**: the phone, a
+  second attended device and a third factor from outside your devices (a paper phrase or an emailed code) each have to
+  prove it, and every device checks the same rule. **Trust sessions** let a machine open a group or marked hosts for
+  7, 30 or 90 days under a phone-signed certificate with a daily budget. A lost phone is replaced by **recovery** (two
+  other devices or the paper, a proven third factor, a 7 day time lock that every device shows, cancellable by the real
+  phone). CLI verbs: `sync-join`, `sync-now`, `sync-status`, `sync-review`, `sync-revoke`, `sync-role`, `sync-approve`,
+  `sync-factor`, `sync-factor-register`, `sync-recovery`, `sync-mode`, `sync-exemption`, `sync-export`, `sync-migrate`,
+  `sync-import-kit`, `sync-phone-enroll`, `sync-notice`, `sync-phone-ops`, `sync-share-request`, `sync-cert-request`
+  (plus `sync-serve` and `sync-enroll`, which a peer runs over ssh). Config: `[sync] auto_sync_on_start`, `[sync] unattended` (a device nobody sits at, such as the Hub, enrolls as unattended and never blocks a checkpoint or a Red change; an already enrolled Hub must re-enroll), `[sync.notify]`
+  for recovery mails. Docs: the README "Sync (tab 7)" section with a step-by-step quick start,
+  `docs/host-sync-design.md` (with every default and why), `docs/host-sync-companion.md`, `docs/host-sync-contract.md`,
+  measurements in `docs/host-sync-poc-results.md`. Limits, stated plainly: metadata (addresses, notes, groups) is
+  readable by every ring device; revocation protects the future, not what a device already downloaded; the ML-KEM crate
+  is not independently audited; a phone page cannot prove it is the page you meant (compare its fingerprint with the
+  terminal's); the camera, sound, Bluetooth and phone-loss flows were verified with simulated devices only and not yet
+  on a physical phone or on iOS.
+- **Paper phrase first (host sync)** - the paper wizard now asks you to type back three random words of the 24 (no tick
+  box), and a switch to Quorum or a third full device needs a registered paper phrase: the Sync tab starts the wizard
+  instead of the change, `sync-mode quorum` and `sync-role ... holder` refuse until it is registered, and a ring without
+  a paper phrase shows a standing line with one key, `K`, to open the wizard.
+- **Approve back a device that was away (host sync)** - in the review, `A` approves, on this device only, every change
+  of the same device that waits only because it was away and touches no address, jump host, remote command, user or
+  key; `sshub sync-review --approve-all --device <id>` does the same. Everything else stays one by one with its full
+  diff. `sync-review --approve-all` no longer approves changes held as removed-author, not-a-holder, conflicting with a
+  removal or bringing back something deleted.
+- **Saved passwords that need attention (host sync)** - `sync-status` (text and JSON), the removal result and the Sync tab
+  list the saved passwords that share a key with a removed device (change them) or that a current full device does not
+  hold a piece of yet (healed on use), and the hosts list marks those hosts with `!`. Removing a full computer now says
+  before the name is asked whether the others re-share the passwords or only the phone and the paper approve it, and
+  asks whether the device was stolen or lost, or destroyed or wiped. Two computers are enough to remove one.
+- **Recovery alert (host sync)** - a recovery of the phone that another device started shows one full-screen notice
+  on every attended computer, with who started it, how many are open and when the earliest time lock ends; `Esc` only
+  dismisses it, there is no acknowledge key and nothing is written. The status bar keeps showing it, and
+  `sshub sync-status` lists the recoveries and exits with code 3 while one is open, so a script or a login banner can
+  act on it.
+- **Mail when someone tries to replace your phone (host sync)** - after you enroll a phone, SSHub offers to set up the
+  local sendmail: it asks for the addresses, writes `[sync.notify]`, sends a test message and says whether the command
+  accepted it; "Not now" is remembered and the Sync tab keeps a line about it. `sync-phone-enroll` prints a
+  `notify_hint` line, and names a shared mailbox when the alert address is also the sender of the emailed code.
+- **Heal saved passwords after a device was replaced (host sync)** - `sshub sync-heal`, or Passwords, "Heal
+  credentials" in `M`: the paper phrase is typed once and every saved password a current full device does not hold a
+  piece of is re-sealed to all of them, with no phone round trip. Passwords a removed device held a piece of are skipped.
+- **Change passwords a stolen device could read (host sync)** - `sshub sync-rekey` lists them; `--csv FILE` or
+  `--stdin` (lines `host,newpassword`) saves new secrets with a result per host, and `--new-key HOST` generates a key,
+  installs it on the server with the credential the host has now (through `sshub exec`) and only then saves it. SSHub
+  cannot change a password on a server and says so; removing the old key's line from `authorized_keys` stays yours.
+- **Renew a trust session (host sync)** - `M`, Advanced, "Trust session: renew one", or `sshub sync-trust-renew [<id>]
+  [--days N]`: another full computer shows the phone a request that carries what the other terminals saw of the delegate;
+  the request also lists the hosts opened under the session (names and a total, or "no list sent"); one phone confirmation renews it, at most twice and at most 180 days in all. The Sync tab says when a session ends
+  within 3 days, and each renewal is mailed once when mail is set up.
+- **Replace a full computer (host sync)** - `M`, Devices, "Replace a full computer", or
+  `sshub sync-replace-terminal <old> [--new <computer>]`: it says how to enroll the new one, proposes it as a full
+  device and, run again once the phone approved, proposes removing the old one; the paper phrase is typed once and goes
+  to both. Pending big changes now also say who can give each missing approval and since when.
+- **Hand the ring over to a new phone (host sync)** - while the old phone still works, `M`, Phone, "Replace the phone"
+  or `sshub sync-phone-enroll --replace` verifies the new phone (the four words), then shows the OLD phone a request
+  with the new phone's name and eight words to compare; it signs the handover, the new phone signs its own admission, and
+  the usual approvals follow (another computer and the paper phrase). The new phone holds your old saved passwords after
+  `sync-heal`. A lost phone is still replaced by a recovery.
+
 ### Fixed
 
 - **Startup command in `exported.conf`** (PR #187 by @56steve) - the exported

@@ -138,6 +138,7 @@ impl App {
                     self.identity_notice =
                         Some(format!("Generated key and identity '{}'", identity_name));
                 }
+                self.replicate_identity_key(created.id);
             }
             Err(e) => {
                 self.identity_notice = Some(format!(

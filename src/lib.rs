@@ -24,6 +24,7 @@ pub mod sftp;
 pub mod ssh;
 pub mod store;
 pub mod suggestions;
+pub mod sync;
 /// Shared allocation counter for tests; only one `#[global_allocator]` may
 /// exist per binary, so every allocation-free proof shares this module.
 #[cfg(test)]
@@ -122,6 +123,12 @@ pub fn run_app() -> Result<()> {
 ///   -> load profile config -> App::new_with_profile -> dashboard
 /// ```
 pub fn run_app_with(opts: profile::StartupOptions) -> Result<()> {
+    let result = run_app_inner(opts);
+    app::kit::print_reminder();
+    result
+}
+
+fn run_app_inner(opts: profile::StartupOptions) -> Result<()> {
     let auto_quit = std::env::var("SSHUB_AUTO_QUIT")
         .or_else(|_| std::env::var("SSH_LAUNCHER_AUTO_QUIT"))
         .ok();
@@ -617,6 +624,10 @@ fn poll_keys_and_watcher(app: &mut App) -> Result<()> {
 
     // Refresh auth events cache periodically
     app.refresh_auth_cache();
+
+    // Forward the UI's sync requests to the worker and fold its events into
+    // the Sync view, before the tick's mode change detection below.
+    app.poll_sync();
 
     // Arm tab-switch / popup slides for ANY mode or tab change this tick (#35).
     // Must run AFTER the background event drains (SFTP / OS-detect / broadcast),

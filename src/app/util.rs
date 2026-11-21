@@ -455,6 +455,18 @@ pub fn resolved_to_ssh_host(
         .as_ref()
         .and_then(|i| i.private_key.as_ref())
         .map(|p| p.to_string_lossy().into_owned());
+    // A synced identity whose key is not on this disk: ssh gets the private
+    // agent that holds it and the public key that selects it.
+    if host.identity_file.is_none() {
+        if let Some(agent) = resolved
+            .identity
+            .as_ref()
+            .and_then(|i| crate::credentials::synced_identity_agent(i.id))
+        {
+            host.identity_file = Some(agent.public_file.to_string_lossy().into_owned());
+            host.identity_agent = Some(agent.socket);
+        }
+    }
     host.certificate_file = resolved
         .identity
         .as_ref()
@@ -1166,7 +1178,7 @@ impl HopSpec {
             via: self.via.clone(),
             key_path: self.key_path(),
             class,
-            refs,
+            refs: stage_unlocked(refs, passwords),
             store: store.clone(),
         })
         // Presence only: the value is read to test it and dropped; a hop with
@@ -1180,6 +1192,65 @@ impl HopSpec {
         })
         .collect()
     }
+
+    /// Every credential-store key a connection through this hop may read:
+    /// the hop host's own and its identity's. For the unlock pre-flight.
+    pub fn secret_refs(&self) -> Vec<crate::credentials::SecretRef> {
+        use crate::credentials::{host_key, identity_key, SecretRef};
+        let mut refs = vec![SecretRef::Key(host_key(self.managed.id))];
+        if let Some(identity) = self.identity.as_ref() {
+            refs.push(SecretRef::Key(identity_key(identity.id)));
+        }
+        refs
+    }
+}
+
+/// A synced credential that is open in this process, in place of its key: the
+/// helper that answers ssh's prompt cannot open it. Local keys stay
+/// references. A locked one stays a key that reads as nothing, so the hop is
+/// left to the user.
+fn stage_unlocked(
+    refs: Vec<crate::credentials::SecretRef>,
+    passwords: &dyn crate::credentials::PasswordStore,
+) -> Vec<crate::credentials::SecretRef> {
+    use crate::credentials::{SecretRef, StagedValue};
+    refs.into_iter()
+        .map(|r| match &r {
+            SecretRef::Key(key) if passwords.gate().is_some_and(|g| g.is_synced(key)) => {
+                match passwords.get(key) {
+                    Ok(Some(value)) => SecretRef::Staged(StagedValue::new(value)),
+                    _ => r,
+                }
+            }
+            _ => r,
+        })
+        .collect()
+}
+
+/// Every credential-store key a connection to a host may read, for the unlock
+/// pre-flight: the host's, its (effective) identity's and its jump hops'.
+pub fn connection_secret_refs(
+    store: &crate::store::LauncherStore,
+    hosts: &[HostEntry],
+    managed: Option<&crate::store::ManagedHost>,
+    identity: Option<&crate::store::Identity>,
+    jump: Option<&str>,
+) -> Vec<crate::credentials::SecretRef> {
+    use crate::credentials::{host_key, identity_key, SecretRef};
+    let mut refs = Vec::new();
+    if let Some(m) = managed {
+        refs.push(SecretRef::Key(host_key(m.id)));
+        if let Some(identity) = identity.or(m.identity.as_ref()) {
+            refs.push(SecretRef::Key(identity_key(identity.id)));
+        }
+    }
+    if let Some(jump) = jump {
+        for spec in hop_specs(store, hosts, jump) {
+            refs.extend(spec.secret_refs());
+        }
+    }
+    refs.dedup();
+    refs
 }
 
 /// The hops of `jump` (a stored ProxyJump: names, `user@name`, `user@host`)
@@ -1222,6 +1293,11 @@ pub fn hop_specs(
                     same.next().is_none().then_some(one)
                 })?;
             let fields = store.resolve_fields(managed).ok()?;
+            // A hop whose key is not on this disk is reached through the
+            // private agent once its identity is open.
+            if let Some(identity) = fields.identity.as_ref().filter(|i| i.private_key.is_none()) {
+                crate::credentials::note_hop_identity(&via, identity.id);
+            }
             let user = raw
                 .and_then(|r| r.user)
                 .or(fields.username)
